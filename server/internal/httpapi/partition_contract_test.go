@@ -16,6 +16,7 @@ func TestPartitionUsesCOSAuthorMembershipAcrossBrowseFacetsAndActivity(t *testin
  f.library=library.ID
  rootInput,_:=f.upload("unclassified-root.png",211,nil)
  root:=*f.complete(rootInput).Asset
+ decode(t,f.json("GET","/assets/"+root.ID,"",nil,200),&root)
  cosInput,_:=f.upload("mixed-cos.png",212,map[string]any{"relativeDirectory":"Directory creator/Work"})
  cos:=*f.complete(cosInput).Asset
  fixed:=cos.COSDirectoryAuthorID

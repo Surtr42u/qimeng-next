@@ -8,7 +8,7 @@ import (
  "qimeng.local/next/server/internal/service"
 )
 
-func commitLikeImport(t *testing.T,f *fixture,a model.Asset,key string,count int64,day any)service.V2MigrationPlan{t.Helper();input:=stageV2(t,f,"stage-"+key,v2Document(t,a,map[string]any{"likes":[]any{map[string]any{"recordKey":"source-record","likeCount":count,"lastLikeDate":day}}}));plan:=planV2(t,f,input,"plan-"+key);r:=f.json("POST","/migration/v2/plans/"+plan.ID+"/commit","commit-"+key,map[string]any{"fingerprint":plan.Fingerprint},200);decode(t,r,&plan);return plan}
+func commitLikeImport(t *testing.T,f *fixture,a model.Asset,key string,count int64,day any)service.V2MigrationPlan{t.Helper();input:=stageV2(t,f,"stage-"+key,v2Document(t,a,map[string]any{"likes":[]any{map[string]any{"recordKey":"source-record","likeCount":count,"lastLikeDate":day}}}));plan:=planV2(t,f,input,"plan-"+key);if plan.SkippedCount!=0{t.Fatal("like fixture unexpectedly contains skipped media")};r:=f.json("POST","/migration/v2/plans/"+plan.ID+"/commit","commit-"+key,map[string]any{"fingerprint":plan.Fingerprint,"acceptSkipped":false},200);decode(t,r,&plan);return plan}
 func TestV2LikesKeepLifetimeBaselineAndTodayDeduplication(t *testing.T){
  f:=setup(t);u,_:=f.upload("like-baseline.png",203,nil);a:=*f.complete(u).Asset;today:=time.Now().Format("2006-01-02");plan:=commitLikeImport(t,f,a,"lifetime-today",27,today);if plan.Counts["legacyLikesPreserved"]!=27{t.Fatal("legacy lifetime count was not recorded")}
  r:=f.json("GET","/assets/"+a.ID,"",nil,200);decode(t,r,&a);if a.LikeCount!=27||a.UnattributedLikeCount!=26||!a.Liked{t.Fatalf("legacy lifetime/today facts changed: %+v",a)}
