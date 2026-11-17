@@ -1,0 +1,4 @@
+.preference-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin-top: 18px; }
+.preference-fields label { font-size: 11px; }.preference-fields input { padding: 8px; min-height: 35px; }
+.preference-save { margin-top: auto; padding-top: 12px; }.preference-save > p { min-height: 24px; }
+@media (max-width: 760px) { .preference-save .actions { align-items: stretch; flex-direction: column; } }

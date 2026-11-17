@@ -5,6 +5,8 @@
   "getAsset": {"tool": "asset.read", "scope": "read"},
   "listAuthors": {"tool": "author.query", "scope": "read"},
   "getAuthor": {"tool": "author.read", "scope": "read"},
+  "getAuthorTask": {"tool": "author.task.context", "scope": "read"},
+  "updateAuthor": {"tool": "author.profile.update", "scope": "author.profile.write"},
   "createAuthor": {"tool": "author.create", "scope": "organize"},
   "listCollections": {"tool": "collection.query", "scope": "read"},
   "listTags": {"tool": "tag.query", "scope": "read"},

@@ -1,0 +1,12 @@
+import { useEffect, useRef, useState } from 'react';
+import { useCreateDirectory, useDirectories } from '../data/catalog';
+import { EmptyState, ErrorNotice, Loading } from '../components/Feedback';
+import { newId } from '../lib/id';
+
+export function DirectoryPicker({ libraryId, value, onChange }: { libraryId: string; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false); const [parent, setParent] = useState(value); const [name, setName] = useState('');
+  const query = useDirectories(libraryId, parent, open); const create = useCreateDirectory(libraryId); const attempt = useRef({ path: '', key: newId() });
+  useEffect(() => { setOpen(false); setParent(''); }, [libraryId]);
+  const items = query.data?.pages.flatMap(page => page.items) ?? [];
+  return <div className="form-stack"><button type="button" className="button" disabled={!libraryId} aria-expanded={open} onClick={() => { setParent(value); setOpen(!open); }}>{value || '库根目录'} · 选择目录</button>{open && <div className="directory-browser"><div className="actions"><button type="button" className="button button--small" disabled={!parent} onClick={() => setParent(parent.includes('/') ? parent.slice(0, parent.lastIndexOf('/')) : '')}>上一级</button><span className="muted">{parent || '库根目录'}</span><button type="button" className="button button--small button--primary" onClick={() => { onChange(parent); setOpen(false); }}>使用此目录</button></div><ErrorNotice error={query.error} retry={() => void query.refetch()} />{query.isPending ? <Loading /> : items.length ? <div className="directory-list">{items.map(item => <button key={item.relativePath} type="button" onClick={() => setParent(item.relativePath)}>{item.name}</button>)}</div> : !query.isError && <p className="muted">此目录下没有子目录。</p>}{query.hasNextPage && <button type="button" className="button button--small" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>更多子目录</button>}<div className="inline-form"><input aria-label="新目录名称" value={name} disabled={create.isPending} onChange={event => setName(event.target.value)} placeholder="新目录名称" /><button type="button" className="button button--small" disabled={!name.trim() || create.isPending} onClick={() => { const path = [parent, name.trim()].filter(Boolean).join('/'); if (attempt.current.path !== path) attempt.current = { path, key: newId() }; create.mutate({ relativePath: path, key: attempt.current.key }, { onSuccess: () => setName('') }); }}>创建</button></div><ErrorNotice error={create.error} /></div>}</div>;
+}

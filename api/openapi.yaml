@@ -333,6 +333,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateAuthor
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdate'}}}}
       responses:
         '200': {description: Author, content: {application/json: {schema: {$ref: '#/components/schemas/Author'}}}}
@@ -543,6 +544,26 @@ paths:
       responses:
         '200': {description: Deterministic personalized page, content: {application/json: {schema: {$ref: '#/components/schemas/RecommendationPage'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /author-tasks:
+    post:
+      operationId: createAuthorTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorTaskCreate'}}}}
+      responses:
+        '201': {description: Trusted author maintenance authorization, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /author-tasks/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAuthorTask
+      responses:
+        '200': {description: Maintenance task and current author, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorTaskContext'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: cancelAuthorTask
+      responses:
+        '204': {description: Authorization revoked}
+        default: {$ref: '#/components/responses/Error'}
   /rankings:
     get:
       operationId: getRankings
@@ -551,6 +572,7 @@ paths:
         - {$ref: '#/components/parameters/Limit'}
         - {name: period, in: query, schema: {type: string, enum: [day, week, month, quarter, year, all], default: week}}
         - {name: kind, in: query, schema: {type: string, enum: [regular, cos]}}
+        - {name: mediaType, in: query, schema: {type: string, enum: [image, animated_image, video]}}
       responses:
         '200': {description: Activity ranking, content: {application/json: {schema: {$ref: '#/components/schemas/RankingPage'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -605,6 +627,37 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    AuthorTaskCreate:
+      type: object
+      required: [authorId, expectedRevision, allowedFields, allowClear]
+      properties:
+        authorId: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        allowedFields: {type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: {type: string, enum: [name, biography, homepage, aliases]}}
+        allowClear: {type: boolean}
+        maxUpdates: {type: integer, minimum: 1, maximum: 10, default: 1}
+        expiresInSeconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
+    AuthorTask:
+      type: object
+      required: [id, authorId, expectedRevision, allowedFields, allowClear, maxUpdates, usedUpdates, state, expiresAt, createdAt]
+      properties:
+        id: {type: string}
+        authorId: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        allowedFields: {type: array, items: {type: string}}
+        allowClear: {type: boolean}
+        maxUpdates: {type: integer}
+        usedUpdates: {type: integer}
+        state: {type: string, enum: [authorized, completed, cancelled]}
+        expiresAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+    AuthorTaskContext:
+      type: object
+      required: [task, author, nextActions]
+      properties:
+        task: {$ref: '#/components/schemas/AuthorTask'}
+        author: {$ref: '#/components/schemas/Author'}
+        nextActions: {type: array, items: {type: string}}
     RecommendationWeights:
       type: object
       required: [tagRelevance, tagCollection, engagement, recency, likeScore, discovery, freshness, browseDepth, maxRandom]
@@ -709,14 +762,14 @@ components:
         kind: {type: string, enum: [author, tag]}
         id: {type: string}
         name: {type: string}
-        currentShare: {type: number, format: double}
-        previousShare: {type: number, format: double}
+        currentShare: {type: number, format: double, description: 'Percentage 0–100; multiple associations are not mutually exclusive'}
+        previousShare: {type: number, format: double, description: 'Percentage 0–100; multiple associations are not mutually exclusive'}
         changePoints: {type: number, format: double}
         currentViews: {type: integer, format: int64}
         previousViews: {type: integer, format: int64}
     BrowsingReview:
       type: object
-      required: [range, firstViews, returnViews, distinctAssets, activeDays, comparisonAvailable, hours, changes]
+      required: [range, firstViews, returnViews, distinctAssets, activeDays, totalSeconds, comparisonAvailable, hours, changes]
       properties:
         range: {type: string}
         firstViews: {type: integer, format: int64}
@@ -724,6 +777,7 @@ components:
         distinctAssets: {type: integer}
         activeDays: {type: integer}
         comparisonAvailable: {type: boolean}
+        totalSeconds: {type: integer, format: int64}
         hours: {type: array, minItems: 24, maxItems: 24, items: {$ref: '#/components/schemas/ReviewHour'}}
         changes: {type: array, maxItems: 6, items: {$ref: '#/components/schemas/InterestChange'}}
     Error:
@@ -756,11 +810,12 @@ components:
       properties: {token: {type: string}, label: {type: string, maxLength: 80}}
     CredentialCreate:
       type: object
-      required: [label, batchId, scopes]
+      required: [label, scopes]
       properties:
         label: {type: string, maxLength: 80}
         batchId: {type: string}
-        scopes: {type: array, items: {type: string, enum: [read, ingest, research, organize]}}
+        authorTaskId: {type: string, description: 'Exactly one of batchId and authorTaskId is required'}
+        scopes: {type: array, items: {type: string, enum: [read, ingest, research, organize, author.profile.write]}}
     Session:
       type: object
       required: [id, label, scopes, expiresAt]
@@ -770,6 +825,7 @@ components:
         label: {type: string}
         scopes: {type: array, items: {type: string}}
         batchId: {type: string}
+        authorTaskId: {type: string}
         expiresAt: {type: string, format: date-time}
     LibraryCreate:
       type: object
@@ -813,6 +869,7 @@ components:
         note: {type: string}
         source: {type: string}
         sourceIds: {type: array, items: {type: string}}
+        acquisitionSources: {type: array, items: {type: string}, description: User-provided acquisition channels; separate from the source work identity}
         characters: {type: array, items: {type: string}}
         characterIds: {type: array, items: {type: string}}
         metadataSource: {type: string, enum: [upload, human, ai]}
@@ -843,6 +900,7 @@ components:
         note: {type: string, maxLength: 10000}
         source: {type: string, maxLength: 200}
         sourceIds: {type: array, maxItems: 20, items: {type: string}}
+        acquisitionSources: {type: array, maxItems: 100, items: {type: string, maxLength: 2000}}
         characterIds: {type: array, maxItems: 50, items: {type: string}}
         characters: {type: array, maxItems: 50, items: {type: string, maxLength: 200}}
     TagsUpdate:
@@ -943,6 +1001,9 @@ components:
         authorIds: {type: array, maxItems: 20, items: {type: string}}
         collectionId: {type: string}
         note: {type: string, maxLength: 10000}
+        acquisitionSources: {type: array, maxItems: 100, items: {type: string, maxLength: 2000}}
+        sourceIds: {type: array, maxItems: 20, items: {type: string}}
+        characterIds: {type: array, maxItems: 50, items: {type: string}}
         family: {type: string, maxLength: 200, description: Optional automatic work numbering requested by the user}
         replaceAssetId: {type: string, description: Admin device only; explicit replacement intent}
         expectedContentVersion: {type: integer, format: int64}
@@ -1026,6 +1087,8 @@ components:
         family: {type: string, minLength: 1, maxLength: 200}
         authorId: {type: string}
         authorIds: {type: array, maxItems: 20, items: {type: string}}
+        sourceIds: {type: array, maxItems: 20, items: {type: string}}
+        characterIds: {type: array, maxItems: 50, items: {type: string}}
         groupKey: {type: string, maxLength: 100}
         collectionId: {type: string}
         page: {type: integer, minimum: 1}
@@ -1044,6 +1107,8 @@ components:
         relativePath: {type: string}
         authorId: {type: string}
         authorIds: {type: array, items: {type: string}}
+        sourceIds: {type: array, items: {type: string}}
+        characterIds: {type: array, items: {type: string}}
         collectionId: {type: string}
         page: {type: integer}
         expectedHash: {type: string}

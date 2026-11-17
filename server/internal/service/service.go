@@ -89,6 +89,12 @@ type Result struct{ Body []byte; Status int }
 // transaction as business records. A file intent is made durable before disk IO.
 func(s *Service)Run(ctx context.Context,p model.Principal,operation,key string,input []byte,fn func(*Write)(any,int,error))(result Result,err error){
  s.mu.Lock();defer s.mu.Unlock()
+ // Authentication can precede a queued write. Recheck the revocable credential
+ // at the mutation boundary so revocation also rejects work not yet started.
+ if p.ID!="owner"&&p.ID!="ai-reader"{
+  current,e:=store.Get[model.Principal](ctx,s.DB.DB,"SELECT data FROM credentials WHERE id=?",p.ID)
+  if errors.Is(e,sql.ErrNoRows){return result,Fail(401,"revoked","凭据已撤销，尚未开始的写入已拒绝。")};if e!=nil{return result,e};if !current.ExpiresAt.After(time.Now()){return result,Fail(401,"expired","凭据已过期。")};p=current
+ }
  if key!=""&&(len(key)<8||len(key)>128){return result,Fail(400,"invalid_idempotency_key","幂等键长度应为 8–128。")}
  hash:=digest(input)
  if key!=""{
@@ -109,12 +115,20 @@ func(s *Service)Run(ctx context.Context,p model.Principal,operation,key string,i
  return Result{body,status},nil
 }
 
-func(s *Service)CreateSession(ctx context.Context,w *Write,label,batchID string,scopes []string)(model.Principal,error){
+func(s *Service)CreateSession(ctx context.Context,w *Write,label,batchID string,scopes []string,authorTaskIDs ...string)(model.Principal,error){
  if !w.Principal.Has("admin"){return model.Principal{},Fail(403,"scope_denied","仅设备管理会话可以签发凭据。")}
  if strings.TrimSpace(label)==""||len(label)>80{return model.Principal{},Fail(400,"invalid_label","请输入会话名称。")}
+ authorTaskID:="";if len(authorTaskIDs)>0{authorTaskID=authorTaskIDs[0]}
+ if batchID!=""&&authorTaskID!=""{return model.Principal{},Fail(400,"task_conflict","凭据只能绑定一种授权任务。")}
  duration:=30*24*time.Hour
- if batchID!=""{if _,err:=s.Batch(ctx,batchID);err!=nil{return model.Principal{},err};duration=24*time.Hour;for _,scope:=range scopes{if scope!="read"&&scope!="ingest"&&scope!="research"&&scope!="organize"{return model.Principal{},Fail(400,"invalid_scope","不支持的 AI 权限。")}}}else{scopes=[]string{"admin"}}
- p:=model.Principal{ID:ID(),Label:label,BatchID:batchID,Scopes:scopes,ExpiresAt:time.Now().UTC().Add(duration)}
+ if batchID!=""||authorTaskID!=""{read:=false;for _,scope:=range scopes{if scope=="read"{read=true}};if !read{return model.Principal{},Fail(400,"read_scope_required","任务凭据必须明确包含read权限。")}}
+ if authorTaskID!=""{
+  task,err:=s.authorTask(ctx,authorTaskID);if err!=nil{return model.Principal{},err}
+  if task.State!="authorized"||!task.ExpiresAt.After(time.Now()){return model.Principal{},Fail(409,"author_task_stale","资料维护授权已失效。")}
+  duration=time.Until(task.ExpiresAt)
+  for _,scope:=range scopes{if scope!="read"&&scope!="author.profile.write"{return model.Principal{},Fail(400,"invalid_scope","资料维护凭据只能授予read和author.profile.write。")}}
+ }else if batchID!=""{if _,err:=s.Batch(ctx,batchID);err!=nil{return model.Principal{},err};duration=24*time.Hour;for _,scope:=range scopes{if scope!="read"&&scope!="ingest"&&scope!="research"&&scope!="organize"{return model.Principal{},Fail(400,"invalid_scope","不支持的 AI 权限。")}}}else{scopes=[]string{"admin"}}
+ p:=model.Principal{ID:ID(),Label:label,BatchID:batchID,AuthorTaskID:authorTaskID,Scopes:scopes,ExpiresAt:time.Now().UTC().Add(duration)}
  secret:=token();raw,err:=store.Encode(p);if err!=nil{return p,err};q,err:=w.Q();if err!=nil{return p,err}
  _,err=q.ExecContext(ctx,"INSERT INTO credentials(id,token_hash,expires_at,data) VALUES(?,?,?,?)",p.ID,digest([]byte(secret)),p.ExpiresAt.Format(time.RFC3339Nano),raw);p.Token=secret;return p,err
 }

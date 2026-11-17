@@ -8,6 +8,7 @@
   --qm-highlight: rgb(255 255 255 / .36); --qm-shadow: 0 14px 48px rgb(0 0 0 / .26);
   --qm-danger: #ffabae; --qm-danger-soft: rgb(245 86 100 / .1);
   --qm-warning: #efd394; --qm-success: #83d4bc;
+  --qm-chart-image: #7aaaf8; --qm-chart-video: #ecc66f; --qm-chart-animated: #78caae;
   --qm-aurora: radial-gradient(ellipse at 7% 0%, rgb(111 75 173 / .16), transparent 45%), radial-gradient(ellipse at 95% 65%, rgb(46 119 125 / .1), transparent 50%);
   --qm-radius: 20px; --qm-radius-sm: 12px; --qm-radius-pill: 999px;
   --qm-motion-fast: 160ms; --qm-motion-page: 240ms; --qm-motion-lens: 420ms;
@@ -28,6 +29,7 @@
   --qm-highlight: rgb(255 255 255 / .94); --qm-shadow: 0 12px 36px rgb(75 48 103 / .11);
   --qm-danger: #b12e48; --qm-danger-soft: rgb(177 46 72 / .07);
   --qm-warning: #8b6416; --qm-success: #21705a;
+  --qm-chart-image: #407aca; --qm-chart-video: #b88c27; --qm-chart-animated: #378d70;
   --qm-aurora: radial-gradient(ellipse at 10% 0%, rgb(185 156 226 / .2), transparent 45%), radial-gradient(ellipse at 90% 65%, rgb(104 211 205 / .12), transparent 50%);
 }
 @media (prefers-reduced-motion: reduce) {

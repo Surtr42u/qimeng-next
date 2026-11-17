@@ -76,6 +76,8 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'))
                                 route.startsWith("author:") -> AuthorDetailScreen(model, route.substringAfter(':'))
                                 route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'))
+                                route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
+                                route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
                                 route == "search" -> MediaBrowser(model, "search", search = true)
                                 route == "favorites" -> MediaBrowser(model, "favorites", favorite = true)
                                 route == "authors" -> AuthorsScreen(model)
@@ -85,6 +87,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "appearance" -> AppearanceScreen(model)
                                 route == "server" -> ServerScreen(model)
                                 route == "trash" -> TrashScreen(model)
+                                route == "recommendation" -> RecommendationSettings(model)
                                 else -> when (tab) {
                                     0 -> HomeScreen(model)
                                     1 -> AlbumsScreen(model)
@@ -145,6 +148,8 @@ private fun routeTitle(route: String) = when {
     route.startsWith("asset:") -> "作品详情"
     route.startsWith("author:") -> "作者档案"
     route.startsWith("task:") -> "任务报告"
+    route.startsWith("review:") -> "浏览回顾"
+    route.startsWith("vocabulary:") -> vocabularyTitle(route.substringAfter(':'))
     else -> mapOf("search" to "搜索", "favorites" to "收藏", "authors" to "作者", "history" to "浏览历史", "upload" to "上传",
-        "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "trash" to "回收站")[route] ?: "绮梦影库"
+        "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "trash" to "回收站", "recommendation" to "推荐偏好")[route] ?: "绮梦影库"
 }

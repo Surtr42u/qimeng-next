@@ -18,7 +18,7 @@
 | `QIMENG_API_TOKEN` | 为目标批次签发的AI凭据，仅可信端持有 |
 | `QIMENG_AI_STATE_DIR` | 执行端私有绝对状态目录，必填 |
 | `QIMENG_AI_TASK_ID` | 同任务跨进程共享预算的稳定ID，默认interactive |
-| `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予ingest/research/organize/local.read/local.research |
+| `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予ingest/research/organize/author.profile.write/local.read/local.research |
 | `QIMENG_AI_STORAGES` | JSON对象，逻辑名映射可信本地根；模型只看到逻辑名与相对路径 |
 | `QIMENG_AI_MAX_CALLS/MAX_SECONDS/MAX_UNCHANGED` | 默认100次/900秒/3次相同结果；预算持久保存 |
 | `QIMENG_AI_OUTPUT_BYTES` | 默认12288，限制展示结果；不含协议外壳或宿主重复呈现 |
@@ -36,6 +36,8 @@
 6. `task.read` / `asset.read` 按输入清单回读，分别报告入库、未知/冲突、备份和来源清理。上传工具保留来源文件。
 
 超长结果返回resultRef与省略声明；`platform.result.read` 用JSON Pointer、offset/limit续读。引用绑定实例、凭据和契约，24小时过期，每个32MiB、总256MiB、最多128项。该缓存失效不等于服务端计划丢失，需重新从原计划ID读取。
+
+作者资料维护采用单独的明确授权任务：可信客户端用 `POST /author-tasks` 指定作者、读取修订、允许字段、是否允许清空、次数及有效期，随后签发只绑定该任务的 `read,author.profile.write` 凭据。模型通过 `author.task.context` 获取需要的信息，使用稳定幂等键执行 `author.profile.update`。正常用户界面仍直接使用本人会话编辑；只有向AI委托时才需要此范围授权。AI修改字段标为candidate，不冒充人工核实；无关字段保留。
 
 ## 可信端维护
 

@@ -36,12 +36,16 @@ func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{
  if e:=json.Unmarshal(output.Bytes(),&result);e!=nil{return e};if len(result.Streams)==0{a.ProbeState="failed";return nil};a.Width=result.Streams[0].Width;a.Height=result.Streams[0].Height
  if result.Format.Duration!=""{duration,e:=strconv.ParseFloat(result.Format.Duration,64);if e!=nil{return e};if duration>=0&&duration<1e9{a.DurationMs=int64(duration*1000)}};a.ProbeState="ready";return nil
 }
-func(s *Service)Thumbnail(ctx context.Context,id string)(*os.File,model.Asset,error){
- a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,e};if a.Trashed{return nil,a,Fail(404,"not_found","媒体位于回收站。")}
+func(s *Service)thumbnailSource(ctx context.Context,id string)(*os.File,model.Asset,string,string,error){
+ s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,"","",e};if a.Trashed{return nil,a,"","",Fail(404,"not_found","媒体位于回收站。")}
  cache:="cache/"+a.ID+"/"+strconv.FormatInt(a.ContentVersion,10)+".jpg"
- if e=s.safe(cache);e!=nil{return nil,a,e};if f,e:=s.Root.Open(cache);e==nil{return f,a,nil}else if !errors.Is(e,os.ErrNotExist){return nil,a,e}
+ if e=s.safe(cache);e!=nil{return nil,a,"","",e};if f,e:=s.Root.Open(cache);e==nil{return f,a,cache,"",nil}else if !errors.Is(e,os.ErrNotExist){return nil,a,"","",e}
+ snapshot:=path.Dir(cache)+"/"+ID()+".source"+path.Ext(a.FileName)
+ if e=s.linkNoReplace(assetPath(a),snapshot);e!=nil{return nil,a,"","",e};return nil,a,cache,snapshot,nil
+}
+func(s *Service)Thumbnail(ctx context.Context,id string)(*os.File,model.Asset,error){
+ cached,a,cache,source,e:=s.thumbnailSource(ctx,id);if e!=nil{return nil,a,e};if cached!=nil{return cached,a,nil};defer s.Root.Remove(source)
  select{case thumbnailSlots<-struct{}{}:defer func(){<-thumbnailSlots}();case <-ctx.Done():return nil,a,ctx.Err()}
- source:=assetPath(a);if e=s.safe(source);e!=nil{return nil,a,e}
  var data []byte
  if builtinImage(a.MimeType){
   if a.Width<=0||a.Height<=0||int64(a.Width)*int64(a.Height)>40_000_000{return nil,a,Fail(422,"thumbnail_resource_limit","图片超过缩略图解码预算，原件仍可查看。")}

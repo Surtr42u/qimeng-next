@@ -32,6 +32,7 @@ fun UploadScreen(model: LibraryViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
     var renameId by rememberSaveable { mutableStateOf<String?>(null) }
+    var chooseDirectory by rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) model.receiveFiles(it) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { ContentCard {
@@ -40,9 +41,10 @@ fun UploadScreen(model: LibraryViewModel) {
                 Text("尚未读取到影库。请检查连接或在服务器创建影库。")
                 TextButton(onClick = model::refreshConnection, enabled = !busy) { Text("刷新影库") }
             } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                libraries.forEach { library -> FilterChip(selected == library.id, { model.setUploadLibrary(library.id) }, label = { Text(library.name) }) }
+                libraries.forEach { library -> FilterChip(selected == library.id, { model.setUploadLibrary(library.id) }, label = { Text(library.name) }, enabled = library.enabled) }
             }
             OutlinedTextField(directory, model::setUploadDirectory, label = { Text("库内目录（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TextButton(onClick = { chooseDirectory = true }, enabled = libraries.any { it.id == selected && it.enabled }) { Text("浏览 / 创建目录") }
         } }
         item { ContentCard {
             Text("入库方式", style = MaterialTheme.typography.titleMedium)
@@ -55,6 +57,7 @@ fun UploadScreen(model: LibraryViewModel) {
             Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy && queue != null) { Icon(Icons.Outlined.Add, null); Text("选择文件") }
             Text("文件选择后可预览名称再开始；来源原件保留。", style = MaterialTheme.typography.bodySmall)
         } }
+        item { UploadAssociations(model) }
         queueError?.let { item { ErrorNotice(it, model::reloadQueue) } }
         items(queue?.drafts.orEmpty(), key = { "draft:${it.id}" }) { draft ->
             ContentCard {
@@ -67,11 +70,16 @@ fun UploadScreen(model: LibraryViewModel) {
             }
         }
         if (queue?.drafts?.isNotEmpty() == true) item {
-            Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected }, modifier = Modifier.fillMaxWidth()) { Text("开始上传 ${queue!!.drafts.size} 个文件") }
+            Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled }, modifier = Modifier.fillMaxWidth()) { Text("开始上传 ${queue!!.drafts.size} 个文件") }
         }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("任务结果", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = model::clearUploads, enabled = !busy) { Text("清理已结束记录") }
+        } }
+        items(queue?.intakeFailures.orEmpty(), key = { "rejected:${it.id}" }) { rejected -> ContentCard {
+            Text(rejected.name, style = MaterialTheme.typography.titleMedium)
+            ErrorNotice(rejected.message)
+            Text("来源文件保留，修复后可重新选择。", style = MaterialTheme.typography.bodySmall)
         } }
         items(queue?.transfers.orEmpty().asReversed(), key = { "transfer:${it.id}" }) { transfer ->
             ContentCard {
@@ -102,6 +110,99 @@ fun UploadScreen(model: LibraryViewModel) {
     queue?.drafts?.find { it.id == renameId }?.let { draft ->
         TextEditDialog("上传文件名", draft.name, busy, { renameId = null }) { model.renameDraft(draft.id, it) { renameId = null } }
     }
+    if (chooseDirectory) DirectoryDialog(model, selected, directory) { chooseDirectory = false }
+}
+
+@Composable
+private fun UploadAssociations(model: LibraryViewModel) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var chooseAuthors by rememberSaveable { mutableStateOf(false) }
+    var chooseCollection by rememberSaveable { mutableStateOf(false) }
+    var newCollection by rememberSaveable { mutableStateOf(false) }
+    val authorIds by model.uploadAuthorIds.collectAsStateWithLifecycle()
+    val collectionId by model.uploadCollectionId.collectAsStateWithLifecycle()
+    val note by model.uploadNote.collectAsStateWithLifecycle()
+    val acquisitionSources by model.uploadSources.collectAsStateWithLifecycle()
+    val libraryId by model.uploadLibrary.collectAsStateWithLifecycle()
+    val libraries by model.libraries.collectAsStateWithLifecycle()
+    val authors by model.authors.collectAsStateWithLifecycle()
+    val collections by model.collections.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
+    val libraryKind = libraries.find { it.id == libraryId }?.kind
+    ContentCard {
+        TextButton(onClick = { expanded = !expanded }) { Text("可选关联 · ${authorIds.size} 位作者${if (collectionId == null) "" else " · 已选集合"}") }
+        if (expanded) {
+            Text("仅对这次提交的全部待传文件应用所选关联；混合内容可保持未指定。", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { model.loadAuthors(); chooseAuthors = true }, enabled = !busy) { Text("选择作者") }
+            OutlinedTextField(acquisitionSources, model::setUploadSources, label = { Text("获取渠道 / 来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
+            OutlinedButton(onClick = { model.loadCollections(); chooseCollection = true }, enabled = libraryId.isNotEmpty() && !busy) { Text("组图 / 短剧集合") }
+            OutlinedTextField(note, model::setUploadNote, label = { Text("本批备注（原样保存）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+        }
+    }
+    if (chooseAuthors) {
+        var selected by rememberSaveable { mutableStateOf(authorIds) }
+        AlertDialog(onDismissRequest = { chooseAuthors = false }, title = { Text("本批关联作者") }, text = {
+            LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                items(authors.items.filter { libraryKind == null || it.kind == libraryKind }, key = { it.id }) { author -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(author.id in selected, { checked -> selected = if (checked) selected + author.id else selected - author.id }); Text(author.name)
+                } }
+                if (authors.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") } }
+                authors.error?.let { item { ErrorNotice(it) { model.loadAuthors() } } }
+            }
+        }, confirmButton = { TextButton(onClick = { model.setUploadAuthors(selected); chooseAuthors = false }) { Text("应用") } },
+            dismissButton = { TextButton(onClick = { chooseAuthors = false }) { Text("取消") } })
+    }
+    if (chooseCollection) AlertDialog(onDismissRequest = { chooseCollection = false }, title = { Text("组图 / 短剧集合") }, text = {
+        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+            item { TextButton(onClick = { model.setUploadCollection(null); chooseCollection = false }) { Text("不关联集合") } }
+            items(collections.items, key = { it.id }) { collection -> TextButton(onClick = { model.setUploadCollection(collection.id); chooseCollection = false }) {
+                Text("${collection.name} · ${if (collection.kind == "short_drama") "短剧" else "组图"}")
+            } }
+            if (collections.cursor != null) item { TextButton(onClick = { model.loadCollections(true) }) { Text("更多集合") } }
+            collections.error?.let { item { ErrorNotice(it) { model.loadCollections() } } }
+        }
+    }, confirmButton = { TextButton(onClick = { newCollection = true }) { Text("新建集合") } },
+        dismissButton = { TextButton(onClick = { chooseCollection = false }) { Text("关闭") } })
+    if (newCollection) {
+        var name by rememberSaveable { mutableStateOf("") }
+        var kind by rememberSaveable { mutableStateOf("image_set") }
+        AlertDialog(onDismissRequest = { if (!busy) newCollection = false }, title = { Text("新建集合") }, text = {
+            Column {
+                OutlinedTextField(name, { name = it }, label = { Text("名称") })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(kind == "image_set", { kind = "image_set" }, label = { Text("组图") })
+                    FilterChip(kind == "short_drama", { kind = "short_drama" }, label = { Text("短剧") })
+                }
+            }
+        }, confirmButton = { TextButton(onClick = { model.createCollection(name.trim(), kind) { newCollection = false } }, enabled = !busy && name.isNotBlank()) { Text("创建") } },
+            dismissButton = { TextButton(onClick = { newCollection = false }, enabled = !busy) { Text("取消") } })
+    }
+}
+
+@Composable
+private fun DirectoryDialog(model: LibraryViewModel, libraryId: String, initial: String, close: () -> Unit) {
+    var parent by rememberSaveable(libraryId) { mutableStateOf(initial) }
+    var create by rememberSaveable { mutableStateOf(false) }
+    val state by model.directories.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
+    LaunchedEffect(libraryId, parent) { model.loadDirectories(libraryId, parent) }
+    AlertDialog(onDismissRequest = close, title = { Text("选择库内目录") }, text = {
+        Column(Modifier.heightIn(max = 420.dp)) {
+            Text(parent.ifEmpty { "影库根目录" })
+            Row {
+                TextButton(onClick = { parent = parent.substringBeforeLast('/', "") }, enabled = parent.isNotEmpty()) { Text("上一级") }
+                TextButton(onClick = { create = true }, enabled = !busy) { Text("新建目录") }
+            }
+            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            state.error?.let { ErrorNotice(it) { model.loadDirectories(libraryId, parent) } }
+            LazyColumn(Modifier.weight(1f, fill = false)) {
+                items(state.items, key = { it.path }) { directory -> TextButton(onClick = { parent = directory.path }) { Icon(Icons.Outlined.Folder, null); Text(directory.name) } }
+                if (state.cursor != null) item { TextButton(onClick = { model.loadDirectories(libraryId, parent, true) }, enabled = !state.loading) { Text("加载更多目录") } }
+            }
+        }
+    }, confirmButton = { TextButton(onClick = { model.setUploadDirectory(parent); close() }, enabled = state.loaded) { Text("选择当前目录") } },
+        dismissButton = { TextButton(onClick = close) { Text("取消") } })
+    if (create) TextEditDialog("新建目录名称", "", busy, { create = false }) { model.createDirectory(libraryId, parent, it) { create = false } }
 }
 
 @Composable

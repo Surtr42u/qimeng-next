@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useBeforeUnload, useBlocker, useLocation, useNavigationType } from 'react-router-dom';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -36,9 +37,20 @@ export function usePageRestoration() {
   }, []);
 }
 
-export function UnsavedGuard({ dirty }: { dirty: boolean }) {
+const DirtyContext = createContext<((id: string, dirty: boolean) => void) | null>(null);
+export function UnsavedProvider({ children }: { children: ReactNode }) {
+  const [drafts, setDrafts] = useState<Set<string>>(() => new Set());
+  const setDirty = useCallback((id: string, dirty: boolean) => setDrafts(previous => {
+    if (previous.has(id) === dirty) return previous;
+    const next = new Set(previous); if (dirty) next.add(id); else next.delete(id); return next;
+  }), []);
+  const dirty = drafts.size > 0;
   const blocker = useBlocker(dirty);
   useBeforeUnload(event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
-  if (blocker.state !== 'blocked') return null;
-  return <ConfirmDialog title="离开未保存的编辑？" confirmLabel="放弃并离开" onCancel={() => blocker.reset()} onConfirm={() => blocker.proceed()}><p>尚未保存的修改会丢失。</p></ConfirmDialog>;
+  return <DirtyContext.Provider value={setDirty}>{children}{blocker.state === 'blocked' && <ConfirmDialog title="离开未保存的编辑？" confirmLabel="放弃并离开" onCancel={() => blocker.reset()} onConfirm={() => blocker.proceed()}><p>尚未保存的修改会丢失。</p></ConfirmDialog>}</DirtyContext.Provider>;
+}
+export function UnsavedGuard({ dirty }: { dirty: boolean }) {
+  const id = useId(); const update = useContext(DirtyContext);
+  useLayoutEffect(() => { update?.(id, dirty); return () => update?.(id, false); }, [id, dirty, update]);
+  return null;
 }

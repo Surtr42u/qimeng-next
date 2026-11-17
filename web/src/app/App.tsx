@@ -7,7 +7,7 @@ import { UploadProvider } from '../data/upload';
 import { EventsProvider, EventSyncStatus } from '../data/events';
 import { Icon } from '../components/Icon';
 import type { IconName } from '../components/Icon';
-import { usePageRestoration } from '../lib/navigation';
+import { usePageRestoration, UnsavedProvider } from '../lib/navigation';
 
 const mainLinks: { id: string; label: string; href: string; icon: IconName }[] = [
   { id: 'home', label: '首页', href: '/', icon: 'home' },
@@ -17,7 +17,7 @@ const mainLinks: { id: string; label: string; href: string; icon: IconName }[] =
   { id: 'manage', label: '数据管理', href: '/manage', icon: 'manage' },
 ];
 const navItems = mainLinks.map(item => ({ ...item, icon: <Icon name={item.icon} /> }));
-export function App() { return <SessionGate><EventsProvider><UploadProvider><Shell /></UploadProvider></EventsProvider></SessionGate>; }
+export function App() { return <SessionGate><UnsavedProvider><EventsProvider><UploadProvider><Shell /></UploadProvider></EventsProvider></UnsavedProvider></SessionGate>; }
 function Shell() {
   const location = useLocation();
   const direction = useNavigationType();

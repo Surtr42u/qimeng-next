@@ -23,7 +23,7 @@ func(s *Service)CreateLibrary(ctx context.Context,w *Write,name,kind string)(mod
  raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};_,e=q.ExecContext(ctx,"INSERT INTO libraries(id,name,kind,data) VALUES(?,?,?,?)",l.ID,l.Name,l.Kind,raw);return l,e
 }
 func(s *Service)library(ctx context.Context,id string)(model.Library,error){a,e:=store.Get[model.Library](ctx,s.DB.DB,"SELECT data FROM libraries WHERE id=?",id);return a,Normalize(e)}
-const assetJSON="json_set(a.data,'$.authorName',au.name,'$.liked',json(CASE WHEN EXISTS(SELECT 1 FROM likes lk WHERE lk.asset_id=a.id AND lk.day=?) THEN 'true' ELSE 'false' END),'$.likeCount',(SELECT count(*) FROM likes lk WHERE lk.asset_id=a.id))"
+const assetJSON="json_set(a.data,'$.authorName',au.name,'$.liked',json(CASE WHEN EXISTS(SELECT 1 FROM likes lk WHERE lk.asset_id=a.id AND lk.day=?) THEN 'true' ELSE 'false' END),'$.likeCount',(SELECT count(*) FROM likes lk WHERE lk.asset_id=a.id),'$.source',CASE WHEN json_array_length(json_extract(a.data,'$.sourceIds'))>0 THEN (SELECT group_concat(name,'+') FROM (SELECT s.name FROM json_each(a.data,'$.sourceIds') j JOIN sources s ON s.id=j.value ORDER BY j.key)) ELSE json_extract(a.data,'$.source') END,'$.characters',json(CASE WHEN json_array_length(json_extract(a.data,'$.characterIds'))>0 THEN (SELECT json_group_array(name) FROM (SELECT c.name FROM json_each(a.data,'$.characterIds') j JOIN characters c ON c.id=j.value ORDER BY j.key)) ELSE COALESCE(json_extract(a.data,'$.characters'),'[]') END))"
 func(s *Service)Asset(ctx context.Context,id string)(model.Asset,error){a,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id WHERE a.id=?",time.Now().Format("2006-01-02"),id);return a,Normalize(e)}
 type AssetFilter struct { LibraryID,Q,MediaType,Kind,AuthorID,CollectionID,Tag,Sort,Cursor string; Favorite,Liked *bool; Trashed bool; Limit int }
 type cursorValue struct { Offset int `json:"o"`; Filter string `json:"f"` }
@@ -47,7 +47,7 @@ func(s *Service)Assets(ctx context.Context,f AssetFilter)(model.Page[model.Asset
  values,e:=store.List[model.Asset](ctx,s.DB.DB,"SELECT "+assetJSON+" FROM assets a JOIN libraries l ON l.id=a.library_id JOIN authors au ON au.id=a.author_id WHERE "+strings.Join(where," AND ")+" ORDER BY "+order+" LIMIT ? OFFSET ?",args...)
  return paged(values,n,offset,key),e
 }
-type AssetUpdate struct { ExpectedRevision int64 `json:"expectedRevision"`; ExpectedAuthorsRevision int64 `json:"expectedAuthorsRevision,omitempty"`; AuthorID,Note,Source *string; AuthorIDs *[]string `json:"authorIds"`; Characters *[]string `json:"characters"`; SourceIDs *[]string `json:"sourceIds"`;CharacterIDs *[]string `json:"characterIds"` }
+type AssetUpdate struct { ExpectedRevision int64 `json:"expectedRevision"`; ExpectedAuthorsRevision int64 `json:"expectedAuthorsRevision,omitempty"`; AuthorID,Note,Source *string; AuthorIDs *[]string `json:"authorIds"`; Characters *[]string `json:"characters"`; SourceIDs *[]string `json:"sourceIds"`;CharacterIDs *[]string `json:"characterIds"`;AcquisitionSources *[]string `json:"acquisitionSources"` }
 func(s *Service)UpdateAsset(ctx context.Context,w *Write,id string,in AssetUpdate)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)}
  if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")}
@@ -55,6 +55,7 @@ func(s *Service)UpdateAsset(ctx context.Context,w *Write,id string,in AssetUpdat
  if in.Note!=nil{if len(*in.Note)>10000{return a,Fail(400,"invalid_note","备注过长。")};a.Note=*in.Note};if in.Source!=nil{if len(*in.Source)>200{return a,Fail(400,"invalid_source","出处名称过长。")};a.Source=*in.Source}
  if in.Characters!=nil{v,e:=cleanStrings(*in.Characters,50,200);if e!=nil{return a,e};a.Characters=v}
  if in.SourceIDs!=nil||in.CharacterIDs!=nil{sources:=a.SourceIDs;characters:=a.CharacterIDs;if in.SourceIDs!=nil{sources=*in.SourceIDs};if in.CharacterIDs!=nil{characters=*in.CharacterIDs};if e=s.resolveTaxonomy(ctx,&a,sources,characters);e!=nil{return a,e}}
+ if in.AcquisitionSources!=nil{a.AcquisitionSources,e=cleanStrings(*in.AcquisitionSources,100,2000);if e!=nil{return a,e}}
  a.MetadataSource="human";a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e};return a,store.SaveAsset(ctx,q,a)
 }
 func cleanStrings(values []string,maxCount,maxLen int)([]string,error){if values==nil{return nil,Fail(400,"missing_array","必须显式提供数组；清空时提供空数组。")};if len(values)>maxCount{return nil,Fail(400,"too_many_values","项目数量超出限制。")};out:=[]string{};seen:=map[string]bool{};for _,v:=range values{v=strings.TrimSpace(v);if v==""||len(v)>maxLen||strings.ContainsRune(v,'\x00'){return nil,Fail(400,"invalid_value","名称为空或过长。")};if !seen[v]{seen[v]=true;out=append(out,v)}};return out,nil}
@@ -91,11 +92,13 @@ func(s *Service)CreateAuthor(ctx context.Context,w *Write,in AuthorInput)(model.
 }
 type AuthorUpdate struct{ExpectedRevision int64 `json:"expectedRevision"`;Name,Biography,Homepage *string;Aliases *[]string;Following *bool}
 func(s *Service)UpdateAuthor(ctx context.Context,w *Write,id string,in AuthorUpdate)(model.Author,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Author{},e};a,e:=s.Author(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)};if a.Placeholder{return a,Fail(409,"placeholder_protected","未知作者占位不能改为真实作者。请修改媒体关联。")}
+ task,e:=s.authorizeAuthorUpdate(ctx,w.Principal,id,in);if e!=nil{return model.Author{},e};a,e:=s.Author(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)};if a.Placeholder{return a,Fail(409,"placeholder_protected","未知作者占位不能改为真实作者。请修改媒体关联。")}
  if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>200{return a,Fail(400,"invalid_author","作者名称无效。")};a.Name=v}
  if in.Biography!=nil{if len(*in.Biography)>20000{return a,Fail(400,"invalid_author","简介过长。")};a.Biography=*in.Biography;a.FieldStatus["biography"]="confirmed"}
  if in.Homepage!=nil{if !validURL(*in.Homepage)||len(*in.Homepage)>2000{return a,Fail(400,"invalid_author","主页地址无效。")};a.Homepage=*in.Homepage;a.FieldStatus["homepage"]="confirmed"}
- if in.Aliases!=nil{a.Aliases,e=cleanStrings(*in.Aliases,100,200);if e!=nil{return a,e}};if in.Following!=nil{a.Following=*in.Following};a.Revision++;a.UpdatedAt=time.Now().UTC();raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e};_,e=q.ExecContext(ctx,"UPDATE authors SET name=?,following=?,data=? WHERE id=?",a.Name,a.Following,raw,a.ID);return a,e
+ if in.Aliases!=nil{a.Aliases,e=cleanStrings(*in.Aliases,100,200);if e!=nil{return a,e}};if in.Following!=nil{a.Following=*in.Following}
+ if task!=nil{if in.Biography!=nil{a.FieldStatus["biography"]="candidate"};if in.Homepage!=nil{a.FieldStatus["homepage"]="candidate"}}
+ a.Revision++;a.UpdatedAt=time.Now().UTC();raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e};if _,e=q.ExecContext(ctx,"UPDATE authors SET name=?,following=?,data=? WHERE id=?",a.Name,a.Following,raw,a.ID);e!=nil{return a,e};return a,finishAuthorTask(ctx,q,task,a.Revision)
 }
 func(s *Service)Collections(ctx context.Context,libraryID,query,cursor string,limit int)(model.Page[model.Collection],error){n,e:=limited(limit,50);if e!=nil{return model.Page[model.Collection]{},e};key:="collections:"+libraryID+":"+query;o,e:=pageOffset(cursor,key);if e!=nil{return model.Page[model.Collection]{},e};a,e:=store.List[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE (?='' OR library_id=?) AND (name LIKE ? ESCAPE '\\' OR json_extract(data,'$.aliases') LIKE ? ESCAPE '\\') ORDER BY name,id LIMIT ? OFFSET ?",libraryID,libraryID,like(query),like(query),n+1,o);return paged(a,n,o,key),e}
 func(s *Service)CreateCollection(ctx context.Context,w *Write,in model.Collection)(model.Collection,error){

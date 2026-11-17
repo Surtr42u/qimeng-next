@@ -1,4 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { useRef } from 'react';
+import { newId } from '../lib/id';
 import { api, operationHeaders, read } from './client';
 import type { Schema } from './client';
 import { invalidateLibrary } from './query';
@@ -22,10 +24,21 @@ export function useAuthor(id: string) {
   return useQuery({ queryKey: [...key, 'author', id], queryFn: ({ signal }) => read(api.GET('/authors/{id}', { params: { path: { id } }, signal })), enabled: !!id });
 }
 export function useUpdateAuthor(id: string) {
-  return useMutation({ mutationFn: (body: Schema<'AuthorUpdate'>) => read(api.PATCH('/authors/{id}', { params: { path: { id } }, body })), onSuccess: invalidateLibrary });
+  const attempt = useRef({ signature: '', key: newId() });
+  return useMutation({ mutationFn: (body: Schema<'AuthorUpdate'>) => {
+    const signature = JSON.stringify([id, body]);
+    if (attempt.current.signature !== signature) attempt.current = { signature, key: newId() };
+    return read(api.PATCH('/authors/{id}', { params: { path: { id }, header: operationHeaders(attempt.current.key) }, body }));
+  }, onSuccess: invalidateLibrary });
 }
 export function useCreateAuthor() {
   return useMutation({ mutationFn: ({ body, key }: { body: Schema<'AuthorCreate'>; key: string }) => read(api.POST('/authors', { params: { header: operationHeaders(key) }, body })), onSuccess: invalidateLibrary });
+}
+export function useDeleteAuthor() {
+  return useMutation({ mutationFn: ({ id, revision, key }: { id: string; revision: number; key: string }) => read(api.DELETE('/authors/{id}', { params: { path: { id }, query: { expectedRevision: revision }, header: operationHeaders(key) } })), onSuccess: invalidateLibrary });
+}
+export function useMergeAuthors() {
+  return useMutation({ mutationFn: ({ body, key }: { body: Schema<'AuthorMergeInput'>; key: string }) => read(api.POST('/authors/merge', { params: { header: operationHeaders(key) }, body })), onSuccess: invalidateLibrary });
 }
 export function useCollections(libraryId?: string) {
   const key = useRemoteKey();
@@ -67,7 +80,7 @@ export function useTrash() {
   });
 }
 export function useTrashAction() {
-  return useMutation({ mutationFn: ({ id, revision, key, permanent }: { id: string; revision: number; key: string; permanent: boolean }) => permanent
+  return useMutation({ mutationFn: async ({ id, revision, key, permanent }: { id: string; revision: number; key: string; permanent: boolean }) => permanent
     ? read(api.DELETE('/trash/{id}', { params: { path: { id }, query: { expectedRevision: revision }, header: operationHeaders(key) } }))
     : read(api.POST('/trash/{id}/restore', { params: { path: { id }, header: operationHeaders(key) }, body: { expectedRevision: revision } })), onSuccess: invalidateLibrary });
 }

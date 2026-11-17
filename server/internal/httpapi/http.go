@@ -53,14 +53,14 @@ func boolQuery(r *http.Request,name string)(*bool,error){v:=r.URL.Query().Get(na
 type revisionBody struct{ExpectedRevision int64 `json:"expectedRevision"`}
 func(a *API)routes(){
  a.mux.HandleFunc("GET /healthz",func(w http.ResponseWriter,r *http.Request){if e:=a.s.DB.DB.PingContext(r.Context());e!=nil{fail(w,e);return};respond(w,200,map[string]string{"status":"ok"})})
- a.mux.HandleFunc("GET /api/v1/instance",func(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"id":a.s.InstanceID,"name":"绮梦 Next","apiVersion":"0.1.0","capabilities":map[string]bool{"aiConfigured":a.s.Config.AIConfigured,"recommendations":false,"rankings":false,"stats":true,"backups":true,"migration":false}})})
+ a.mux.HandleFunc("GET /api/v1/instance",func(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"id":a.s.InstanceID,"name":"绮梦 Next","apiVersion":"0.1.0","capabilities":map[string]bool{"aiConfigured":a.s.Config.AIConfigured,"recommendations":true,"rankings":true,"stats":true,"backups":true,"migration":false}})})
  a.mux.HandleFunc("POST /api/v1/sessions",func(w http.ResponseWriter,r *http.Request){
   if !originOK(r){fail(w,service.Fail(403,"origin_denied","请求来源不匹配。"));return};in,_,e:=decode[struct{Token string `json:"token"`;Label string `json:"label"`}](w,r);if e!=nil{fail(w,e);return};p,e:=a.s.Authenticate(r.Context(),in.Token);if e!=nil{fail(w,e);return}
   out,e:=a.s.Run(r.Context(),p,"createSession","",nil,func(tx *service.Write)(any,int,error){v,e:=a.s.CreateSession(r.Context(),tx,in.Label,"",nil);return v,201,e});if e!=nil{fail(w,e);return};var session model.Principal;if e=json.Unmarshal(out.Body,&session);e!=nil{fail(w,e);return};http.SetCookie(w,&http.Cookie{Name:"qimeng_session",Value:session.Token,Path:"/",HttpOnly:true,Secure:a.s.Config.SecureCookies,SameSite:http.SameSiteStrictMode,Expires:session.ExpiresAt});result(w,out)
  })
  a.get("/sessions/current",func(r *http.Request)(any,error){return principal(r),nil})
  a.mux.HandleFunc("DELETE /api/v1/sessions/current",a.auth(func(w http.ResponseWriter,r *http.Request){p:=principal(r);out,e:=a.s.Run(r.Context(),p,"logout","",nil,func(tx *service.Write)(any,int,error){return nil,204,a.s.Revoke(r.Context(),tx,p.ID)});if e!=nil{fail(w,e);return};http.SetCookie(w,&http.Cookie{Name:"qimeng_session",Value:"",Path:"/",HttpOnly:true,Secure:a.s.Config.SecureCookies,SameSite:http.SameSiteStrictMode,MaxAge:-1});result(w,out)}))
- write[struct{Label string `json:"label"`;BatchID string `json:"batchId"`;Scopes []string `json:"scopes"`}](a,"POST","/credentials",false,func(r *http.Request,w *service.Write,in struct{Label string `json:"label"`;BatchID string `json:"batchId"`;Scopes []string `json:"scopes"`})(any,int,error){if in.BatchID==""{return nil,0,service.Fail(400,"batch_required","AI 凭据必须绑定批次。")};v,e:=a.s.CreateSession(r.Context(),w,in.Label,in.BatchID,in.Scopes);return v,201,e})
+ write[credentialRequest](a,"POST","/credentials",false,func(r *http.Request,w *service.Write,in credentialRequest)(any,int,error){if (in.BatchID=="")==(in.AuthorTaskID==""){return nil,0,service.Fail(400,"task_required","AI 凭据必须且只能绑定一个接收或资料维护任务。")};v,e:=a.s.CreateSession(r.Context(),w,in.Label,in.BatchID,in.Scopes,in.AuthorTaskID);return v,201,e})
  write[struct{}](a,"DELETE","/credentials/{id}",false,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){return nil,204,a.s.Revoke(r.Context(),w,r.PathValue("id"))})
  a.get("/libraries",func(r *http.Request)(any,error){return a.s.Libraries(r.Context())})
  write[struct{Name string `json:"name"`;Kind string `json:"kind"`}](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in struct{Name string `json:"name"`;Kind string `json:"kind"`})(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind);return v,201,e})
@@ -79,7 +79,7 @@ func(a *API)routes(){
  a.get("/authors",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};f,e:=boolQuery(r,"following");if e!=nil{return nil,e};return a.s.Authors(r.Context(),r.URL.Query().Get("q"),r.URL.Query().Get("cursor"),n,f!=nil&&*f)})
  a.get("/authors/{id}",func(r *http.Request)(any,error){return a.s.Author(r.Context(),r.PathValue("id"))})
  write[service.AuthorInput](a,"POST","/authors",true,func(r *http.Request,w *service.Write,in service.AuthorInput)(any,int,error){v,e:=a.s.CreateAuthor(r.Context(),w,in);return v,201,e})
- write[service.AuthorUpdate](a,"PATCH","/authors/{id}",false,func(r *http.Request,w *service.Write,in service.AuthorUpdate)(any,int,error){v,e:=a.s.UpdateAuthor(r.Context(),w,r.PathValue("id"),in);return v,200,e})
+ write[service.AuthorUpdate](a,"PATCH","/authors/{id}",true,func(r *http.Request,w *service.Write,in service.AuthorUpdate)(any,int,error){v,e:=a.s.UpdateAuthor(r.Context(),w,r.PathValue("id"),in);return v,200,e})
  a.get("/collections",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};q:=r.URL.Query();return a.s.Collections(r.Context(),q.Get("libraryId"),q.Get("q"),q.Get("cursor"),n)})
  write[model.Collection](a,"POST","/collections",true,func(r *http.Request,w *service.Write,in model.Collection)(any,int,error){v,e:=a.s.CreateCollection(r.Context(),w,in);return v,201,e})
  a.uploadRoutes();a.batchRoutes()
@@ -91,6 +91,7 @@ func(a *API)routes(){
  write[struct{}](a,"POST","/backups",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){v,e:=a.s.CreateBackup(r.Context(),w);return v,201,e})
  a.get("/operations/{key}",func(r *http.Request)(any,error){return a.s.Operation(r.Context(),principal(r),r.PathValue("key"),r.URL.Query().Get("operation"))})
  a.analyticsRoutes()
+ a.authorTaskRoutes()
  a.managementRoutes()
 }
 func(a *API)uploadRoutes(){

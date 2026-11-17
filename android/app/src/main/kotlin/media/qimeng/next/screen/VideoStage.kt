@@ -88,6 +88,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
         }
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black))
     } else PlayerSurface(player, false, error, { error = null; player.prepare() }) { fullscreen = true }
+    TimelineControls(asset, player)
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

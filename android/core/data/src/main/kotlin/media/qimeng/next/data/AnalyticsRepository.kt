@@ -24,7 +24,7 @@ class AnalyticsRepository internal constructor(private val settings: SecureSetti
     }
     suspend fun review(range: String): BrowsingReview {
         val value = api().getBrowsingReview(range = DefaultApi.RangeGetBrowsingReview.entries.first { it.value == range }).bodyOrThrow()
-        return BrowsingReview(value.range, value.firstViews, value.returnViews, value.distinctAssets, value.activeDays, value.comparisonAvailable,
+        return BrowsingReview(value.range, value.totalSeconds, value.firstViews, value.returnViews, value.distinctAssets, value.activeDays, value.comparisonAvailable,
             value.hours.map { ReviewHour(it.hour, it.views, it.seconds, it.imageSeconds, it.animatedSeconds, it.videoSeconds) },
             value.changes.map { InterestChange(it.kind.value, it.id, it.name, it.currentShare, it.previousShare, it.changePoints, it.currentViews, it.previousViews) })
     }

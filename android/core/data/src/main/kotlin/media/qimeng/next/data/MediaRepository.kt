@@ -9,6 +9,11 @@ import media.qimeng.next.sdk.model.ReactionUpdate
 import media.qimeng.next.sdk.model.SessionCreate
 import media.qimeng.next.sdk.model.TagsUpdate
 import media.qimeng.next.sdk.model.LibraryCreate
+import media.qimeng.next.sdk.model.LibraryUpdate
+import media.qimeng.next.sdk.model.CreateDirectoryRequest
+import media.qimeng.next.sdk.model.AuthorCreate
+import media.qimeng.next.sdk.model.AuthorMergeInput
+import media.qimeng.next.sdk.model.CollectionCreate
 import media.qimeng.next.sdk.model.RevisionRequest
 import media.qimeng.next.sdk.model.MoveRequest
 import media.qimeng.next.sdk.api.DefaultApi
@@ -48,11 +53,32 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return ServerCapabilities(instance.capabilities.aiConfigured, instance.capabilities.recommendations, instance.capabilities.rankings)
     }
 
-    suspend fun libraries(): List<Library> = provider.api(target()).listLibraries().bodyOrThrow().items.map { Library(it.id, it.name, it.kind.value) }
+    suspend fun libraries(): List<Library> = provider.api(target()).listLibraries().bodyOrThrow().items.map { Library(it.id, it.name, it.kind.value, it.enabled, it.revision) }
     suspend fun createLibrary(name: String, cos: Boolean): Library {
         val value = provider.api(target()).createLibrary(idempotencyKey = UUID.randomUUID().toString(),
             libraryCreate = LibraryCreate(name = name, kind = LibraryCreate.Kind.entries.first { it.value == if (cos) "cos" else "regular" })).bodyOrThrow()
-        return Library(value.id, value.name, value.kind.value)
+        return Library(value.id, value.name, value.kind.value, value.enabled, value.revision)
+    }
+    suspend fun updateLibrary(library: Library, name: String, enabled: Boolean): Library {
+        val value = provider.api(target()).updateLibrary(id = library.id, idempotencyKey = UUID.randomUUID().toString(),
+            libraryUpdate = LibraryUpdate(expectedRevision = library.revision, name = name, enabled = enabled)).bodyOrThrow()
+        return Library(value.id, value.name, value.kind.value, value.enabled, value.revision)
+    }
+    suspend fun directories(libraryId: String, parent: String, cursor: String?): Page<Directory> {
+        val page = provider.api(target()).listDirectories(id = libraryId, parent = parent, cursor = cursor, limit = 50).bodyOrThrow()
+        return Page(page.items.map { Directory(it.relativePath, it.name) }, page.nextCursor)
+    }
+    suspend fun createDirectory(libraryId: String, path: String) {
+        provider.api(target()).createDirectory(id = libraryId, idempotencyKey = UUID.randomUUID().toString(),
+            createDirectoryRequest = CreateDirectoryRequest(relativePath = path)).bodyOrThrow()
+    }
+    suspend fun collections(libraryId: String, cursor: String? = null): Page<MediaCollection> {
+        val page = provider.api(target()).listCollections(libraryId = libraryId, cursor = cursor, limit = 50).bodyOrThrow()
+        return Page(page.items.map { MediaCollection(it.id, it.name, it.kind.value) }, page.nextCursor)
+    }
+    suspend fun createCollection(libraryId: String, name: String, kind: String) {
+        provider.api(target()).createCollection(idempotencyKey = UUID.randomUUID().toString(),
+            collectionCreate = CollectionCreate(libraryId = libraryId, name = name, kind = CollectionCreate.Kind.entries.first { it.value == kind })).bodyOrThrow()
     }
 
     suspend fun assets(query: AssetQuery, cursor: String? = null): Page<Asset> {
@@ -105,7 +131,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             authorIds = ids, expectedAuthorsRevision = asset.authorsRevision)).bodyOrThrow().toModel(target)
     }
 
-    suspend fun tags(): List<String> = provider.api(target()).listTags().bodyOrThrow().items
+    suspend fun tags(cursor: String? = null): Page<String> = provider.api(target()).listTags(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items, it.nextCursor) }
+    suspend fun removeTag(asset: Asset, tag: String): Asset {
+        val target = target()
+        return provider.api(target).removeAssetTag(id = asset.id, tag = tag, idempotencyKey = UUID.randomUUID().toString(),
+            expectedRevision = asset.tagsRevision).bodyOrThrow().toModel(target)
+    }
 
     suspend fun history(cursor: String? = null): Page<HistoryEntry> {
         val page = provider.api(target()).listHistory(cursor = cursor, limit = 50).bodyOrThrow()
@@ -119,11 +150,27 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun author(id: String): Author = provider.api(target()).getAuthor(id).bodyOrThrow().toModel()
-    suspend fun follow(author: Author): Author = provider.api(target()).updateAuthor(id = author.id,
-        authorUpdate = AuthorUpdate(expectedRevision = author.revision, following = !author.followed)).bodyOrThrow().toModel()
-    suspend fun editAuthor(author: Author, name: String, aliases: List<String>, biography: String, homepage: String): Author =
-        provider.api(target()).updateAuthor(id = author.id, authorUpdate = AuthorUpdate(expectedRevision = author.revision,
-            name = name, aliases = aliases, biography = biography, homepage = homepage)).bodyOrThrow().toModel()
+    suspend fun follow(author: Author): Author {
+        val target = target()
+        val input = AuthorUpdate(expectedRevision = author.revision, following = !author.followed)
+        return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
+    }
+    suspend fun editAuthor(author: Author, name: String, aliases: List<String>, biography: String, homepage: String): Author {
+        val target = target()
+        val input = AuthorUpdate(expectedRevision = author.revision, name = name, aliases = aliases, biography = biography, homepage = homepage)
+        return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
+    }
+    suspend fun createAuthor(name: String): Author = provider.api(target()).createAuthor(idempotencyKey = UUID.randomUUID().toString(),
+        authorCreate = AuthorCreate(name = name)).bodyOrThrow().toModel()
+    suspend fun deleteAuthor(author: Author) {
+        val result = provider.api(target()).deleteAuthor(id = author.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = author.revision)
+        if (!result.isSuccessful) result.bodyOrThrow()
+    }
+    suspend fun mergeAuthors(source: Author, targetAuthor: Author): Pair<Author, String> {
+        val result = provider.api(target()).mergeAuthors(idempotencyKey = UUID.randomUUID().toString(), authorMergeInput = AuthorMergeInput(
+            sourceId = source.id, targetId = targetAuthor.id, expectedSourceRevision = source.revision, expectedTargetRevision = targetAuthor.revision)).bodyOrThrow()
+        return result.author.toModel() to "已合并 ${result.affectedAssets} 件媒体的关联。${if (result.preservedConflicts.isEmpty()) "" else "目标档案保留；冲突字段：${result.preservedConflicts.joinToString()}"}"
+    }
 
     suspend fun trash(asset: Asset) {
         provider.api(target()).trashAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision).bodyOrThrow()
@@ -152,7 +199,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         val result = provider.api(target()).getBatch(id).bodyOrThrow()
         return result.batch.toModel().copy(items = result.items.map {
             TaskItem(it.upload.id, it.upload.fileName, it.upload.state.value,
-                listOfNotNull(it.upload.errorMessage, it.researchOutcome.takeIf(String::isNotBlank)).joinToString(" · "), it.upload.assetId)
+                listOfNotNull(it.upload.errorMessage, if (result.batch.mode.value == "ordinary") "普通上传，无需研究" else researchMessage(it.researchOutcome)).joinToString(" · "), it.upload.assetId)
         })
     }
 
@@ -179,4 +226,14 @@ private fun ApiAsset.toModel(target: Session): Asset {
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision)
 private fun ApiBatch.toModel() = TaskReport(id, mode.value, state.value,
-    "${label} · 备份：${backupState.value} · 来源：${cleanupState.value}", createdAt, emptyList())
+    "${label} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList())
+private fun researchMessage(outcome: String): String? = when (outcome) {
+    "", "not_run", "pending" -> "尚未执行研究"
+    "unknown" -> "已研究，尚未查明"
+    "candidates" -> "研究候选待确认"
+    "conflict" -> "研究结果存在冲突"
+    "not_needed" -> "普通上传，无需研究"
+    else -> "研究状态待核对"
+}
+private fun stableAuthorKey(target: Session, id: String, input: AuthorUpdate) = UUID.nameUUIDFromBytes(
+    com.google.gson.Gson().toJson(listOf("author-update", target.instanceId, id, input)).toByteArray()).toString()

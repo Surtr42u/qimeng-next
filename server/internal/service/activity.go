@@ -55,7 +55,7 @@ func(s *Service)RecordEvent(ctx context.Context,w *Write,id string,in model.Even
 
 func(s *Service)History(ctx context.Context,cursor string,limit int)(model.Page[model.Event],error){
  n,e:=limited(limit,50);if e!=nil{return model.Page[model.Event]{},e};o,e:=pageOffset(cursor,"history");if e!=nil{return model.Page[model.Event]{},e}
- a,e:=store.List[model.Event](ctx,s.DB.DB,`SELECT data FROM events WHERE json_extract(data,'$.kind')='view' ORDER BY created_at DESC,event_id DESC LIMIT ? OFFSET ?`,n+1,o)
+ a,e:=store.List[model.Event](ctx,s.DB.DB,`WITH latest AS (SELECT data,created_at,event_id,row_number() OVER(PARTITION BY asset_id ORDER BY created_at DESC,event_id DESC) AS position FROM events WHERE json_extract(data,'$.kind')='view') SELECT data FROM latest WHERE position=1 ORDER BY created_at DESC,event_id DESC LIMIT ? OFFSET ?`,n+1,o)
  return paged(a,n,o,"history"),e
 }
 

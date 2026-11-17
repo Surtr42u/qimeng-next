@@ -54,7 +54,8 @@ internal class ApiProvider(private val settings: SecureSettings) {
         return baseClient.newBuilder().addInterceptor { chain ->
             val url = chain.request().url
             if (!sameOrigin(url, expected)) throw IOException("拒绝向其他服务器发送媒体凭据")
-            val token = settings.tokenFor(target)
+            val token = try { settings.tokenFor(target) }
+            catch (_: Exception) { throw ApiFailure(401, "登录凭据不可用或连接已变更，请重新登录") }
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
         }.build().also { cachedClient = target to it }
     }

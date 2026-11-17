@@ -39,6 +39,7 @@ type Asset struct {
  Note string `json:"note"`
  Source string `json:"source"`
  SourceIDs []string `json:"sourceIds"`
+ AcquisitionSources []string `json:"acquisitionSources"`
  Characters []string `json:"characters"`
  CharacterIDs []string `json:"characterIds"`
  MetadataSource string `json:"metadataSource"`
@@ -94,6 +95,9 @@ type UploadInput struct {
  AuthorIDs []string `json:"authorIds,omitempty"`
  CollectionID string `json:"collectionId,omitempty"`
  Note string `json:"note,omitempty"`
+ AcquisitionSources []string `json:"acquisitionSources,omitempty"`
+ SourceIDs []string `json:"sourceIds,omitempty"`
+ CharacterIDs []string `json:"characterIds,omitempty"`
  Family string `json:"family,omitempty"`
  ReplaceAssetID string `json:"replaceAssetId,omitempty"`
  ExpectedContentVersion int64 `json:"expectedContentVersion,omitempty"`
@@ -158,6 +162,8 @@ type PlanInput struct {
  Family string `json:"family"`
  AuthorID string `json:"authorId,omitempty"`
  AuthorIDs []string `json:"authorIds,omitempty"`
+ SourceIDs []string `json:"sourceIds,omitempty"`
+ CharacterIDs []string `json:"characterIds,omitempty"`
  GroupKey string `json:"groupKey,omitempty"`
  CollectionID string `json:"collectionId,omitempty"`
  Page int `json:"page,omitempty"`
@@ -172,6 +178,8 @@ type PlanItem struct {
  RelativePath string `json:"relativePath"`
  AuthorID string `json:"authorId"`
  AuthorIDs []string `json:"authorIds"`
+ SourceIDs []string `json:"sourceIds"`
+ CharacterIDs []string `json:"characterIds"`
  CollectionID string `json:"collectionId,omitempty"`
  Page int `json:"page,omitempty"`
  ExpectedHash string `json:"expectedHash"`
@@ -207,6 +215,7 @@ type Principal struct {
  Label string `json:"label"`
  Scopes []string `json:"scopes"`
  BatchID string `json:"batchId,omitempty"`
+ AuthorTaskID string `json:"authorTaskId,omitempty"`
  ExpiresAt time.Time `json:"expiresAt"`
 }
 func (p Principal) Has(scope string) bool {

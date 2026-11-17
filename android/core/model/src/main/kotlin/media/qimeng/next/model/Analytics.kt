@@ -12,6 +12,6 @@ data class TrendPoint(val label: String, val views: Long, val plays: Long, val s
 data class ReviewHour(val hour: Int, val views: Long, val seconds: Long, val image: Long, val animated: Long, val video: Long)
 data class InterestChange(val kind: String, val id: String, val name: String, val currentShare: Double, val previousShare: Double,
     val changePoints: Double, val currentViews: Long, val previousViews: Long)
-data class BrowsingReview(val range: String, val firstViews: Long, val returnViews: Long, val distinctAssets: Int, val activeDays: Int,
+data class BrowsingReview(val range: String, val totalSeconds: Long, val firstViews: Long, val returnViews: Long, val distinctAssets: Int, val activeDays: Int,
     val comparisonAvailable: Boolean, val hours: List<ReviewHour>, val changes: List<InterestChange>)
 data class AnalyticsReport(val overview: ActivityOverview, val trends: List<TrendPoint>)

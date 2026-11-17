@@ -128,4 +128,4 @@ func(s *Service)availablePath(ctx context.Context,library,relative string)(strin
  for n:=1;n<100000;n++{candidate:=relative;if n>1{candidate=fmt.Sprintf("%s (%d)%s",stem,n,ext)};e:=s.checkPath(ctx,library,candidate,"");if e!=nil{var ae *Error;if errors.As(e,&ae)&&ae.Code=="path_occupied"{continue};return "",e};_,e=s.Root.Lstat("libraries/"+library+"/"+candidate);if errors.Is(e,os.ErrNotExist){return candidate,nil};if e!=nil{return "",e}}
  return "",Fail(409,"name_exhausted","无法分配可用文件名。")
 }
-func(s *Service)Content(ctx context.Context,id string)(*os.File,model.Asset,error){a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,e};if a.Trashed{return nil,a,Fail(404,"not_found","媒体位于回收站。")};name:=assetPath(a);if e=s.safe(name);e!=nil{return nil,a,e};f,e:=s.Root.Open(name);return f,a,e}
+func(s *Service)Content(ctx context.Context,id string)(*os.File,model.Asset,error){s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,e};if a.Trashed{return nil,a,Fail(404,"not_found","媒体位于回收站。")};name:=assetPath(a);if e=s.safe(name);e!=nil{return nil,a,e};f,e:=s.Root.Open(name);return f,a,e}

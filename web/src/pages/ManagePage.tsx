@@ -12,6 +12,7 @@ const groups: { title: string; items: { title: string; description: string; href
   ] },
   { title: '资料与关联', items: [
     { title: '作者资料', description: '名称、别名、简介、主页与关注', href: '/authors', icon: 'mine' },
+    { title: '词表与关联', description: '标签、作品出处、角色与别名', href: '/manage/vocabulary', icon: 'manage' },
     { title: '整理已有媒体', description: '打开媒体详情，维护标签、来源与位置', href: '/album', icon: 'manage' },
   ] },
   { title: '备份与存储', items: [

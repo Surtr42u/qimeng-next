@@ -42,11 +42,15 @@ fun ProfileScreen(model: LibraryViewModel) {
             SettingsRow("上传新文件", "系统文件、分享与持久传输队列", Icons.Outlined.Upload) { model.navigate("upload") }
             SettingsRow("任务中心", "智能整理、逐项结果与等待原因", Icons.Outlined.Assignment) { model.navigate("reports") }
             SettingsRow("回收站", "恢复误删的媒体", Icons.Outlined.DeleteOutline) { model.navigate("trash") }
+            SettingsRow("标签", "维护词表与媒体关联", Icons.Outlined.Label) { model.navigate("vocabulary:tags") }
+            SettingsRow("原作 / 出处", "维护名称与别名", Icons.Outlined.MenuBook) { model.navigate("vocabulary:sources") }
+            SettingsRow("角色", "维护角色及所属出处", Icons.Outlined.Badge) { model.navigate("vocabulary:characters") }
             SettingsRow("服务器", session?.label.orEmpty(), Icons.Outlined.Dns) { model.navigate("server") }
         }
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
             Text("使用偏好", style = MaterialTheme.typography.titleSmall)
             SettingsRow("外观", "${themeName(preferences.theme)} · ${if (preferences.glass) "玻璃导航" else "实色导航"}", Icons.Outlined.Palette) { model.navigate("appearance") }
+            SettingsRow("推荐偏好", "选择适合你的浏览方式", Icons.Outlined.Tune) { model.navigate("recommendation") }
         }
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
             Text("绮梦 Next · 0.1.0-dev", style = MaterialTheme.typography.titleSmall)
@@ -115,7 +119,13 @@ fun ServerScreen(model: LibraryViewModel) {
         }
         ContentCard {
             Text("影库", style = MaterialTheme.typography.titleMedium)
-            libraries.forEach { Text(it.name) }
+            libraries.forEach { library ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(library.name, Modifier.weight(1f))
+                    Text(if (library.enabled) "接收上传" else "已暂停", style = MaterialTheme.typography.bodySmall)
+                    Switch(library.enabled, { model.updateLibrary(library, enabled = it) }, enabled = !busy)
+                }
+            }
             TextButton(onClick = { create = true }) { Text("创建影库") }
         }
         OutlinedButton(onClick = { confirm = true }) { Text("退出并切换服务器") }
@@ -145,9 +155,14 @@ fun ServerScreen(model: LibraryViewModel) {
 @Composable
 fun AuthorsScreen(model: LibraryViewModel) {
     val state by model.authors.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
+    var creating by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!state.loaded) model.loadAuthors() }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { TextButton(onClick = { model.loadAuthors() }) { Text("刷新作者") } }
+        item { Row {
+            TextButton(onClick = { model.loadAuthors() }) { Text("刷新作者") }
+            TextButton(onClick = { creating = true }) { Text("添加作者") }
+        } }
         state.error?.let { item { ErrorNotice(it) { model.loadAuthors() } } }
         if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         if (state.loaded && state.items.isEmpty()) item { Text("尚无作者") }
@@ -162,6 +177,7 @@ fun AuthorsScreen(model: LibraryViewModel) {
         }
         if (state.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !state.loading) { Text("加载更多作者") } }
     }
+    if (creating) TextEditDialog("添加常规作者", "", busy, { creating = false }) { model.createAuthor(it.trim()) { creating = false } }
 }
 
 @Composable
@@ -169,6 +185,8 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
     val author by model.author.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     var edit by rememberSaveable(id) { mutableStateOf(false) }
+    var deleting by rememberSaveable(id) { mutableStateOf(false) }
+    var merging by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(id) { if (author?.id != id) model.openAuthor(id) }
     val item = author?.takeIf { it.id == id }
     if (item == null) { TextButton(onClick = { model.openAuthor(id) }, enabled = !busy) { Text("读取作者 · 重试") }; return }
@@ -181,6 +199,10 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = model::followAuthor, enabled = !busy) { Text(if (item.followed) "取消关注" else "关注作者") }
                 if (item.kind != "cos") TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑档案") }
+            }
+            if (item.kind != "cos") Row {
+                TextButton(onClick = { model.loadAuthors(); merging = true }, enabled = !busy) { Text("合并重复作者") }
+                TextButton(onClick = { deleting = true }, enabled = !busy) { Text("删除作者", color = MaterialTheme.colorScheme.error) }
             }
         }
         MediaBrowser(model, "author:$id", author = id)
@@ -201,6 +223,27 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
             }
         }, confirmButton = { TextButton(onClick = { model.editAuthor(name.trim(), aliases.lines().filter(String::isNotBlank), biography, homepage) { edit = false } }, enabled = !busy && name.isNotBlank()) { Text("保存") } },
             dismissButton = { TextButton(onClick = { edit = false }, enabled = !busy) { Text("取消") } })
+    }
+    if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("删除作者？") },
+        text = { Text("删除「${item.name}」的档案与关联；媒体原件和其他作者保留。") },
+        confirmButton = { TextButton(onClick = { deleting = false; model.deleteCurrentAuthor() }, enabled = !busy) { Text("删除作者") } },
+        dismissButton = { TextButton(onClick = { deleting = false }) { Text("取消") } })
+    if (merging) {
+        val candidates by model.authors.collectAsStateWithLifecycle()
+        var selected by rememberSaveable { mutableStateOf<String?>(null) }
+        val target = candidates.items.find { it.id == selected }
+        AlertDialog(onDismissRequest = { if (!busy) merging = false }, title = { Text("合并「${item.name}」") }, text = {
+            Column(Modifier.heightIn(max = 420.dp)) {
+                Text("选择保留的目标作者。源作者的媒体关联将移入目标，目标档案受保护。")
+                LazyColumn(Modifier.weight(1f, fill = false)) {
+                    items(candidates.items.filter { it.id != item.id && it.kind == "regular" }, key = { it.id }) { candidate ->
+                        Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected == candidate.id, { selected = candidate.id }); Text(candidate.name) }
+                    }
+                    if (candidates.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !candidates.loading) { Text("更多作者") } }
+                }
+            }
+        }, confirmButton = { TextButton(onClick = { target?.let { model.mergeCurrentAuthor(it) { merging = false } } }, enabled = !busy && target != null) { Text("合并到 ${target?.name.orEmpty()}") } },
+            dismissButton = { TextButton(onClick = { merging = false }, enabled = !busy) { Text("取消") } })
     }
 }
 
@@ -240,30 +283,6 @@ fun HistoryScreen(model: LibraryViewModel) {
             }
         }
         if (state.cursor != null) item { TextButton(onClick = { model.loadHistory(true) }, enabled = !state.loading) { Text("加载更多记录") } }
-    }
-}
-
-@Composable
-fun StatisticsScreen(model: LibraryViewModel) {
-    val stats by model.statistics.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { if (stats == null) model.loadStatistics() }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 128.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        PageHeader("数据", actions = { IconButton(onClick = model::loadStatistics) { Icon(Icons.Outlined.Refresh, "刷新统计") } })
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Text("当前影库", style = MaterialTheme.typography.titleMedium)
-            if (stats == null) Text("统计尚未读取") else stats!!.let { value ->
-                Text("${value.assets} 件媒体", style = MaterialTheme.typography.headlineMedium)
-                Text("图片 ${value.images} · 视频 ${value.videos}")
-                Text("原件 ${formatBytes(value.bytes)}")
-                HorizontalDivider()
-                Text("收藏 ${value.favorites} · 作者 ${value.authors}")
-                Text("浏览事件 ${value.events} · 回收站 ${value.trash}")
-            }
-        }
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            SettingsRow("浏览历史", "查看逐次记录与播放位置", Icons.Outlined.History) { model.navigate("history") }
-            SettingsRow("任务中心", "查看当前服务器持久报告", Icons.Outlined.Assignment) { model.navigate("reports") }
-        }
     }
 }
 

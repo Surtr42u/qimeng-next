@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { duration } from '../lib/format';
 
-export function VideoPlayer({ src, title, initialPosition, progressMatches, onProgress, onPlay }: {
+export function VideoPlayer({ src, title, initialPosition, progressMatches, onProgress, onPlay, onPosition, seek }: {
   src: string; title: string; initialPosition: number; progressMatches: boolean;
   onProgress: (positionMs: number) => void; onPlay: () => void;
+  onPosition?: (positionMs: number) => void; seek?: { id: string; positionMs: number };
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -11,6 +12,13 @@ export function VideoPlayer({ src, title, initialPosition, progressMatches, onPr
   const [error, setError] = useState('');
   const [resume, setResume] = useState(progressMatches && initialPosition > 0);
   const lastSent = useRef(0);
+  useEffect(() => {
+    if (!seek || !video.current) return;
+    const element = video.current;
+    const apply = () => { element.currentTime = seek.positionMs / 1000; setResume(false); };
+    if (element.readyState > 0) apply(); else element.addEventListener('loadedmetadata', apply, { once: true });
+    return () => element.removeEventListener('loadedmetadata', apply);
+  }, [seek]);
   useEffect(() => {
     const handle = (event: KeyboardEvent) => { if (event.key === 'Escape') setWebFullscreen(false); };
     document.addEventListener('keydown', handle);
@@ -25,7 +33,7 @@ export function VideoPlayer({ src, title, initialPosition, progressMatches, onPr
     <video ref={video} src={src} controls playsInline preload="metadata" aria-label={title} onPlay={onPlay}
       onError={() => setError('此浏览器无法播放该文件或原件不可读取。可打开原件使用系统播放器。')}
       onPause={event => onProgress(Math.round(event.currentTarget.currentTime * 1000))}
-      onTimeUpdate={event => { if (!event.currentTarget.paused && Date.now() - lastSent.current >= 10000) { lastSent.current = Date.now(); onProgress(Math.round(event.currentTarget.currentTime * 1000)); } }} />
+      onTimeUpdate={event => { const position = Math.round(event.currentTarget.currentTime * 1000); onPosition?.(position); if (!event.currentTarget.paused && Date.now() - lastSent.current >= 10000) { lastSent.current = Date.now(); onProgress(position); } }} />
     {resume && <div className="resume-prompt qm-glass"><span>上次播放到 {duration(initialPosition)}</span><button className="button button--small" onClick={() => { if (video.current) { video.current.currentTime = initialPosition / 1000; void video.current.play().catch(() => setError('浏览器未允许自动播放，请点击播放按钮。')); } setResume(false); }}>继续播放</button><button className="button button--small" onClick={() => setResume(false)}>从头开始</button></div>}
     {!progressMatches && initialPosition > 0 && <p className="notice">记录来自旧内容版本，未自动套用到当前视频。</p>}
     {error && <p role="alert" className="notice notice--error">{error} <a href={src} target="_blank" rel="noreferrer">打开原件</a></p>}

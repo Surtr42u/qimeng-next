@@ -36,6 +36,8 @@ import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import java.text.Collator
+import java.util.Locale
 
 @Composable
 fun DetailScreen(model: LibraryViewModel, id: String) {
@@ -183,19 +185,28 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit) {
 @Composable
 private fun TagsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Unit) {
     val vocabulary by model.tagVocabulary.collectAsStateWithLifecycle()
+    val cursor by model.tagCursor.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     var selected by rememberSaveable(asset.id) { mutableStateOf(asset.tags) }
     var extra by rememberSaveable { mutableStateOf("") }
     var added by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val candidates = remember(vocabulary, asset.tags, added) { (vocabulary + asset.tags + added).distinct().sortedWith(::compareTags) }
     AlertDialog(onDismissRequest = { if (!busy) onClose() }, title = { Text("标签 · 已选 ${selected.size}") },
         text = { Column(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(selected.joinToString(" · ").ifBlank { "尚未选择标签" }, Modifier.heightIn(min = 60.dp, max = 76.dp).verticalScroll(rememberScrollState()))
+            FlowRow(Modifier.height(76.dp).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                selected.forEach { tag -> InputChip(selected = true, onClick = { }, label = { Text(tag) }, trailingIcon = {
+                    IconButton(onClick = {
+                        if (tag in asset.tags) model.removeTag(tag) { selected = selected - tag } else selected = selected - tag
+                    }, enabled = !busy, modifier = Modifier.size(24.dp)) { Icon(Icons.Outlined.Close, if (tag in asset.tags) "立即解除标签 $tag" else "移除草稿标签 $tag", Modifier.size(16.dp)) }
+                }) }
+            }
             FlowRow(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                (vocabulary + asset.tags + added).distinct().sorted().forEach { tag ->
+                candidates.forEach { tag ->
                     FilterChip(tag in selected, { selected = if (tag in selected) selected - tag else selected + tag }, label = { Text(tag) })
                 }
             }
+            if (cursor != null) TextButton(onClick = { model.loadTags(true) }, enabled = !busy) { Text("更多标签") }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(extra, { extra = it }, label = { Text("新建标签") }, singleLine = true, modifier = Modifier.weight(1f))
                 TextButton(onClick = { val value = extra.trim(); if (value.isNotEmpty()) { added = added + value; selected = (selected + value).distinct(); extra = "" } }) { Text("添加") }
@@ -204,6 +215,22 @@ private fun TagsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Uni
         } },
         confirmButton = { TextButton(onClick = { model.saveTags(selected, onClose) }, enabled = !busy) { Text("保存") } },
         dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("取消") } })
+}
+
+private fun compareTags(left: String, right: String): Int {
+    val parts = Regex("[0-9]+|[^0-9]+")
+    val a = parts.findAll(left).map { it.value }.toList()
+    val b = parts.findAll(right).map { it.value }.toList()
+    val collator = Collator.getInstance(Locale.CHINA)
+    for (i in 0 until minOf(a.size, b.size)) {
+        val x = a[i]; val y = b[i]
+        val result = if (x[0].isDigit() && y[0].isDigit()) {
+            val n = x.trimStart('0').ifEmpty { "0" }; val m = y.trimStart('0').ifEmpty { "0" }
+            n.length.compareTo(m.length).takeIf { it != 0 } ?: n.compareTo(m)
+        } else collator.compare(x, y)
+        if (result != 0) return result
+    }
+    return a.size.compareTo(b.size).takeIf { it != 0 } ?: left.compareTo(right)
 }
 
 @Composable

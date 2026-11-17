@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { bytes, dateTime } from '../lib/format';
 import { newId } from '../lib/id';
 import { UnsavedGuard } from '../lib/navigation';
+import { useUpdateLibrary } from '../data/catalog';
 
 export function LibrariesPage() {
   const libraries = useLibraries();
@@ -17,8 +18,18 @@ export function LibrariesPage() {
   const attempt = useRef({ body: '', key: newId() });
   return <><PageHeading title="媒体库" subtitle="常规与 COS 保持独立分区，媒体统一由服务器保存。" action={<button className="button" onClick={() => setOpen(!open)}>新建媒体库</button>} /><ErrorNotice error={libraries.error} stale={!!libraries.data} retry={() => void libraries.refetch()} />
     {open && <form className="panel form-stack" onSubmit={event => { event.preventDefault(); const body = { name, kind }; const signature = JSON.stringify(body); if (signature !== attempt.current.body) attempt.current = { body: signature, key: newId() }; create.mutate({ body, key: attempt.current.key }, { onSuccess: () => { setOpen(false); setName(''); } }); }}><h2>新建媒体库</h2><label>名称<input value={name} onChange={event => setName(event.target.value)} maxLength={120} required /></label><label>分区<select value={kind} onChange={event => setKind(event.target.value as 'regular' | 'cos')}><option value="regular">常规</option><option value="cos">COS</option></select></label><ErrorNotice error={create.error} /><button className="button button--primary" disabled={create.isPending || !name.trim()}>创建</button><UnsavedGuard dirty={!!name} /></form>}
-    {libraries.isPending ? <Loading /> : libraries.data?.items.length ? <div className="manage-grid">{libraries.data.items.map(library => <section className="panel" key={library.id}><div className="section-heading"><h2>{library.name}</h2><StatusBadge>{library.kind === 'cos' ? 'COS' : '常规'}</StatusBadge></div><p className="muted">创建于 {dateTime(library.createdAt)}</p><div className="actions"><Link className="button" to={`/album?libraryId=${encodeURIComponent(library.id)}`}>浏览内容</Link><Link className="button" to="/manage/upload">上传文件</Link></div></section>)}</div> : !libraries.isError && <EmptyState title="还没有媒体库">创建后即可开始普通上传。</EmptyState>}
+    {libraries.isPending ? <Loading /> : libraries.data?.items.length ? <div className="manage-grid">{libraries.data.items.map(library => <LibraryCard key={library.id} library={library} />)}</div> : !libraries.isError && <EmptyState title="还没有媒体库">创建后即可开始普通上传。</EmptyState>}
   </>;
+}
+
+function LibraryCard({ library }: { library: Schema<'Library'> }) {
+  const update = useUpdateLibrary(); const [editing, setEditing] = useState(false); const [name, setName] = useState(library.name); const [baseName, setBaseName] = useState(library.name); const [revision, setRevision] = useState(library.revision);
+  const [confirmation, setConfirmation] = useState<{ revision: number; enabled: boolean; key: string }>();
+  const attempt = useRef({ name: '', revision: 0, key: newId() });
+  return <section className="panel"><div className="section-heading"><h2>{library.name}</h2><StatusBadge tone={library.enabled ? 'neutral' : 'warning'}>{library.enabled ? library.kind === 'cos' ? 'COS' : '常规' : '已停用'}</StatusBadge></div><p className="muted">创建于 {dateTime(library.createdAt)}</p><div className="actions"><Link className="button button--small" to={`/album?libraryId=${encodeURIComponent(library.id)}`}>浏览内容</Link><Link className="button button--small" to="/manage/upload">上传文件</Link><button className="button button--small" onClick={() => { setName(library.name); setBaseName(library.name); setRevision(library.revision); setEditing(!editing); }}>改名</button><button className="button button--small" onClick={() => { update.reset(); setConfirmation({ revision: library.revision, enabled: !library.enabled, key: newId() }); }}>{library.enabled ? '停用' : '启用'}</button></div>
+    {editing && <form className="inline-form section-space" onSubmit={event => { event.preventDefault(); if (attempt.current.name !== name || attempt.current.revision !== revision) attempt.current = { name, revision, key: newId() }; update.mutate({ id: library.id, body: { expectedRevision: revision, name }, key: attempt.current.key }, { onSuccess: () => setEditing(false) }); }}><input aria-label="媒体库名称" value={name} maxLength={120} required disabled={update.isPending} onChange={event => setName(event.target.value)} /><button className="button" disabled={update.isPending || name === baseName}>保存</button></form>}
+    <ErrorNotice error={update.error} />{confirmation && <ConfirmDialog title={confirmation.enabled ? '启用此媒体库？' : '停用此媒体库？'} busy={update.isPending} onCancel={() => setConfirmation(undefined)} onConfirm={() => update.mutate({ id: library.id, body: { expectedRevision: confirmation.revision, enabled: confirmation.enabled }, key: confirmation.key }, { onSuccess: () => setConfirmation(undefined) })}><p>{library.name}</p><p>停用会阻止新的入库操作，媒体原件和记录保留。既有任务的实际结果可在报告中核对。</p><ErrorNotice error={update.error} /></ConfirmDialog>}<UnsavedGuard dirty={editing && name !== baseName} />
+  </section>;
 }
 
 export function CollectionsPage() {

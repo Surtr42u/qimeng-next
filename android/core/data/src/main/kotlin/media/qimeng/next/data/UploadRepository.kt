@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.work.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import media.qimeng.next.model.*
@@ -22,12 +23,14 @@ class UploadRepository internal constructor(private val context: Context, val qu
     suspend fun receive(uris: List<Uri>) = withContext(Dispatchers.IO) {
         require(uris.size <= 100) { "每批最多选择 100 个文件" }
         check(queue.state.value != null) { "请先恢复传输记录" }
+        check(queue.state.value!!.intakeFailures.size + uris.size <= 200) { "请先清理已结束记录，再选择这一批文件" }
         uris.forEach { uri ->
             coroutineContext.ensureActive()
-            require(uri.scheme == "content") { "仅支持系统文件提供器的内容授权" }
             val id = UUID.randomUUID().toString()
             var name = "媒体-$id"
             var declaredSize: Long? = null
+            try {
+            require(uri.scheme == "content") { "仅支持系统文件提供器的内容授权" }
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -36,7 +39,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
                     if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) declaredSize = cursor.getLong(sizeIndex).takeIf { it >= 0 }
                 }
             }
-            require(name.isNotBlank() && '/' !in name && '\\' !in name) { "文件名无效" }
+            require(name.isNotBlank() && name.length <= 240 && '/' !in name && '\\' !in name) { "文件名无效或过长" }
             val mime = context.contentResolver.getType(uri) ?: error("文件提供器没有声明媒体类型")
             require(mime.startsWith("image/") || mime.startsWith("video/")) { "暂不支持此文件类型" }
             val reserve = 64L * 1024 * 1024
@@ -68,6 +71,10 @@ class UploadRepository internal constructor(private val context: Context, val qu
                 file.delete() // Only this uncommitted app-owned snapshot, never the provider's original.
                 throw failure
             }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                queue.update { it.copy(intakeFailures = it.intakeFailures + IntakeFailure(id, name.take(240), safeFailure(failure))) }
+            }
         }
     }
 
@@ -82,7 +89,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
         withContext(Dispatchers.IO) { File(spool, draft.spoolName).delete() }
     }
 
-    suspend fun enqueue(libraryId: String, directory: String, mode: UploadMode) {
+    suspend fun enqueue(libraryId: String, directory: String, mode: UploadMode, options: UploadOptions = UploadOptions()) {
         val target = settings.session.value ?: error("请先登录服务器")
         require(libraryId.isNotBlank()) { "请选择上传影库" }
         val now = Instant.now().toString()
@@ -92,7 +99,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
             require(previous.drafts.size <= 100) { "每批最多 100 个文件，请先移除多余的待传项" }
             previous.copy(drafts = emptyList(), transfers = previous.transfers + previous.drafts.map {
                 Transfer(it.id, target, libraryId, it.name, it.mimeType, it.bytes, it.spoolName, mode, now,
-                    batchKey, "Android ${previous.drafts.size} 个文件", directory.trim())
+                    batchKey, "Android ${previous.drafts.size} 个文件", directory.trim(), options = options)
             })
         }
         schedule()
@@ -128,7 +135,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
     suspend fun clearFinished() {
         val snapshot = queue.state.value ?: return
         val finished = snapshot.transfers.filter { it.state in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED) }
-        queue.update { it.copy(transfers = it.transfers.filterNot { item -> item.id in finished.map(Transfer::id) }) }
+        queue.update { it.copy(transfers = it.transfers.filterNot { item -> item.id in finished.map(Transfer::id) }, intakeFailures = emptyList()) }
         withContext(Dispatchers.IO) { finished.forEach { File(spool, it.spoolName).delete() } }
     }
 

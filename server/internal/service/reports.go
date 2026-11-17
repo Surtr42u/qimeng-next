@@ -83,7 +83,7 @@ func(s *Service)StatsTrends(ctx context.Context,window string)(Trends,error){
 
 type ReviewHour struct {Hour int `json:"hour"`;Views int64 `json:"views"`;Seconds int64 `json:"seconds"`;ImageSeconds int64 `json:"imageSeconds"`;AnimatedSeconds int64 `json:"animatedSeconds"`;VideoSeconds int64 `json:"videoSeconds"`}
 type InterestChange struct {Kind string `json:"kind"`;ID string `json:"id"`;Name string `json:"name"`;CurrentShare float64 `json:"currentShare"`;PreviousShare float64 `json:"previousShare"`;ChangePoints float64 `json:"changePoints"`;CurrentViews int64 `json:"currentViews"`;PreviousViews int64 `json:"previousViews"`}
-type Review struct {Range string `json:"range"`;FirstViews int64 `json:"firstViews"`;ReturnViews int64 `json:"returnViews"`;DistinctAssets int `json:"distinctAssets"`;ActiveDays int `json:"activeDays"`;ComparisonAvailable bool `json:"comparisonAvailable"`;Hours []ReviewHour `json:"hours"`;Changes []InterestChange `json:"changes"`}
+type Review struct {Range string `json:"range"`;FirstViews int64 `json:"firstViews"`;ReturnViews int64 `json:"returnViews"`;DistinctAssets int `json:"distinctAssets"`;ActiveDays int `json:"activeDays"`;TotalSeconds int64 `json:"totalSeconds"`;ComparisonAvailable bool `json:"comparisonAvailable"`;Hours []ReviewHour `json:"hours"`;Changes []InterestChange `json:"changes"`}
 
 func(s *Service)BrowsingReview(ctx context.Context,window string)(Review,error){
  result:=Review{Range:window,Hours:make([]ReviewHour,24),Changes:[]InterestChange{}};for i:=range result.Hours{result.Hours[i].Hour=i}
@@ -93,7 +93,9 @@ func(s *Service)BrowsingReview(ctx context.Context,window string)(Review,error){
  if e!=nil{return result,e};result.ReturnViews=total-result.FirstViews
  rows,e:=s.DB.DB.QueryContext(ctx,`SELECT h.hour,sum(h.views),sum(h.seconds),sum(CASE WHEN a.media_type='image' THEN h.seconds ELSE 0 END),sum(CASE WHEN a.media_type='animated_image' THEN h.seconds ELSE 0 END),sum(CASE WHEN a.media_type='video' THEN h.seconds ELSE 0 END) FROM asset_hourly_stats h JOIN assets a ON a.id=h.asset_id AND a.trashed=0 WHERE h.day>=? GROUP BY h.hour`,day)
  if e!=nil{return result,e};for rows.Next(){var h ReviewHour;if e=rows.Scan(&h.Hour,&h.Views,&h.Seconds,&h.ImageSeconds,&h.AnimatedSeconds,&h.VideoSeconds);e!=nil{rows.Close();return result,e};if h.Hour>=0&&h.Hour<24{result.Hours[h.Hour]=h}}
- e=rows.Err();rows.Close();if e!=nil{return result,e};if start.IsZero()||total==0{return result,nil}
+ e=rows.Err();rows.Close();if e!=nil{return result,e}
+ if e=s.DB.DB.QueryRowContext(ctx,"SELECT coalesce(sum(d.seconds),0) FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=?",day).Scan(&result.TotalSeconds);e!=nil{return result,e}
+ if start.IsZero()||total==0{return result,nil}
  today:=bucketStart(time.Now(),"day");days:=0;for d:=start;!d.After(today);d=d.AddDate(0,0,1){days++}
  previous:=start.AddDate(0,0,-days);var previousTotal int64
  e=s.DB.DB.QueryRowContext(ctx,`SELECT coalesce(sum(d.views),0) FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? AND d.day<?`,dayString(previous),day).Scan(&previousTotal)

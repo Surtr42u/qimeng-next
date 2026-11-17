@@ -74,6 +74,7 @@ func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.Plan
   u,e:=s.Upload(ctx,w.Principal,input.UploadID);if e!=nil{return p,e};if u.BatchID!=id||u.State!="staged"||u.Hash==""||u.ReplaceAssetID!=""{return p,Fail(409,"plan_input_conflict","计划只能引用本批已完整接收的新文件。")}
   r,e:=store.Get[model.Research](ctx,s.DB.DB,"SELECT data FROM research WHERE upload_id=?",u.ID);if e!=nil&&!errors.Is(e,sql.ErrNoRows){return p,e};if e==nil&&r.Outcome=="conflict"{return p,Fail(409,"research_conflict","此项证据冲突，须由用户解决后再准备计划。")}
   authorIDs:=input.AuthorIDs;if len(authorIDs)==0&&input.AuthorID!=""{authorIDs=[]string{input.AuthorID}};if len(authorIDs)==0{authorIDs=u.AuthorIDs};authors,e:=s.resolveAuthors(ctx,b.LibraryID,authorIDs);if e!=nil{return p,e};authorIDs=[]string{};for _,a:=range authors{authorIDs=append(authorIDs,a.ID)};authorID:=authors[0].ID
+  sourceIDs:=input.SourceIDs;characterIDs:=input.CharacterIDs;if sourceIDs==nil{sourceIDs=u.SourceIDs};if characterIDs==nil{characterIDs=u.CharacterIDs};taxonomy:=model.Asset{};if e=s.resolveTaxonomy(ctx,&taxonomy,sourceIDs,characterIDs);e!=nil{return p,e}
   class:=domain.NumberClass(u.FileName);directory:=u.RelativeDirectory;collectionID:=input.CollectionID;isDrama:=false;appendGroup:=false;var existingWork domain.WorkName;lastExistingPage:=0
   if collectionID!=""{
    c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",collectionID);if e!=nil{return p,Normalize(e)};if c.LibraryID!=b.LibraryID{return p,Fail(409,"collection_library_mismatch","集合属于其他库。")}
@@ -92,7 +93,7 @@ func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.Plan
   pageNumber:=0;if input.GroupKey!=""{if appendGroup&&input.Page==0{input.Page=g.lastPage+1};if input.Page!=g.lastPage+1{return p,Fail(400,"group_order_required","组图页码必须按确认顺序连续提交。")};pageNumber=input.Page;g.lastPage=pageNumber}
   filename:=domain.WorkFilename(input.Family,g.sep,g.number,g.width,pageNumber,path.Ext(u.FileName));if collectionID!=""&&class=="video"&&u.Note!=""{ext:=path.Ext(filename);filename=strings.TrimSuffix(filename,ext)+" "+safeNote(u.Note)+ext}
   if !domain.ValidName(filename){return p,Fail(400,"invalid_name","最终名称无效，未发布文件。")};relative:=path.Join(directory,filename);if e=s.checkPath(ctx,b.LibraryID,relative,"");e!=nil{return p,e};for _,existing:=range names{if existing==filename{return p,Fail(409,"path_occupied","计划内部目标名称重复。")}}
-  if isDrama{pageNumber=g.number};p.Items=append(p.Items,model.PlanItem{UploadID:u.ID,FileName:filename,RelativePath:relative,AuthorID:authorID,AuthorIDs:authorIDs,CollectionID:g.collection,Page:pageNumber,ExpectedHash:u.Hash});inventories[directory]=append(names,filename)
+  if isDrama{pageNumber=g.number};p.Items=append(p.Items,model.PlanItem{UploadID:u.ID,FileName:filename,RelativePath:relative,AuthorID:authorID,AuthorIDs:authorIDs,SourceIDs:taxonomy.SourceIDs,CharacterIDs:taxonomy.CharacterIDs,CollectionID:g.collection,Page:pageNumber,ExpectedHash:u.Hash});inventories[directory]=append(names,filename)
  }
  raw,e:=json.Marshal(p);if e!=nil{return p,e};p.Fingerprint=digest(raw);q,e:=w.Q();if e!=nil{return p,e}
  for _,c:=range collections{raw,e:=store.Encode(c);if e!=nil{return p,e};if _,e=q.ExecContext(ctx,"INSERT INTO collections(id,library_id,name,kind,data) VALUES(?,?,?,?,?)",c.ID,c.LibraryID,c.Name,c.Kind,raw);e!=nil{return p,e}}

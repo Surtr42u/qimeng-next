@@ -59,7 +59,7 @@ class RecoveryBoundaryTest {
             assertThrows(IOException::class.java) { client.newCall(Request.Builder().url(other.url("/media")).build()).execute().close() }
             assertNull(other.takeRequest(150, TimeUnit.MILLISECONDS))
             settings.clearSession()
-            assertThrows(IllegalStateException::class.java) { client.newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
+            assertThrows(ApiFailure::class.java) { client.newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
         } finally { server.shutdown(); other.shutdown() }
     }
 

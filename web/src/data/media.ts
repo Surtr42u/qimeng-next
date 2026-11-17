@@ -30,7 +30,10 @@ export function useAssetActions(id: string) {
 }
 export function useTags() {
   const key = useRemoteKey();
-  return useQuery({ queryKey: [...key, 'tags'], queryFn: ({ signal }) => read(api.GET('/tags', { signal })) });
+  const query = useInfiniteQuery({ queryKey: [...key, 'tags'], initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => read(api.GET('/tags', { params: { query: { cursor: pageParam, limit: 100 } }, signal })), getNextPageParam: last => last.nextCursor || undefined,
+  });
+  return { ...query, data: query.data ? { items: query.data.pages.flatMap(page => page.items) } : undefined };
 }
 export function useHistory() {
   const key = useRemoteKey();

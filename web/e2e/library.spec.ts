@@ -56,3 +56,24 @@ test('keyboard selection, reduced motion and light mode remain usable', async ({
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.screenshot({ path: testInfo.outputPath('synthetic-settings-light.png'), fullPage: false });
 });
+
+test('a slow preference save confirms its own snapshot while preserving newer edits', async ({ page }) => {
+  const fixture = await mockLibrary(page); await page.goto('/settings');
+  await page.getByText('自定义权重', { exact: true }).click();
+  await page.getByRole('spinbutton', { name: '发现', exact: true }).fill('0.2'); fixture.holdPreference = true;
+  await page.getByRole('button', { name: '保存偏好', exact: true }).click();
+  await expect.poll(() => !!fixture.releasePreference).toBe(true);
+  await page.getByRole('spinbutton', { name: '发现', exact: true }).fill('0.35'); fixture.releasePreference?.();
+  await expect(page.getByRole('spinbutton', { name: '发现', exact: true })).toHaveValue('0.35');
+  await expect(page.getByText('有未保存的修改', { exact: true })).toBeVisible(); expect(fixture.weights.discovery).toBe(.2);
+});
+
+test('review shares use server percent units and hour controls work by keyboard', async ({ page }) => {
+  await mockLibrary(page); await page.goto('/data/review?range=30d');
+  await page.getByText('详情 / 收起', { exact: true }).click();
+  await expect(page.getByText('50.0% · 6 次', { exact: true })).toBeVisible();
+  const bars = page.getByRole('group', { name: '24小时浏览停留' });
+  await bars.getByRole('button').first().focus(); await page.keyboard.press('End');
+  await expect(bars.getByRole('button').last()).toBeFocused();
+  await page.getByRole('link', { name: '返回数据', exact: true }).click(); await expect(page).toHaveURL(/range=30d/);
+});

@@ -4,7 +4,10 @@ data class Session(val baseUrl: String, val instanceId: String, val label: Strin
 enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 data class Preferences(val theme: ThemeChoice = ThemeChoice.SYSTEM, val reducedMotion: Boolean = false, val glass: Boolean = true)
 
-data class Library(val id: String, val name: String, val kind: String)
+data class Library(val id: String, val name: String, val kind: String, val enabled: Boolean, val revision: Long)
+data class Directory(val path: String, val name: String)
+data class MediaCollection(val id: String, val name: String, val kind: String)
+data class UploadOptions(val authorIds: List<String> = emptyList(), val collectionId: String? = null, val note: String = "", val acquisitionSources: List<String> = emptyList())
 data class Asset(
     val id: String,
     val libraryId: String,
@@ -80,11 +83,14 @@ data class Transfer(
     val assetId: String? = null,
     val batchId: String? = null,
     val message: String = "等待传输",
+    val options: UploadOptions = UploadOptions(),
 )
 data class PendingEvent(val id: String, val target: Session, val assetId: String, val kind: String, val positionMs: Long, val contentVersion: Long,
     val sessionId: String, val seconds: Double = 0.0, val occurredAt: String, val failure: String? = null)
 data class UploadDraft(val id: String, val name: String, val mimeType: String, val bytes: Long, val spoolName: String)
-data class QueueSnapshot(val transfers: List<Transfer> = emptyList(), val events: List<PendingEvent> = emptyList(), val drafts: List<UploadDraft> = emptyList())
+data class IntakeFailure(val id: String, val name: String, val message: String)
+data class QueueSnapshot(val transfers: List<Transfer> = emptyList(), val events: List<PendingEvent> = emptyList(), val drafts: List<UploadDraft> = emptyList(),
+    val intakeFailures: List<IntakeFailure> = emptyList())
 
 fun sameTarget(left: Session, right: Session?): Boolean = right != null &&
     left.baseUrl == right.baseUrl && left.instanceId == right.instanceId

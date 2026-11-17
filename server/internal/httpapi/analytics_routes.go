@@ -13,7 +13,7 @@ func(a *API)analyticsRoutes(){
   if q.Get("seed")!=""{seed,e=strconv.ParseInt(q.Get("seed"),10,64);if e!=nil{return nil,service.Fail(400,"invalid_seed","推荐种子必须是整数。")}}
   return a.s.Recommendations(r.Context(),service.RecommendationFilter{Kind:q.Get("kind"),MediaType:q.Get("mediaType"),Seed:seed,Cursor:q.Get("cursor"),Limit:n})
  })
- a.get("/rankings",func(r *http.Request)(any,error){q:=r.URL.Query();n,e:=limit(r);if e!=nil{return nil,e};period:=q.Get("period");if period==""{period="week"};return a.s.Rankings(r.Context(),period,q.Get("kind"),q.Get("cursor"),n)})
+ a.get("/rankings",func(r *http.Request)(any,error){q:=r.URL.Query();n,e:=limit(r);if e!=nil{return nil,e};period:=q.Get("period");if period==""{period="week"};return a.s.Rankings(r.Context(),period,q.Get("kind"),q.Get("cursor"),n,q.Get("mediaType"))})
  a.get("/preferences/recommendation",func(r *http.Request)(any,error){return a.s.RecommendationPreferences(r.Context())})
  write[service.RecommendationUpdate](a,"PUT","/preferences/recommendation",true,func(r *http.Request,w *service.Write,in service.RecommendationUpdate)(any,int,error){v,e:=a.s.UpdateRecommendationPreferences(r.Context(),w,in);return v,200,e})
  a.get("/stats/overview",func(r *http.Request)(any,error){return a.s.StatsOverview(r.Context(),statsRange(r))})

@@ -117,14 +117,16 @@ fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, 
                 modifier = Modifier.weight(1f), trailingIcon = { IconButton(onClick = { submitted = draft.trim(); type = null; partition = null }) { Icon(Icons.Outlined.Search, "提交搜索") } })
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
-                FilterChip(type == value, { type = value }, label = { Text(label) })
+            if (source != "rankings") {
+                listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
+                    FilterChip(type == value, { type = value }, label = { Text(label) })
+                }
+                IconButton(onClick = { showFilters = !showFilters }) { Icon(Icons.Outlined.Tune, "筛选与排序") }
             }
-            IconButton(onClick = { showFilters = !showFilters }) { Icon(Icons.Outlined.Tune, "筛选与排序") }
             IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "网格 $columns 列，切换列数") }
             IconButton(onClick = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) }) { Icon(Icons.Outlined.Refresh, "刷新") }
         }
-        if (search) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (search || source == "rankings") Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(null to "全部", "regular" to "常规", "cos" to "COS").forEach { (value, label) ->
                 FilterChip(partition == value, { partition = value }, label = { Text(label) })
             }

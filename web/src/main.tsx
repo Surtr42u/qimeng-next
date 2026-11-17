@@ -5,6 +5,7 @@ import { App, RouteError } from './app/App';
 import { queryClient } from './data/query';
 import { BrowsePage } from './pages/BrowsePage';
 import { HomePage } from './pages/HomePage';
+import { VocabularyPage } from './pages/VocabularyPage';
 import { AssetPage } from './pages/AssetPage';
 import { MinePage } from './pages/MinePage';
 import { AuthorsPage, AuthorPage } from './pages/AuthorsPage';
@@ -12,11 +13,13 @@ import { ManagePage } from './pages/ManagePage';
 import { UploadPage } from './pages/UploadPage';
 import { TasksPage, TaskPage } from './pages/TasksPage';
 import { LibrariesPage, CollectionsPage, TrashPage, BackupPage } from './pages/LibraryPages';
-import { DataPage, MaintenancePage } from './pages/DataPage';
+import { DataPage, ReviewPage, MaintenancePage } from './pages/DataPage';
 import { SettingsPage } from './pages/SettingsPage';
 import '../../ui/react/tokens.css';
 import '../../ui/react/glass.css';
 import './styles/app.css';
+import './styles/charts.css';
+import './styles/preferences.css';
 
 const router = createBrowserRouter([{ element: <App />, errorElement: <RouteError />, children: [
   { path: '/', element: <HomePage /> },
@@ -24,7 +27,9 @@ const router = createBrowserRouter([{ element: <App />, errorElement: <RouteErro
   { path: '/asset/:id', element: <AssetPage /> },
   { path: '/mine', element: <MinePage /> },
   { path: '/data', element: <DataPage /> },
+  { path: '/data/review', element: <ReviewPage /> },
   { path: '/manage', element: <ManagePage /> },
+  { path: '/manage/vocabulary', element: <VocabularyPage /> },
   { path: '/manage/upload', element: <UploadPage /> },
   { path: '/manage/libraries', element: <LibrariesPage /> },
   { path: '/manage/collections', element: <CollectionsPage /> },

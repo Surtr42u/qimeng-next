@@ -91,7 +91,8 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             api.createUpload(idempotencyKey = "upload-${task.id}", uploadCreate = UploadCreate(libraryId = task.libraryId,
                 fileName = task.name, propertySize = task.bytes, mimeType = task.mimeType,
                 mode = UploadCreate.Mode.entries.first { it.value == task.mode.name.lowercase() }, batchId = task.batchId,
-                sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory)).bodyOrThrow()
+                sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory, authorIds = task.options.authorIds,
+                collectionId = task.options.collectionId, note = task.options.note, acquisitionSources = task.options.acquisitionSources)).bodyOrThrow()
         } else api.getUpload(task.uploadId!!).bodyOrThrow()
         update(task.id) { it.copy(uploadId = upload.id, offset = upload.offset) }
         if (isStopped || current(task.id)?.state == TransferState.CANCELLED) return
