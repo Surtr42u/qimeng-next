@@ -54,3 +54,5 @@ flowchart LR
 `android`门禁用`-Pqimeng.embedded=false`编译client并检查APK不含本机程序；`android-native`核对ELF实际架构、Android解释器与16KiB段对齐；`android-embedded`验证完整APK；`android-local-ui`在明确的`qimeng_api35`云端模拟器运行真实本机实例。实际通过情况记录在状态文档。
 
 平台依据：[Android NDK跨编译说明](https://developer.android.com/ndk/guides/other_build_systems)、[Android页大小要求](https://developer.android.com/guide/practices/page-sizes)、[FFmpeg官方源码](https://github.com/FFmpeg/FFmpeg)、[VideoLAN dav1d](https://github.com/videolan/dav1d)。这些平台实现细节不进入服务端领域层。
+
+云端模拟器37的首次API24+初始化会把数据盘抬至至少6GiB，再检查20%余量；`disk-size=2048M`不能规避此要求。仪器作业仅在一次性Linux runner移除未使用的.NET/Swift/Haskell/CodeQL预装工具，保留工作区、Android SDK与Java，确认12GiB空闲后再启动。依据为[模拟器启动实现](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp)。磁盘不足导致的启动失败与App测试失败分别记录。

@@ -361,6 +361,7 @@ jobs:
         with: {packages: 'platform-tools'}
       - name: Enable KVM in ephemeral cloud runner
         run: |
+          bash tools/prepare_android_runner.sh
           sudo apt-get update && sudo apt-get install -y ffmpeg
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
@@ -405,6 +406,7 @@ jobs:
         with: {packages: 'platform-tools'}
       - name: Prepare isolated native runtime and emulator
         run: |
+          bash tools/prepare_android_runner.sh
           sdkmanager 'ndk;28.2.13676358'
           python tools/stage_android_native.py "$RUNNER_TEMP/android-native"
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
