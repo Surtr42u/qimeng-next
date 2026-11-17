@@ -93,6 +93,7 @@ func(s *Service)finishFile(ctx context.Context,j fileIntent)error{
  j.State="done";return s.saveIntent(ctx,j)
 }
 func(s *Service)runFile(ctx context.Context,w *Write,j fileIntent)(model.Asset,error){
+ j.After.FileDate=j.After.EffectiveFileDate()
  if j.Kind=="ingest"||j.Kind=="move"||j.Kind=="restore"{var e error;j.COSAuthor,j.COSWork,e=s.planCOSPlacement(ctx,s.DB.DB,&j.After);if e!=nil{return j.After,e}}
  j,e:=s.prepareFile(ctx,w,j);if e!=nil{return j.After,e}
  if j.State=="prepared"{if e=s.applyFile(j);e!=nil{return j.After,e}}

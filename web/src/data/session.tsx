@@ -5,7 +5,7 @@ import { api, ApiError, read } from "./client";
 import type { Schema } from "./client";
 import { queryClient } from "./query";
 import { ErrorNotice, Loading } from "../components/Feedback";
-import { LegacyLogin } from '../components/LegacyLogin';
+import { LegacyLogin } from "../components/LegacyLogin";
 
 const SessionContext = createContext<{
   instance: Schema<"Instance">;
@@ -78,11 +78,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
       </div>
     );
   if (session.error instanceof ApiError && session.error.status === 401)
-    return (
-      <LoginForm
-        onSuccess={() => void session.refetch()}
-      />
-    );
+    return <LoginForm onSuccess={() => void session.refetch()} />;
   if (!session.data) {
     return (
       <div className="connection-screen">
@@ -107,24 +103,32 @@ export function SessionGate({ children }: { children: ReactNode }) {
   );
 }
 
-function LoginForm({
-  onSuccess,
-}: {
-  onSuccess: () => void;
-}) {
+function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState("");
   const login = useMutation({
     gcTime: 0,
     mutationFn: async () => {
       // The browser only needs the HttpOnly cookie. Do not put a returned token in mutation data.
-      await read(api.POST('/sessions', { body: { password, label: 'Web 浏览器' } }));
+      await read(
+        api.POST("/sessions", { body: { password, label: "Web 浏览器" } }),
+      );
     },
     onSuccess: () => {
       setPassword("");
       onSuccess();
     },
   });
-  return <LegacyLogin password={password} setPassword={setPassword} busy={login.isPending} error={login.error} submit={() => { if (!login.isPending && password) login.mutate(); }} />;
+  return (
+    <LegacyLogin
+      password={password}
+      setPassword={setPassword}
+      busy={login.isPending}
+      error={login.error}
+      submit={() => {
+        if (!login.isPending && password) login.mutate();
+      }}
+    />
+  );
 }
 export function useLogout() {
   return useMutation({

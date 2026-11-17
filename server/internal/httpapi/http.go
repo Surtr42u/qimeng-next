@@ -109,6 +109,7 @@ func(a *API)routes(){
  a.authorProfileRoutes()
  a.namingRoutes()
  a.migrationRoutes()
+ a.backupRoutes()
  a.browseRoutes()
 }
 func(a *API)uploadRoutes(){
@@ -122,6 +123,8 @@ func(a *API)batchRoutes(){
  a.get("/batches",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Batches(r.Context(),principal(r),r.URL.Query().Get("cursor"),n)})
  write[batchCreateRequest](a,"POST","/batches",true,func(r *http.Request,w *service.Write,in batchCreateRequest)(any,int,error){budget:=8;if in.MaxResearchCalls!=nil{budget=*in.MaxResearchCalls};v,e:=a.s.CreateBatch(r.Context(),w,model.Batch{LibraryID:in.LibraryID,Mode:in.Mode,Label:in.Label,MaxResearchCalls:budget});return v,201,e})
  a.get("/batches/{id}",func(r *http.Request)(any,error){return a.s.BatchDetail(r.Context(),principal(r),r.PathValue("id"))})
+ write[model.BatchInputsSet](a,"PUT","/batches/{id}/inputs",true,func(r *http.Request,w *service.Write,in model.BatchInputsSet)(any,int,error){v,e:=a.s.SetBatchInputs(r.Context(),w,r.PathValue("id"),in);return v,200,e})
+ write[struct{ManifestFingerprint string `json:"manifestFingerprint"`}](a,"POST","/batches/{id}/inputs/{inputId}/cancel",true,func(r *http.Request,w *service.Write,in struct{ManifestFingerprint string `json:"manifestFingerprint"`})(any,int,error){v,e:=a.s.CancelBatchInput(r.Context(),w,r.PathValue("id"),r.PathValue("inputId"),in.ManifestFingerprint);return v,200,e})
  write[revisionBody](a,"POST","/batches/{id}/cancel",false,func(r *http.Request,w *service.Write,in revisionBody)(any,int,error){v,e:=a.s.CancelBatch(r.Context(),w,r.PathValue("id"),in.ExpectedRevision);return v,200,e})
  a.get("/ai/tasks/{id}/context",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Context(r.Context(),principal(r),r.PathValue("id"),r.URL.Query().Get("cursor"),n)})
  write[model.Research](a,"POST","/batches/{id}/research",true,func(r *http.Request,w *service.Write,in model.Research)(any,int,error){v,e:=a.s.SubmitResearch(r.Context(),w,r.PathValue("id"),in);return v,200,e})

@@ -18,10 +18,14 @@ import media.qimeng.next.data.DataGraph
 import media.qimeng.next.model.AssetQuery
 import media.qimeng.next.model.TransferState
 import media.qimeng.next.model.UploadMode
+import media.qimeng.next.model.OriginalInput
+import media.qimeng.next.model.Transfer
+import media.qimeng.next.model.TransferBatch
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
+import java.util.UUID
 
 /** Run only against the same-SHA isolated Go process, using explicit cloud runner arguments. */
 class AndroidRealServerTest {
@@ -63,8 +67,12 @@ class AndroidRealServerTest {
             }
         }
         runBlocking {
-            graph.uploads.receive(listOf(imageUri, videoUri))
+            // An unreadable picker input must remain part of the server's original manifest.
+            graph.uploads.receive(listOf(imageUri, Uri.parse("content://media.qimeng.next.test.fixture/unreadable-selection"), videoUri))
             assertEquals(2, graph.queue.state.value!!.drafts.size)
+            assertEquals(3, graph.queue.state.value!!.pendingInputs.size)
+            assertNull(graph.queue.state.value!!.pendingInputs[1].originalFileName)
+            assertEquals(1, graph.queue.state.value!!.intakeFailures.size)
             graph.uploads.enqueue(library.id, "android-cloud", UploadMode.ORDINARY)
         }
         await {
@@ -78,6 +86,24 @@ class AndroidRealServerTest {
         val video = assets.single { it.mediaType == "video" }
         assertTrue(picture.thumbnailUrl.isNotEmpty())
         assertTrue((video.durationMs ?: 0) > 0)
+        val batch = graph.queue.state.value!!.batches.single()
+        assertEquals(64, batch.manifestFingerprint!!.length)
+        val originalReport = runBlocking { graph.media.report(batch.serverId!!) }
+        assertEquals(3, originalReport.items.size)
+        assertEquals("pending", originalReport.items[1].state)
+        assertNotEquals("completed", originalReport.state)
+
+        val cancelledId = UUID.randomUUID().toString()
+        val cancelledBatch = TransferBatch(UUID.randomUUID().toString(), graph.settings.session.value!!, library.id, UploadMode.ORDINARY,
+            "Synthetic cancelled original input", listOf(OriginalInput(cancelledId, "cancelled.png", picture.bytes, batch.inputs[0].expectedHash, "known")))
+        runBlocking { graph.queue.update { it.copy(batches = it.batches + cancelledBatch,
+            transfers = it.transfers + Transfer(cancelledId, cancelledBatch.target, library.id, "cancelled.png", "image/png", picture.bytes,
+                "unused-cancelled-fixture", UploadMode.ORDINARY, null, cancelledBatch.key, cancelledBatch.label, state = TransferState.CANCELLED)) } }
+        graph.uploads.schedule()
+        await { graph.queue.state.value!!.transfers.single { it.id == cancelledId }.cancelConfirmed }
+        val stopped = graph.queue.state.value!!.transfers.single { it.id == cancelledId }
+        assertNull(stopped.uploadId)
+        assertEquals("cancelled", runBlocking { graph.media.report(stopped.batchId!!).items.single().state })
 
         compose.onNodeWithTag("navigation:home").performClick()
         compose.onNodeWithTag("media-browser:home:0").performTouchInput { swipeDown() }

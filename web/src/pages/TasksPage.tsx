@@ -12,6 +12,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { dateTime, bytes } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { TaskNavigation } from "./AuthorTaskPages";
+import { BatchInputReport } from './BatchInputReport';
 
 const batchLabels: Record<string, string> = {
   receiving: "正在接收",
@@ -143,15 +144,14 @@ export function TaskPage() {
         )}
       </>
     );
-  const { batch, items, plans } = query.data;
-  const ingested = items.filter(
-    (item) => item.upload.state === "ingested",
-  ).length;
-  const exceptions = items.filter(
-    (item) =>
-      ["failed", "duplicate"].includes(item.upload.state) ||
-      item.researchOutcome === "conflict",
-  ).length;
+  const { batch, inputs, items, plans } = query.data;
+  const ingested = batch.manifestState === 'sealed'
+    ? inputs.filter(input => input.state === 'ingested').length
+    : items.filter(item => item.upload.state === 'ingested').length;
+  const exceptions = new Set([
+    ...inputs.filter(input => ['failed', 'duplicate'].includes(input.state)).map(input => input.id),
+    ...items.filter(item => item.researchOutcome === 'conflict' || batch.manifestState !== 'sealed' && ['failed', 'duplicate'].includes(item.upload.state)).map(item => item.upload.inputId ?? item.upload.id),
+  ]).size;
   return (
     <>
       <Link className="back-link" to="/manage/tasks">
@@ -184,10 +184,11 @@ export function TaskPage() {
           <strong>{exceptions}</strong>
         </div>
         <div className="metric panel">
-          <span>本批记录</span>
-          <strong>{items.length}</strong>
+          <span>原始输入</span>
+          <strong>{batch.manifestState === 'sealed' ? batch.expectedInputs : '未核验'}</strong>
         </div>
       </div>
+      <BatchInputReport batch={batch} inputs={inputs} />
       {batch.state === "waiting_executor" && (
         <div className="notice notice--warning">
           <strong>等待可用的外部执行器</strong>
@@ -252,7 +253,7 @@ export function TaskPage() {
                 <div>
                   <dt>原始文件</dt>
                   <dd>
-                    {upload.fileName} · {bytes(upload.size)}
+                    {upload.originalFileName || '未记录原名'} · {bytes(upload.size)}
                   </dd>
                 </div>
                 <div>

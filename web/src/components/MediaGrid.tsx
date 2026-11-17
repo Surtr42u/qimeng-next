@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useState } from "react";
 import { Icon } from "./Icon";
-import { useThumbnailURL } from '../data/media';
+import { useThumbnailURL } from "../data/media";
 
 export type MediaCardModel = {
   id: string;
@@ -41,12 +41,20 @@ export function MediaGrid({
         >
           <div className="card--cover">
             <Preview item={item} />
-            {item.duration && <span className="card--duration">{item.duration}</span>}
+            {item.duration && (
+              <span className="card--duration">{item.duration}</span>
+            )}
           </div>
-          <div className={`card--title${search ? ' one-line' : ''}`} title={item.title}>
+          <div
+            className={`card--title${search ? " one-line" : ""}`}
+            title={item.title}
+          >
             {item.title}
           </div>
-          <div className="card--meta"><span className="card--up">{item.caption}</span>{item.date && <span className="card--date">{item.date}</span>}</div>
+          <div className="card--meta">
+            <span className="card--up">{item.caption}</span>
+            {item.date && <span className="card--date">{item.date}</span>}
+          </div>
         </Link>
       ))}
     </div>

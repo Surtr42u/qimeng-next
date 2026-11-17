@@ -24,10 +24,12 @@
 | web/src/pages/SettingsPage.tsx、components/manage/SourceVocabularyCard.tsx | web/src/pages/SettingsPage.tsx、AcquisitionVocabularyPage.tsx | 原设置卡与保存/退出位置，原四推荐预设点选即保存；新设置请求保留在途新草稿 |
 | web/src/pages/LibraryManagePage.tsx、components/manage/ManagePageHeader.tsx | web/src/pages/ManagePage.tsx、components/LegacyManageHeader.tsx | 原三组八入口与管理返回标题，不增加主导航 |
 
+| web/src/components/manage/DirBrowser.tsx、DirFileList.tsx、MoveDialog.tsx、CreateDirDialog.tsx、components/ui/multi-select-bar.tsx、batch-ops-panel.tsx | web/src/pages/FileManagementPage.tsx、FileManagementDialogs.tsx | 原目录/文件行、单项和批量移动/回收展示；状态和幂等编排全新，目录树目前按真实分页导航，完整树与行计数待服务契约 |
+
 web/src/styles/legacy-base.css 补回旧UI原本消费的浏览器重置规则；legacy-adapter.css 连接新变量与原样式、处理类名冲突，并停用被新连续过渡接管的旧入场动画。没有新增 Web 底栏。独立 GlassNavigation 不改变宿主导航布局；新增 SelectionLens 只在既有侧栏/顶栏的实际选中元素下移动。
 
 为恢复相同字形，@fontsource-variable/geist 精确锁为旧项目实际使用的 5.3.0（OFL-1.1）；为复用原页面图标，lucide-react 精确锁为 1.59.0（ISC，React 19 peer 可兼容）。两者已读取官方 npm registry 元数据，锁文件只由云端生成。
 
 Radix使用旧实际版本 [1.6.7](https://registry.npmjs.org/radix-ui/1.6.7)（MIT）；图表使用旧实际版本 [Recharts 3.10.1](https://registry.npmjs.org/recharts/3.10.1)（MIT），其peer使用与React同版本的 [react-is 19.3.1](https://registry.npmjs.org/react-is/19.3.1)。2026-11-17已读取官方元数据，未本机安装。复制的包许可位于 public/licenses，云端负责传递依赖锁与构建验证。
 
-当前是逐页恢复中的记录，不表示整个新站已经与旧版截图一致。相册/搜索、数据/回顾、作者管理、设置已有待云验源码；媒体详情/编辑、上传工作台、库/文件管理、词表、备份与维护页仍有未对齐区域。来源镜像和按目录文件清单等待真实协议接通，界面明确未执行。新API缺失字段不能用假计数或假成功填充。云端截图测试 ui-parity/settings-parity 输出与旧图同尺寸证据；这些新截图必须与旧reference实际对照，不能自行当作一致证明。
+当前是逐页恢复中的记录，不表示整个新站已经与旧版截图一致。相册/搜索、数据/回顾、作者管理、设置已有待云验源码；媒体详情/编辑、上传工作台、库/文件管理、词表、备份与维护页仍有未对齐区域。来源镜像等待真实协议；目录文件清单、移动、回收和逐项报告已接真实接口，完整目录树与逐目录计数仍缺。新API缺失字段不能用假计数或假成功填充。云端截图测试 ui-parity/settings-parity 输出与旧图同尺寸证据；这些新截图必须与旧reference实际对照，不能自行当作一致证明。

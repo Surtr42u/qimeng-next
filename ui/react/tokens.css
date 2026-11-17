@@ -28,9 +28,21 @@
   --qm-bg: oklch(0.965 0.008 285);
   /** 极光氛围层（body::before 专用，三团 radial-gradient 组合；暗色版见 .dark） */
   --qm-aurora:
-    radial-gradient(52rem 34rem at 12% -8%, oklch(0.82 0.09 295 / 0.34), transparent 62%),
-    radial-gradient(46rem 30rem at 88% 6%, oklch(0.85 0.07 220 / 0.26), transparent 60%),
-    radial-gradient(50rem 36rem at 58% 112%, oklch(0.85 0.08 330 / 0.16), transparent 64%);
+    radial-gradient(
+      52rem 34rem at 12% -8%,
+      oklch(0.82 0.09 295 / 0.34),
+      transparent 62%
+    ),
+    radial-gradient(
+      46rem 30rem at 88% 6%,
+      oklch(0.85 0.07 220 / 0.26),
+      transparent 60%
+    ),
+    radial-gradient(
+      50rem 36rem at 58% 112%,
+      oklch(0.85 0.08 330 / 0.16),
+      transparent 64%
+    );
 
   /* 文字三级 + 最浅饰色 */
   --qm-text: oklch(0.26 0.025 280);
@@ -65,18 +77,29 @@
   /* 发丝描边（玻璃边缘的明暗两笔：外描边 + 顶缘内高光，玻璃立体感的来源） */
   --qm-border: oklch(0.35 0.03 285 / 0.14);
   --qm-border-strong: oklch(0.35 0.03 285 / 0.24);
-  --qm-glass-highlight: linear-gradient(to bottom, oklch(1 0 0 / 0.55), oklch(1 0 0 / 0.06) 38%, transparent 60%);
+  --qm-glass-highlight: linear-gradient(
+    to bottom,
+    oklch(1 0 0 / 0.55),
+    oklch(1 0 0 / 0.06) 38%,
+    transparent 60%
+  );
 
   /* backdrop-filter 参数（模糊半径/饱和提升；@supports 降级时整组失效退化为不透明） */
   --qm-glass-blur: 22px;
   --qm-glass-saturate: 1.5;
 
   /* 阴影阶梯（玻璃的落影：比实心卡片更轻更散） */
-  --qm-shadow-1: 0 1px 2px oklch(0.3 0.03 285 / 0.08), 0 1px 6px oklch(0.3 0.03 285 / 0.05);
-  --qm-shadow-2: 0 2px 8px oklch(0.3 0.03 285 / 0.1), 0 8px 24px oklch(0.3 0.03 285 / 0.08);
-  --qm-shadow-3: 0 4px 14px oklch(0.3 0.03 285 / 0.12), 0 16px 40px oklch(0.3 0.03 285 / 0.12);
+  --qm-shadow-1:
+    0 1px 2px oklch(0.3 0.03 285 / 0.08), 0 1px 6px oklch(0.3 0.03 285 / 0.05);
+  --qm-shadow-2:
+    0 2px 8px oklch(0.3 0.03 285 / 0.1), 0 8px 24px oklch(0.3 0.03 285 / 0.08);
+  --qm-shadow-3:
+    0 4px 14px oklch(0.3 0.03 285 / 0.12),
+    0 16px 40px oklch(0.3 0.03 285 / 0.12);
   /** hover 浮起专用（卡片/FAB 共用） */
-  --qm-shadow-lift: 0 6px 18px oklch(0.35 0.05 285 / 0.16), 0 2px 6px oklch(0.35 0.05 285 / 0.08);
+  --qm-shadow-lift:
+    0 6px 18px oklch(0.35 0.05 285 / 0.16),
+    0 2px 6px oklch(0.35 0.05 285 / 0.08);
 
   /* 遮罩（弹窗/查看器底）：深色玻璃幕 */
   --qm-scrim: oklch(0.25 0.04 285 / 0.4);
@@ -108,8 +131,16 @@
   /* 媒体封面/舞台专用 */
   --qm-stage: oklch(0.12 0.01 280);
   --qm-cover-placeholder: oklch(0.92 0.012 285);
-  --qm-cover-shade: linear-gradient(180deg, oklch(0 0 0 / 0.06) 0%, transparent 30%, transparent 55%, oklch(0 0 0 / 0.55) 100%);
-  --qm-scrim-chip: oklch(0 0 0 / 0.55); /* 封面上浮字（时长/已看完）的半透明黑底 */
+  --qm-cover-shade: linear-gradient(
+    180deg,
+    oklch(0 0 0 / 0.06) 0%,
+    transparent 30%,
+    transparent 55%,
+    oklch(0 0 0 / 0.55) 100%
+  );
+  --qm-scrim-chip: oklch(
+    0 0 0 / 0.55
+  ); /* 封面上浮字（时长/已看完）的半透明黑底 */
   /* 封面上浮字文字色：恒白不随主题翻转（App DurationBadgeTextStyle 同口径——
    *  白字+柔和阴影无胶囊底；封面不随主题变。2026-10-04 事故根因：此类浮字曾用
    *  --qm-on-accent，而它在暗色主题翻成深色（为浅紫主按钮配的深字）→ 夜间
@@ -148,9 +179,19 @@
   --qm-duration-base: 240ms;
   --qm-duration-slow: 420ms;
   /* 动效缓动（easings.net 标准档 + 一档回弹；样式一律引用 var(--qm-ease-*)） */
-  --qm-ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* easeOutQuint：玻璃进场，先快后极缓 */
+  --qm-ease-out: cubic-bezier(
+    0.22,
+    1,
+    0.36,
+    1
+  ); /* easeOutQuint：玻璃进场，先快后极缓 */
   --qm-ease-in: cubic-bezier(0.64, 0, 0.78, 0); /* easeInCubic：退场/收起 */
-  --qm-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* back-out：微交互弹跳 */
+  --qm-ease-spring: cubic-bezier(
+    0.34,
+    1.56,
+    0.64,
+    1
+  ); /* back-out：微交互弹跳 */
 
   /* 层级阶梯（数字关系为既有约定：叠加层 < 弹层面板 < 搜索框 < 查看器 < FAB < 弹窗） */
   --qm-z-overlay: 10;
@@ -162,7 +203,9 @@
   --qm-z-modal-panel: 51;
 
   /* 字体栈：Geist Variable 打头（web/index.html 与 @fontsource 引入），中文回退系统字体 */
-  --qm-font: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --qm-font:
+    "Geist Variable", -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
 
   /* ================================================================
    * 四、旧名兼容别名（全部指向 --qm-* 单源，改值只动上方语义层；新代码禁止使用）
@@ -194,8 +237,17 @@
   --stage-bg: var(--qm-stage);
   --cover-placeholder: var(--qm-cover-placeholder);
   --cover-shade: var(--qm-cover-shade);
-  --hist-cover-gradient: linear-gradient(135deg, color-mix(in oklab, var(--qm-chart-1) 14%, transparent), color-mix(in oklab, var(--qm-chart-2) 12%, transparent), color-mix(in oklab, var(--qm-chart-4) 10%, transparent));
-  --hist-cover-shade: linear-gradient(180deg, transparent 55%, oklch(0 0 0 / 0.45) 100%);
+  --hist-cover-gradient: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--qm-chart-1) 14%, transparent),
+    color-mix(in oklab, var(--qm-chart-2) 12%, transparent),
+    color-mix(in oklab, var(--qm-chart-4) 10%, transparent)
+  );
+  --hist-cover-shade: linear-gradient(
+    180deg,
+    transparent 55%,
+    oklch(0 0 0 / 0.45) 100%
+  );
   --hist-done-bg: var(--qm-scrim-chip);
   --scrollbar-thumb: color-mix(in oklab, var(--qm-text-faint) 55%, transparent);
   --trend-line-sub: var(--qm-chart-sub);
@@ -224,9 +276,21 @@
 .dark {
   --qm-bg: oklch(0.16 0.02 278);
   --qm-aurora:
-    radial-gradient(52rem 34rem at 12% -8%, oklch(0.42 0.16 292 / 0.42), transparent 62%),
-    radial-gradient(46rem 30rem at 88% 6%, oklch(0.48 0.12 225 / 0.3), transparent 60%),
-    radial-gradient(50rem 36rem at 58% 112%, oklch(0.38 0.13 330 / 0.26), transparent 64%);
+    radial-gradient(
+      52rem 34rem at 12% -8%,
+      oklch(0.42 0.16 292 / 0.42),
+      transparent 62%
+    ),
+    radial-gradient(
+      46rem 30rem at 88% 6%,
+      oklch(0.48 0.12 225 / 0.3),
+      transparent 60%
+    ),
+    radial-gradient(
+      50rem 36rem at 58% 112%,
+      oklch(0.38 0.13 330 / 0.26),
+      transparent 64%
+    );
 
   --qm-text: oklch(0.93 0.012 280);
   --qm-text-soft: oklch(0.78 0.015 280);
@@ -247,12 +311,19 @@
 
   --qm-border: oklch(1 0 0 / 0.09);
   --qm-border-strong: oklch(1 0 0 / 0.16);
-  --qm-glass-highlight: linear-gradient(to bottom, oklch(1 0 0 / 0.14), oklch(1 0 0 / 0.03) 38%, transparent 60%);
+  --qm-glass-highlight: linear-gradient(
+    to bottom,
+    oklch(1 0 0 / 0.14),
+    oklch(1 0 0 / 0.03) 38%,
+    transparent 60%
+  );
 
   --qm-shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 1px 6px oklch(0 0 0 / 0.2);
   --qm-shadow-2: 0 2px 8px oklch(0 0 0 / 0.36), 0 8px 24px oklch(0 0 0 / 0.28);
-  --qm-shadow-3: 0 4px 14px oklch(0 0 0 / 0.42), 0 16px 40px oklch(0 0 0 / 0.34);
-  --qm-shadow-lift: 0 6px 18px oklch(0 0 0 / 0.44), 0 2px 6px oklch(0 0 0 / 0.3);
+  --qm-shadow-3:
+    0 4px 14px oklch(0 0 0 / 0.42), 0 16px 40px oklch(0 0 0 / 0.34);
+  --qm-shadow-lift:
+    0 6px 18px oklch(0 0 0 / 0.44), 0 2px 6px oklch(0 0 0 / 0.3);
 
   --qm-scrim: oklch(0 0 0 / 0.55);
 

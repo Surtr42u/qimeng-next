@@ -12,7 +12,8 @@ import media.qimeng.next.model.*
 import java.util.UUID
 
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
-    val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null)
+    val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
+    val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList())
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -173,7 +174,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 val page = repository.assets(query, if (next) old.cursor else null)
                 if (generation.isCurrent(ticket) && connection == connectionGeneration) {
                     state.value = ListState(if (next) (old.items + page.items).distinctBy(Asset::id) else page.items,
-                        page.nextCursor, loaded = true)
+                        page.nextCursor, loaded = true, totalMatched = page.totalMatched,
+                        dateCounts = if (next) old.dateCounts else page.dateCounts)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
@@ -213,7 +215,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun loginLocal(password: String = "") = action { connectLocal(forceLogin = true, password = password) }
     fun stopLocal() = action { runtime.stop() }
     fun restoreLocalConnection() {
-        if (runtime.available && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
+        runtime.files.refreshAccess()
+        if (runtime.available && runtime.shouldRestore && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
     }
     private suspend fun connectLocal(forceLogin: Boolean, password: String = "") {
         localConnection.connect(forceLogin, password)
@@ -532,7 +535,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         pageJobs[state] = viewModelScope.launch {
             try {
                 val result = loader(if (next) old.cursor else null)
-                if (generation == connectionGeneration) state.value = ListState(if (next) old.items + result.items else result.items, result.nextCursor, loaded = true)
+                if (generation == connectionGeneration) state.value = ListState(if (next) old.items + result.items else result.items, result.nextCursor,
+                    loaded = true, totalMatched = result.totalMatched, dateCounts = if (next) old.dateCounts else result.dateCounts)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (generation == connectionGeneration) state.value = old.copy(error = explain(failure)) }
         }

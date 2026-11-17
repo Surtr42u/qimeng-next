@@ -17,7 +17,7 @@ import (
  "qimeng.local/next/server/internal/store"
 )
 
-func newBatch(id,library,mode,label string,budget int)model.Batch{now:=time.Now().UTC();return model.Batch{ID:id,LibraryID:library,Mode:mode,Label:label,MaxResearchCalls:budget,State:"receiving",Revision:1,BackupState:"not_covered",CleanupState:"retained",CreatedAt:now,UpdatedAt:now}}
+func newBatch(id,library,mode,label string,budget int)model.Batch{now:=time.Now().UTC();return model.Batch{ID:id,LibraryID:library,Mode:mode,Label:label,MaxResearchCalls:budget,State:"receiving",Revision:1,ManifestRevision:1,ManifestState:"open",BackupState:"not_covered",CleanupState:"retained",CreatedAt:now,UpdatedAt:now}}
 func(s *Service)Batch(ctx context.Context,id string)(model.Batch,error){b,e:=store.Get[model.Batch](ctx,s.DB.DB,"SELECT data FROM batches WHERE id=?",id);return b,Normalize(e)}
 func(s *Service)CreateBatch(ctx context.Context,w *Write,in model.Batch)(model.Batch,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return in,e};b,e:=s.prepareBatch(ctx,w.ID("batch"),in);if e!=nil{return b,e};q,e:=w.Q();if e!=nil{return b,e};return b,store.SaveBatch(ctx,q,b)
@@ -29,24 +29,31 @@ func(s *Service)prepareBatch(ctx context.Context,id string,in model.Batch)(model
 func(s *Service)Batches(ctx context.Context,p model.Principal,cursor string,limit int)(model.Page[model.Batch],error){n,e:=limited(limit,50);if e!=nil{return model.Page[model.Batch]{},e};key:="batches:"+p.BatchID;o,e:=pageOffset(cursor,key);if e!=nil{return model.Page[model.Batch]{},e};a,e:=store.List[model.Batch](ctx,s.DB.DB,"SELECT data FROM batches WHERE (?='' OR id=?) ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",p.BatchID,p.BatchID,n+1,o);return paged(a,n,o,key),e}
 func(s *Service)BatchDetail(ctx context.Context,p model.Principal,id string)(model.BatchDetail,error){
  if e:=Authorize(p,"read",id);e!=nil{return model.BatchDetail{},e};b,e:=s.Batch(ctx,id);if e!=nil{return model.BatchDetail{},e}
- uploads,e:=store.List[model.Upload](ctx,s.DB.DB,"SELECT data FROM uploads WHERE batch_id=? ORDER BY id LIMIT 100",id);if e!=nil{return model.BatchDetail{},e};items:=make([]model.BatchItem,0,len(uploads))
+ inputs,e:=s.batchInputs(ctx,s.DB.DB,id);if e!=nil{return model.BatchDetail{},e}
+ uploads,e:=store.List[model.Upload](ctx,s.DB.DB,"SELECT u.data FROM uploads u LEFT JOIN batch_inputs i ON i.batch_id=u.batch_id AND i.upload_id=u.id WHERE u.batch_id=? ORDER BY i.ordinal,u.id LIMIT 100",id);if e!=nil{return model.BatchDetail{},e};items:=make([]model.BatchItem,0,len(uploads))
  for _,u:=range uploads{r,e:=store.Get[model.Research](ctx,s.DB.DB,"SELECT data FROM research WHERE upload_id=?",u.ID);if e!=nil&&!errors.Is(e,sql.ErrNoRows){return model.BatchDetail{},e};if r.Candidates==nil{r.Candidates=[]model.ResearchCandidate{}};items=append(items,model.BatchItem{Upload:u,ResearchOutcome:r.Outcome,Candidates:r.Candidates})}
- plans,e:=store.List[model.PlanSummary](ctx,s.DB.DB,"SELECT json_object('id',id,'state',json_extract(data,'$.state'),'fingerprint',json_extract(data,'$.fingerprint')) FROM plans WHERE batch_id=? ORDER BY id LIMIT 100",id);if e!=nil{return model.BatchDetail{},e};return model.BatchDetail{Batch:b,Items:items,Plans:plans},nil
+ plans,e:=store.List[model.PlanSummary](ctx,s.DB.DB,"SELECT json_object('id',id,'state',json_extract(data,'$.state'),'fingerprint',json_extract(data,'$.fingerprint')) FROM plans WHERE batch_id=? ORDER BY id LIMIT 100",id);if e!=nil{return model.BatchDetail{},e};return model.BatchDetail{Batch:b,Inputs:inputs,Items:items,Plans:plans},nil
 }
 func(s *Service)refreshBatch(ctx context.Context,q store.Querier,id string)error{
  b,e:=store.Get[model.Batch](ctx,q,"SELECT data FROM batches WHERE id=?",id);if e!=nil{return e};if b.State=="cancelled"{return nil}
  var total,ingested,staged,receiving,problems int
  e=q.QueryRowContext(ctx,"SELECT count(*),COALESCE(sum(state='ingested'),0),COALESCE(sum(state='staged'),0),COALESCE(sum(state='receiving'),0),COALESCE(sum(state IN ('duplicate','failed','cancelled') OR (state='staged' AND COALESCE(json_extract(data,'$.errorCode'),'')!='')),0) FROM uploads WHERE batch_id=?",id).Scan(&total,&ingested,&staged,&receiving,&problems);if e!=nil{return e}
- switch{case total>0&&ingested==total:b.State="completed";case problems>0||ingested>0:b.State="partial";case receiving>0:b.State="receiving";case staged>0:b.State="waiting_executor";default:b.State="receiving"};b.Revision++;b.UpdatedAt=time.Now().UTC();return store.SaveBatch(ctx,q,b)
+ var declared,bound,cancelled int
+ if e=q.QueryRowContext(ctx,"SELECT count(*),count(upload_id),coalesce(sum(cancelled),0) FROM batch_inputs WHERE batch_id=?",id).Scan(&declared,&bound,&cancelled);e!=nil{return e}
+ if b.ManifestState=="sealed"&&(declared!=b.ExpectedInputs||total!=bound){return Fail(500,"manifest_corrupt","已收文件与原始输入映射不一致，不能报告完成。")}
+ switch{case b.ManifestState=="sealed"&&declared>0&&total==declared&&ingested==declared&&cancelled==0:b.State="completed";case problems>0||ingested>0||cancelled>0:b.State="partial";case receiving>0||b.ManifestState!="sealed"||bound<declared:b.State="receiving";case staged>0:b.State="waiting_executor";default:b.State="receiving"};b.Revision++;b.UpdatedAt=time.Now().UTC();return store.SaveBatch(ctx,q,b)
 }
 func(s *Service)CancelBatch(ctx context.Context,w *Write,id string,revision int64)(model.Batch,error){
  if e:=Authorize(w.Principal,"admin",id);e!=nil{return model.Batch{},e};b,e:=s.Batch(ctx,id);if e!=nil{return b,e};if b.Revision!=revision{return b,Conflict(b.Revision)};b.State="cancelled";b.Revision++;b.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return b,e};return b,store.SaveBatch(ctx,q,b)
 }
 func(s *Service)Context(ctx context.Context,p model.Principal,id,cursor string,limit int)(map[string]any,error){
- d,e:=s.BatchDetail(ctx,p,id);if e!=nil{return nil,e};n,e:=limited(limit,20);if e!=nil{return nil,e};key:=fmt.Sprintf("context:%s:%d",id,d.Batch.Revision);o,e:=pageOffset(cursor,key);if e!=nil{return nil,e};if o>len(d.Items){return nil,Fail(400,"invalid_cursor","分页游标超出批次范围。")};end:=o+n;if end>len(d.Items){end=len(d.Items)}
+ d,e:=s.BatchDetail(ctx,p,id);if e!=nil{return nil,e};n,e:=limited(limit,20);if e!=nil{return nil,e};key:=fmt.Sprintf("context:%s:%d",id,d.Batch.Revision);o,e:=pageOffset(cursor,key);if e!=nil{return nil,e};total:=len(d.Inputs);if d.Batch.ManifestState=="legacy_unverified"{total=len(d.Items)};if o>total{return nil,Fail(400,"invalid_cursor","分页游标超出批次范围。")};end:=min(o+n,total)
+ inputs:=[]model.BatchInput{};items:=[]model.BatchItem{}
+ if d.Batch.ManifestState=="legacy_unverified"{items=d.Items[o:end]}else{inputs=d.Inputs[o:end];selected:=map[string]bool{};for _,input:=range inputs{selected[input.UploadID]=true};for _,item:=range d.Items{if selected[item.Upload.ID]{items=append(items,item)}}}
  actions:=[]string{};if d.Batch.State!="cancelled"&&d.Batch.State!="completed"{for _,item:=range d.Items{switch item.Upload.State{case "receiving":actions=appendUnique(actions,"appendUpload","completeUpload");case "staged":actions=appendUnique(actions,"preparePlan");if item.ResearchOutcome==""&&d.Batch.ResearchCalls<d.Batch.MaxResearchCalls{actions=appendUnique(actions,"submitResearch")};case "duplicate":actions=appendUnique(actions,"awaitUserDuplicateDecision")}};if len(d.Plans)>0{actions=appendUnique(actions,"getPlan","commitPlan")}}
- result:=map[string]any{"batch":d.Batch,"policyVersion":"1","nextActions":actions,"remainingResearchCalls":d.Batch.MaxResearchCalls-d.Batch.ResearchCalls,"items":d.Items[o:end],"limitations":[]string{"研究候选不等于确认归属；未知作者可入其他搁置。","批次外、人工修正、替换与删除不在新增授权内。","外部模型调用消费由可信执行器控制并回报；服务端不声称限制未接入的外部消费。","独立备份和来源回收尚未接线，来源必须保留。"}}
- if end<len(d.Items){result["nextCursor"]=nextCursor(end,key)};return result,nil
+ if d.Batch.State=="cancelled"||d.Batch.ManifestState=="legacy_unverified"{actions=[]string{}}else if d.Batch.ManifestState=="open"{actions=[]string{"intake.register"}}else if d.Batch.ManifestState=="sealed"{for _,input:=range d.Inputs{if input.State=="pending"{actions=appendUnique(actions,"upload.file")}}}
+ result:=map[string]any{"batch":d.Batch,"policyVersion":"2","nextActions":actions,"remainingResearchCalls":d.Batch.MaxResearchCalls-d.Batch.ResearchCalls,"inputs":inputs,"items":items,"limitations":[]string{"研究候选不等于确认归属；未知作者可入其他搁置。","批次外、人工修正、替换与删除不在新增授权内。","外部模型调用消费由可信执行器控制并回报；服务端不声称限制未接入的外部消费。","独立备份和来源回收尚未接线，来源必须保留。"}}
+ if end<total{result["nextCursor"]=nextCursor(end,key)};return result,nil
 }
 func appendUnique(values []string,more ...string)[]string{for _,v:=range more{found:=false;for _,x:=range values{if x==v{found=true;break}};if !found{values=append(values,v)}};return values}
 func(s *Service)SubmitResearch(ctx context.Context,w *Write,id string,in model.Research)(model.Batch,error){
@@ -66,7 +73,7 @@ func(s *Service)namespaceFingerprint(ctx context.Context,library string,ignore m
  for rows.Next(){var id,p,h string;var rev int64;if e=rows.Scan(&id,&p,&h,&rev);e!=nil{rows.Close();return "",e};if !ignore[id]{entries=append(entries,id+"\x00"+p+"\x00"+h+"\x00"+strconv.FormatInt(rev,10))}};e=rows.Err();rows.Close();if e!=nil{return "",e};sort.Strings(entries);raw,_:=json.Marshal(entries);return digest(raw),nil
 }
 func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.PlanCreate)(model.Plan,error){
- if e:=Authorize(w.Principal,"organize",id);e!=nil{return model.Plan{},e};b,e:=s.Batch(ctx,id);if e!=nil{return model.Plan{},e};if b.Revision!=in.ExpectedRevision{return model.Plan{},Conflict(b.Revision)};if b.Mode!="intelligent"||b.State=="cancelled"||b.State=="completed"{return model.Plan{},Fail(409,"batch_closed","本批不能再准备智能入库计划。")};if len(in.Items)==0||len(in.Items)>100{return model.Plan{},Fail(400,"invalid_plan","计划须包含 1–100 项。")}
+ if e:=Authorize(w.Principal,"organize",id);e!=nil{return model.Plan{},e};b,e:=s.Batch(ctx,id);if e!=nil{return model.Plan{},e};if b.ManifestState!="sealed"{return model.Plan{},Fail(409,"manifest_required","须先完整登记原始输入，不能依据实际上传项自证没有遗漏。")};if b.Revision!=in.ExpectedRevision{return model.Plan{},Conflict(b.Revision)};if b.Mode!="intelligent"||b.State=="cancelled"||b.State=="completed"{return model.Plan{},Fail(409,"batch_closed","本批不能再准备智能入库计划。")};if len(in.Items)==0||len(in.Items)>100{return model.Plan{},Fail(400,"invalid_plan","计划须包含 1–100 项。")}
  var planCount int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM plans WHERE batch_id=?",id).Scan(&planCount);e!=nil{return model.Plan{},e};if planCount>=100{return model.Plan{},Fail(409,"plan_limit","本批计划数量达到上限。")}
  fingerprint,e:=s.namespaceFingerprint(ctx,b.LibraryID,nil);if e!=nil{return model.Plan{},e}
  p:=model.Plan{PlanSummary:model.PlanSummary{ID:w.ID("plan"),State:"prepared"},BatchID:id,BatchRevision:b.Revision,DirectoryFingerprint:fingerprint,Items:[]model.PlanItem{}}

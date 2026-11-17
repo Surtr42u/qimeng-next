@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND_MULTIPLE -> IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
             else -> return
         }
-        if (uris.isNotEmpty()) model.receiveFiles(uris.distinct(), shared = true)
+        val selection = uris.ifEmpty { intent.clipData?.let { clips -> (0 until clips.itemCount).mapNotNull { clips.getItemAt(it).uri } }.orEmpty() }
+        if (selection.isNotEmpty()) model.receiveFiles(selection, shared = true)
     }
 }

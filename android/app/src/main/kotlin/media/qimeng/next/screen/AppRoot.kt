@@ -65,7 +65,7 @@ fun AppRoot(model: LibraryViewModel) {
     }
     DisposableEffect(imageLoader) { onDispose { imageLoader.shutdown() } }
     QimengTheme(dark) {
-        CompositionLocalProvider(LocalMediaImages provides imageLoader) {
+        CompositionLocalProvider(LocalMediaImages provides imageLoader, LocalReducedMotion provides (preferences.reducedMotion || !ValueAnimator.areAnimatorsEnabled())) {
             if (session == null) {
                 LoginScreen(model)
             } else {
@@ -74,7 +74,7 @@ fun AppRoot(model: LibraryViewModel) {
                 val detailRoute = route.startsWith("asset:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && route !in setOf("main", "ai-access", "search")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -93,6 +93,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("profile-archive:") -> AuthorProfileScreen(route.split(':')[1], model, archiveId = route.split(':')[2])
                                 route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'))
                                 route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
+                                route.startsWith("stats-detail:") -> route.split(':').let { StatsDetailScreen(model, it[1], it[2]) }
                                 route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
                                 route.startsWith("collection:") -> MediaBrowser(model, route, collectionId = route.substringAfter(':'))
                                 route.startsWith("tag:") -> MediaBrowser(model, route, initialTag = route.substringAfter(':'))

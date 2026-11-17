@@ -1,13 +1,13 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
-import type { InfiniteData, QueryKey } from '@tanstack/react-query';
+import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import type { paths } from "../api/generated/schema";
 import { api, operationHeaders, read } from "./client";
 import type { Schema } from "./client";
 import { invalidateLibrary } from "./query";
 import { useRemoteKey } from "./session";
 import type { MediaCardModel } from "../components/MediaGrid";
-import { duration } from '../lib/format';
-import { useThumbnailPreference } from '../lib/thumbnail-preference';
+import { duration } from "../lib/format";
+import { useThumbnailPreference } from "../lib/thumbnail-preference";
 
 export type Asset = Schema<"Asset">;
 export type AssetFilters = NonNullable<
@@ -28,11 +28,23 @@ export function deduplicateAssetPages<T extends { items: Asset[] }>(
 }
 export function useAssets(filters: AssetFilters, enabled = true) {
   const key = useRemoteKey();
-  return useInfiniteQuery<Schema<'AssetPage'>, Error, InfiniteData<Schema<'AssetPage'>, string | undefined>, QueryKey, string | undefined>({
+  return useInfiniteQuery<
+    Schema<"AssetPage">,
+    Error,
+    InfiniteData<Schema<"AssetPage">, string | undefined>,
+    QueryKey,
+    string | undefined
+  >({
     queryKey: [...key, "assets", filters],
     placeholderData: (previous, query) => {
       const before = query?.queryKey.at(-1) as AssetFilters | undefined;
-      return before?.q === filters.q && before?.authorId === filters.authorId && before?.libraryId === filters.libraryId && before?.collectionId === filters.collectionId && before?.directory === filters.directory ? previous : undefined;
+      return before?.q === filters.q &&
+        before?.authorId === filters.authorId &&
+        before?.libraryId === filters.libraryId &&
+        before?.collectionId === filters.collectionId &&
+        before?.directory === filters.directory
+        ? previous
+        : undefined;
     },
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
@@ -163,20 +175,25 @@ export function originalUrl(asset: Asset) {
 }
 export function useThumbnailURL(source?: string) {
   const [preference] = useThumbnailPreference();
-  if (!source || preference === 'auto') return source;
+  if (!source || preference === "auto") return source;
   const url = new URL(source, window.location.origin);
-  url.searchParams.set('size', preference);
+  url.searchParams.set("size", preference);
   return `${url.pathname}${url.search}`;
 }
 export function mediaCards(assets: readonly Asset[]): MediaCardModel[] {
   return assets.map((asset) => ({
     id: asset.id,
     title: asset.fileName,
-    caption:
-      asset.authorName ? `${asset.authorName}${asset.authorIds.length > 1 ? ` 等${asset.authorIds.length}` : ''}` :
-      (asset.authorStatus === "unknown" ? "其他搁置" : "作者资料"),
-    date: mediaCardDate(asset.sourceMtime || asset.contentMtime),
-    duration: asset.mediaType === 'video' && asset.durationMs ? duration(asset.durationMs) : undefined,
+    caption: asset.authorName
+      ? `${asset.authorName}${asset.authorIds.length > 1 ? ` 等${asset.authorIds.length}` : ""}`
+      : asset.authorStatus === "unknown"
+        ? "其他搁置"
+        : "作者资料",
+    date: mediaCardDate(asset.fileDate),
+    duration:
+      asset.mediaType === "video" && asset.durationMs
+        ? duration(asset.durationMs)
+        : undefined,
     type: asset.mediaType,
     src: asset.thumbnailUrl
       ? safeMediaUrl(asset.thumbnailUrl, asset.contentVersion)

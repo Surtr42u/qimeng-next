@@ -57,14 +57,15 @@ test('profile conflict retains draft and rebases only explicitly edited fields',
   const state = await mockProfiles(page);
   await page.goto('/authors/synthetic-author/profile');
   await page.getByRole('button', { name: '编辑基础资料', exact: true }).click();
-  await page.getByLabel('整理简介', { exact: true }).fill('本次人工草稿');
+  await page.getByRole('textbox', { name: '整理简介', exact: true }).fill('本次人工草稿');
   state.conflict = true;
   await page.getByRole('button', { name: '保存资料', exact: true }).click();
-  await expect(page.getByLabel('整理简介', { exact: true })).toHaveValue('本次人工草稿');
+  await expect(page.getByRole('textbox', { name: '整理简介', exact: true })).toHaveValue('本次人工草稿');
   await page.getByRole('button', { name: '读取当前资料并对照' }).click();
   await expect(page.getByText('服务器当前修订 2', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '已核对，保留本次改动并采用当前版本' }).click();
-  await expect(page.getByLabel('私人备注', { exact: true })).toHaveValue('另一个设备更新的备注');
+  await page.getByText('个人整理备注', { exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '私人备注', exact: true })).toHaveValue('另一个设备更新的备注');
   await page.getByRole('button', { name: '保存资料', exact: true }).click();
   await expect(page.getByRole('button', { name: '编辑基础资料', exact: true })).toBeVisible();
   expect(state.writes.at(-1)?.values).toEqual({ summary: '本次人工草稿' });
@@ -75,7 +76,7 @@ test('candidate fills a reviewable draft and does not save before explicit confi
   const state = await mockProfiles(page);
   await page.goto('/authors/synthetic-author/profile');
   await page.getByRole('button', { name: '填入候选草稿，继续核对' }).click();
-  await expect(page.getByLabel('整理简介', { exact: true })).toHaveValue('候选提出的简介');
+  await expect(page.getByRole('textbox', { name: '整理简介', exact: true })).toHaveValue('候选提出的简介');
   expect(state.writes).toHaveLength(0);
   await expect(page.getByRole('button', { name: '保存资料', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '保存资料', exact: true }).click();

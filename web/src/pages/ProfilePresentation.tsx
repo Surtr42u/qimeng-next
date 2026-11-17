@@ -33,7 +33,7 @@ export function AuthorAvatar({
         />
       ) : (
         <span aria-label={avatar ? "离线头像不可用" : undefined}>
-            {Array.from(name)[0] ?? '?'}
+          {Array.from(name)[0] ?? "?"}
         </span>
       )}
     </span>

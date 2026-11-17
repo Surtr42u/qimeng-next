@@ -71,6 +71,13 @@ class Config:
         for name, value in raw_storages.items():
             if not isinstance(value, str) or not name.isidentifier() or not Path(value).is_absolute():
                 raise ToolError("CONFIG_INVALID", "存储必须使用逻辑名和绝对路径")
+            try:
+                source_root = Path(value).resolve()
+                private_root = directory.resolve()
+            except OSError:
+                raise ToolError("CONFIG_INVALID", "无法确认来源和私有状态目录边界") from None
+            if source_root.is_relative_to(private_root) or private_root.is_relative_to(source_root):
+                raise ToolError("CONFIG_INVALID", "来源存储与执行器私有状态目录必须完全分离")
             storages[name] = Path(value)
         if positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576) < 2048:
             raise ToolError("CONFIG_INVALID", "输出预算至少2048字节，以容纳执行结果和恢复引用")

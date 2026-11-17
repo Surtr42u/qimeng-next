@@ -17,7 +17,8 @@ class FixtureProvider : ContentProvider() {
         require(name in setOf("android-synthetic.png", "android-synthetic.mp4"))
         return File(requireNotNull(context).filesDir, "fixture-$name")
     }
-    override fun getType(uri: Uri) = if (uri.lastPathSegment?.endsWith(".mp4") == true) "video/mp4" else "image/png"
+    // Legal file providers may omit MIME; the real server must classify the synthetic PNG.
+    override fun getType(uri: Uri): String? = if (uri.lastPathSegment?.endsWith(".mp4") == true) "video/mp4" else null
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         val flags = if (mode == "w" || mode == "wt") ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_TRUNCATE
         else ParcelFileDescriptor.MODE_READ_ONLY

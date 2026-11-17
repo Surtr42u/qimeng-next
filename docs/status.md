@@ -8,7 +8,7 @@ UI纠偏为当前优先事项：用户指出新界面与旧版不同，明确允
 
 独立私有仓库 [Surtr42u/qimeng-next](https://github.com/Surtr42u/qimeng-next) 已从空目录初始化。服务端、Web/桌面、Android和AI工具正在并行重构。旧纯UI按用户授权复用，业务核心重新实现。已有云端生成与部分验证，尚未达到成熟切换条件；没有迁移真实库、替换现装软件或运行本地编译/测试。
 
-用户已明确保留Android本机离线模式。源码增加可移除embedded运行模块和client变体，云端新增原生源码构建、APK组成与真实本机启动检查；此轮新增代码仍待云端结果，不能视为已验证可用。
+用户已明确保留Android本机离线模式。d755923的可移除embedded模块、client变体、双ABI原生构建与APK组成检查已通过；两种运行方式的实际仪器测试因云端AVD磁盘不足未执行，已将新AVD数据盘显式设为2GB。后续恢复旧登录/统计和原始输入清单的改动仍需同提交验证，不能把构建成功当本机功能验收。
 
 ## 并行分工
 
@@ -21,19 +21,20 @@ UI纠偏为当前优先事项：用户指出新界面与旧版不同，明确允
 |---|---|---|
 | 独立 Git 历史 | 已初始化 | 空目录创建，业务独立重写；UI复用逐项记录来源 |
 | 产品与协议 | 已有初版，持续补全 | requirements与OpenAPI；由云端生成Go/TS/Kotlin/Python契约 |
-| Go服务端 | 69dc401 Linux与Windows检查/构建通过 | 包含研究材料缓存、完整profile、命名权威用例；后续v2迁移/筛选/COS/监督启动待新提交验证 |
-| AI工具 | 69dc401边界/打包与真实stdio业务测试通过 | 真实Go接收/作者维护、换执行器预算、Pi与官方TS SDK兼容检查通过；Hermes本体验证未完成 |
-| Web | 98fbb9a类型、构建、单测、模拟浏览器与真实Go集成通过 | 后续完整profile/权限设置新页面待新提交验证 |
-| Android | 69dc401编译与JVM测试通过，lint失败 | Activity获取方式已修；本机模块与UI恢复待新提交验证，仪器/截图未运行 |
-| 桌面 | 69dc401 Windows原生构建通过 | Rust测试、Tauri发布构建/安装包生成；未安装用户设备 |
-| 文档 | 69dc401链接检查通过 | 后续文档继续随代码同步 |
+| Go服务端 | db56924 Linux与Windows检查/构建通过 | 包含v2/筛选/COS/监督启动、密码会话、设置/缩略图档位及完整回顾；后续原始清单/完整备份待验证 |
+| AI工具 | db56924边界/打包与真实stdio业务测试通过 | 换执行器预算、研究材料、Pi及官方TS SDK兼容检查通过；新intake清单待验证，Hermes本体验证未完成 |
+| Web | db56924类型、构建、15项单测通过；浏览器38通过/16失败 | 新旧UI已有同尺寸合成截图；剩余定位/交互/隔离失败正在修，不能宣称视觉一致性完成 |
+| Android | d755923两变体编译/JVM/lint与APK组成通过 | 后续旧LoadingIndicator与锁定M3版本不匹配已定位；依赖和后续UI改动待验证，实际仪器尚未通过 |
+| Android原生程序 | d755923及db56924真实arm64/x86_64源码构建通过 | Go/runner/FFmpeg/dav1d逐ABI、ELF/16KiB与来源摘要校验；不等同设备运行通过 |
+| 桌面 | db56924 Windows原生构建通过 | Rust测试、Tauri发布构建/安装包生成；未安装用户设备 |
+| 文档 | db56924链接检查通过 | 后续文档继续随代码同步 |
 | 真实迁移 / NAS / 手机 | 未执行 | 不属于合成数据验收 |
 
 首轮完整记录：[云端集成run44036720223](https://github.com/Surtr42u/qimeng-next/actions/runs/44036720223)。该次整体未通过，不能将两个已绿作业写成全部门禁通过。此前生成链保留依赖peer不兼容、Maven不存在的校验文件、YAML描述格式、SDK命令PATH四类失败，均针对原因修正后重跑，不跳过校验。
 
 ## 必须继续完成
 
-最近功能检查：[69dc401云端集成](https://github.com/Surtr42u/qimeng-next/actions/runs/44060602502)。Web测试夹具类型与Android lint失败已针对原因修正，整体仍未通过。[5fe5ba2检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44067428511)在协议生成时发现未引号化的YAML描述，已修正并增加早期拒绝检查；该次后续作业没有运行。成功的模块不代表所有功能完成。
+最近检查：[db56924云端集成](https://github.com/Surtr42u/qimeng-next/actions/runs/44085613136)。[d755923检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44079232703)首次通过两Android构建变体，但AVD磁盘不足，未运行仪器；之后修复Review查询变量和Web类型衔接，db56924服务端通过。旧UI恢复后的浏览器和Android失败仍在收口，成功模块不代表全功能完成。
 
 1. 当前新增作者维护任务、每日点赞/多作者/词表/时间轴与完整统计的同提交回归。
 2. Web/Android完整编译、云端浏览器与模拟器视觉/交互，桌面Windows原生构建。

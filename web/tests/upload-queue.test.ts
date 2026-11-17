@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   readAll: vi.fn(),
   write: vi.fn(),
+  writeGroup: vi.fn(),
   digest: vi.fn(),
   invalidate: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock("../src/data/client", () => ({
 vi.mock("../src/data/storage", () => ({
   localReadAll: mocks.readAll,
   localWrite: mocks.write,
+  localWriteGroup: mocks.writeGroup,
 }));
 vi.mock("../src/data/hash", () => ({ fileDigest: mocks.digest }));
 vi.mock("../src/data/query", () => ({ invalidateLibrary: mocks.invalidate }));
@@ -34,6 +36,8 @@ const file = () =>
     lastModified: 1000,
   });
 const target = { libraryId: "library-fixture", mode: "ordinary" as const };
+const batch = { id: 'batch-fixture', manifestRevision: 1, manifestState: 'open' };
+const sealed = (count: number) => ({ ...batch, manifestRevision: 2, manifestState: 'sealed', manifestFingerprint: 'a'.repeat(64), expectedInputs: count });
 const upload = (state = "receiving", offset = 0) => ({
   id: "upload-fixture",
   state,
@@ -45,13 +49,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.readAll.mockResolvedValue([]);
   mocks.write.mockResolvedValue(undefined);
+  mocks.writeGroup.mockResolvedValue(undefined);
   mocks.digest.mockResolvedValue("source-digest");
   mocks.get.mockResolvedValue(upload());
-  mocks.put.mockResolvedValue(upload("receiving", file().size));
+  mocks.put.mockImplementation((path: string, options: { body: { inputs?: unknown[] } }) => Promise.resolve(path === '/batches/{id}/inputs' ? sealed(options.body.inputs?.length ?? 0) : upload('receiving', file().size)));
   mocks.remove.mockResolvedValue(undefined);
   mocks.post.mockImplementation((path: string) =>
     path === "/batches"
-      ? Promise.resolve({ id: "batch-fixture" })
+      ? Promise.resolve(batch)
       : path === "/uploads"
         ? Promise.resolve(upload())
         : Promise.resolve({ upload: upload("ingested", file().size) }),
@@ -72,13 +77,13 @@ describe("durable upload behavior", () => {
     const next = new File(['second synthetic page'], 'second.jpg', { type: 'image/jpeg', lastModified: 1001 });
     let completes = 0;
     mocks.post.mockImplementation((path: string) => {
-      if (path === '/batches') return Promise.resolve({ id: 'batch-fixture' });
+      if (path === '/batches') return Promise.resolve(batch);
       if (path === '/uploads') return Promise.resolve(upload());
       completes++;
       if (completes === 1) return Promise.reject(new Error('first page result unknown'));
       return Promise.resolve({ upload: { ...upload('ingested', next.size), size: next.size } });
     });
-    mocks.put.mockImplementation((_path: string, options: { body: Blob }) => Promise.resolve({ ...upload('receiving', options.body.size), size: options.body.size }));
+    mocks.put.mockImplementation((path: string, options: { body: Blob & { inputs?: unknown[] } }) => Promise.resolve(path === '/batches/{id}/inputs' ? sealed(options.body.inputs?.length ?? 0) : { ...upload('receiving', options.body.size), size: options.body.size }));
     const queue = await initialized();
     await queue.add([file(), next], { ...target, collectionId: 'synthetic-group' }, '合成库');
     await vi.waitFor(() => expect(queue.getSnapshot().entries[0]?.phase).toBe('failed'));
@@ -93,7 +98,7 @@ describe("durable upload behavior", () => {
   it("reconciles a lost completion response without creating or sending the file again", async () => {
     let completionAttempts = 0;
     mocks.post.mockImplementation((path: string) => {
-      if (path === "/batches") return Promise.resolve({ id: "batch-fixture" });
+      if (path === "/batches") return Promise.resolve(batch);
       if (path === "/uploads") return Promise.resolve(upload());
       completionAttempts++;
       return Promise.reject(new Error("completion response lost"));
@@ -112,7 +117,7 @@ describe("durable upload behavior", () => {
     expect(
       mocks.post.mock.calls.filter((call) => call[0] === "/uploads"),
     ).toHaveLength(1);
-    expect(mocks.put).toHaveBeenCalledTimes(1);
+    expect(mocks.put.mock.calls.filter(call => call[0] === '/uploads/{id}/content')).toHaveLength(1);
     expect(completionAttempts).toBe(1);
     queue.dispose();
   });
@@ -137,7 +142,7 @@ describe("durable upload behavior", () => {
       hashProgress: 0,
       createdAt: "2026-01-01T00:00:00Z",
     };
-    mocks.readAll.mockResolvedValue([restored]);
+    mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? [restored] : []));
     mocks.digest.mockResolvedValue("changed-digest");
     const queue = await initialized();
     queue.retry(restored.id, file());
@@ -150,6 +155,7 @@ describe("durable upload behavior", () => {
   });
   it("storage retry does not repeat an already committed business request", async () => {
     mocks.write.mockRejectedValue(new Error("quota exceeded"));
+    mocks.writeGroup.mockRejectedValue(new Error('quota exceeded'));
     const queue = await initialized();
     await queue.add([file()], target, "合成库");
     await vi.waitFor(() =>
@@ -163,4 +169,108 @@ describe("durable upload behavior", () => {
     expect(mocks.post).toHaveBeenCalledTimes(requests);
     queue.dispose();
   });
+});
+
+it('keeps the complete input list and operation identity after a lost seal response', async () => {
+  const next = new File(['synthetic media'], 'second.jpg', { type: 'image/jpeg', lastModified: 1001 });
+  let attempts = 0;
+  mocks.put.mockImplementation((path: string, options: { body: { inputs?: unknown[] } }) => {
+    if (path === '/batches/{id}/inputs') {
+      attempts++;
+      return attempts === 1 ? Promise.reject(new Error('manifest response lost')) : Promise.resolve(sealed(options.body.inputs!.length));
+    }
+    return Promise.resolve(upload('receiving', file().size));
+  });
+  const queue = await initialized();
+  await expect(queue.add([file(), next], target, '合成库')).rejects.toThrow('manifest response lost');
+  expect(mocks.post.mock.calls.filter(call => call[0] === '/uploads')).toHaveLength(0);
+  const entries = queue.getSnapshot().entries;
+  expect(entries.map(entry => entry.phase)).toEqual(['failed', 'failed']);
+  queue.retry(entries[0]!.id);
+  await vi.waitFor(() => expect(queue.getSnapshot().entries.every(entry => entry.phase === 'ingested')).toBe(true));
+  const manifests = mocks.put.mock.calls.filter(call => call[0] === '/batches/{id}/inputs');
+  expect(manifests[1]![1]).toMatchObject({ body: manifests[0]![1].body, params: manifests[0]![1].params });
+  expect(manifests[0]![1].body.inputs.map((input: { id: string }) => input.id)).toEqual(entries.map(entry => entry.id));
+  expect(mocks.post.mock.calls.filter(call => call[0] === '/uploads').every(call => entries.some(entry => entry.id === call[1].body.inputId))).toBe(true);
+  queue.dispose();
+});
+
+it('restores an unconfirmed manifest without deriving its membership from reselected files', async () => {
+  const stores = new Map<string, Map<string, { id: string }>>();
+  const put = (store: string, item: { id: string } | string) => {
+    const values = stores.get(store) ?? new Map();
+    if (typeof item === 'string') values.delete(item); else values.set(item.id, structuredClone(item));
+    stores.set(store, values);
+  };
+  mocks.write.mockImplementation(async (store: string, item: { id: string } | string) => put(store, item));
+  mocks.writeGroup.mockImplementation(async (records: { store: string; item: { id: string } }[]) => records.forEach(record => put(record.store, record.item)));
+  mocks.readAll.mockImplementation(async (store: string) => [...(stores.get(store)?.values() ?? [])]);
+  mocks.put.mockRejectedValue(new Error('manifest response lost'));
+  const queue = await initialized();
+  const next = new File(['synthetic media'], 'second.jpg', { type: 'image/jpeg', lastModified: 1001 });
+  await expect(queue.add([file(), next], target, '合成库')).rejects.toThrow();
+  const firstId = queue.getSnapshot().entries[0]!.id;
+  await vi.waitFor(() => expect(stores.get('uploads')?.size).toBe(2));
+  queue.dispose();
+  mocks.put.mockImplementation((path: string, options: { body: { inputs?: unknown[] } }) => Promise.resolve(path === '/batches/{id}/inputs' ? sealed(options.body.inputs!.length) : upload('receiving', file().size)));
+  const restored = await initialized();
+  restored.retry(firstId, file());
+  await vi.waitFor(() => expect(restored.getSnapshot().entries.find(entry => entry.id === firstId)?.phase).toBe('ingested'));
+  expect(restored.getSnapshot().entries.find(entry => entry.id !== firstId)?.phase).toBe('waiting_file');
+  const last = mocks.put.mock.calls.filter(call => call[0] === '/batches/{id}/inputs').at(-1)!;
+  expect(last[1].body.inputs.map((input: { originalFileName: string }) => input.originalFileName)).toEqual(['fixture.jpg', 'second.jpg']);
+  restored.dispose();
+});
+
+it('cancels an input before hashing finishes without creating an unhashed upload', async () => {
+  mocks.digest.mockImplementation((_file: File, signal: AbortSignal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
+  const queue = await initialized();
+  await queue.add([file()], target, '合成库');
+  await vi.waitFor(() => expect(queue.getSnapshot().entries[0]?.phase).toBe('hashing'));
+  const entry = queue.getSnapshot().entries[0]!;
+  await queue.cancel(entry.id);
+  expect(queue.getSnapshot().entries[0]?.phase).toBe('cancelled');
+  const cancelled = mocks.post.mock.calls.find(call => call[0] === '/batches/{id}/inputs/{inputId}/cancel')!;
+  expect(cancelled[1]).toMatchObject({ params: { path: { inputId: entry.id, id: 'batch-fixture' } }, body: { manifestFingerprint: 'a'.repeat(64) } });
+  expect(mocks.post.mock.calls.filter(call => call[0] === '/uploads')).toHaveLength(0);
+  queue.dispose();
+});
+
+it('rejects more than one hundred picked inputs before registering anything', async () => {
+  const queue = await initialized();
+  await expect(queue.add(Array.from({ length: 101 }, file), target, '合成库')).rejects.toThrow('不会截取');
+  expect(queue.getSnapshot().entries).toHaveLength(0);
+  expect(mocks.post).not.toHaveBeenCalled();
+  expect(mocks.writeGroup).not.toHaveBeenCalled();
+  queue.dispose();
+});
+
+it('replays the same batch creation key after its acknowledgement is lost', async () => {
+  let creations = 0;
+  mocks.post.mockImplementation((path: string) => {
+    if (path === '/batches') return ++creations === 1 ? Promise.reject(new Error('batch response lost')) : Promise.resolve(batch);
+    if (path === '/uploads') return Promise.resolve(upload());
+    return Promise.resolve({ upload: upload('ingested', file().size) });
+  });
+  const queue = await initialized();
+  await expect(queue.add([file()], target, '合成库')).rejects.toThrow('batch response lost');
+  queue.retry(queue.getSnapshot().entries[0]!.id);
+  await vi.waitFor(() => expect(queue.getSnapshot().entries[0]?.phase).toBe('ingested'));
+  const calls = mocks.post.mock.calls.filter(call => call[0] === '/batches');
+  expect(calls).toHaveLength(2);
+  expect(calls[1]![1]).toMatchObject({ body: calls[0]![1].body, params: calls[0]![1].params });
+  queue.dispose();
+});
+
+it('a cancellation race reads an already published input without marking it cancelled', async () => {
+  mocks.digest.mockImplementation((_file: File, signal: AbortSignal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
+  const queue = await initialized();
+  await queue.add([file()], target, '合成库');
+  await vi.waitFor(() => expect(queue.getSnapshot().entries[0]?.phase).toBe('hashing'));
+  const entry = queue.getSnapshot().entries[0]!;
+  mocks.post.mockRejectedValue(new Error('already published'));
+  mocks.get.mockResolvedValue({ inputs: [{ id: entry.id, state: 'ingested', assetId: 'asset-fixture' }] });
+  await queue.cancel(entry.id);
+  expect(queue.getSnapshot().entries[0]).toMatchObject({ phase: 'ingested', assetId: 'asset-fixture' });
+  queue.dispose();
 });

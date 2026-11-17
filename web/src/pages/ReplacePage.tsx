@@ -4,6 +4,7 @@ import { useAsset } from "../data/media";
 import type { Asset } from "../data/media";
 import { useLibraries, useSettings } from "../data/manage";
 import { useUploadQueue } from "../data/upload";
+import { QueuedPreparationError } from '../data/upload-queue';
 import { PageHeading, Loading, ErrorNotice } from "../components/Feedback";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { UploadRow } from "./UploadPage";
@@ -47,6 +48,7 @@ export function ReplacePage() {
       setConfirmation(undefined);
     } catch (failure) {
       setError(failure);
+      if (failure instanceof QueuedPreparationError) { setFile(undefined); setConfirmation(undefined); }
     } finally {
       setBusy(false);
     }

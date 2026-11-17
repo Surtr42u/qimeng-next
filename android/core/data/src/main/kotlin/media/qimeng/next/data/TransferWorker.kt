@@ -14,6 +14,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import media.qimeng.next.model.*
 import media.qimeng.next.sdk.model.BatchCreate
+import media.qimeng.next.sdk.model.BatchInputsSet
+import media.qimeng.next.sdk.model.BatchInputCancel
+import media.qimeng.next.sdk.model.IntakeInput
 import media.qimeng.next.sdk.model.EventCreate
 import media.qimeng.next.sdk.model.UploadCreate
 import okhttp3.MediaType.Companion.toMediaType
@@ -29,6 +32,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         try {
             if (graph.queue.state.value == null) graph.queue.load()
             val target = graph.settings.session.value ?: return@withContext Result.success()
+            if (inputData.getString("targetKey") != transferTargetKey(target)) return@withContext Result.success()
             val api = graph.provider.api(target)
             val instance = api.getInstance().bodyOrThrow()
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
@@ -48,9 +52,22 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                     } else throw failure
                 } catch (_: IOException) { retry = true }
             }
-            val pending = graph.queue.state.value!!.transfers.filter { it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) }
+            val pending = graph.queue.state.value!!.transfers.filter { it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) ||
+                (it.state == TransferState.CANCELLED && !it.cancelConfirmed) }
             if (pending.isNotEmpty()) setForeground(notification())
             pending.forEach { task ->
+                if (task.state == TransferState.CANCELLED) {
+                    if (!sameTarget(task.target, graph.settings.session.value)) return@forEach
+                    try { confirmCancellation(task) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) {
+                        graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
+                            if (it.id == task.id && it.state == TransferState.CANCELLED) it.copy(message = "本机已停止发送；服务器取消尚未确认，连接后继续核对。${safeFailure(failure)}") else it
+                        }) }
+                        if (runAttemptCount < 4 && (failure !is ApiFailure || failure.status == 409 || failure.status == 429 || failure.status >= 500)) retry = true
+                    }
+                    return@forEach
+                }
                 if (collectionPredecessor(task, graph.queue.state.value!!.transfers) != null) {
                     update(task.id) { it.copy(message = "等待同一集合前面的文件完成；请先处理前项失败或明确停止前项") }
                     return@forEach
@@ -88,12 +105,8 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         if (current(initial.id)?.state == TransferState.CANCELLED) return
         update(initial.id) { it.copy(state = TransferState.UPLOADING, message = "核对传输进度") }
         var task = current(initial.id) ?: return
-        if (task.batchId == null) {
-            val batch = api.createBatch(idempotencyKey = "batch-${task.batchKey}", batchCreate = BatchCreate(libraryId = task.libraryId,
-                mode = BatchCreate.Mode.entries.first { it.value == task.mode.name.lowercase() }, label = task.batchLabel)).bodyOrThrow()
-            update(task.id) { it.copy(batchId = batch.id) }
-            task = current(task.id) ?: return
-        }
+        prepareBatch(task)
+        task = current(task.id) ?: return
         if (isStopped || task.state == TransferState.CANCELLED) return
         check(task.sourceHash?.length == 64) { "传输快照缺少完整摘要，请重新选择文件" }
         var upload = if (task.uploadId == null) {
@@ -103,7 +116,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory, authorIds = task.options.authorIds,
                 collectionId = task.options.collectionId, note = task.options.note, acquisitionSources = task.options.acquisitionSources,
                 family = task.options.family,
-                expectedHash = task.sourceHash, originalFileName = task.originalName)).bodyOrThrow()
+                expectedHash = task.sourceHash, originalFileName = task.originalName, inputId = task.id)).bodyOrThrow()
         } else api.getUpload(task.uploadId!!).bodyOrThrow()
         update(task.id) { it.copy(uploadId = upload.id, offset = upload.offset) }
         if (isStopped || current(task.id)?.state == TransferState.CANCELLED) return
@@ -129,6 +142,58 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         val completed = api.completeUpload(id = upload.id, idempotencyKey = "complete-${task.id}").bodyOrThrow()
         check(completed.upload.state.value in setOf("ingested", "staged")) { completed.upload.errorMessage ?: "尚未入库，请查看任务报告" }
         finish(task.id, completed.upload.assetId, completed.upload.state.value)
+    }
+
+    /** The entire immutable picker manifest is committed before the first upload of this batch. */
+    private suspend fun prepareBatch(task: Transfer): TransferBatch {
+        var batch = graph.queue.state.value!!.batches.find { it.key == task.batchKey }
+            ?: error("旧传输记录缺少完整原始清单，请保留来源并重新选择文件")
+        val api = graph.provider.api(batch.target)
+        if (batch.serverId == null) {
+            val created = api.createBatch(idempotencyKey = "batch-${batch.key}", batchCreate = BatchCreate(libraryId = batch.libraryId,
+                mode = BatchCreate.Mode.entries.first { it.value == batch.mode.name.lowercase() }, label = batch.label)).bodyOrThrow()
+            graph.queue.update { snapshot -> snapshot.copy(
+                batches = snapshot.batches.map { if (it.key == batch.key) it.copy(serverId = created.id) else it },
+                transfers = snapshot.transfers.map { if (it.batchKey == batch.key) it.copy(batchId = created.id) else it }) }
+            batch = graph.queue.state.value!!.batches.first { it.key == batch.key }
+        }
+        if (batch.manifestFingerprint == null) {
+            val sealed = api.setBatchInputs(id = requireNotNull(batch.serverId), idempotencyKey = "manifest-${batch.key}",
+                batchInputsSet = BatchInputsSet(expectedManifestRevision = 1, inputs = batch.inputs.map {
+                    IntakeInput(id = it.id, originalFileName = it.originalFileName,
+                        nameState = IntakeInput.NameState.entries.first { state -> state.value == it.nameState },
+                        propertySize = it.size, expectedHash = it.expectedHash)
+                })).bodyOrThrow()
+            check(sealed.manifestState.value == "sealed" && sealed.manifestFingerprint.isNotBlank()) { "服务器未封存原始输入清单" }
+            graph.queue.update { snapshot -> snapshot.copy(batches = snapshot.batches.map {
+                if (it.key == batch.key) it.copy(manifestFingerprint = sealed.manifestFingerprint) else it
+            }) }
+            batch = graph.queue.state.value!!.batches.first { it.key == batch.key }
+        }
+        return batch
+    }
+
+    private suspend fun confirmCancellation(task: Transfer) {
+        val batch = prepareBatch(task)
+        val api = graph.provider.api(task.target)
+        try {
+            val result = api.cancelBatchInput(id = requireNotNull(batch.serverId), inputId = task.id,
+                idempotencyKey = "cancel-input-${task.id}", batchInputCancel = BatchInputCancel(requireNotNull(batch.manifestFingerprint))).bodyOrThrow()
+            check(result.state.value == "cancelled") { "服务器尚未确认取消此输入" }
+            graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
+                if (it.id == task.id && it.state == TransferState.CANCELLED) it.copy(cancelConfirmed = true, message = "已停止；原始输入清单保留取消记录，来源文件保留") else it
+            }) }
+        } catch (failure: ApiFailure) {
+            if (failure.status == 409) {
+                val detail = api.getBatch(requireNotNull(batch.serverId)).bodyOrThrow()
+                val input = detail.inputs.first { it.id == task.id }
+                if (input.state.value == "ingested") {
+                    finish(task.id, input.assetId, "ingested")
+                    return
+                }
+            }
+            throw failure
+        }
     }
 
     private suspend fun finish(id: String, assetId: String?, state: String) {

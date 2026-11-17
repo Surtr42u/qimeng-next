@@ -20,6 +20,29 @@ import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 class RecoveryBoundaryTest {
+    @Test fun originalManifestKeepsUnreadInputsAndCancellationReceiptAfterRestart() = runBlocking {
+        val context = isolatedContext()
+        val queue = QueueStore(context)
+        queue.load()
+        val target = Session("https://example.test/", "manifest-instance", "Synthetic")
+        val inputs = listOf(OriginalInput("input-known-001", "original.png", 32, "a".repeat(64), "known"),
+            OriginalInput("input-unavailable-002"))
+        val batch = TransferBatch("batch-selection-001", target, "library", UploadMode.ORDINARY, "Two original inputs", inputs,
+            serverId = "server-batch", manifestFingerprint = "b".repeat(64))
+        val transfer = Transfer(inputs[0].id, target, "library", "renamed.png", "image/png", 32, "spool-synthetic", UploadMode.ORDINARY,
+            null, batch.key, batch.label, state = TransferState.CANCELLED, batchId = batch.serverId, cancelConfirmed = true)
+        queue.update { it.copy(batches = listOf(batch), transfers = listOf(transfer)) }
+        val recovered = QueueStore(context)
+        recovered.load()
+        val restored = recovered.state.value!!
+        assertEquals(inputs, restored.batches.single().inputs)
+        assertNull(restored.batches.single().inputs[1].originalFileName)
+        assertEquals("unavailable", restored.batches.single().inputs[1].nameState)
+        assertEquals(batch.manifestFingerprint, restored.batches.single().manifestFingerprint)
+        assertTrue(restored.transfers.single().cancelConfirmed)
+        assertNull(restored.transfers.single().sourceMtime)
+    }
+
     @Test fun committedCancellationAndServerIdentitySurviveJournalReload() = runBlocking {
         val context = isolatedContext()
         val queue = QueueStore(context)

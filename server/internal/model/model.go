@@ -54,6 +54,7 @@ type Asset struct {
  MetadataSource string `json:"metadataSource"`
  SourceMtime *time.Time `json:"sourceMtime,omitempty"`
  ContentMtime *time.Time `json:"contentMtime,omitempty"`
+ FileDate *time.Time `json:"fileDate,omitempty"`
  CreatedAt time.Time `json:"createdAt"`
  UpdatedAt time.Time `json:"updatedAt"`
  ContentURL string `json:"contentUrl"`
@@ -67,6 +68,8 @@ type Asset struct {
  PositionMs int64 `json:"positionMs"`
  PositionContentVersion int64 `json:"positionContentVersion"`
 }
+
+func(a Asset)EffectiveFileDate()*time.Time{if a.ContentMtime!=nil{return a.ContentMtime};return a.SourceMtime}
 
 type Author struct {
  ID string `json:"id"`
@@ -109,6 +112,7 @@ type UploadInput struct {
  ExpectedHash string `json:"expectedHash,omitempty"`
  Mode string `json:"mode"`
  BatchID string `json:"batchId,omitempty"`
+ InputID string `json:"inputId,omitempty"`
  SourceMtime *time.Time `json:"sourceMtime,omitempty"`
  RelativeDirectory string `json:"relativeDirectory,omitempty"`
  AuthorID string `json:"authorId,omitempty"`
@@ -148,6 +152,10 @@ type Batch struct {
  MaxResearchCalls int `json:"maxResearchCalls"`
  State string `json:"state"`
  Revision int64 `json:"revision"`
+ ManifestRevision int64 `json:"manifestRevision"`
+ ManifestState string `json:"manifestState"`
+ ManifestFingerprint string `json:"manifestFingerprint"`
+ ExpectedInputs int `json:"expectedInputs"`
  ResearchCalls int `json:"researchCalls"`
  BackupState string `json:"backupState"`
  CleanupState string `json:"cleanupState"`
@@ -175,8 +183,29 @@ type BatchItem struct {
 }
 type BatchDetail struct {
  Batch Batch `json:"batch"`
+ Inputs []BatchInput `json:"inputs"`
  Items []BatchItem `json:"items"`
  Plans []PlanSummary `json:"plans"`
+}
+type IntakeInput struct {
+ ID string `json:"id"`
+ NameState string `json:"nameState"`
+ OriginalFileName string `json:"originalFileName,omitempty"`
+ SourceRelativePath string `json:"sourceRelativePath,omitempty"`
+ Size *int64 `json:"size,omitempty"`
+ ExpectedHash string `json:"expectedHash,omitempty"`
+}
+type BatchInput struct {
+ IntakeInput
+ Ordinal int `json:"ordinal"`
+ State string `json:"state"`
+ UploadID string `json:"uploadId,omitempty"`
+ AssetID string `json:"assetId,omitempty"`
+ ErrorCode string `json:"errorCode,omitempty"`
+}
+type BatchInputsSet struct {
+ ExpectedManifestRevision int64 `json:"expectedManifestRevision"`
+ Inputs []IntakeInput `json:"inputs"`
 }
 type PlanInput struct {
  UploadID string `json:"uploadId"`

@@ -13,8 +13,10 @@ class LocalConnection(val baseUrl: String, val instanceId: String, val bootstrap
 
 interface LocalRuntime {
     val available: Boolean
+    val shouldRestore: Boolean
     val baseUrl: String?
     val status: StateFlow<RuntimeStatus>
+    val files: LocalFiles
     suspend fun start(): LocalConnection
     suspend fun stop()
     suspend fun confirmInstance(instanceId: String)
@@ -22,8 +24,10 @@ interface LocalRuntime {
 
 object RemoteOnlyRuntime : LocalRuntime {
     override val available = false
+    override val shouldRestore = false
     override val baseUrl: String? = null
     override val status = MutableStateFlow(RuntimeStatus(RuntimePhase.STOPPED, "此安装包仅支持连接服务器"))
+    override val files = UnavailableLocalFiles
     override suspend fun start(): LocalConnection = error("此安装包未包含本机服务")
     override suspend fun stop() = Unit
     override suspend fun confirmInstance(instanceId: String) = Unit

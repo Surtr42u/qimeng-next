@@ -141,7 +141,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             kind = query.kind?.let { value -> DefaultApi.KindGetAssetFacets.entries.first { it.value == value } },
             mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeGetAssetFacets.entries.first { it.value == value } },
             authorId = query.authorId, collectionId = query.collectionId, favorite = query.favorite, liked = query.liked,
-            workKeys = query.workKeys, roleKeys = query.roleKeys, tags = (query.tags + listOfNotNull(query.tag)).distinct(), history = query.history,
+            workKeys = query.workKeys, roleKeys = query.roleKeys, tag = query.tag, tags = query.tags, history = query.history,
             tagMode = DefaultApi.TagModeGetAssetFacets.entries.first { it.value == query.tagMode },
             viewRange = DefaultApi.ViewRangeGetAssetFacets.entries.first { it.value == query.viewRange },
             playRange = DefaultApi.PlayRangeGetAssetFacets.entries.first { it.value == query.playRange },
@@ -203,14 +203,17 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun history(cursor: String? = null): Page<HistoryEntry> {
-        val page = provider.api(target()).listHistory(cursor = cursor, limit = 50).bodyOrThrow()
+        val target = target()
+        val page = provider.api(target).listHistory(cursor = cursor, limit = 50).bodyOrThrow()
         return Page(page.items.map { HistoryEntry(it.eventId, it.assetId, it.fileName ?: "已移除的媒体", it.kind.value,
-            it.positionMs ?: 0, it.createdAt) }, page.nextCursor)
+            it.positionMs ?: 0, it.createdAt, it.asset?.toModel(target), it.contentVersion) }, page.nextCursor, page.totalMatched)
     }
 
-    suspend fun authors(cursor: String? = null, query: String? = null): Page<Author> {
-        val page = provider.api(target()).listAuthors(cursor = cursor, limit = 50, q = query).bodyOrThrow()
-        return Page(page.items.map { it.toModel() }, page.nextCursor)
+    suspend fun authors(cursor: String? = null, query: String? = null, kind: String? = null, sort: String = "default", following: Boolean? = null): Page<Author> {
+        val page = provider.api(target()).listAuthors(cursor = cursor, limit = 50, q = query, following = following,
+            kind = kind?.let { value -> DefaultApi.KindListAuthors.entries.first { it.value == value } },
+            sort = DefaultApi.SortListAuthors.entries.first { it.value == sort }).bodyOrThrow()
+        return Page(page.items.map { it.toModel() }, page.nextCursor, page.totalMatched)
     }
 
     suspend fun author(id: String): Author = provider.api(target()).getAuthor(id).bodyOrThrow().toModel()
@@ -274,10 +277,18 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
 
     suspend fun report(id: String): TaskReport {
         val result = provider.api(target()).getBatch(id).bodyOrThrow()
-        return result.batch.toModel().copy(items = result.items.map {
-            TaskItem(it.upload.id, it.upload.fileName, it.upload.state.value,
-                listOfNotNull(it.upload.errorMessage, if (result.batch.mode.value == "ordinary") "普通上传，无需研究" else researchMessage(it.researchOutcome)).joinToString(" · "), it.upload.assetId)
-        })
+        val received = result.items.associateBy { it.upload.id }
+        val items = if (result.inputs.isNotEmpty()) result.inputs.map { input ->
+            val item = input.uploadId?.let(received::get)
+            TaskItem(input.id, input.originalFileName ?: "第${input.ordinal + 1}项（名称读取失败）", input.state.value,
+                if (item == null) {
+                    if (input.state.value == "cancelled") "此输入已取消，原始清单保留" else "此输入尚未传到服务器，仍计入原始清单"
+                } else listOfNotNull(item.upload.errorMessage,
+                    if (result.batch.mode.value == "ordinary") "普通上传，无需研究" else researchMessage(item.researchOutcome)).joinToString(" · "), input.assetId)
+        } else result.items.map {
+            TaskItem(it.upload.id, it.upload.fileName, it.upload.state.value, "已收到的文件；旧批次的原始清单不可核验", it.upload.assetId)
+        }
+        return result.batch.toModel().copy(items = items)
     }
     suspend fun cancelReport(report: TaskReport): TaskReport {
         provider.api(target()).cancelBatch(id = report.id, revisionRequest = RevisionRequest(expectedRevision = report.revision)).bodyOrThrow()
@@ -309,9 +320,10 @@ private fun ApiAsset.toModel(target: Session): Asset {
         contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt)
 }
 
-private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision)
+private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,
+    fileCount, viewCount, acquisitionSources.orEmpty())
 private fun ApiBatch.toModel() = TaskReport(id, revision, mode.value, state.value,
-    "${label} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList())
+    "${label} · ${if (manifestState.value == "sealed") "原始清单 $expectedInputs 项" else "原始清单尚未核验"} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList())
 private fun researchMessage(outcome: String): String? = when (outcome) {
     "", "not_run", "pending" -> "尚未执行研究"
     "unknown" -> "已研究，尚未查明"

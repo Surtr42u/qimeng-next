@@ -38,6 +38,7 @@ func New(config Config)(*Service,error){
  password,err:=preparePassword(config.AdminPassword);if err!=nil{return nil,err};config.AdminPassword=""
  if config.ReserveBytes<=0{config.ReserveBytes=512<<20}
  if err:=os.MkdirAll(config.DataDir,0700);err!=nil{return nil,err}
+ if _,err:=os.Stat(filepath.Join(config.DataDir,"RESTORE_INCOMPLETE"));err==nil{return nil,errors.New("incomplete restore directory cannot serve requests")}else if !errors.Is(err,os.ErrNotExist){return nil,err}
  root,err:=storage.Open(config.DataDir,config.StorageRoots);if err!=nil{return nil,err}
  for _,d:=range []string{"libraries","uploads","trash","retired","backups"}{if err=root.MkdirAll(d,0700);err!=nil{root.Close();return nil,err}}
  // SQLite's exclusive ownership lock is held by a separate connection for this
@@ -63,6 +64,7 @@ func New(config Config)(*Service,error){
  }
  if err=s.recoverIntents(ctx);err!=nil{s.Close();return nil,fmt.Errorf("file recovery requires attention: %w",err)}
  if _,err=db.DB.ExecContext(ctx,"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
+ if _,err=db.DB.ExecContext(ctx,"UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted') WHERE json_extract(data,'$.exportState') IN ('queued','running')");err!=nil{s.Close();return nil,err}
  return s,nil
 }
 func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}

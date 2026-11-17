@@ -33,11 +33,12 @@ def tool_definitions() -> list[dict]:
          "inputSchema": {"type": "object", "properties": {
              "fileRef": {"type": "string"}, "operationId": {"type": "string", "minLength": 8, "maxLength": 100},
              "libraryId": {"type": "string"}, "batchId": {"type": "string"},
+             "inputId": {"type": "string", "description": "intake.register返回的原始输入身份"},
              "fileName": {"type": "string", "minLength": 1, "maxLength": 240},
              "mode": {"type": "string", "enum": ["ordinary", "intelligent"]},
              "authorId": {"type": "string"}, "collectionId": {"type": "string"},
              "note": {"type": "string", "maxLength": 10000}},
-             "required": ["fileRef", "operationId", "libraryId", "batchId", "fileName", "mode"],
+             "required": ["fileRef", "operationId", "libraryId", "batchId", "inputId", "fileName", "mode"],
              "additionalProperties": False}},
     ]
 
@@ -54,6 +55,8 @@ def guarded_path(config, storage: str, relative: str) -> Path:
         resolved = path.resolve(strict=True)
         if not resolved.is_relative_to(resolved_root):
             raise ToolError("PATH_DENIED", "路径超出授权存储")
+        if resolved.is_relative_to(config.state_dir.resolve()):
+            raise ToolError("PATH_DENIED", "执行器私有状态不能作为业务来源读取")
         for ancestor in (path, *path.parents):
             info = ancestor.lstat()
             if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 1024):
@@ -150,7 +153,7 @@ def upload(runtime, arguments: dict) -> dict:
         expected_hash = digest.hexdigest()
         if identity(os.fstat(source.fileno())) != identity(before):
             raise ToolError("FILE_REF_STALE", "哈希过程中来源变化，未上传")
-        body = {key: arguments[key] for key in ("libraryId", "batchId", "fileName", "mode", "authorId", "collectionId", "note")
+        body = {key: arguments[key] for key in ("libraryId", "batchId", "inputId", "fileName", "mode", "authorId", "collectionId", "note")
                 if key in arguments}
         body.update(size=before.st_size, mimeType=mimetypes.guess_type(arguments["fileName"])[0] or "application/octet-stream",
                     sourceMtime=datetime.fromtimestamp(before.st_mtime, timezone.utc).isoformat(), expectedHash=expected_hash)

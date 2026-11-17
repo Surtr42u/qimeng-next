@@ -64,11 +64,13 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
             return json.loads(raw) if raw else None
 
     def process(self, root, token, permissions):
+        source = root / "input"
+        source.mkdir(exist_ok=True)
         return StdioServerParameters(command=sys.executable, args=["-m", "qimeng_ai.cli", "mcp"], env={
             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
             "QIMENG_API_BASE": os.environ["QIMENG_TEST_BASE"], "QIMENG_API_TOKEN": token,
             "QIMENG_AI_STATE_DIR": str(root / "state"), "QIMENG_AI_TASK_ID": "cloud-live",
-            "QIMENG_AI_STORAGES": json.dumps({"input": str(root)}),
+            "QIMENG_AI_STORAGES": json.dumps({"input": str(source)}),
             "QIMENG_AI_PERMISSIONS": permissions, "QIMENG_AI_MAX_SECONDS": "900",
             "QIMENG_AI_ALLOW_MEDIA_TO_MODEL": "true",
         })
@@ -78,9 +80,10 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
             self.fail("live tests must run in cloud")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            (root / "input").mkdir()
             # Complete, generated image fixture; no real user file is ever read.
             import subprocess
-            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=orange:s=64x48", "-frames:v", "1", str(root / "sample.png")], check=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=orange:s=64x48", "-frames:v", "1", str(root / "input/sample.png")], check=True)
             library = self.request("POST", "/libraries", {"name": "MCP synthetic", "kind": "regular"}, key="mcp-live-library")
             batch = self.request("POST", "/batches", {"libraryId": library["id"], "mode": "intelligent", "label": "MCP fixture"}, key="mcp-live-batch")
             credential = self.request("POST", "/credentials", {"label": "MCP fixture", "batchId": batch["id"], "scopes": ["read", "ingest", "research", "organize"]})
@@ -102,8 +105,10 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(any(block.type == "image" for block in picture.content))
                     bypass = await client.call_tool("platform.result.read", {"resultRef": "r_" + reference[2:]})
                     self.assertTrue(bypass.is_error)
+                    registered = await call("intake.register", {"batchId": batch["id"], "operationId": "mcp-live-manifest", "storage": "input"})
+                    self.assertEqual(registered["inputCount"], 1)
                     uploaded = await call("upload.file", {"fileRef": listing["items"][0]["fileRef"], "operationId": "mcp-live-upload",
-                                          "libraryId": library["id"], "batchId": batch["id"], "fileName": "sample.png", "mode": "intelligent"})
+                                          "libraryId": library["id"], "batchId": batch["id"], "inputId": registered["inputs"][0]["inputId"], "fileName": "sample.png", "mode": "intelligent"})
                     self.assertEqual(uploaded["status"], "staged")
                     materials = await call("research.materials", {"id": uploaded["upload"]["id"], "expectedHash": uploaded["sha256"]})
                     self.assertEqual(materials["businessWrites"], 0)

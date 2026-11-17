@@ -12,13 +12,17 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import media.qimeng.next.runtime.*
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
+import java.io.File
 
 internal object HostState {
     const val BASE_URL = "https://127.0.0.1:18431/"
     const val LISTEN = "127.0.0.1:18431"
     val status = MutableStateFlow(RuntimeStatus(RuntimePhase.STOPPED, "本机服务未运行"))
     val generation = AtomicLong()
+    val ownerActive = AtomicBoolean()
     @Volatile var certificateDerBase64: String? = null
+    @Volatile var storageRoots: String? = null
 }
 
 class EmbeddedRuntime(context: Context) : LocalRuntime {
@@ -26,10 +30,17 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     private val secrets = EmbeddedSecrets(app)
     private val mutex = Mutex()
     override val available = true
+    override val shouldRestore: Boolean get() = secrets.enabled
     override val baseUrl: String = HostState.BASE_URL
     override val status = HostState.status.asStateFlow()
+    override val files = EmbeddedFileAccess(app)
 
     override suspend fun start(): LocalConnection = mutex.withLock {
+        files.refreshAccess()
+        val desiredRoots = withContext(Dispatchers.IO) { EmbeddedFileAccess.roots(app, File(app.filesDir, "embedded-v1/media")) }
+        if ((status.value.phase == RuntimePhase.READY && HostState.storageRoots != desiredRoots) ||
+            status.value.phase == RuntimePhase.STOPPING ||
+            (status.value.phase == RuntimePhase.FAILED && HostState.ownerActive.get())) stopLocked()
         withContext(Dispatchers.IO) { secrets.enabled = true }
         if (status.value.phase != RuntimePhase.READY) {
             HostState.status.value = RuntimeStatus(RuntimePhase.STARTING, "正在启动本机影库")
@@ -51,11 +62,13 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
         LocalConnection(HostState.BASE_URL, instance, token, requireNotNull(HostState.certificateDerBase64) { "本机TLS启动凭据缺失" })
     }
 
-    override suspend fun stop() = mutex.withLock {
+    override suspend fun stop() = mutex.withLock { stopLocked() }
+
+    private suspend fun stopLocked() {
         withContext(Dispatchers.IO) { secrets.enabled = false }
-        if (status.value.phase in setOf(RuntimePhase.STOPPED, RuntimePhase.FAILED)) return@withLock
+        if (status.value.phase in setOf(RuntimePhase.STOPPED, RuntimePhase.FAILED) && !HostState.ownerActive.get()) return
         app.startService(Intent(app, EmbeddedService::class.java).setAction(EmbeddedService.STOP))
-        withTimeout(30_000) { status.first { it.phase == RuntimePhase.STOPPED || it.phase == RuntimePhase.FAILED } }
+        withTimeout(30_000) { status.first { !HostState.ownerActive.get() && it.phase in setOf(RuntimePhase.STOPPED, RuntimePhase.FAILED) } }
         Unit
     }
 

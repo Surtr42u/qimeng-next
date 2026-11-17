@@ -1,14 +1,40 @@
-import type { ReactNode } from 'react';
-import { ArrowLeft } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router-dom';
+import type { ReactNode } from "react";
+import { ArrowLeft } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 
-export function ManagePageHeader({ title, description, backTo, backLabel, actions }: {
-  title: string; description: string; backTo?: string; backLabel?: string; actions?: ReactNode;
+export function ManagePageHeader({
+  title,
+  description,
+  backTo,
+  backLabel,
+  actions,
+}: {
+  title: string;
+  description: string;
+  backTo?: string;
+  backLabel?: string;
+  actions?: ReactNode;
 }) {
   const [params] = useSearchParams();
-  const fromMine = params.get('from') === 'mine';
-  return <header className="manage-page-head">
-    <Link className="manage-back" to={backTo ?? (fromMine ? '/mine' : '/manage')}><ArrowLeft aria-hidden="true" />{backLabel ?? (fromMine ? '返回我的' : '返回数据管理')}</Link>
-    <div className="manage-heading"><div><h2 data-page-heading tabIndex={-1}>{title}</h2><p>{description}</p></div>{actions && <div className="manage-actions">{actions}</div>}</div>
-  </header>;
+  const fromMine = params.get("from") === "mine";
+  return (
+    <header className="manage-page-head">
+      <Link
+        className="manage-back"
+        to={backTo ?? (fromMine ? "/mine" : "/manage")}
+      >
+        <ArrowLeft aria-hidden="true" />
+        {backLabel ?? (fromMine ? "返回我的" : "返回数据管理")}
+      </Link>
+      <div className="manage-heading">
+        <div>
+          <h2 data-page-heading tabIndex={-1}>
+            {title}
+          </h2>
+          <p>{description}</p>
+        </div>
+        {actions && <div className="manage-actions">{actions}</div>}
+      </div>
+    </header>
+  );
 }

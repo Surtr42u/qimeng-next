@@ -73,6 +73,7 @@ jobs:
           go vet ./...
           go test -race -timeout 180s ./...
           go build -trimpath -o ../build/qimeng-next ./cmd/qimeng
+          go build -trimpath -o ../build/qimeng-backup ./cmd/qimeng-backup
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -81,6 +82,7 @@ jobs:
           path: |
             build-format.patch
             build/qimeng-next
+            build/qimeng-backup
             server/go.mod
             server/go.sum
   web:
@@ -311,6 +313,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go tests failed' }
           go build -trimpath -o ../build/qimeng-next.exe ./cmd/qimeng
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go build failed' }
+          go build -trimpath -o ../build/qimeng-backup.exe ./cmd/qimeng-backup
+          if ($LASTEXITCODE -ne 0) { throw 'Windows backup utility build failed' }
       - name: Build native connection shell
         working-directory: desktop
         run: |
@@ -333,6 +337,7 @@ jobs:
           retention-days: 7
           path: |
             build/qimeng-next.exe
+            build/qimeng-backup.exe
             desktop/package-lock.json
             desktop/src-tauri/Cargo.lock
             desktop/src-tauri/target/release/bundle/

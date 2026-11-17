@@ -13,10 +13,24 @@ import (
  "qimeng.local/next/server/internal/store"
 )
 
-type Backup struct{ID string `json:"id"`;State string `json:"state"`;CreatedAt time.Time `json:"createdAt"`;SnapshotHash string `json:"snapshotHash"`;AssetCount int `json:"assetCount"`;ManifestHash string `json:"manifestHash"`}
+type Backup struct{
+ ID string `json:"id"`
+ State string `json:"state"`
+ CreatedAt time.Time `json:"createdAt"`
+ SnapshotHash string `json:"snapshotHash"`
+ AssetCount int `json:"assetCount"`
+ ManifestHash string `json:"manifestHash"`
+ ExportState string `json:"exportState"`
+ ExportError string `json:"exportError,omitempty"`
+ ArchiveHash string `json:"archiveHash,omitempty"`
+ ArchiveBytes int64 `json:"archiveBytes,omitempty"`
+ ExportedFiles int `json:"exportedFiles"`
+ TotalFiles int `json:"totalFiles"`
+ ExportedAt *time.Time `json:"exportedAt,omitempty"`
+}
 type backupEntry struct{AssetID string `json:"assetId"`;ContentVersion int64 `json:"contentVersion"`;Revision int64 `json:"revision"`;RelativeFile string `json:"relativeFile"`;Hash string `json:"hash"`;Size int64 `json:"size"`}
 func(s *Service)CreateBackup(ctx context.Context,w *Write)(Backup,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return Backup{},e};b:=Backup{ID:w.ID("backup"),State:"awaiting_external_backup",CreatedAt:time.Now().UTC()};directory:="backups/"+b.ID
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return Backup{},e};b:=Backup{ID:w.ID("backup"),State:"awaiting_external_backup",ExportState:"not_started",CreatedAt:time.Now().UTC()};directory:="backups/"+b.ID
  var pending int;if e:=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM file_intents WHERE state='prepared'").Scan(&pending);e!=nil{return b,e};if pending>0{return b,Fail(409,"publication_pending","文件发布尚未完成恢复，暂不能生成与原件一致的备份清单。")}
  if e:=s.Root.MkdirAll(directory,0700);e!=nil{return b,e};snapshot:=directory+"/snapshot.sqlite"
  // A previous uncommitted attempt may have completed its snapshot. Its manifest

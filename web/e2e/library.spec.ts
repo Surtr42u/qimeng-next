@@ -18,7 +18,7 @@ test("cursor pagination and search keep the active query isolated", async ({
   await mockLibrary(page);
   await page.goto("/album");
   await expect(page.locator(".media-card")).toHaveCount(48);
-  await page.locator('.media-card').last().scrollIntoViewIfNeeded();
+  await page.locator(".media-card").last().scrollIntoViewIfNeeded();
   await expect(page.locator(".media-card")).toHaveCount(72);
   await page.getByRole("textbox", { name: "搜索媒体" }).fill("合成场景 71");
   await page.getByRole("textbox", { name: "搜索媒体" }).press("Enter");
@@ -77,7 +77,9 @@ test("return restores browsing position and image viewer restores focus", async 
   await expect(page.locator(".media-card")).toHaveCount(48);
   const card = page.locator(".media-card").nth(30);
   await card.scrollIntoViewIfNeeded();
-  const scrollBefore = await page.locator('[data-scroll-root]').evaluate(element => element.scrollTop);
+  const scrollBefore = await page
+    .locator("[data-scroll-root]")
+    .evaluate((element) => element.scrollTop);
   await card.click();
   await page.getByRole("button", { name: "查看原图并缩放" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -87,7 +89,11 @@ test("return restores browsing position and image viewer restores focus", async 
   ).toBeFocused();
   await page.getByRole("button", { name: "返回浏览" }).click();
   await expect
-    .poll(() => page.locator('[data-scroll-root]').evaluate(element => element.scrollTop))
+    .poll(() =>
+      page
+        .locator("[data-scroll-root]")
+        .evaluate((element) => element.scrollTop),
+    )
     .toBeGreaterThan(Math.max(0, scrollBefore - 80));
 });
 
@@ -95,11 +101,11 @@ test("keyboard selection, reduced motion and light mode remain usable", async ({
   page,
 }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.addInitScript(() => localStorage.setItem('qimeng.theme', 'dark'));
+  await page.addInitScript(() => localStorage.setItem("qimeng.theme", "dark"));
   await mockLibrary(page);
   await page.goto("/settings");
-  await page.getByRole('button', { name: '明暗主题', exact: true }).focus();
-  await page.keyboard.press('Space');
+  await page.getByRole("button", { name: "明暗主题", exact: true }).focus();
+  await page.keyboard.press("Space");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.screenshot({
     path: testInfo.outputPath("synthetic-settings-light.png"),
@@ -113,11 +119,15 @@ test("recommendation presets save immediately and prevent overlapping writes", a
   const fixture = await mockLibrary(page);
   await page.goto("/settings");
   fixture.holdPreference = true;
-  await page.getByRole('button', { name: '深度探索', exact: true }).click();
+  await page.getByRole("button", { name: "深度探索", exact: true }).click();
   await expect.poll(() => !!fixture.releasePreference).toBe(true);
-  await expect(page.getByRole('button', { name: '新鲜优先', exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "新鲜优先", exact: true }),
+  ).toBeDisabled();
   fixture.releasePreference?.();
-  await expect(page.getByRole('button', { name: '深度探索', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    page.getByRole("button", { name: "深度探索", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   expect(fixture.weights.discovery).toBe(0.3);
 });
 
@@ -126,9 +136,15 @@ test("review shares use server percent units and hour controls work by keyboard"
 }) => {
   await mockLibrary(page);
   await page.goto("/data/review?range=30d");
-  await page.getByRole('button', { name: '晨光，查看详情' }).click();
-  await expect(page.locator('.review-interest-values').getByText('50.0', { exact: false })).toContainText('50.0');
-  await expect(page.locator('.review-interest-values').getByText('6 次浏览', { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "晨光，查看详情" }).click();
+  await expect(
+    page.locator(".review-interest-values").getByText("50.0", { exact: false }),
+  ).toContainText("50.0");
+  await expect(
+    page
+      .locator(".review-interest-values")
+      .getByText("6 次浏览", { exact: true }),
+  ).toBeVisible();
   const bars = page.getByRole("group", { name: "24小时浏览时长" });
   await bars.getByRole("button").first().focus();
   await page.keyboard.press("End");

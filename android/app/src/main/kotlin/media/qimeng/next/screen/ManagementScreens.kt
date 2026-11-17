@@ -348,6 +348,7 @@ fun HistoryScreen(model: LibraryViewModel) {
             ContentCard(Modifier.fillMaxWidth().clickable { model.openAsset(entry.assetId) }) {
                 Text(entry.name, style = MaterialTheme.typography.titleMedium)
                 Text("${entry.createdAt} · ${if (entry.kind == "view") "浏览" else "播放 ${entry.positionMs / 1000} 秒"}", style = MaterialTheme.typography.bodySmall)
+                if (entry.contentVersion == 0L) Text("历史内容版本未知，进度不会映射到当前文件", style = MaterialTheme.typography.bodySmall)
             }
         }
         if (state.cursor != null) item { TextButton(onClick = { model.loadHistory(true) }, enabled = !state.loading) { Text("加载更多记录") } }

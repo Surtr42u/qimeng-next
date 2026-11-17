@@ -34,8 +34,9 @@ func TestStableTaxonomyAndExplicitChannelSeparation(t *testing.T){
 
 func TestPlanContinuesIndependentInputsAfterPathConflict(t *testing.T){
  f:=setup(t);r:=f.json("POST","/batches","partial-batch-create",map[string]any{"libraryId":f.library,"mode":"intelligent","label":"Partial synthetic batch","maxResearchCalls":0},201);var batch model.Batch;decode(t,r,&batch)
- first,_:=f.upload("blocked-input.png",110,map[string]any{"mode":"intelligent","batchId":batch.ID});f.complete(first)
- second,_:=f.upload("working-input.png",120,map[string]any{"mode":"intelligent","batchId":batch.ID});f.complete(second)
+ inputs:=f.declareInputs(batch.ID,"blocked-input.png","working-input.png")
+ first,_:=f.upload("blocked-input.png",110,map[string]any{"mode":"intelligent","batchId":batch.ID,"inputId":inputs["blocked-input.png"]});f.complete(first)
+ second,_:=f.upload("working-input.png",120,map[string]any{"mode":"intelligent","batchId":batch.ID,"inputId":inputs["working-input.png"]});f.complete(second)
  r=f.json("GET","/batches/"+batch.ID,"",nil,200);var before model.BatchDetail;decode(t,r,&before)
  r=f.json("POST","/batches/"+batch.ID+"/plans","prepare-partial-plan",map[string]any{"expectedRevision":before.Batch.Revision,"items":[]any{map[string]any{"uploadId":first.ID,"family":"Blocked"},map[string]any{"uploadId":second.ID,"family":"Available"}}},201);var plan model.Plan;decode(t,r,&plan)
  occupied,e:=f.s.Root.OpenFile(path.Join("libraries",f.library,plan.Items[0].RelativePath),os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);if e!=nil{t.Fatal(e)};if _,e=occupied.Write([]byte("synthetic external occupant"));e!=nil{t.Fatal(e)};if e=occupied.Close();e!=nil{t.Fatal(e)}

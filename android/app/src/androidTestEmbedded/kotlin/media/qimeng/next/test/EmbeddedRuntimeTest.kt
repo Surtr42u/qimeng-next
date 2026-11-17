@@ -25,18 +25,21 @@ class EmbeddedRuntimeTest {
             val first = runtime.start()
             assertEquals("https://127.0.0.1:18431/", first.baseUrl)
             assertTrue(first.certificateDerBase64.isNotBlank())
-            graph.media.login(first.baseUrl, first.bootstrapToken, first.certificateDerBase64, first.instanceId)
-            runtime.confirmInstance(first.instanceId)
+            application.localConnection.connect(forceLogin = true)
             val library = graph.media.createLibrary("Embedded synthetic cloud library", false)
             assertTrue(graph.media.libraries().any { it.id == library.id })
 
             runtime.stop()
             assertEquals(RuntimePhase.STOPPED, runtime.status.value.phase)
+            assertFalse(runtime.shouldRestore)
+            application.localConnection.restoreSelected()
+            assertEquals("Returning to the app must respect an explicit stop", RuntimePhase.STOPPED, runtime.status.value.phase)
             val second = runtime.start()
             assertEquals(first.instanceId, second.instanceId)
             assertNotEquals("Every native restart must replace its ephemeral certificate", first.certificateDerBase64, second.certificateDerBase64)
-            graph.media.login(second.baseUrl, second.bootstrapToken, second.certificateDerBase64, second.instanceId)
-            runtime.confirmInstance(second.instanceId)
+            // Share the app coordinator with automatic pin refresh, so the test cannot race two logins.
+            application.localConnection.connect(forceLogin = false)
+            assertEquals(second.certificateDerBase64, graph.settings.certificateFor(graph.settings.session.value!!))
             assertTrue("Server persistence must survive process restart", graph.media.libraries().any { it.id == library.id })
         } finally { runtime.stop() }
     }

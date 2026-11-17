@@ -14,6 +14,8 @@ test('author source replacement keeps a failed clear draft and saves an explicit
   await expect(editor.getByRole('button', { name: 'synthetic-forum', exact: true })).toHaveAttribute('aria-pressed', 'false');
   state.authorSourceError = false;
   await editor.getByRole('button', { name: '保存来源', exact: true }).click();
+  await expect(editor.getByRole('button', { name: '保存来源', exact: true })).toBeDisabled();
+  await editor.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('来源已保存');
   expect(state.authorBodies.map(item => item.acquisitionSources)).toEqual([[], []]);
 });

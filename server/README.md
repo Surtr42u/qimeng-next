@@ -48,6 +48,7 @@ gofmt -w cmd internal
 go vet ./...
 go test -race -count=1 ./...
 go build -trimpath -o qimeng ./cmd/qimeng
+go build -trimpath -o qimeng-backup ./cmd/qimeng-backup
 ```
 
 测试使用云端临时根与合成 PNG，不依赖模型、旧仓服务、真实媒体或设备。各能力的实际编译、测试、发布与设备验收证据统一记录于 `docs/status.md`。本文件描述实现与契约，不替代云端通过记录。

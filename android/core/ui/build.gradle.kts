@@ -14,6 +14,7 @@ dependencies {
     api(libs.compose.material3)
     api(libs.compose.icons)
     implementation(libs.core)
+    implementation(libs.vico.compose)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.test)

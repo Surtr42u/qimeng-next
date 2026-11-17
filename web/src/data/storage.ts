@@ -1,13 +1,17 @@
 let database: Promise<IDBDatabase> | undefined;
+export type DeviceStore = 'uploads' | 'events' | 'upload_batches';
 function open() {
   if (!database)
     database = new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("qimeng-device-state", 1);
+      const request = indexedDB.open("qimeng-device-state", 2);
+      let abandoned = false;
       request.onupgradeneeded = () => {
-        request.result.createObjectStore("uploads", { keyPath: "id" });
-        request.result.createObjectStore("events", { keyPath: "id" });
+        for (const store of ['uploads', 'events', 'upload_batches']) {
+          if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store, { keyPath: 'id' });
+        }
       };
       request.onsuccess = () => {
+        if (abandoned) { request.result.close(); return; }
         request.result.onversionchange = () => {
           request.result.close();
           database = undefined;
@@ -19,6 +23,7 @@ function open() {
         reject(request.error);
       };
       request.onblocked = () => {
+        abandoned = true;
         database = undefined;
         reject(new Error("请关闭其他旧版影库标签页后重试存储"));
       };
@@ -26,7 +31,7 @@ function open() {
   return database;
 }
 export async function localReadAll<T>(
-  store: "uploads" | "events",
+  store: DeviceStore,
 ): Promise<T[]> {
   const db = await open();
   return new Promise((resolve, reject) => {
@@ -39,7 +44,7 @@ export async function localReadAll<T>(
   });
 }
 export async function localWrite(
-  store: "uploads" | "events",
+  store: DeviceStore,
   item: { id: string } | string,
 ) {
   const db = await open();
@@ -51,6 +56,22 @@ export async function localWrite(
     transaction.oncomplete = () => resolve();
     transaction.onabort = () =>
       reject(transaction.error ?? new Error("本地写入被中止"));
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+/** A picked input list and its queue rows become recoverable in the same transaction. */
+export async function localWriteGroup(records: readonly { store: DeviceStore; item: { id: string } | string }[]) {
+  if (!records.length) return;
+  const db = await open();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction([...new Set(records.map(record => record.store))], 'readwrite');
+    for (const record of records) {
+      const store = transaction.objectStore(record.store);
+      if (typeof record.item === 'string') store.delete(record.item); else store.put(record.item);
+    }
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error ?? new Error('本地批次写入被中止'));
     transaction.onerror = () => reject(transaction.error);
   });
 }

@@ -32,8 +32,8 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  if e:=s.uploadsAllowed(ctx);e!=nil{return model.Upload{},e}
  library,e:=s.library(ctx,in.LibraryID);if e!=nil{return model.Upload{},e};if !library.Enabled{return model.Upload{},Fail(409,"library_disabled","目标库已停用，不能接收新上传。")}
  if !domain.ValidName(in.FileName)||!domain.ValidMediaPath(in.RelativeDirectory)||in.Size<1||len(in.Note)>10000||(in.Mode!="ordinary"&&in.Mode!="intelligent"){return model.Upload{},Fail(400,"invalid_upload","上传名称、目标、长度或模式无效。")}
- if in.OriginalFileName==""{in.OriginalFileName=in.FileName};if len(in.OriginalFileName)>1024||strings.ContainsAny(in.OriginalFileName,"/\\:\x00"){return model.Upload{},Fail(400,"invalid_source_name","原始名称只能是文件名，不能包含绝对路径。")};sourcePath:=strings.ReplaceAll(in.SourceRelativePath,"\\","/");if len(sourcePath)>4096||strings.ContainsAny(sourcePath,":\x00")||strings.HasPrefix(sourcePath,"/")||sourcePath==".."||strings.HasPrefix(sourcePath,"../")||(sourcePath!=""&&path.Clean(sourcePath)!=sourcePath){return model.Upload{},Fail(400,"invalid_source_path","来源线索必须是相对路径。")}
- _,mime,supported:=domain.MediaType(in.FileName);if !supported{return model.Upload{},Fail(415,"unsupported_media","不支持该文件类型；不自动解压文件。")};if in.MimeType!=mime{return model.Upload{},Fail(415,"mime_mismatch","声明的 MIME 与文件扩展名不一致。")}
+ if in.OriginalFileName==""&&in.BatchID==""{in.OriginalFileName=in.FileName};if len(in.OriginalFileName)>1024||strings.ContainsAny(in.OriginalFileName,"/\\:\x00"){return model.Upload{},Fail(400,"invalid_source_name","原始名称只能是文件名，不能包含绝对路径。")};sourcePath:=strings.ReplaceAll(in.SourceRelativePath,"\\","/");if len(sourcePath)>4096||strings.ContainsAny(sourcePath,":\x00")||strings.HasPrefix(sourcePath,"/")||sourcePath==".."||strings.HasPrefix(sourcePath,"../")||(sourcePath!=""&&path.Clean(sourcePath)!=sourcePath){return model.Upload{},Fail(400,"invalid_source_path","来源线索必须是相对路径。")};in.SourceRelativePath=sourcePath
+ _,mime,supported:=domain.MediaType(in.FileName);if !supported{return model.Upload{},Fail(415,"unsupported_media","不支持该文件类型；不自动解压文件。")};if !domain.CompatibleMediaDeclaration(in.MimeType,mime){return model.Upload{},Fail(415,"mime_mismatch","声明的 MIME 与文件扩展名不一致。")};in.MimeType=mime
  if in.ExpectedHash!=""{if _,e:=hex.DecodeString(in.ExpectedHash);e!=nil||len(in.ExpectedHash)!=64{return model.Upload{},Fail(400,"invalid_hash","源摘要必须是完整 SHA-256。")};in.ExpectedHash=strings.ToLower(in.ExpectedHash)}
  if in.Family!=""&&!domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","自动命名基名无效。")}
  if in.AcquisitionSources==nil{in.AcquisitionSources=[]string{}};in.AcquisitionSources,e=cleanStrings(in.AcquisitionSources,100,2000);if e!=nil{return model.Upload{},e};taxonomy:=model.Asset{};if e=s.resolveTaxonomy(ctx,&taxonomy,in.SourceIDs,in.CharacterIDs);e!=nil{return model.Upload{},e};in.SourceIDs=taxonomy.SourceIDs;in.CharacterIDs=taxonomy.CharacterIDs
@@ -47,7 +47,9 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
   if in.Mode!="ordinary"{return model.Upload{},Fail(400,"replacement_mode","明确替换须使用普通上传通道。")};a,e:=s.Asset(ctx,in.ReplaceAssetID);if e!=nil{return model.Upload{},e};if a.LibraryID!=in.LibraryID||a.Trashed||a.ContentVersion!=in.ExpectedContentVersion{return model.Upload{},Fail(409,"replacement_conflict","替换对象或内容版本已变化。")}
  }
  if in.Mode=="intelligent"&&in.BatchID==""{return model.Upload{},Fail(400,"batch_required","智能整理须先创建接收批次。")}
+ if in.BatchID==""&&in.InputID!=""{return model.Upload{},Fail(400,"input_batch_required","原始输入ID必须属于已登记的批次。")}
  if in.BatchID!=""{
+  if e=s.validateUploadInput(ctx,&in);e!=nil{return model.Upload{},e}
   b,e:=s.Batch(ctx,in.BatchID);if e!=nil{return model.Upload{},e};if b.LibraryID!=in.LibraryID||b.Mode!=in.Mode||b.State=="cancelled"{return model.Upload{},Fail(409,"batch_mismatch","批次目标或状态不允许接收文件。")};var count int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM uploads WHERE batch_id=?",in.BatchID).Scan(&count);e!=nil{return model.Upload{},e};if count>=MaxBatchItems{return model.Upload{},Fail(409,"batch_limit","每批最多接收 100 项。")}
  }
  var active int;var reserved int64
@@ -60,7 +62,13 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  if errors.Is(e,os.ErrExist){if e=s.safe(uploadPath(u.ID));e!=nil{return u,e};info,se:=s.Root.Stat(uploadPath(u.ID));if se!=nil{return u,se};if info.Size()!=0{return u,Fail(409,"upload_orphan_conflict","同操作残留内容需要核对。")};f,e=s.Root.OpenFile(uploadPath(u.ID),os.O_WRONLY,0600)}
  if e!=nil{return u,e};if e=f.Sync();e!=nil{f.Close();return u,e};if e=f.Close();e!=nil{return u,e};if e=s.syncParent(uploadPath(u.ID));e!=nil{return u,e}
  q,e:=w.Q();if e!=nil{return u,e}
- if u.BatchID==""{b:=newBatch(w.ID("batch"),in.LibraryID,in.Mode,in.FileName,0);u.BatchID=b.ID;if e=store.SaveBatch(ctx,q,b);e!=nil{return u,e}}
+ if u.BatchID==""{
+  b:=newBatch(w.ID("batch"),in.LibraryID,in.Mode,in.FileName,0);u.BatchID=b.ID;u.InputID=w.ID("input")
+  if e=store.SaveBatch(ctx,q,b);e!=nil{return u,e}
+  input:=model.IntakeInput{ID:u.InputID,OriginalFileName:u.OriginalFileName,SourceRelativePath:u.SourceRelativePath,Size:&u.Size,ExpectedHash:u.ExpectedHash}
+  if _,e=sealIntakeInputs(ctx,q,b,[]model.IntakeInput{input});e!=nil{return u,e}
+ }
+ if e=bindUploadInput(ctx,q,u);e!=nil{return u,e}
  if e=store.SaveUpload(ctx,q,u);e!=nil{return u,e};if e=s.refreshBatch(ctx,q,u.BatchID);e!=nil{return u,e};return u,nil
 }
 func(s *Service)AppendUpload(ctx context.Context,w *Write,id string,offset int64,body []byte)(model.Upload,error){
@@ -96,7 +104,6 @@ func(s *Service)CompleteUpload(ctx context.Context,w *Write,id string)(model.Upl
 }
 func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.PlanItem)(model.UploadResult,error){
  if e:=s.uploadsAllowed(ctx);e!=nil{return model.UploadResult{},e}
- if u.OriginalFileName==""{u.OriginalFileName=u.FileName}
  if e:=s.verify(uploadPath(u.ID),u.Hash,u.Size);e!=nil{return model.UploadResult{},e}
  var duplicate int;if e:=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM assets WHERE hash=? AND size=? AND id!=?",u.Hash,u.Size,u.ReplaceAssetID).Scan(&duplicate);e!=nil{return model.UploadResult{},e}
  if duplicate>0&&u.ReplaceAssetID==""{u.State="duplicate";u.ErrorCode="duplicate_content";u.ErrorMessage="已有相同内容，请由用户决定本项处理；原文件保留。";q,e:=w.Q();if e!=nil{return model.UploadResult{},e};if e=store.SaveUpload(ctx,q,u);e!=nil{return model.UploadResult{},e};if e=s.refreshBatch(ctx,q,u.BatchID);e!=nil{return model.UploadResult{},e};return model.UploadResult{Upload:u},nil}
@@ -127,7 +134,7 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
 }
 func safeNote(note string)string{v:=strings.Map(func(r rune)rune{if r<32||strings.ContainsRune("/\\<>:\"|?*\ufffd",r){return '_'};return r},note);v=strings.Trim(v," .");if len([]rune(v))>80{v=string([]rune(v)[:80])};return v}
 func(s *Service)CancelUpload(ctx context.Context,w *Write,id string)error{
- u,e:=s.Upload(ctx,w.Principal,id);if e!=nil{return e};if e=Authorize(w.Principal,"ingest",u.BatchID);e!=nil{return e};if u.State=="ingested"{return Fail(409,"already_ingested","取消上传不会删除已入库媒体。")};u.State="cancelled";q,e:=w.Q();if e!=nil{return e};if e=store.SaveUpload(ctx,q,u);e!=nil{return e};return s.refreshBatch(ctx,q,u.BatchID)
+ u,e:=s.Upload(ctx,w.Principal,id);if e!=nil{return e};if e=Authorize(w.Principal,"ingest",u.BatchID);e!=nil{return e};if u.State=="ingested"{return Fail(409,"already_ingested","取消上传不会删除已入库媒体。")};if u.ErrorCode=="publication_pending"{return Fail(409,"publication_pending","发布已经开始，须先恢复并核对结果，不能用取消覆盖发布事实。")};u.State="cancelled";q,e:=w.Q();if e!=nil{return e};if e=store.SaveUpload(ctx,q,u);e!=nil{return e};return s.refreshBatch(ctx,q,u.BatchID)
 }
 func(s *Service)directoryNames(ctx context.Context,library,dir string)([]string,error){
  rows,e:=s.DB.DB.QueryContext(ctx,"SELECT relative_path FROM assets WHERE library_id=? AND trashed=0 ORDER BY relative_path",library);if e!=nil{return nil,e};names:=[]string{};seen:=map[string]bool{};normalized:=path.Clean(dir)

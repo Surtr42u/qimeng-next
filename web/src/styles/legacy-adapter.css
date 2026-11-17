@@ -44,6 +44,7 @@
 .layout .header .qm-segment button[aria-selected=true] { color: var(--qm-primary); background: transparent; box-shadow: none; }
 .layout .search input { min-height: 0; }
 .layout .shell-search-submit { position: absolute; inset: 0 0 0 auto; width: 44px; }
+.layout .shell-search-submit .search-icon { top: 50%; transform: translateY(-50%); }
 .layout .pop-suggest-item[aria-selected=true] { background: var(--qm-hover); }
 .layout .win-btn { display: flex; align-items: center; justify-content: center; }
 .page-heading { margin: 0 0 16px; }

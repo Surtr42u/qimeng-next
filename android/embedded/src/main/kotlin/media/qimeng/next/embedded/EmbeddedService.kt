@@ -59,6 +59,7 @@ class EmbeddedService : Service() {
             return START_NOT_STICKY
         }
         if (running.compareAndSet(false, true)) {
+            HostState.ownerActive.set(true)
             stopping.set(false)
             stopWarning = null
             generation = HostState.generation.incrementAndGet()
@@ -91,12 +92,13 @@ class EmbeddedService : Service() {
             val receipt = File(runtime, "ready.json")
             if (receipt.exists() && !receipt.delete()) fail("无法清理上次本机启动回执")
             val launchId = UUID.randomUUID().toString()
+            val storageRoots = EmbeddedFileAccess.roots(this, media)
             val builder = ProcessBuilder(runner.absolutePath, server.absolutePath).directory(control).redirectErrorStream(true)
             builder.environment().apply {
                 keys.filter { it.startsWith("QIMENG_") }.toList().forEach(::remove)
                 put("QIMENG_LISTEN", HostState.LISTEN)
                 put("QIMENG_DATA_DIR", control.absolutePath)
-                put("QIMENG_STORAGE_ROOTS", JSONObject().put("local", media.absolutePath).toString())
+                put("QIMENG_STORAGE_ROOTS", storageRoots)
                 put("QIMENG_TIMEZONE", TimeZone.getDefault().id)
                 put("QIMENG_ADMIN_TOKEN", token)
                 put("QIMENG_FFMPEG", File(nativeRoot, "libffmpeg_cli.so").absolutePath)
@@ -125,7 +127,10 @@ class EmbeddedService : Service() {
                     if (declared.isBlank() || (secrets.confirmedInstance != null && secrets.confirmedInstance != declared)) fail("本机实例身份已改变，请先核对数据恢复结果")
                     if (httpInstance(certificate) != declared || !child.isAlive) fail("本机服务身份核对未通过")
                     secrets.confirm(declared)
-                    if (HostState.generation.get() == ticket) HostState.certificateDerBase64 = certificate
+                    if (HostState.generation.get() == ticket) {
+                        HostState.certificateDerBase64 = certificate
+                        HostState.storageRoots = storageRoots
+                    }
                     instanceId = declared
                     break
                 }
@@ -147,6 +152,7 @@ class EmbeddedService : Service() {
             }
             process.compareAndSet(child, null)
             running.set(false)
+            if (HostState.generation.get() == ticket) HostState.ownerActive.set(false)
             if (stopping.get()) publish(ticket, stoppedStatus())
             main.post { stopSelf(startId) }
         }

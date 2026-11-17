@@ -23,7 +23,7 @@ test('settings keep the old action placement on desktop and narrow screens', asy
 test('a completed settings snapshot does not erase edits made while the request was pending', async ({ page }) => {
   const fixture = await mockLibrary(page);
   await page.goto('/settings');
-  const edge = page.getByLabel('缩略图长边', { exact: true });
+  const edge = page.getByRole('spinbutton', { name: /缩略图长边/ });
   await edge.fill('512');
   fixture.holdSettings = true;
   await page.getByRole('button', { name: '保存设置', exact: true }).click();

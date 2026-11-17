@@ -232,6 +232,21 @@ export function useCancelBatch(id: string) {
     onSuccess: invalidateLibrary,
   });
 }
+export function useCancelBatchInput(id: string) {
+  const attempts = useRef(new Map<string, string>());
+  return useMutation({
+    mutationFn: ({ inputId, fingerprint }: { inputId: string; fingerprint: string }) => {
+      const signature = `${id}:${inputId}:${fingerprint}`;
+      const key = attempts.current.get(signature) ?? newId();
+      attempts.current.set(signature, key);
+      return read(api.POST('/batches/{id}/inputs/{inputId}/cancel', {
+        params: { path: { id, inputId }, header: operationHeaders(key) },
+        body: { manifestFingerprint: fingerprint },
+      }));
+    },
+    onSuccess: invalidateLibrary,
+  });
+}
 export function useTrash() {
   const key = useRemoteKey();
   return useInfiniteQuery({

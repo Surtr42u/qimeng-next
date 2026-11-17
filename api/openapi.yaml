@@ -665,6 +665,28 @@ paths:
       responses:
         '200': {description: Bounded context and next actions, content: {application/json: {schema: {$ref: '#/components/schemas/TaskContext'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/inputs:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setBatchInputs
+      description: Register and seal the complete original selection before any explicit-batch upload. Stable input identities and order remain immutable; missing uploads stay visible and cannot count as completed. A new selection uses a new batch.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BatchInputsSet'}}}}
+      responses:
+        '200': {description: Sealed original input manifest, content: {application/json: {schema: {$ref: '#/components/schemas/Batch'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/inputs/{inputId}/cancel:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+      - {name: inputId, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: cancelBatchInput
+      description: Retains the original manifest entry and records cancellation. Cancels a bound unpublished upload through the same use case; published or in-progress publication cannot be undone here.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BatchInputCancel'}}}}
+      responses:
+        '200': {description: Original input with an explicit cancelled disposition, content: {application/json: {schema: {$ref: '#/components/schemas/BatchInput'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /batches/{id}/research:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
@@ -755,11 +777,41 @@ paths:
         '200': {description: Caller-owned durable receipt, content: {application/json: {schema: {$ref: '#/components/schemas/OperationReceipt'}}}}
         default: {$ref: '#/components/responses/Error'}
   /backups:
+    get:
+      operationId: listBackups
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Administrator checkpoint and export records, content: {application/json: {schema: {$ref: '#/components/schemas/BackupPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createBackupManifest
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
         '201': {description: Consistent database snapshot and original-version manifest; not proof of independent backup, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /backups/{id}:
+    get:
+      operationId: getBackup
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Durable export progress and integrity metadata, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /backups/{id}/export:
+    post:
+      operationId: exportBackup
+      description: Build one complete portable archive asynchronously. Includes database facts and exact current or recycled originals plus committed prefixes of uncompleted uploads. A changed or missing snapshot input fails the export. Downloading is not independent-backup proof. Reuse the same key after a timeout and read the backup record.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: Export queued or its original receipt, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /backups/{id}/archive:
+    get:
+      operationId: downloadBackupArchive
+      description: Administrator-only completed qnext archive. Byte ranges support resumable transfer. Verify archiveHash and restore using the offline backup command into a new empty destination.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Complete qnext archive, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '206': {description: Requested archive byte range, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
   /migration/v2/imports:
     get:
@@ -1732,6 +1784,7 @@ components:
         characterIds: {type: array, items: {type: string}}
         metadataSource: {type: string, enum: [upload, human, ai, scanner, migration]}
         contentMtime: {type: string, format: date-time}
+        fileDate: {type: string, format: date-time, nullable: true, description: 'Authoritative current-file date for sorting and grouping; verified contentMtime first and sourceMtime only when unavailable. Never falls back to added time.'}
         sourceMtime: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
@@ -1874,10 +1927,11 @@ components:
         originalFileName: {type: string, maxLength: 1024, description: Original source basename retained even when the chosen destination filename differs}
         sourceRelativePath: {type: string, maxLength: 4096, description: Source-relative clue only; absolute paths and traversal are rejected}
         size: {type: integer, format: int64, minimum: 1}
-        mimeType: {type: string}
+        mimeType: {type: string, description: Provider MIME declaration; application/octet-stream explicitly means unknown. Go normalizes compatible aliases and verifies actual bytes before publication.}
         expectedHash: {type: string, pattern: '^[0-9a-fA-F]{64}$', description: Optional complete source SHA-256 snapshot. When provided the server must match it before staging or publishing.}
         mode: {type: string, enum: [ordinary, intelligent]}
         batchId: {type: string}
+        inputId: {type: string, description: Required for an explicit batch; references its previously sealed original input manifest}
         sourceMtime: {type: string, format: date-time}
         relativeDirectory: {type: string, maxLength: 500}
         authorId: {type: string}
@@ -1921,11 +1975,15 @@ components:
       allOf:
         - {$ref: '#/components/schemas/BatchCreate'}
         - type: object
-          required: [id, state, revision, researchCalls, backupState, cleanupState, createdAt, updatedAt]
+          required: [id, state, revision, manifestRevision, manifestState, manifestFingerprint, expectedInputs, researchCalls, backupState, cleanupState, createdAt, updatedAt]
           properties:
             id: {type: string}
             state: {type: string, enum: [receiving, waiting_executor, ready, partial, completed, cancelled]}
             revision: {type: integer, format: int64}
+            manifestRevision: {type: integer, format: int64}
+            manifestState: {type: string, enum: [open, sealed, legacy_unverified]}
+            manifestFingerprint: {type: string}
+            expectedInputs: {type: integer, minimum: 0, maximum: 100}
             researchCalls: {type: integer}
             backupState: {type: string, enum: [not_covered, awaiting_external_backup]}
             cleanupState: {type: string, enum: [retained]}
@@ -1940,11 +1998,44 @@ components:
         candidates: {type: array, items: {$ref: '#/components/schemas/ResearchCandidate'}}
     BatchDetail:
       type: object
-      required: [batch, items, plans]
+      required: [batch, inputs, items, plans]
       properties:
         batch: {$ref: '#/components/schemas/Batch'}
+        inputs: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/BatchInput'}}
         items: {type: array, items: {$ref: '#/components/schemas/BatchItem'}}
         plans: {type: array, items: {$ref: '#/components/schemas/PlanSummary'}}
+    IntakeInput:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string, pattern: '^[A-Za-z0-9_-]{8,128}$'}
+        nameState: {type: string, enum: [known, unavailable], default: known, description: known requires a real originalFileName; unavailable must omit it and retain the selected input}
+        originalFileName: {type: string, minLength: 1, maxLength: 1024}
+        sourceRelativePath: {type: string, maxLength: 4096}
+        size: {type: integer, format: int64, minimum: 1, description: Omit only when the trusted picker cannot determine the source length yet}
+        expectedHash: {type: string, pattern: '^[0-9a-fA-F]{64}$'}
+    BatchInput:
+      allOf:
+        - {$ref: '#/components/schemas/IntakeInput'}
+        - type: object
+          required: [ordinal, state]
+          properties:
+            ordinal: {type: integer, minimum: 0, maximum: 99}
+            state: {type: string, enum: [pending, receiving, staged, ingested, duplicate, cancelled, failed]}
+            uploadId: {type: string}
+            assetId: {type: string}
+            errorCode: {type: string}
+    BatchInputsSet:
+      type: object
+      required: [expectedManifestRevision, inputs]
+      properties:
+        expectedManifestRevision: {type: integer, format: int64, minimum: 1}
+        inputs: {type: array, minItems: 1, maxItems: 100, items: {$ref: '#/components/schemas/IntakeInput'}}
+    BatchInputCancel:
+      type: object
+      required: [manifestFingerprint]
+      properties:
+        manifestFingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
     ResearchCandidate:
       type: object
       required: [sourceUrl, evidence]
@@ -2012,12 +2103,13 @@ components:
             items: {type: array, items: {$ref: '#/components/schemas/PlanItem'}}
     TaskContext:
       type: object
-      required: [batch, policyVersion, nextActions, remainingResearchCalls, items, limitations]
+      required: [batch, policyVersion, nextActions, remainingResearchCalls, inputs, items, limitations]
       properties:
         batch: {$ref: '#/components/schemas/Batch'}
         policyVersion: {type: string}
         nextActions: {type: array, items: {type: string}}
         remainingResearchCalls: {type: integer}
+        inputs: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/BatchInput'}}
         items: {type: array, items: {$ref: '#/components/schemas/BatchItem'}}
         nextCursor: {type: string}
         limitations: {type: array, items: {type: string}}
@@ -2143,11 +2235,24 @@ components:
       required: [id, state, createdAt, snapshotHash, assetCount, manifestHash]
       properties:
         id: {type: string}
-        state: {type: string, enum: [awaiting_external_backup]}
+        state: {type: string, enum: [awaiting_external_backup, snapshot_not_included]}
         createdAt: {type: string, format: date-time}
         snapshotHash: {type: string}
         assetCount: {type: integer}
         manifestHash: {type: string}
+        exportState: {type: string, enum: [not_started, queued, running, completed, failed, interrupted, unavailable]}
+        exportError: {type: string, description: Stable non-sensitive failure code; never a filesystem path}
+        archiveHash: {type: string, description: SHA-256 of the completed archive}
+        archiveBytes: {type: integer, format: int64, minimum: 0}
+        exportedFiles: {type: integer, minimum: 0}
+        totalFiles: {type: integer, minimum: 0}
+        exportedAt: {type: string, format: date-time}
+    BackupPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Backup'}}
+        nextCursor: {type: string}
     V2Import:
       type: object
       required: [id, sourceId, sha256, bytes, createdAt, mediaCount, authorCount, eventCount, fragmentCount, sourceHashesAvailable]

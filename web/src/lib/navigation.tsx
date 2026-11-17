@@ -35,7 +35,7 @@ export function usePageRestoration() {
     const saved = direction === "POP" ? positions.get(key) : undefined;
     let cancelled = false;
     let observer: ResizeObserver | undefined;
-    const container = document.querySelector<HTMLElement>('[data-scroll-root]');
+    const container = document.querySelector<HTMLElement>("[data-scroll-root]");
     const restore = () => {
       if (cancelled) return;
       (container ?? window).scrollTo({
@@ -61,7 +61,10 @@ export function usePageRestoration() {
     restore();
     // Cached lists normally restore immediately; delayed image layout can enlarge the document afterwards.
     observer = new ResizeObserver(restore);
-    if (saved && !cancelled) observer.observe(container?.querySelector('[data-route-surface]') ?? document.body);
+    if (saved && !cancelled)
+      observer.observe(
+        container?.querySelector("[data-route-surface]") ?? document.body,
+      );
     const cancel = () => {
       cancelled = true;
       observer?.disconnect();
@@ -87,7 +90,7 @@ export function usePageRestoration() {
     };
   }, [key, direction, location.pathname]);
   useEffect(() => {
-    const container = document.querySelector<HTMLElement>('[data-scroll-root]');
+    const container = document.querySelector<HTMLElement>("[data-scroll-root]");
     const save = () => {
       const focused =
         document.activeElement?.closest<HTMLAnchorElement>("a[href]");

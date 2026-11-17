@@ -13,7 +13,7 @@ export const profileFieldLabels: Record<keyof ProfileValues, string> = {
   remark: "特殊情况备注",
   note: "私人备注",
   accounts: "公开账号与发布入口",
-  identityStatus: '身份状态',
+  identityStatus: "身份状态",
 };
 export const profileBlockTitles = {
   x: "X 公开资料",
@@ -30,7 +30,7 @@ export const profileFieldNames = {
     "avatarSourceUrl",
   ],
   basic: ["publicName", "summary", "remark", "note"],
-  accounts: ["accounts", 'identityStatus'],
+  accounts: ["accounts", "identityStatus"],
 } satisfies Record<string, (keyof ProfileValues)[]>;
 
 const equal = (left: unknown, right: unknown) =>

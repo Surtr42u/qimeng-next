@@ -39,7 +39,7 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await expect(page.getByRole('heading', { name: '合成执行器', exact: true })).toBeVisible();
   await expect(page.getByLabel('一次性显示的接入凭据')).toHaveCount(0);
   await page.getByRole('button', { name: '撤销此接入' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: '确认', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: '确认', exact: true }).click();
   await page.getByLabel('接入状态').selectOption('revoked');
   await expect(page.getByText('已撤销', { exact: true })).toBeVisible();
 });

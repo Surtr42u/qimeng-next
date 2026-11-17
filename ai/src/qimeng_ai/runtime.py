@@ -73,6 +73,8 @@ class Runtime:
         ])
         from .files import tool_definitions
         result.extend(tool_definitions())
+        from .intake import tool_definitions as intake_definitions
+        result.extend(intake_definitions())
         from .research import tool_definitions as research_definitions
         result.extend(research_definitions())
         from .delegation import tool_definitions as delegation_definitions
@@ -140,7 +142,7 @@ class Runtime:
                     "discovery": "full", "permissions": sorted(self.config.permissions),
                     "tools": [{key: tool[key] for key in ("name", "description", "scope", "readOnly")}
                               for tool in self.tools()],
-                    "workflow": ["platform.permissions", "task.start", "task.context", "files.search", "upload.file", "research.materials", "research.submit", "naming.suggest", "naming.preview",
+                    "workflow": ["platform.permissions", "task.start", "task.context", "intake.register", "upload.file", "research.materials", "research.submit", "naming.suggest", "naming.preview",
                                  "plan.prepare", "plan.read", "plan.commit", "task.read"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",
                               "计划在Go服务端持久化；用原计划ID和fingerprint提交。",
@@ -162,6 +164,9 @@ class Runtime:
         if name == "research.probe":
             from .research import probe
             return probe(self, arguments)
+        if name == "intake.register":
+            from .intake import register
+            return register(self, arguments)
         if name == "platform.artifact.read":
             from .research import read_artifact
             return read_artifact(self, arguments["artifactRef"])

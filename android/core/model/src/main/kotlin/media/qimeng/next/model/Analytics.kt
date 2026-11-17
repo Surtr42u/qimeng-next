@@ -16,5 +16,9 @@ data class ReviewHour(val hour: Int, val views: Long, val seconds: Long, val ima
 data class InterestChange(val kind: String, val id: String, val name: String, val currentShare: Double, val previousShare: Double,
     val changePoints: Double, val currentViews: Long, val previousViews: Long)
 data class BrowsingReview(val range: String, val totalSeconds: Long, val firstViews: Long, val returnViews: Long, val distinctAssets: Int, val activeDays: Int,
-    val comparisonAvailable: Boolean, val hours: List<ReviewHour>, val changes: List<InterestChange>)
-data class AnalyticsReport(val overview: ActivityOverview, val trends: List<TrendPoint>, val top: Map<String, List<ActivityRank>>)
+    val comparisonAvailable: Boolean, val hours: List<ReviewHour>, val changes: List<InterestChange>,
+    val fromDay: String, val toDay: String, val previousFromDay: String, val previousToDay: String,
+    val viewCount: Long, val previousViewCount: Long, val imageSeconds: Long, val animatedSeconds: Long, val videoSeconds: Long)
+data class TopInterest(val kind: String, val id: String, val name: String, val views: Long)
+data class AnalyticsReport(val overview: ActivityOverview, val trends: List<TrendPoint>, val top: Map<String, List<ActivityRank>>,
+    val interests: List<TopInterest>)

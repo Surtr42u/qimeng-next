@@ -24,6 +24,7 @@
   "createUpload": {"tool": "upload.prepare", "scope": "ingest"},
   "completeUpload": {"tool": "upload.complete", "scope": "ingest"},
   "getBatch": {"tool": "task.read", "scope": "read"},
+  "cancelBatchInput": {"tool": "intake.cancel", "scope": "ingest"},
   "listBatches": {"tool": "task.query", "scope": "read"},
   "getTaskContext": {"tool": "task.context", "scope": "read"},
   "submitResearch": {"tool": "research.submit", "scope": "research"},

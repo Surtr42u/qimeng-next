@@ -26,7 +26,8 @@ export function syntheticAsset(index: number): Asset {
     likeCount: 0,
     note: "",
     createdAt: "2026-01-01T00:00:00Z",
-    sourceMtime: '2026-01-01T00:00:00Z',
+    sourceMtime: "2026-01-01T00:00:00Z",
+    fileDate: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     contentUrl: `/api/v1/assets/synthetic-${index}/content`,
     thumbnailUrl: `/api/v1/assets/synthetic-${index}/thumbnail`,
@@ -60,14 +61,23 @@ export async function mockLibrary(page: Page) {
     holdPreference: false,
     releasePreference: undefined as (() => void) | undefined,
     authorRevision: 1,
-    authorSources: ['synthetic-forum'],
+    authorSources: ["synthetic-forum"],
     authorSourceError: false,
-    authorBodies: [] as components['schemas']['AuthorUpdate'][],
+    authorBodies: [] as components["schemas"]["AuthorUpdate"][],
     facetRequests: [] as URL[],
-    settings: { revision: 1, scan: { workers: 2, thumbEdge: 800 }, upload: { autoAccept: true }, effectiveScanWorkers: 2, maxChunkBytes: 8 * 1024 * 1024, maxActiveUploads: 4, maxBatchItems: 100, sourceCleanupEnabled: false },
+    settings: {
+      revision: 1,
+      scan: { workers: 2, thumbEdge: 800 },
+      upload: { autoAccept: true },
+      effectiveScanWorkers: 2,
+      maxChunkBytes: 8 * 1024 * 1024,
+      maxActiveUploads: 4,
+      maxBatchItems: 100,
+      sourceCleanupEnabled: false,
+    },
     holdSettings: false,
     releaseSettings: undefined as (() => void) | undefined,
-    settingsBodies: [] as components['schemas']['SettingsUpdate'][],
+    settingsBodies: [] as components["schemas"]["SettingsUpdate"][],
   };
   const respond = (route: Route, body: unknown, status = 200) =>
     route.fulfill({
@@ -101,12 +111,20 @@ export async function mockLibrary(page: Page) {
         scopes: ["admin"],
         expiresAt: "2027-01-01T00:00:00Z",
       });
-    if (path === '/settings') {
-      if (method === 'PUT') {
+    if (path === "/settings") {
+      if (method === "PUT") {
         const body = route.request().postDataJSON();
         state.settingsBodies.push(body);
-        if (state.holdSettings) await new Promise<void>(resolve => { state.releaseSettings = resolve; });
-        state.settings = { ...state.settings, scan: body.scan, upload: body.upload, revision: state.settings.revision + 1 };
+        if (state.holdSettings)
+          await new Promise<void>((resolve) => {
+            state.releaseSettings = resolve;
+          });
+        state.settings = {
+          ...state.settings,
+          scan: body.scan,
+          upload: body.upload,
+          revision: state.settings.revision + 1,
+        };
       }
       return respond(route, state.settings);
     }
@@ -123,18 +141,108 @@ export async function mockLibrary(page: Page) {
           },
         ],
       });
-    if (path === '/storages') return respond(route, { items: [{ id: 'data', available: true }] });
-    if (path === '/acquisition-vocabulary') return respond(route, { revision: 1, sources: ['synthetic-forum', 'synthetic-a synthetic-b'], suggestions: ['synthetic-forum', 'synthetic-a', 'synthetic-b'] });
-    if (path.endsWith('/profile-summary')) return respond(route, { authorId: 'synthetic-author', xRevision: 0, biographyOriginal: '', biographyZh: '' });
-    if (path === '/search/suggestions') return respond(route, { items: [{ id: 'synthetic-author', type: 'author', name: '合成作者' }] });
-    if (path === '/assets/facets') {
+    if (path === "/storages")
+      return respond(route, { items: [{ id: "data", available: true }] });
+    if (path === "/acquisition-vocabulary")
+      return respond(route, {
+        revision: 1,
+        sources: ["synthetic-forum", "synthetic-a synthetic-b"],
+        suggestions: ["synthetic-forum", "synthetic-a", "synthetic-b"],
+      });
+    if (path.endsWith("/profile-summary"))
+      return respond(route, {
+        authorId: "synthetic-author",
+        xRevision: 0,
+        biographyOriginal: "",
+        biographyZh: "",
+      });
+    if (path === "/search/suggestions")
+      return respond(route, {
+        items: [{ id: "synthetic-author", type: "author", name: "合成作者" }],
+      });
+    if (path === "/assets/facets") {
       state.facetRequests.push(url);
-      const row = url.searchParams.get('row');
-      const items = row === 'partitions' ? [{ key: 'all', kind: 'partition', id: 'all', name: '全部', count: 72 }, { key: 'regular', kind: 'partition', id: 'regular', name: '常规', count: 72 }, { key: 'cos', kind: 'partition', id: 'cos', name: 'COS', count: 0 }]
-        : row === 'types' ? [{ key: 'all', kind: 'type', id: 'all', name: '全部', count: 72 }, { key: 'image', kind: 'type', id: 'image', name: '图片', count: 72 }, { key: 'video', kind: 'type', id: 'video', name: '视频', count: 0 }, { key: 'animated_image', kind: 'type', id: 'animated_image', name: '动图', count: 0 }]
-        : row === 'works' ? [{ key: 'opaque:synthetic-work', kind: 'source', id: 'synthetic-source', name: '合成作品', count: 72 }]
-        : [{ key: 'opaque:synthetic-role', kind: 'character', id: 'synthetic-character', name: '合成角色', count: 72 }];
-      return respond(route, { items, totalMatched: 72, totalOptions: items.length });
+      const row = url.searchParams.get("row");
+      const items =
+        row === "partitions"
+          ? [
+              {
+                key: "all",
+                kind: "partition",
+                id: "all",
+                name: "全部",
+                count: 72,
+              },
+              {
+                key: "regular",
+                kind: "partition",
+                id: "regular",
+                name: "常规",
+                count: 72,
+              },
+              {
+                key: "cos",
+                kind: "partition",
+                id: "cos",
+                name: "COS",
+                count: 0,
+              },
+            ]
+          : row === "types"
+            ? [
+                {
+                  key: "all",
+                  kind: "type",
+                  id: "all",
+                  name: "全部",
+                  count: 72,
+                },
+                {
+                  key: "image",
+                  kind: "type",
+                  id: "image",
+                  name: "图片",
+                  count: 72,
+                },
+                {
+                  key: "video",
+                  kind: "type",
+                  id: "video",
+                  name: "视频",
+                  count: 0,
+                },
+                {
+                  key: "animated_image",
+                  kind: "type",
+                  id: "animated_image",
+                  name: "动图",
+                  count: 0,
+                },
+              ]
+            : row === "works"
+              ? [
+                  {
+                    key: "opaque:synthetic-work",
+                    kind: "source",
+                    id: "synthetic-source",
+                    name: "合成作品",
+                    count: 72,
+                  },
+                ]
+              : [
+                  {
+                    key: "opaque:synthetic-role",
+                    kind: "character",
+                    id: "synthetic-character",
+                    name: "合成角色",
+                    count: 72,
+                  },
+                ];
+      return respond(route, {
+        items,
+        totalMatched: 72,
+        totalOptions: items.length,
+      });
     }
     if (path === "/tags")
       return respond(
@@ -149,11 +257,17 @@ export async function mockLibrary(page: Page) {
           : { items: ["晨光", "星空", "海岸"] },
       );
     if (path === "/authors" || path === "/authors/synthetic-author") {
-      if (method === 'PATCH') {
+      if (method === "PATCH") {
         const body = route.request().postDataJSON();
         state.authorBodies.push(body);
-        if (state.authorSourceError) return respond(route, { code: 'unavailable', message: '合成来源保存失败' }, 503);
-        if (body.acquisitionSources) state.authorSources = body.acquisitionSources;
+        if (state.authorSourceError)
+          return respond(
+            route,
+            { code: "unavailable", message: "合成来源保存失败" },
+            503,
+          );
+        if (body.acquisitionSources)
+          state.authorSources = body.acquisitionSources;
         state.authorRevision++;
       }
       const author = {
@@ -172,7 +286,10 @@ export async function mockLibrary(page: Page) {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       };
-      return respond(route, path === "/authors" ? { items: [author], totalMatched: 1 } : author);
+      return respond(
+        route,
+        path === "/authors" ? { items: [author], totalMatched: 1 } : author,
+      );
     }
     if (["/collections", "/batches", "/history", "/trash"].includes(path))
       return respond(route, { items: [], totalMatched: 0 });
@@ -200,7 +317,12 @@ export async function mockLibrary(page: Page) {
       return respond(route, {
         revision: state.preferenceRevision,
         weights: state.weights,
-        presets: { balanced: weights, familiar: { ...weights, recency: 0.25 }, explore: { ...weights, discovery: 0.3 }, fresh: { ...weights, freshness: 0.2 } },
+        presets: {
+          balanced: weights,
+          familiar: { ...weights, recency: 0.25 },
+          explore: { ...weights, discovery: 0.3 },
+          fresh: { ...weights, freshness: 0.2 },
+        },
       });
     }
     if (path === "/recommendations") {
@@ -272,16 +394,50 @@ export async function mockLibrary(page: Page) {
             views: 12,
             plays: 0,
             seconds: 120,
-            mediaTypes: [{ key: 'image', views: 12, plays: 0, seconds: 120 }, { key: 'animated_image', views: 0, plays: 0, seconds: 0 }, { key: 'video', views: 0, plays: 0, seconds: 0 }],
-            sources: [{ key: 'regular', views: 12, plays: 0, seconds: 120 }, { key: 'cos', views: 0, plays: 0, seconds: 0 }],
+            mediaTypes: [
+              { key: "image", views: 12, plays: 0, seconds: 120 },
+              { key: "animated_image", views: 0, plays: 0, seconds: 0 },
+              { key: "video", views: 0, plays: 0, seconds: 0 },
+            ],
+            sources: [
+              { key: "regular", views: 12, plays: 0, seconds: 120 },
+              { key: "cos", views: 0, plays: 0, seconds: 0 },
+            ],
           },
         ],
       });
-    if (['/stats/top-authors', '/stats/top-tags', '/stats/most-viewed'].includes(path)) {
+    if (
+      ["/stats/top-authors", "/stats/top-tags", "/stats/most-viewed"].includes(
+        path,
+      )
+    ) {
       const asset = state.assets[0]!;
-      const name = path.endsWith('top-authors') ? '合成作者' : path.endsWith('top-tags') ? '晨光' : asset.fileName;
-      const id = path.endsWith('top-authors') ? 'synthetic-author' : path.endsWith('top-tags') ? 'synthetic-tag' : asset.id;
-      return respond(route, { items: [{ id, name, views: 12, plays: 0, seconds: 120, assets: 1, value: url.searchParams.get('metric') === 'seconds' ? 120 : 12, ...(path.endsWith('most-viewed') ? { asset } : {}) }], range: url.searchParams.get('range'), metric: url.searchParams.get('metric') ?? 'views' });
+      const name = path.endsWith("top-authors")
+        ? "合成作者"
+        : path.endsWith("top-tags")
+          ? "晨光"
+          : asset.fileName;
+      const id = path.endsWith("top-authors")
+        ? "synthetic-author"
+        : path.endsWith("top-tags")
+          ? "synthetic-tag"
+          : asset.id;
+      return respond(route, {
+        items: [
+          {
+            id,
+            name,
+            views: 12,
+            plays: 0,
+            seconds: 120,
+            assets: 1,
+            value: url.searchParams.get("metric") === "seconds" ? 120 : 12,
+            ...(path.endsWith("most-viewed") ? { asset } : {}),
+          },
+        ],
+        range: url.searchParams.get("range"),
+        metric: url.searchParams.get("metric") ?? "views",
+      });
     }
     if (path === "/stats/review")
       return respond(route, {
@@ -292,8 +448,15 @@ export async function mockLibrary(page: Page) {
         activeDays: 2,
         comparisonAvailable: true,
         totalSeconds: 120,
-        fromDay: '2026-01-01', toDay: '2026-01-30', previousFromDay: '2025-12-02', previousToDay: '2025-12-31',
-        viewCount: 12, previousViewCount: 12, imageSeconds: 120, animatedSeconds: 0, videoSeconds: 0,
+        fromDay: "2026-01-01",
+        toDay: "2026-01-30",
+        previousFromDay: "2025-12-02",
+        previousToDay: "2025-12-31",
+        viewCount: 12,
+        previousViewCount: 12,
+        imageSeconds: 120,
+        animatedSeconds: 0,
+        videoSeconds: 0,
         hours: Array.from({ length: 24 }, (_, hour) => ({
           hour,
           views: hour === 10 ? 12 : 0,
@@ -327,12 +490,21 @@ export async function mockLibrary(page: Page) {
       if (q) assets = assets.filter((asset) => asset.fileName.includes(q));
       if (url.searchParams.get("favorite") === "true")
         assets = assets.filter((asset) => asset.favorite);
+      const libraryId = url.searchParams.get('libraryId');
+      if (libraryId) assets = assets.filter(asset => asset.libraryId === libraryId);
+      const directory = url.searchParams.get('directory');
+      if (directory !== null) assets = assets.filter(asset => {
+        const parent = asset.relativePath.includes('/') ? asset.relativePath.slice(0, asset.relativePath.lastIndexOf('/')) : '';
+        return parent === directory;
+      });
       const offset = Number(url.searchParams.get("cursor") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? 48);
       return respond(route, {
         items: assets.slice(offset, offset + limit),
         totalMatched: assets.length,
-        ...(url.searchParams.get('dateCounts') === 'true' && !offset ? { dateCounts: [{ date: '2026-01-01', fileCount: assets.length }] } : {}),
+        ...(url.searchParams.get("dateCounts") === "true" && !offset
+          ? { dateCounts: [{ date: "2026-01-01", fileCount: assets.length }] }
+          : {}),
         ...(offset + limit < assets.length
           ? { nextCursor: String(offset + limit) }
           : {}),

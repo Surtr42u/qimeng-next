@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
-import { SelectionLens } from './SelectionLens';
+import { SelectionLens } from "./SelectionLens";
 
 export type NavigationItem = {
   id: string;
@@ -151,7 +151,11 @@ export function SegmentedControl<T extends string>({
           ?.focus();
       }}
     >
-      <SelectionLens host={root} selected='[aria-selected="true"]' selectionKey={value} />
+      <SelectionLens
+        host={root}
+        selected='[aria-selected="true"]'
+        selectionKey={value}
+      />
       {options.map((option, index) => (
         <button
           key={option.value}

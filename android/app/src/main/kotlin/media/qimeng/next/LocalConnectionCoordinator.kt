@@ -21,7 +21,7 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
     init {
         if (runtime.available) scope.launch {
             runtime.status.collect { status ->
-                if (status.phase == RuntimePhase.READY && graph.settings.session.value?.baseUrl == runtime.baseUrl) {
+                if (status.phase == RuntimePhase.READY && runtime.shouldRestore && graph.settings.session.value?.baseUrl == runtime.baseUrl) {
                     try { connect(forceLogin = false) }
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { mutableError.value = "本机服务已启动，但客户端连接尚未恢复，请重新连接" }
@@ -31,6 +31,7 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
     }
 
     suspend fun connect(forceLogin: Boolean, password: String = "") = mutex.withLock {
+        if (!forceLogin && !runtime.shouldRestore) return@withLock
         mutableError.value = null
         val selectedBeforeStart = graph.settings.session.value
         val connection = runtime.start()
@@ -46,6 +47,6 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
     }
 
     suspend fun restoreSelected() {
-        if (runtime.available && graph.settings.session.value?.baseUrl == runtime.baseUrl) connect(forceLogin = false)
+        if (runtime.available && runtime.shouldRestore && graph.settings.session.value?.baseUrl == runtime.baseUrl) connect(forceLogin = false)
     }
 }

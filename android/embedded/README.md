@@ -34,6 +34,8 @@ runner 只安装父死亡信号并 exec 同目录 Go：设置 `PR_SET_PDEATHSIG=
 - 媒体工具路径经 `QIMENG_FFMPEG` / `QIMENG_FFPROBE` 指定到受包目录。缺失工具必须报告实际格式能力不足，不把原件假作缩略图。
 - 默认 `data` 存储仍由 Go 管理；`local` 是可供正常库注册流程选择的独立存储。本模块不通过直接写库代替 `POST /libraries`。
 
+获系统“所有文件访问”授权后，宿主将规范化的主存储根作为逻辑 `phone` 一同交给 Go；尚未授权时不交出该根。权限 Activity、API 26–29 的旧存储授权与 API30+ 特殊授权清单均只存在 embedded 模块。`LocalFiles` 只提供授权态与一级目录浏览（包括点前缀），拒绝链接 / 越界，按 200 项有界分页；不扫描媒体或写图库。授权变化后下次恢复连接会先停止自己持有的旧服务，再以相同私有数据根重启并刷新 TLS pin。旧目录 UI、注册 / 接收路径和充电任务接线仍在后续切片，不能把这个能力端口当作已完成整套本机流程。
+
 启动不能只依据端口已开放。同 Go `cmd` 在监听成功后原子写私有回执，环境为 `QIMENG_STARTUP_RECEIPT=<runtime>/ready.json`、`QIMENG_LAUNCH_ID=<本次随机ID>` 和 `QIMENG_EPHEMERAL_TLS=true`；内容为 `launchId`、`instanceId`、`listenAddress`、公开 `certificateDerBase64`，不含私钥或令牌。本机地址为 `https://127.0.0.1:18431/`，证书 SAN 必须包含 IP127.0.0.1。
 
 宿主核验本次 ID、活的子进程、回执与 TLS 实例身份后，再走生成 SDK 的正常会话交换。`core:transport` 仅信任回执中的完整 leaf DER，HTTP 客户端的默认主机名校验保留；远程默认系统信任不变。这样即使 Go 在核验后退出、其他应用重绑端口，也无法收到 bootstrap 凭据。新启动刷新公开证书策略，旧 HTTP 客户端在 pin 改变后拒发 token；队列只保存目标实例、不保存证书副本或凭据。Go 回执实现与云端实证尚待本提交验证，未取得回执不得冒充本机就绪。
@@ -41,6 +43,8 @@ runner 只安装父死亡信号并 exec 同目录 Go：设置 `PR_SET_PDEATHSIG=
 ## 生命周期与验证要求
 
 前台服务拥有唯一 Process 句柄；开始、停止、失败与重试状态明确。用户停止发送 SIGTERM，并给 Go 现有 20 秒 graceful shutdown 留出余量；只对自己的进程句柄做超时终止，禁止用陈旧 PID 或占用端口杀任意进程。切换远程连接不复制 / 合并两端数据库；队列仍按原实例身份补传。
+
+显式停止会关闭自动恢复标记，单纯回到 Activity 不会再次启动。失败提示与子进程退出分开：快速重试须先等待仍在清退的旧宿主结束，再开始下一次启动，避免把失败窗口当成已释放端口。
 
 云端需分别验证 client-only 依赖 / APK 内容、embedded 两 ABI 装配、App UID 下启动与就绪、SQLite 建库 / 重启恢复、合成图片视频 / 探测、SIGTERM、宿主退出、端口占用、连续启停与后台恢复。设备固定为 `qimeng_api35` / `emulator-5556`；不能把 arm64 编译成功当成 x86_64 或真实手机运行成功。
 

@@ -31,6 +31,12 @@ func pngBytes(t *testing.T,shade uint8)[]byte{t.Helper();img:=image.NewRGBA(imag
 func(f *fixture)upload(name string,shade uint8,extra map[string]any)(model.Upload,[]byte){f.t.Helper();body:=pngBytes(f.t,shade);in:=map[string]any{"libraryId":f.library,"fileName":name,"size":len(body),"mimeType":"image/png","mode":"ordinary"};for k,v:=range extra{in[k]=v};r:=f.json("POST","/uploads","create-upload-"+name,in,201);var u model.Upload;decode(f.t,r,&u);r=f.request("PUT","/uploads/"+u.ID+"/content","",testSecret,body,map[string]string{"Content-Type":"application/octet-stream","Upload-Offset":"0"});if r.Code!=200{f.t.Fatalf("append: %s",r.Body.String())};decode(f.t,r,&u);return u,body}
 func(f *fixture)complete(u model.Upload)model.UploadResult{f.t.Helper();r:=f.json("POST","/uploads/"+u.ID+"/complete","complete-"+u.ID,struct{}{},200);var out model.UploadResult;decode(f.t,r,&out);return out}
 
+func(f *fixture)declareInputs(batchID string,names ...string)map[string]string{
+ f.t.Helper();inputs:=[]map[string]any{};ids:=map[string]string{}
+ for index,name:=range names{id:=fmt.Sprintf("input-%04d",index);ids[name]=id;inputs=append(inputs,map[string]any{"id":id,"originalFileName":name})}
+ f.json("PUT","/batches/"+batchID+"/inputs","seal-inputs-"+batchID,map[string]any{"expectedManifestRevision":1,"inputs":inputs},200);return ids
+}
+
 func TestOrdinaryUploadReplayTagDeletionAndFileLifecycle(t *testing.T){
  f:=setup(t);u,body:=f.upload("example.png",30,nil)
  replay:=f.request("PUT","/uploads/"+u.ID+"/content","",testSecret,body,map[string]string{"Upload-Offset":"0"});if replay.Code!=200{t.Fatal(replay.Body.String())}
@@ -71,7 +77,9 @@ func TestConcurrentCompletionReplaysOneAsset(t *testing.T){
 func TestBatchBoundCredentialCannotWriteOutsideTask(t *testing.T){
  f:=setup(t);r:=f.json("POST","/batches","batch-create-1",map[string]any{"libraryId":f.library,"mode":"intelligent","label":"Synthetic batch","maxResearchCalls":1},201);var b model.Batch;decode(t,r,&b)
  r=f.json("POST","/credentials","",map[string]any{"label":"Synthetic AI","batchId":b.ID,"scopes":[]string{"read","ingest","research","organize"}},201);var credential model.Principal;decode(t,r,&credential)
- body:=pngBytes(t,50);in:=map[string]any{"libraryId":f.library,"fileName":"research.png","size":len(body),"mimeType":"image/png","mode":"intelligent","batchId":b.ID};raw,_:=json.Marshal(in)
+ manifestRaw:=[]byte(`{"expectedManifestRevision":1,"inputs":[{"id":"input-0000","originalFileName":"research.png"}]}`)
+ r=f.request("PUT","/batches/"+b.ID+"/inputs","ai-seal-inputs-1",credential.Token,manifestRaw,nil);if r.Code!=200{t.Fatal(r.Body.String())}
+ body:=pngBytes(t,50);in:=map[string]any{"libraryId":f.library,"fileName":"research.png","size":len(body),"mimeType":"image/png","mode":"intelligent","batchId":b.ID,"inputId":"input-0000"};raw,_:=json.Marshal(in)
  r=f.request("POST","/uploads","ai-create-upload-1",credential.Token,raw,nil);if r.Code!=201{t.Fatal(r.Body.String())};var u model.Upload;decode(t,r,&u)
  r=f.request("PUT","/uploads/"+u.ID+"/content","",credential.Token,body,map[string]string{"Upload-Offset":"0"});if r.Code!=200{t.Fatal(r.Body.String())}
  r=f.request("POST","/uploads/"+u.ID+"/complete","ai-complete-upload-1",credential.Token,[]byte("{}"),nil);if r.Code!=200{t.Fatal(r.Body.String())};var staged model.UploadResult;decode(t,r,&staged);if staged.Upload.State!="staged"||staged.Asset!=nil{t.Fatal("intelligent upload prematurely ingested")}

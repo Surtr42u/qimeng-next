@@ -33,7 +33,7 @@ class DataGraph private constructor(context: Context) {
 
     init {
         scope.launch {
-            try { queue.load(); uploads.schedule() }
+            try { queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule() }
             catch (failure: CancellationException) { throw failure }
             catch (_: Exception) { /* QueueStore publishes the recoverable read failure to UI. */ }
         }

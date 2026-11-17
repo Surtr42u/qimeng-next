@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
  "net/url"
+ "path"
  "strconv"
  "testing"
  "time"
@@ -48,6 +49,13 @@ func TestDirectoryFilesAreExactAndDisabledLibrariesStayBrowsableOnlyExplicitly(t
  f.json("GET","/assets?directory=","",nil,400);f.json("GET","/assets?libraryId="+f.library+"&directory=../outside","",nil,400)
  f.json("PATCH","/libraries/"+f.library,"disable-library-visibility",map[string]any{"expectedRevision":1,"enabled":false},200);if *assetsAt(t,f,"").TotalMatched!=0||*assetsAt(t,f,"?includeDisabled=true").TotalMatched!=3{t.Fatal("disabled library visibility was inconsistent")};f.json("GET","/assets/"+root.ID,"",nil,200)
  r:=f.json("GET","/stats","",nil,200);var stats map[string]int64;decode(t,r,&stats);if stats["assets"]!=3{t.Fatal("disabling a library erased inventory counts")}
+}
+
+func TestAuthoritativeFileDateUsesReverifiedOriginalTime(t *testing.T){
+ f:=setup(t);sourceTime:=time.Date(2024,3,1,12,0,0,0,time.UTC);u,_:=f.upload("reverified-time.png",127,map[string]any{"sourceMtime":sourceTime});a:=*f.complete(u).Asset;if a.FileDate==nil||!a.FileDate.Equal(sourceTime){t.Fatal("completion omitted authoritative source-preserved file date")}
+ currentTime:=sourceTime.AddDate(1,0,0);if e:=f.s.Root.Chtimes(path.Join("libraries",a.LibraryID,a.RelativePath),currentTime,currentTime);e!=nil{t.Fatal(e)};job:=f.scan("scan-reverified-file-date");if job.Changed!=1{t.Fatal("changed original time was not reconciled")}
+ r:=f.json("GET","/assets/"+a.ID,"",nil,200);decode(t,r,&a);if a.FileDate==nil||!a.FileDate.Equal(currentTime)||a.SourceMtime==nil||!a.SourceMtime.Equal(sourceTime){t.Fatal("current file date and original input clue were conflated")}
+ page:=assetsAt(t,f,"?dateCounts=true");if page.DateCounts==nil||len(*page.DateCounts)!=1||(*page.DateCounts)[0].Date!="2025-03-01"{t.Fatal("date count did not use authoritative file date")}
 }
 
 func TestAssetAndAuthorKeysetSurviveInsertionAndDeletionBeforeCursor(t *testing.T){

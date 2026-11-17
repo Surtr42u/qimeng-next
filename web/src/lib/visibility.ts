@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 export function useNearViewport<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -6,9 +6,18 @@ export function useNearViewport<T extends HTMLElement>() {
   useEffect(() => {
     const element = ref.current;
     if (!element || visible) return;
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
-    }, { root: document.querySelector('[data-scroll-root]'), rootMargin: '320px' });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      {
+        root: document.querySelector("[data-scroll-root]"),
+        rootMargin: "320px",
+      },
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, [visible]);

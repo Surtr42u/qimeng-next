@@ -155,7 +155,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     .getByRole("button", { name: "编辑基础资料", exact: true })
     .click();
   await page
-    .getByLabel("整理简介", { exact: true })
+    .getByRole("textbox", { name: "整理简介", exact: true })
     .fill("云端真实服务确认的合成作者简介");
   await page.getByRole("button", { name: "保存资料", exact: true }).click();
   await expect(
