@@ -36,20 +36,29 @@ func(s *Service)authorTask(ctx context.Context,id string)(AuthorTask,error){
  task,e:=store.Get[AuthorTask](ctx,s.DB.DB,"SELECT data FROM author_tasks WHERE id=?",id);return task,Normalize(e)
 }
 func(s *Service)CreateAuthorTask(ctx context.Context,w *Write,in AuthorTaskCreate)(AuthorTask,error){
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return AuthorTask{},e}
+ result,e:=s.prepareAuthorTask(ctx,w.ID("author-task"),in);if e!=nil{return result,e}
+ q,e:=w.Q();if e!=nil{return result,e};return result,saveAuthorTask(ctx,q,result)
+}
+
+func saveAuthorTask(ctx context.Context,q store.Querier,result AuthorTask)error{
+ raw,e:=store.Encode(result);if e!=nil{return e};_,e=q.ExecContext(ctx,"INSERT INTO author_tasks VALUES(?,?,?,?,?)",result.ID,result.AuthorID,result.State,result.ExpiresAt.Format(time.RFC3339Nano),raw);return e
+}
+
+func(s *Service)prepareAuthorTask(ctx context.Context,id string,in AuthorTaskCreate)(AuthorTask,error){
  var result AuthorTask
- if e:=Authorize(w.Principal,"admin","");e!=nil{return result,e}
  author,e:=s.Author(ctx,in.AuthorID);if e!=nil{return result,e};if author.Placeholder{return result,Fail(409,"placeholder_protected","占位作者不能用于资料维护。")}
  if author.Revision!=in.ExpectedRevision{return result,Conflict(author.Revision)}
  fields,e:=cleanStrings(in.AllowedFields,4,32);if e!=nil{return result,e}
+ if in.CandidateBlocks==nil{in.CandidateBlocks=[]string{}}
  blocks,e:=cleanStrings(in.CandidateBlocks,3,32);if e!=nil{return result,e};if len(fields)+len(blocks)==0{return result,Fail(400,"fields_required","至少授权一个资料字段或候选资料块。")}
  for _,block:=range blocks{if block!="x"&&block!="basic"&&block!="accounts"{return result,Fail(400,"invalid_blocks","候选资料块无效。")}}
  for _,field:=range fields{switch field{case "name","biography","homepage","aliases":default:return result,Fail(400,"invalid_fields","不支持的资料字段。")}}
  if in.MaxUpdates==0{in.MaxUpdates=1};if in.ExpiresInSeconds==0{in.ExpiresInSeconds=3600}
  if in.MaxUpdates<1||in.MaxUpdates>10||in.ExpiresInSeconds<60||in.ExpiresInSeconds>86400{return result,Fail(400,"invalid_budget","维护次数或有效期超出允许范围。")}
- now:=time.Now().UTC();result=AuthorTask{ID:w.ID("author-task"),AuthorID:author.ID,ExpectedRevision:author.Revision,
+ now:=time.Now().UTC();result=AuthorTask{ID:id,AuthorID:author.ID,ExpectedRevision:author.Revision,
   AllowedFields:fields,CandidateBlocks:blocks,AllowClear:in.AllowClear,MaxUpdates:in.MaxUpdates,State:"authorized",CreatedAt:now,ExpiresAt:now.Add(time.Duration(in.ExpiresInSeconds)*time.Second)}
- raw,e:=store.Encode(result);if e!=nil{return result,e};q,e:=w.Q();if e!=nil{return result,e}
- _,e=q.ExecContext(ctx,"INSERT INTO author_tasks VALUES(?,?,?,?,?)",result.ID,result.AuthorID,result.State,result.ExpiresAt.Format(time.RFC3339Nano),raw);return result,e
+ return result,nil
 }
 
 func(s *Service)AuthorTaskContext(ctx context.Context,p model.Principal,id string)(map[string]any,error){

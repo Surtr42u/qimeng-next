@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -67,6 +69,13 @@ fun StatisticsScreen(model: LibraryViewModel) {
                 Text("来源", style = MaterialTheme.typography.titleMedium)
                 o.sources.forEach { DimensionRow(it) }
             }
+            report.top.forEach { (kind, entries) -> ContentCard(Modifier.padding(horizontal = 16.dp)) {
+                TextButton(onClick = { model.navigate("ranking:$kind:$range") }) { Text(rankingTitle(kind)) }
+                if (entries.isEmpty()) Text("这个窗口暂无记录")
+                entries.forEach { entry -> Row(Modifier.fillMaxWidth().clickable { openRank(model, kind, entry) }.padding(vertical = 6.dp)) {
+                    Text(entry.name, Modifier.weight(1f)); Text("${entry.value} 次")
+                } }
+            } }
             ContentCard(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clickable { model.navigate("review:$range") }) {
                 Text("浏览回顾", style = MaterialTheme.typography.titleMedium)
             }
@@ -99,26 +108,73 @@ private fun DimensionRow(value: ActivityDimension) {
 @Composable
 private fun TrendChart(points: List<TrendPoint>) {
     var selected by rememberSaveable(points) { mutableIntStateOf((points.size - 1).coerceAtLeast(0)) }
+    var mode by rememberSaveable { mutableStateOf("all") }
     val color = MaterialTheme.colorScheme.primary
     if (points.isEmpty()) { Text("这个窗口没有趋势数据"); return }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("all" to "整体", "types" to "类型", "sources" to "分区").forEach { (value, name) -> FilterChip(mode == value, { mode = value }, label = { Text(name) }) }
+    }
+    val series = when (mode) {
+        "types" -> listOf("image", "animated_image", "video").mapIndexed { index, key -> PlotSeries(typeName(key),
+            listOf(Color(0xFF4D8DEE), Color(0xFFE8B24E), Color(0xFF52A87C))[index], points.map { point -> point.mediaTypes.first { it.key == key }.views }) }
+        "sources" -> listOf("regular", "cos").mapIndexed { index, key -> PlotSeries(typeName(key),
+            listOf(color, Color(0xFF37A9AE))[index], points.map { point -> point.sources.first { it.key == key }.views }) }
+        else -> listOf(PlotSeries("浏览", color, points.map { it.views }))
+    }
     Canvas(Modifier.fillMaxWidth().height(164.dp).semantics { contentDescription = "浏览趋势，共 ${points.size} 个时段，可通过下方滑块选择" }
         .pointerInput(points) { detectTapGestures { selected = (it.x / size.width * (points.size - 1)).roundToInt().coerceIn(0, points.lastIndex) } }) {
-        val maximum = points.maxOf { it.views }.coerceAtLeast(1).toFloat()
+        val maximum = series.maxOf { it.values.maxOrNull() ?: 0 }.coerceAtLeast(1).toFloat()
+        series.forEach { line ->
         val path = Path()
-        points.forEachIndexed { index, value ->
+        line.values.forEachIndexed { index, value ->
             val x = index.toFloat() / (points.size - 1).coerceAtLeast(1) * size.width
-            val y = size.height - 8.dp.toPx() - value.views / maximum * (size.height - 16.dp.toPx())
+            val y = size.height - 8.dp.toPx() - value / maximum * (size.height - 16.dp.toPx())
             if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            drawCircle(color, if (index == selected) 5.dp.toPx() else 2.5.dp.toPx(), Offset(x, y))
+            drawCircle(line.color, if (index == selected) 5.dp.toPx() else 2.5.dp.toPx(), Offset(x, y))
         }
         val area = Path().apply { addPath(path); lineTo(size.width, size.height); lineTo(0f, size.height); close() }
-        drawPath(area, color.copy(alpha = 0.10f))
-        drawPath(path, color, style = Stroke(width = 2.dp.toPx()))
+        drawPath(area, line.color.copy(alpha = 0.08f))
+        drawPath(path, line.color, style = Stroke(width = 2.dp.toPx()))
+        }
     }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { series.forEach { Text("● ${it.label}", color = it.color, style = MaterialTheme.typography.labelSmall) } }
     if (points.size > 1) Slider(selected.toFloat(), { selected = it.roundToInt() }, valueRange = 0f..points.lastIndex.toFloat(),
         steps = (points.size - 2).coerceAtLeast(0), modifier = Modifier.semantics { contentDescription = "选择趋势时段" })
     val point = points[selected.coerceIn(points.indices)]
     Text("${point.label} · 浏览 ${point.views} · 播放 ${point.plays} · 停留 ${formatSeconds(point.seconds)}", style = MaterialTheme.typography.bodySmall)
+    if (series.size > 1) Text(series.joinToString(" · ") { "${it.label} ${it.values[selected.coerceIn(it.values.indices)]}" }, style = MaterialTheme.typography.bodySmall)
+}
+
+private data class PlotSeries(val label: String, val color: Color, val values: List<Long>)
+
+@Composable
+fun ActivityRankingScreen(model: LibraryViewModel, kind: String, range: String) {
+    var metric by rememberSaveable(kind, range) { mutableStateOf("views") }
+    val state by model.ranking.collectAsStateWithLifecycle()
+    LaunchedEffect(kind, range, metric) { model.loadRanking(kind, range, metric) }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text(rankingTitle(kind), style = MaterialTheme.typography.titleLarge) }
+        if (kind == "assets") item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(metric == "views", { metric = "views" }, label = { Text("浏览次数") })
+            FilterChip(metric == "seconds", { metric = "seconds" }, label = { Text("停留时长") })
+        } }
+        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        state.error?.let { item { ErrorNotice(it) { model.loadRanking(kind, range, metric) } } }
+        if (state.loaded && state.items.isEmpty()) item { Text("这个窗口暂无记录") }
+        items(state.items, key = { it.id }) { entry -> ContentCard(Modifier.fillMaxWidth().clickable { openRank(model, kind, entry) }) {
+            Text(entry.name, style = MaterialTheme.typography.titleMedium)
+            Text(if (metric == "seconds") formatSeconds(entry.value) else "${entry.value} 次浏览")
+            Text("${entry.assets} 件媒体 · 播放 ${entry.plays} 次 · 停留 ${formatSeconds(entry.seconds)}", style = MaterialTheme.typography.bodySmall)
+        } }
+        if (state.cursor != null) item { TextButton(onClick = { model.loadRanking(kind, range, metric, true) }, enabled = !state.loading) { Text("加载更多") } }
+    }
+}
+
+private fun rankingTitle(kind: String) = when (kind) { "authors" -> "常看作者"; "tags" -> "常看标签"; else -> "最常浏览的媒体" }
+private fun openRank(model: LibraryViewModel, kind: String, entry: ActivityRank) = when (kind) {
+    "authors" -> model.openAuthor(entry.id)
+    "tags" -> model.navigate("tag:${entry.name}")
+    else -> entry.assetId?.let { model.openAsset(it) }
 }
 
 @Composable

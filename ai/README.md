@@ -8,17 +8,17 @@
 - 执行端：逻辑文件发现、受控文件引用、流式传输、上下文呈现、调用/时间预算、模型接入。
 - 模型：理解意图、核对候选与证据，使用当前状态给出的动作。不能自算最终编号、修改授权配置或把候选写成确定事实。
 
-业务计划保存在服务端，以计划 ID/fingerprint 提交。执行端 SQLite 只存预算、未决操作定位与可过期结果缓存，不作为第二份媒体库或业务任务账本。
+业务计划保存在服务端，以计划 ID/fingerprint 提交。执行端私有SQLite保存预算、未决操作定位、派生凭据和可过期结果缓存，不作为第二份媒体库或业务任务账本。此目录须受操作系统账号保护，不放进媒体目录或公开备份。
 
 ## 配置
 
 | 环境变量 | 用途 |
 |---|---|
 | `QIMENG_API_BASE` | 后端 origin；HTTP 仅回环/私有IP，远端使用HTTPS/既有隧道 |
-| `QIMENG_API_TOKEN` | 为目标批次签发的AI凭据，仅可信端持有 |
+| `QIMENG_API_TOKEN` | 首次配置的长期AI执行器凭据，或传统单任务/只读凭据；仅可信端持有 |
 | `QIMENG_AI_STATE_DIR` | 执行端私有绝对状态目录，必填 |
-| `QIMENG_AI_TASK_ID` | 同任务跨进程共享预算的稳定ID，默认interactive |
-| `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予ingest/research/organize/author.profile.write/local.read/local.research |
+| `QIMENG_AI_TASK_ID` | 传统单任务预算的稳定ID；默认interactive使用每日控制通道预算，新工作流按taskId另记业务预算 |
+| `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予delegate/ingest/research/organize/author.profile.write/local.read/local.research |
 | `QIMENG_AI_STORAGES` | JSON对象，逻辑名映射可信本地根；模型只看到逻辑名与相对路径 |
 | `QIMENG_AI_MAX_CALLS/MAX_SECONDS/MAX_UNCHANGED` | 默认100次/900秒/3次相同结果；预算持久保存 |
 | `QIMENG_AI_OUTPUT_BYTES` | 默认12288，限制展示结果；不含协议外壳或宿主重复呈现 |
@@ -29,12 +29,18 @@
 
 ## 工作流
 
-1. 可信客户端创建智能批次并签发该批次的最小凭据，模型取得任务ID。
+1. 首次由本人在可信设置中选择允许的库、资料维护范围、动作、预算和有效期，签发长期执行器凭据。配置MCP后，模型用`platform.permissions`读取真实范围，以`task.start`创建任务或认领App已有智能批次；不需要每次切回App。
 2. `task.context` 查看状态、缺失条件与剩余研究预算。
 3. `files.storages` / `files.search` 获取fileRef；`upload.file`沿稳定operationId分片上传并验证服务端摘要。普通上传直接入库，智能上传先进入批次待计划状态。
 4. 已确认资料直接复用；未知项有限研究后调用 `research.submit` 留下候选/未知/冲突与证据，不能伪装已核实。
 5. `plan.prepare` 由Go生成最终命名/关联；必要时 `plan.read` 逐项核对，授权范围内用原ID/fingerprint执行 `plan.commit`。
 6. `task.read` / `asset.read` 按输入清单回读，分别报告入库、未知/冲突、备份和来源清理。上传工具保留来源文件。
+
+`task.start`后续调用带顶层`taskId`。执行器自动生成/保存受限任务凭据，不把秘密返回模型；服务端只保存其摘要，任务创建回执也不含秘密。继续同任务直接用原taskId；更换宿主或执行器目录时用`task.resume`，服务端保留业务任务及幂等身份，并轮换执行租约使旧执行器不能继续写入。撤销长期授权同时撤销其所有派生凭据。
+
+传统“可信客户端创建单批次/资料任务并签发凭据”仍可用，直接配置该任务凭据时无需调用task.start或携带新的taskId包装参数。多宿主配置和验证边界见[兼容指引](../docs/mcp-compatibility.md)。
+
+长期权限默认包含全库只读查询；库/作者选择约束写入范围，不是多用户私有分区。新增媒体、研究、整理和资料维护分别授予，清空资料另有选项。确定命名/编号/关联由Go执行，模型只提交意图与证据。此项目不引入家庭账户或多租户权限模型。
 
 超长结果返回resultRef与省略声明；`platform.result.read` 用JSON Pointer、offset/limit续读。引用绑定实例、凭据和契约，24小时过期，每个32MiB、总256MiB；普通结果最多128项，文件元引用最多10000项，研究图片最多512项，字节总额仍共享。相同内容复用引用。该缓存失效不等于服务端计划丢失，需重新从原计划ID读取。
 
@@ -46,6 +52,10 @@
 
 已安装经过云端验证的工具包后，`qai mcp`启动stdio，`qai catalog`查询目录；`qai call <tool>`从stdin读取JSON。`qai admin status`查询持久预算；`admin reconcile <key>`先请求服务端权威回读再核销；`admin renew --calls N --seconds N`只能提高上限，保留调用数、开始时间和未决项。这些管理能力不注册为模型工具。
 
+长期授权的业务任务使用`qai admin --task-id <任务ID> status/reconcile/renew`选择本地任务状态。CLI的renew只提高执行器本地上限；服务端上限只能由本人会话在预算接口提高，两者取较严格者。
+
 同一未决写入允许以完全相同的工具、参数与操作键恢复，新写入仍被阻止。分片上传沿原会话offset接续；可信端核销整次上传必须取得`:complete`回执，仅创建了上传会话不能算上传完成。SDK契约升级保留消费记录和未决操作，同时使旧契约的结果展示引用失效。
+
+长期授权任务另有Go保存的调用预算与截止时间，换宿主不会清零；执行器每次实际工具执行前先保留一次调用额度，本地预算可能更严格。`platform.budget`不消费额度，显示两层预算。每日控制通道与业务任务分开，避免首次配置后所有后续任务共用一个永久耗尽的计数。预算耗尽保留进度，只有可信本人会话可提高服务端上限；续期不清已消费次数，模型不能自行续期。
 
 开发、打包与所有测试只在云端执行，当前结果见[状态](../docs/status.md)。模型token/费用依赖宿主遥测，本模块不宣称控制外部账号全部消费。真实provider、NAS与设备验证按证据单列。

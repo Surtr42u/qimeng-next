@@ -85,6 +85,8 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
                                 route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
                                 route.startsWith("collection:") -> MediaBrowser(model, route, collectionId = route.substringAfter(':'))
+                                route.startsWith("tag:") -> MediaBrowser(model, route, initialTag = route.substringAfter(':'))
+                                route.startsWith("ranking:") -> ActivityRankingScreen(model, route.split(':')[1], route.split(':')[2])
                                 route == "search" -> MediaBrowser(model, "search", search = true)
                                 route == "favorites" -> MediaBrowser(model, "favorites", favorite = true)
                                 route == "authors" -> AuthorsScreen(model)
@@ -158,6 +160,8 @@ private fun routeTitle(route: String) = when {
     route.startsWith("review:") -> "浏览回顾"
     route.startsWith("vocabulary:") -> vocabularyTitle(route.substringAfter(':'))
     route.startsWith("collection:") -> "同组作品"
+    route.startsWith("tag:") -> "标签：${route.substringAfter(':')}"
+    route.startsWith("ranking:") -> "浏览统计详情"
     else -> mapOf("search" to "搜索", "favorites" to "收藏", "authors" to "作者", "history" to "浏览历史", "upload" to "上传",
         "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "trash" to "回收站", "recommendation" to "推荐偏好")[route] ?: "绮梦影库"
 }

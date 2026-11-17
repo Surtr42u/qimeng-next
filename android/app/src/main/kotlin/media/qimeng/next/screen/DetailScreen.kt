@@ -151,12 +151,13 @@ private fun AuthorsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> 
 @Composable
 private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> Unit) {
     var scale by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var panX by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(0f) }
+    var panY by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(0f) }
     val context = LocalContext.current
     var error by remember(asset.id) { mutableStateOf(false) }
     var retry by remember(asset.id) { mutableIntStateOf(0) }
     Box(Modifier.fillMaxWidth().heightIn(min = 280.dp, max = 620.dp).aspectRatio(0.85f).background(Color.Black)
-        .pointerInput(asset.id) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f; offset = Offset.Zero }) }
+        .pointerInput(asset.id) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f; panX = 0f; panY = 0f }) }
         .pointerInput(asset.id) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
@@ -170,7 +171,8 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
                         scale = (scale * event.calculateZoom()).coerceIn(1f, 6f)
                         val maxX = size.width * (scale - 1f) / 2
                         val maxY = size.height * (scale - 1f) / 2
-                        offset = Offset((offset.x + pan.x).coerceIn(-maxX, maxX), (offset.y + pan.y).coerceIn(-maxY, maxY))
+                        panX = (panX + pan.x).coerceIn(-maxX, maxX)
+                        panY = (panY + pan.y).coerceIn(-maxY, maxY)
                         event.changes.forEach { it.consume() }
                     } else {
                         horizontal += pan.x
@@ -185,10 +187,10 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
                 .diskCachePolicy(CachePolicy.DISABLED).memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:original").build()
         }, imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit,
             onError = { error = true }, onSuccess = { error = false },
-            modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y })
+            modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = panX; translationY = panY })
         if (error) FilledTonalButton(onClick = { retry++; error = false; onReload() }) { Text("图片加载失败 · 重试") }
         Row(Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
-            IconButton(onClick = { scale = (scale - 0.5f).coerceAtLeast(1f); if (scale == 1f) offset = Offset.Zero }) { Icon(Icons.Outlined.ZoomOut, "缩小图片", tint = Color.White) }
+            IconButton(onClick = { scale = (scale - 0.5f).coerceAtLeast(1f); if (scale == 1f) { panX = 0f; panY = 0f } }) { Icon(Icons.Outlined.ZoomOut, "缩小图片", tint = Color.White) }
             IconButton(onClick = { scale = (scale + 0.5f).coerceAtMost(6f) }) { Icon(Icons.Outlined.ZoomIn, "放大图片", tint = Color.White) }
         }
     }

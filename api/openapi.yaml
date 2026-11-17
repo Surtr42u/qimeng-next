@@ -103,6 +103,17 @@ paths:
       responses:
         '202': {description: Persisted scan job; registration is not scan completion, content: {application/json: {schema: {$ref: '#/components/schemas/ScanJob'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /scans:
+    get:
+      operationId: listLibraryScans
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: libraryId, in: query, schema: {type: string}}
+        - {name: state, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Durable scan jobs across devices, content: {application/json: {schema: {$ref: '#/components/schemas/ScanPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /scans/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
@@ -676,11 +687,168 @@ paths:
       responses:
         '200': {description: Existing-asset browsing or dwell ranking, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityRankingPage'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /ai/delegations:
+    get:
+      operationId: listAIDelegations
+      responses:
+        '200': {description: Owner-managed durable AI permissions, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegationPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAIDelegation
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegationPolicy'}}}}
+      responses:
+        '201': {description: Permission and one-time executor credential, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegationCreated'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/delegations/current:
+    get:
+      operationId: getCurrentAIDelegation
+      responses:
+        '200': {description: Effective delegation policy, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/delegations/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    delete:
+      operationId: revokeAIDelegation
+      responses:
+        '204': {description: Delegation and all task credentials revoked}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/delegated-tasks:
+    post:
+      operationId: startDelegatedTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedTaskStart'}}}}
+      responses:
+        '201': {description: Task and limited credential metadata; secret is supplied only by trusted executor, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/delegated-tasks/{id}/resume:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: resumeDelegatedTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedTaskResume'}}}}
+      responses:
+        '200': {description: Same task and operation identity with rotated executor lease, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/delegated-tasks/{id}/calls:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: reserveDelegatedCall
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Durable shared task call reservation for trusted executor, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedBudget'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/delegated-tasks/{id}/budget:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getDelegatedBudget
+      responses:
+        '200': {description: Shared server-side task budget, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedBudget'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: renewDelegatedBudget
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedBudgetUpdate'}}}}
+      responses:
+        '200': {description: Owner-authorized extension without resetting consumption, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedBudget'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAuthorProfile
+      responses:
+        '200': {description: Independently versioned confirmed profile blocks, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfile'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile-summary:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAuthorProfileSummary
+      responses:
+        '200': {description: Small profile summary with authenticated same-origin avatar URL, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileSummary'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/{block}:
+    parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/ProfileBlockName'}]
+    patch:
+      operationId: updateAuthorProfileBlock
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileWrite'}}}}
+      responses:
+        '200': {description: Owner-confirmed block; omitted fields preserved and explicit empty values cleared, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileBlock'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/candidates:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listAuthorProfileCandidates
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}, {name: archiveId, in: query, schema: {type: string}}]
+      responses:
+        '200': {description: Candidate records remain distinct from confirmed profile data, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileCandidatePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: submitAuthorProfileCandidate
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileCandidateCreate'}}}}
+      responses:
+        '201': {description: Candidate persisted; AI requires a live author-task research grant for this block, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileCandidate'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/candidates/{candidateId}/dismiss:
+    parameters: [{$ref: '#/components/parameters/Id'}, {name: candidateId, in: path, required: true, schema: {type: string}}]
+    post:
+      operationId: dismissAuthorProfileCandidate
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Owner dismissed candidate; evidence retained, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileCandidate'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/avatar-from-url:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: fetchAuthorProfileAvatar
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorAvatarFetch'}}}}
+      responses:
+        '200': {description: Bounded public HTTPS image safely decoded and stored locally; updates only the X block avatar, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileBlock'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/avatar:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: uploadAuthorProfileAvatar
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}, {name: expectedRevision, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}]
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary, description: 'JPEG, PNG, GIF or WebP, at most 4 MiB and 4 million decoded pixels'}}}}
+      responses:
+        '200': {description: Local avatar accepted and normalized to PNG, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileBlock'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: clearAuthorProfileAvatar
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}, {name: expectedRevision, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}]
+      responses:
+        '200': {description: Avatar cleared without changing identity or other X fields, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileBlock'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /profile-avatars/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAuthorProfileAvatar
+      responses:
+        '200': {description: Authenticated locally stored PNG, content: {image/png: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/archives:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listAuthorProfileArchives
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Metadata-only archive list for deleted or merged profile evidence, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileArchivePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/profile/archives/{archiveId}:
+    parameters: [{$ref: '#/components/parameters/Id'}, {name: archiveId, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getAuthorProfileArchive
+      responses:
+        '200': {description: Complete preserved blocks; original candidate records are paged by archiveId, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileArchive'}}}}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer}
     sessionCookie: {type: apiKey, in: cookie, name: qimeng_session}
   parameters:
+    ProfileBlockName: {name: block, in: path, required: true, schema: {type: string, enum: [x, basic, accounts]}}
     ExpectedRevision: {name: expectedRevision, in: query, required: true, schema: {type: integer, format: int64, minimum: 1}}
     StatsRange: {name: range, in: query, schema: {type: string, enum: [7d, day, 30d, 90d, week, month, quarter, year, all], default: 7d}}
     Id: {name: id, in: path, required: true, schema: {type: string}}
@@ -693,6 +861,91 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    DelegatedBudgetUpdate:
+      type: object
+      required: [maxCalls, expiresInSeconds]
+      properties:
+        maxCalls: {type: integer, minimum: 10, maximum: 10000}
+        expiresInSeconds: {type: integer, minimum: 60, maximum: 86400}
+    DelegatedBudget:
+      type: object
+      required: [calls, maxCalls, deadline]
+      properties:
+        calls: {type: integer}
+        maxCalls: {type: integer}
+        deadline: {type: string, format: date-time}
+    AIDelegationPolicy:
+      type: object
+      required: [label, libraryIds, authorIds, allAuthors, allowedFields, candidateBlocks, allowClear, canIngest, canResearch, canOrganize, maxResearchCalls, maxUpdates, maxTasksPerDay, validDays]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 80}
+        libraryIds: {type: array, maxItems: 100, uniqueItems: true, items: {type: string}}
+        authorIds: {type: array, maxItems: 100, uniqueItems: true, items: {type: string}}
+        allAuthors: {type: boolean}
+        allowedFields: {type: array, maxItems: 4, uniqueItems: true, items: {type: string, enum: [name, biography, homepage, aliases]}}
+        candidateBlocks: {type: array, maxItems: 3, uniqueItems: true, items: {type: string, enum: [x, basic, accounts]}}
+        allowClear: {type: boolean}
+        canIngest: {type: boolean}
+        canResearch: {type: boolean}
+        canOrganize: {type: boolean}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
+        maxUpdates: {type: integer, minimum: 1, maximum: 10}
+        maxTasksPerDay: {type: integer, minimum: 1, maximum: 200}
+        validDays: {type: integer, minimum: 1, maximum: 365}
+        maxCallsPerTask: {type: integer, minimum: 10, maximum: 10000, default: 100}
+        taskSeconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
+    AIDelegation:
+      allOf:
+        - {$ref: '#/components/schemas/AIDelegationPolicy'}
+        - type: object
+          required: [id, state, createdAt, expiresAt]
+          properties:
+            id: {type: string}
+            state: {type: string, enum: [active, revoked, expired]}
+            createdAt: {type: string, format: date-time}
+            expiresAt: {type: string, format: date-time}
+    AIDelegationPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AIDelegation'}}
+    AIDelegationCreated:
+      type: object
+      required: [delegation, credential]
+      properties:
+        delegation: {$ref: '#/components/schemas/AIDelegation'}
+        credential: {$ref: '#/components/schemas/Session'}
+    DelegatedTaskStart:
+      type: object
+      required: [kind, label, credentialSecret]
+      properties:
+        kind: {type: string, enum: [intake, author]}
+        label: {type: string, minLength: 1, maxLength: 80}
+        libraryId: {type: string}
+        batchId: {type: string}
+        mode: {type: string, enum: [ordinary, intelligent]}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
+        authorId: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        allowedFields: {type: array, items: {type: string, enum: [name, biography, homepage, aliases]}}
+        candidateBlocks: {type: array, items: {type: string, enum: [x, basic, accounts]}}
+        allowClear: {type: boolean}
+        maxUpdates: {type: integer, minimum: 1, maximum: 10}
+        credentialSecret: {type: string, writeOnly: true, minLength: 43, maxLength: 43, description: Trusted executor generates 32 random bytes encoded as unpadded base64url; never a model argument}
+    DelegatedTaskResume:
+      type: object
+      required: [credentialSecret]
+      properties:
+        credentialSecret: {type: string, writeOnly: true, minLength: 43, maxLength: 43}
+    DelegatedTask:
+      type: object
+      required: [taskId, kind, credential]
+      properties:
+        taskId: {type: string}
+        kind: {type: string, enum: [intake, author]}
+        batch: {$ref: '#/components/schemas/Batch'}
+        authorTask: {$ref: '#/components/schemas/AuthorTask'}
+        credential: {$ref: '#/components/schemas/Session'}
     ActivityRankingItem:
       type: object
       required: [id, name, views, plays, seconds, assets, value]
@@ -930,6 +1183,8 @@ components:
         scopes: {type: array, items: {type: string}}
         batchId: {type: string}
         authorTaskId: {type: string}
+        parentDelegationId: {type: string}
+        generation: {type: integer, format: int64}
         expiresAt: {type: string, format: date-time}
     LibraryCreate:
       type: object
@@ -947,6 +1202,10 @@ components:
       type: object
       required: [relativePath, code]
       properties: {relativePath: {type: string}, code: {type: string}}
+    ScanPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/ScanJob'}}, nextCursor: {type: string}}
     ScanJob:
       type: object
       required: [id, libraryId, state, processed, added, moved, changed, skipped, issueCount, issues, createdAt, updatedAt]
@@ -959,6 +1218,7 @@ components:
         moved: {type: integer}
         changed: {type: integer}
         skipped: {type: integer}
+        missing: {type: integer}
         issueCount: {type: integer}
         issues: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/ScanIssue'}}
         createdAt: {type: string, format: date-time}
@@ -1399,3 +1659,142 @@ components:
       type: object
       required: [items]
       properties: {items: {type: array, items: {$ref: '#/components/schemas/Batch'}}, nextCursor: {type: string}}
+    AuthorProfileAccount:
+      type: object
+      required: [platform, identifier, url, publishingUrl]
+      properties:
+        platform: {type: string, maxLength: 80}
+        identifier: {type: string, maxLength: 200}
+        url: {type: string, maxLength: 4096}
+        publishingUrl: {type: string, maxLength: 4096}
+    AuthorProfileValues:
+      type: object
+      description: 'Only fields belonging to the named block are accepted. x: handle/displayName/biographyOriginal/biographyZh/avatarSourceUrl; basic: summary/note; accounts: accounts. Empty strings and empty arrays are explicit clearing intents.'
+      properties:
+        handle: {type: string, maxLength: 200}
+        displayName: {type: string, maxLength: 200}
+        biographyOriginal: {type: string, maxLength: 20000}
+        biographyZh: {type: string, maxLength: 20000}
+        avatarSourceUrl: {type: string, maxLength: 4096}
+        summary: {type: string, maxLength: 20000}
+        note: {type: string, maxLength: 10000}
+        accounts: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/AuthorProfileAccount'}}
+    AuthorProfileEvidence:
+      type: object
+      required: [url, title, fields, status, note]
+      properties:
+        url: {type: string, maxLength: 4096}
+        title: {type: string, maxLength: 400}
+        fields: {type: array, maxItems: 8, items: {type: string}}
+        status: {type: string, enum: [unverified, candidate, confirmed]}
+        note: {type: string, maxLength: 4000}
+        checkedAt: {type: string, format: date-time}
+    AuthorProfileAvatar:
+      type: object
+      required: [id, url, origin, sourceUrl, fetchedUrl, sourceHash, contentHash, width, height, bytes, fetchedAt]
+      properties:
+        id: {type: string}
+        url: {type: string, description: Authenticated same-origin PNG; never a third-party URL}
+        origin: {type: string, enum: [https, upload]}
+        sourceUrl: {type: string}
+        fetchedUrl: {type: string}
+        sourceHash: {type: string}
+        contentHash: {type: string}
+        width: {type: integer}
+        height: {type: integer}
+        bytes: {type: integer}
+        fetchedAt: {type: string, format: date-time}
+    AuthorProfileBlock:
+      type: object
+      required: [authorId, block, revision, values, evidence, source, updatedAt]
+      properties:
+        authorId: {type: string}
+        block: {type: string, enum: [x, basic, accounts]}
+        revision: {type: integer, format: int64, minimum: 0}
+        values: {$ref: '#/components/schemas/AuthorProfileValues'}
+        evidence: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AuthorProfileEvidence'}}
+        source: {type: string, enum: [empty, human, merged, imported]}
+        updatedAt: {type: string, format: date-time, nullable: true}
+        candidateId: {type: string}
+        avatar: {$ref: '#/components/schemas/AuthorProfileAvatar'}
+    AuthorProfile:
+      type: object
+      required: [authorId, editable, blocks]
+      properties:
+        authorId: {type: string}
+        editable: {type: boolean}
+        blocks: {type: array, minItems: 3, maxItems: 3, items: {$ref: '#/components/schemas/AuthorProfileBlock'}}
+    AuthorProfileSummary:
+      type: object
+      required: [authorId, xRevision, biographyOriginal, biographyZh]
+      properties:
+        authorId: {type: string}
+        xRevision: {type: integer, format: int64}
+        biographyOriginal: {type: string}
+        biographyZh: {type: string}
+        avatar: {$ref: '#/components/schemas/AuthorProfileAvatar'}
+    AuthorProfileWrite:
+      type: object
+      required: [expectedRevision, values]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        values: {$ref: '#/components/schemas/AuthorProfileValues'}
+        evidence: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AuthorProfileEvidence'}}
+        candidateId: {type: string}
+        translationReviewed: {type: boolean, description: 'Explicit owner review of a new original/translation pair. Changing original text otherwise clears the old translation.'}
+    AuthorProfileCandidateCreate:
+      type: object
+      required: [block, baseRevision, values, evidence]
+      properties:
+        block: {type: string, enum: [x, basic, accounts]}
+        baseRevision: {type: integer, format: int64, minimum: 0}
+        values: {$ref: '#/components/schemas/AuthorProfileValues'}
+        evidence: {type: array, minItems: 1, maxItems: 20, items: {$ref: '#/components/schemas/AuthorProfileEvidence'}}
+    AuthorProfileCandidate:
+      allOf:
+        - {$ref: '#/components/schemas/AuthorProfileCandidateCreate'}
+        - type: object
+          required: [id, authorId, state, createdAt]
+          properties:
+            id: {type: string}
+            authorId: {type: string}
+            state: {type: string, enum: [pending, applied, dismissed]}
+            createdAt: {type: string, format: date-time}
+            authorTaskId: {type: string}
+            appliedRevision: {type: integer, format: int64}
+            archiveId: {type: string}
+    AuthorProfileCandidatePage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/AuthorProfileCandidate'}}, nextCursor: {type: string}}
+    AuthorAvatarFetch:
+      type: object
+      required: [expectedRevision, sourceUrl]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        sourceUrl: {type: string, maxLength: 4096, description: Public HTTPS source, port 443 only, no userinfo, bounded redirects and DNS-pinned public addresses}
+    AuthorProfileArchiveSummary:
+      type: object
+      required: [id, authorId, authorName, targetAuthorId, reason, createdAt, blockCount, candidateCount, conflicts]
+      properties:
+        id: {type: string}
+        authorId: {type: string}
+        authorName: {type: string}
+        targetAuthorId: {type: string}
+        reason: {type: string}
+        createdAt: {type: string, format: date-time}
+        blockCount: {type: integer}
+        candidateCount: {type: integer}
+        conflicts: {type: array, items: {type: string}}
+    AuthorProfileArchive:
+      allOf:
+        - {$ref: '#/components/schemas/AuthorProfileArchiveSummary'}
+        - type: object
+          required: [blocks]
+          properties:
+            blocks: {type: array, items: {$ref: '#/components/schemas/AuthorProfileBlock'}}
+            originalImport: {type: object, additionalProperties: true, description: Opaque imported profile preserved without claiming confirmed field conversion}
+    AuthorProfileArchivePage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/AuthorProfileArchiveSummary'}}, nextCursor: {type: string}}

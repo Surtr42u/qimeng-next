@@ -86,7 +86,7 @@ fun AlbumsScreen(model: LibraryViewModel) {
 @Composable
 fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, favorite: Boolean? = null,
                  kind: String? = null, author: String? = null, bottomDock: Boolean = false, libraryFilter: Boolean = false,
-                 source: String = "assets", seed: Long = 1, period: String = "week", onRefresh: (() -> Unit)? = null, collectionId: String? = null) {
+                 source: String = "assets", seed: Long = 1, period: String = "week", onRefresh: (() -> Unit)? = null, collectionId: String? = null, initialTag: String? = null) {
     val state by model.assets(key).collectAsStateWithLifecycle()
     val libraries by model.libraries.collectAsStateWithLifecycle()
     var draft by rememberSaveable(key) { mutableStateOf(model.query(key).text) }
@@ -97,7 +97,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, 
     var sort by rememberSaveable(key) { mutableStateOf("added_desc") }
     var columns by rememberSaveable(key) { mutableIntStateOf(3) }
     var showFilters by rememberSaveable(key) { mutableStateOf(false) }
-    var tag by rememberSaveable(key) { mutableStateOf("") }
+    var tag by rememberSaveable(key) { mutableStateOf(initialTag.orEmpty()) }
     val grid = rememberLazyGridState()
     val query = AssetQuery(text = submitted, mediaType = type, kind = partition, favorite = favorite, authorId = author,
         libraryId = library, tag = tag.takeIf(String::isNotBlank), sort = sort,

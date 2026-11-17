@@ -13,6 +13,7 @@ import (
 type authorTaskCursor struct { Created string `json:"at"`; ID string `json:"id"`; Filter string `json:"filter"` }
 
 func effectiveAuthorTask(task AuthorTask, now time.Time) AuthorTask {
+ if task.CandidateBlocks==nil{task.CandidateBlocks=[]string{}}
  if task.State=="authorized"&&!task.ExpiresAt.After(now){task.State="expired"};return task
 }
 

@@ -20,6 +20,7 @@ def main() -> None:
     call = commands.add_parser("call", help="执行一个工具；JSON 从stdin读取")
     call.add_argument("tool")
     admin = commands.add_parser("admin", help="可信端预算状态/核销/续期")
+    admin.add_argument("--task-id", help="选择已由长期授权绑定的业务任务")
     actions = admin.add_subparsers(dest="action", required=True)
     actions.add_parser("status")
     reconcile = actions.add_parser("reconcile")
@@ -47,7 +48,7 @@ def main() -> None:
                 raise ToolError("INVALID_INPUT", "stdin必须是JSON对象") from None
             result = runtime.call(args.tool, payload)
         else:
-            state = runtime.connect()
+            state = runtime.task_state(args.task_id)
             if args.action == "renew":
                 state.renew(args.calls, args.seconds)
                 result = state.status()

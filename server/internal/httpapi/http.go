@@ -99,6 +99,7 @@ func(a *API)routes(){
  a.get("/operations/{key}",func(r *http.Request)(any,error){return a.s.Operation(r.Context(),principal(r),r.PathValue("key"),r.URL.Query().Get("operation"))})
  a.analyticsRoutes()
  a.authorTaskRoutes()
+ a.delegationRoutes()
  a.managementRoutes()
  a.scanRoutes()
 }

@@ -1,5 +1,6 @@
 {
   "getInstance": {"tool": "platform.instance", "scope": "read"},
+  "getCurrentAIDelegation": {"tool": "platform.permissions", "scope": "read"},
   "listLibraries": {"tool": "library.query", "scope": "read"},
   "listAssets": {"tool": "asset.query", "scope": "read"},
   "getAsset": {"tool": "asset.read", "scope": "read"},

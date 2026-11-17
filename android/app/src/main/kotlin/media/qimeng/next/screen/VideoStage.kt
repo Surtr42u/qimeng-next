@@ -51,22 +51,26 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
     val owner = LocalLifecycleOwner.current
     val viewingSession = remember(asset.id) { model.viewSessionId() }
     var fullscreen by rememberSaveable(asset.id) { mutableStateOf(false) }
+    var savedPosition by rememberSaveable(asset.id, asset.version) { mutableLongStateOf(if (asset.positionVersion == asset.version) asset.positionMs else 0) }
     var error by remember { mutableStateOf<String?>(null) }
     var staleContent by remember { mutableStateOf(false) }
+    var positionWasUsed by remember(asset.id, asset.version) { mutableStateOf(false) }
     val player = remember(asset.id, asset.version) {
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient(asset.target))))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(asset.contentUrl))
-                if (asset.positionVersion == asset.version) seekTo(asset.positionMs)
+                seekTo(savedPosition)
                 prepare()
             }
     }
-    val currentAsset by rememberUpdatedState(asset)
+    // The disposing player's final position belongs to its original content version.
+    val playbackAsset = remember(player) { asset }
     DisposableEffect(player, owner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
+                savedPosition = player.currentPosition
                 player.pause()
-                model.recordProgress(currentAsset, player.currentPosition, viewingSession)
+                if (positionWasUsed) model.recordProgress(playbackAsset, player.currentPosition, viewingSession)
             }
         }
         val listener = object : Player.Listener {
@@ -74,18 +78,27 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
                 staleContent = generateSequence<Throwable>(failure) { it.cause }.filterIsInstance<HttpDataSource.InvalidResponseCodeException>().any { it.responseCode == 409 }
                 error = if (staleContent) "媒体内容已更新，请重新读取" else "视频无法播放，请检查网络或媒体格式"
             }
-            override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) model.recordPlay(currentAsset, viewingSession) }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) { positionWasUsed = true; model.recordPlay(playbackAsset, viewingSession) }
+            }
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) positionWasUsed = true
+            }
         }
         owner.lifecycle.addObserver(observer); player.addListener(listener)
         onDispose {
-            model.recordProgress(currentAsset, player.currentPosition, viewingSession)
+            savedPosition = player.currentPosition
+            if (positionWasUsed) model.recordProgress(playbackAsset, player.currentPosition, viewingSession)
             owner.lifecycle.removeObserver(observer); player.removeListener(listener); player.release()
         }
     }
     LaunchedEffect(player) {
         while (true) {
             delay(10_000)
-            if (player.isPlaying) model.recordProgress(currentAsset, player.currentPosition, viewingSession)
+            if (player.isPlaying) {
+                savedPosition = player.currentPosition
+                model.recordProgress(playbackAsset, savedPosition, viewingSession)
+            }
         }
     }
     if (fullscreen) {

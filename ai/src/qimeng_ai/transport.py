@@ -29,6 +29,7 @@ def load_contract() -> dict:
 class Transport:
     def __init__(self, config: Config, contract: dict, *, client: httpx.Client | None = None):
         self.config, self.contract = config, contract
+        self.active_token = None
         self.client = client or httpx.Client(base_url=config.origin, timeout=config.timeout,
                                             follow_redirects=False, trust_env=False,
                                             headers={"Authorization": f"Bearer {config.token}"})
@@ -40,6 +41,8 @@ class Transport:
         operation = self.contract["operations"][operation_id]
         path = operation["path"]
         params, headers = {}, {}
+        if self.active_token is not None:
+            headers["Authorization"] = "Bearer " + self.active_token
         for parameter in operation["parameters"]:
             name = parameter["name"]
             if name not in arguments:

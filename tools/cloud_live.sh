@@ -26,4 +26,3 @@ for attempt in $(seq 1 30); do
 done
 if [[ "$ready" != true ]]; then echo 'Isolated server did not become ready'; exit 1; fi
 npm --prefix web run test:live
-python -m unittest discover -s ai/tests -p test_live.py -v

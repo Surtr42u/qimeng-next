@@ -49,15 +49,20 @@ class State:
               CREATE TABLE IF NOT EXISTS requests (task TEXT NOT NULL, request TEXT NOT NULL,
                 digest TEXT NOT NULL, repeats INTEGER NOT NULL, PRIMARY KEY(task,request));
               CREATE TABLE IF NOT EXISTS pending (task TEXT NOT NULL, key TEXT NOT NULL,
-                tool TEXT NOT NULL, created REAL NOT NULL, request TEXT NOT NULL, PRIMARY KEY(task,key));
+                tool TEXT NOT NULL, created REAL NOT NULL, request TEXT NOT NULL, unresolved INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(task,key));
               CREATE TABLE IF NOT EXISTS results (id TEXT PRIMARY KEY, created REAL NOT NULL,
                 value TEXT NOT NULL, bytes INTEGER NOT NULL, digest TEXT NOT NULL, kind TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS executor_secrets (operation TEXT PRIMARY KEY, secret TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS task_credentials (task TEXT PRIMARY KEY, secret TEXT NOT NULL,
+                generation INTEGER NOT NULL, metadata TEXT NOT NULL);
             """)
             # Local execution metadata is versioned independently of generated API schemas.
             # An SDK update must not grant a fresh task budget or erase unresolved writes.
             pending_columns = {row[1] for row in db.execute("PRAGMA table_info(pending)")}
             if "request" not in pending_columns:
                 db.execute("ALTER TABLE pending ADD COLUMN request TEXT NOT NULL DEFAULT ''")
+            if "unresolved" not in pending_columns:
+                db.execute("ALTER TABLE pending ADD COLUMN unresolved INTEGER NOT NULL DEFAULT 1")
             result_columns = {row[1] for row in db.execute("PRAGMA table_info(results)")}
             if "kind" not in result_columns:
                 db.execute("ALTER TABLE results ADD COLUMN kind TEXT NOT NULL DEFAULT 'result'")
@@ -98,18 +103,23 @@ class State:
                 raise ToolError("WRITE_UNRESOLVED", "存在未决写入；只允许以完全相同参数和操作键恢复，或由可信端核销")
             db.execute("UPDATE tasks SET calls=calls+1 WHERE id=?", (task,))
             if key and pending is None:
-                db.execute("INSERT INTO pending VALUES(?,?,?,?,?)", (task, key, tool, time.time(), request))
+                db.execute("INSERT INTO pending(task,key,tool,created,request,unresolved) VALUES(?,?,?,?,?,0)", (task, key, tool, time.time(), request))
         return request
 
-    def finish(self, request: str, value, key: str | None, *, uncertain: bool = False) -> None:
+    def finish(self, request: str, value, key: str | None, *, uncertain: bool = False, completed: bool = True) -> None:
         digest = hashlib.sha256(encode(observation(value)).encode()).hexdigest()
         task = self.config.task_id
         with self.transaction() as db:
             previous = db.execute("SELECT digest,repeats FROM requests WHERE task=? AND request=?", (task, request)).fetchone()
             repeats = previous[1] + 1 if previous and previous[0] == digest else 1
             db.execute("INSERT OR REPLACE INTO requests VALUES(?,?,?,?)", (task, request, digest, repeats))
-            if key and not uncertain:
-                db.execute("DELETE FROM pending WHERE task=? AND key=?", (task, key))
+            if key:
+                if uncertain:
+                    db.execute("UPDATE pending SET unresolved=1 WHERE task=? AND key=?", (task, key))
+                elif completed:
+                    db.execute("DELETE FROM pending WHERE task=? AND key=?", (task, key))
+                else:
+                    db.execute("DELETE FROM pending WHERE task=? AND key=? AND unresolved=0", (task, key))
 
     def status(self) -> dict:
         with self.transaction() as db:
@@ -119,6 +129,41 @@ class State:
             return {"taskId": row["id"], "calls": row["calls"], "maxCalls": row["max_calls"],
                     "seconds": round(time.time() - row["started"]), "maxSeconds": row["max_seconds"],
                     "pending": [dict(item) for item in pending]}
+
+    def executor_secret(self, operation: str) -> str:
+        # Private material has no resultRef and is never exposed through a model tool.
+        with self.transaction() as db:
+            row = db.execute("SELECT secret FROM executor_secrets WHERE operation=?", (operation,)).fetchone()
+            if row is not None:
+                return row[0]
+            count = db.execute("SELECT count(*) FROM executor_secrets").fetchone()[0]
+            if count >= 10000:
+                raise ToolError("EXECUTOR_STATE_LIMIT", "执行器凭据记录达到上限，请在可信端归档已结束任务")
+            secret = secrets.token_urlsafe(32)
+            db.execute("INSERT INTO executor_secrets VALUES(?,?)", (operation, secret))
+            return secret
+
+    def attach_task_credential(self, task: dict, secret: str) -> None:
+        identifier, credential = task.get("taskId"), task.get("credential")
+        if not isinstance(identifier, str) or not isinstance(credential, dict):
+            raise ToolError("TASK_RESPONSE_INVALID", "服务未返回可绑定的任务身份", uncertain=True)
+        generation = credential.get("generation")
+        if (not isinstance(generation, int) or generation < 1 or
+                identifier not in (credential.get("batchId"), credential.get("authorTaskId")) or "token" in credential):
+            raise ToolError("TASK_RESPONSE_INVALID", "派生凭据未绑定正确任务", uncertain=True)
+        with self.transaction() as db:
+            previous = db.execute("SELECT generation FROM task_credentials WHERE task=?", (identifier,)).fetchone()
+            if previous is not None and previous[0] > generation:
+                raise ToolError("EXECUTOR_LEASE_STALE", "旧响应不能覆盖较新的任务执行器凭据")
+            db.execute("INSERT OR REPLACE INTO task_credentials VALUES(?,?,?,?)",
+                       (identifier, secret, generation, encode(credential)))
+
+    def task_credential(self, task: str) -> str:
+        with self.transaction() as db:
+            row = db.execute("SELECT secret FROM task_credentials WHERE task=?", (task,)).fetchone()
+        if row is None:
+            raise ToolError("TASK_NOT_BOUND", "本执行器未持有该任务凭据，请使用task.resume接续原任务")
+        return row[0]
 
     def receipt_key(self, key: str) -> str:
         with self.transaction() as db:

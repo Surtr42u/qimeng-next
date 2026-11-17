@@ -23,7 +23,10 @@ class AnalyticsRepository internal constructor(private val settings: SecureSetti
             ActivityTotals(o.totals.views, o.totals.plays, o.totals.seconds), o.activeDays, o.viewedAssets, o.viewedAuthors, o.viewedTags,
             o.averageViewsPerFile, o.mediaTypes.map { ActivityDimension(it.key, it.views, it.plays, it.seconds, it.assets, it.bytes) },
             o.sources.map { ActivityDimension(it.key, it.views, it.plays, it.seconds, it.assets, it.bytes) }),
-            trends.await().items.map { TrendPoint(it.label, it.views, it.plays, it.seconds,
+            trends.await().items.map {
+                require(it.mediaTypes.map { d -> d.key }.containsAll(listOf("image", "animated_image", "video")) &&
+                    it.sources.map { d -> d.key }.containsAll(listOf("regular", "cos"))) { "服务器未提供完整趋势分类，请同步更新服务端" }
+                TrendPoint(it.label, it.views, it.plays, it.seconds,
                 it.mediaTypes.map { d -> TrendDimension(d.key, d.views, d.plays, d.seconds) },
                 it.sources.map { d -> TrendDimension(d.key, d.views, d.plays, d.seconds) }) },
             mapOf("authors" to authors.await().items, "tags" to tags.await().items, "assets" to assets.await().items))

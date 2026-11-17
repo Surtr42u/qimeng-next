@@ -16,3 +16,4 @@ func TestNamingRejectsTraversalAndBrokenEncoding(t *testing.T){
  for _,p:=range []string{"../outside","/absolute","a/../b","a//b","C:/private"}{if ValidRelative(p){t.Fatalf("accepted path %q",p)}}
  if !ValidName("生或死+拳皇  女天狗&不知火舞 1 (2).png"){t.Fatal("confirmed naming separators rejected")}
 }
+func TestCanonicalSourceCharacterNamingSeparators(t *testing.T){if got:=NamingFamily("死或生+拳皇",[]string{"女天狗","不知火舞"},"ignored");got!="生或死+拳皇  女天狗&不知火舞"{t.Fatal(got)};if got:=NamingFamily("",nil,"原始线索");got!="原始线索"{t.Fatal(got)}}

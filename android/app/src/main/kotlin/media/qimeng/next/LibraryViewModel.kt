@@ -76,6 +76,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val history = historyState.asStateFlow()
     private val reportState = MutableStateFlow(ListState<TaskReport>())
     val reports = reportState.asStateFlow()
+    private val authorTaskState = MutableStateFlow(ListState<AuthorTaskReport>())
+    val authorTasks = authorTaskState.asStateFlow()
     private val trashState = MutableStateFlow(ListState<Asset>())
     val trash = trashState.asStateFlow()
     private val directoryState = MutableStateFlow(ListState<Directory>())
@@ -114,6 +116,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 saved["uploadInstance"] = connection?.instanceId
                 analyticsState.value = LoadState(); reviewState.value = LoadState(); recommendationState.value = null
                 authorState.value = ListState(); historyState.value = ListState(); reportState.value = ListState()
+                authorTaskState.value = ListState()
                 trashState.value = ListState()
                 if (connection != null) {
                     saved["uploadLibrary"] = graph.settings.uploadLibrary(connection).orEmpty()
@@ -282,6 +285,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun loadAuthors(next: Boolean = false) = loadPage(authorState, next) { repository.authors(it) }
     fun loadHistory(next: Boolean = false) = loadPage(historyState, next) { repository.history(it) }
     fun loadReports(next: Boolean = false) = loadPage(reportState, next) { repository.reports(it) }
+    fun loadAuthorTasks(next: Boolean = false) = loadPage(authorTaskState, next) { repository.authorTasks(it) }
+    fun cancelAuthorTask(id: String) = action { repository.cancelAuthorTask(id); loadAuthorTasks() }
     fun openAuthor(id: String) {
         navigate("author:$id"); mutableAuthor.value = null
         action { val result = repository.author(id); if (route.value == "author:$id") mutableAuthor.value = result }

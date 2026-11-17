@@ -20,8 +20,11 @@ import (
 func newBatch(id,library,mode,label string,budget int)model.Batch{now:=time.Now().UTC();return model.Batch{ID:id,LibraryID:library,Mode:mode,Label:label,MaxResearchCalls:budget,State:"receiving",Revision:1,BackupState:"not_covered",CleanupState:"retained",CreatedAt:now,UpdatedAt:now}}
 func(s *Service)Batch(ctx context.Context,id string)(model.Batch,error){b,e:=store.Get[model.Batch](ctx,s.DB.DB,"SELECT data FROM batches WHERE id=?",id);return b,Normalize(e)}
 func(s *Service)CreateBatch(ctx context.Context,w *Write,in model.Batch)(model.Batch,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return in,e};if _,e:=s.library(ctx,in.LibraryID);e!=nil{return in,e};if (in.Mode!="ordinary"&&in.Mode!="intelligent")||len(in.Label)>200||strings.TrimSpace(in.Label)==""||in.MaxResearchCalls<0||in.MaxResearchCalls>100{return in,Fail(400,"invalid_batch","批次名称、模式或预算无效。")}
- b:=newBatch(w.ID("batch"),in.LibraryID,in.Mode,in.Label,in.MaxResearchCalls);if in.Mode=="intelligent"{b.State="waiting_executor"};q,e:=w.Q();if e!=nil{return b,e};return b,store.SaveBatch(ctx,q,b)
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return in,e};b,e:=s.prepareBatch(ctx,w.ID("batch"),in);if e!=nil{return b,e};q,e:=w.Q();if e!=nil{return b,e};return b,store.SaveBatch(ctx,q,b)
+}
+func(s *Service)prepareBatch(ctx context.Context,id string,in model.Batch)(model.Batch,error){
+ library,e:=s.library(ctx,in.LibraryID);if e!=nil{return in,e};if !library.Enabled{return in,Fail(409,"library_disabled","目标库已停用。")};if (in.Mode!="ordinary"&&in.Mode!="intelligent")||len(in.Label)>200||strings.TrimSpace(in.Label)==""||in.MaxResearchCalls<0||in.MaxResearchCalls>100{return in,Fail(400,"invalid_batch","批次名称、模式或预算无效。")}
+ b:=newBatch(id,in.LibraryID,in.Mode,in.Label,in.MaxResearchCalls);if in.Mode=="intelligent"{b.State="waiting_executor"};return b,nil
 }
 func(s *Service)Batches(ctx context.Context,p model.Principal,cursor string,limit int)(model.Page[model.Batch],error){n,e:=limited(limit,50);if e!=nil{return model.Page[model.Batch]{},e};key:="batches:"+p.BatchID;o,e:=pageOffset(cursor,key);if e!=nil{return model.Page[model.Batch]{},e};a,e:=store.List[model.Batch](ctx,s.DB.DB,"SELECT data FROM batches WHERE (?='' OR id=?) ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",p.BatchID,p.BatchID,n+1,o);return paged(a,n,o,key),e}
 func(s *Service)BatchDetail(ctx context.Context,p model.Principal,id string)(model.BatchDetail,error){
@@ -75,6 +78,7 @@ func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.Plan
   r,e:=store.Get[model.Research](ctx,s.DB.DB,"SELECT data FROM research WHERE upload_id=?",u.ID);if e!=nil&&!errors.Is(e,sql.ErrNoRows){return p,e};if e==nil&&r.Outcome=="conflict"{return p,Fail(409,"research_conflict","此项证据冲突，须由用户解决后再准备计划。")}
   authorIDs:=input.AuthorIDs;if len(authorIDs)==0&&input.AuthorID!=""{authorIDs=[]string{input.AuthorID}};if len(authorIDs)==0{authorIDs=u.AuthorIDs};authors,e:=s.resolveAuthors(ctx,b.LibraryID,authorIDs);if e!=nil{return p,e};authorIDs=[]string{};for _,a:=range authors{authorIDs=append(authorIDs,a.ID)};authorID:=authors[0].ID
   sourceIDs:=input.SourceIDs;characterIDs:=input.CharacterIDs;if sourceIDs==nil{sourceIDs=u.SourceIDs};if characterIDs==nil{characterIDs=u.CharacterIDs};taxonomy:=model.Asset{};if e=s.resolveTaxonomy(ctx,&taxonomy,sourceIDs,characterIDs);e!=nil{return p,e}
+  input.Family=domain.NamingFamily(taxonomy.Source,taxonomy.Characters,input.Family);if !domain.ValidName(input.Family){return p,Fail(400,"invalid_name","规范出处与角色不能生成合法目标基名。")}
   class:=domain.NumberClass(u.FileName);directory:=u.RelativeDirectory;collectionID:=input.CollectionID;isDrama:=false;appendGroup:=false;var existingWork domain.WorkName;lastExistingPage:=0
   if collectionID!=""{
    c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",collectionID);if e!=nil{return p,Normalize(e)};if c.LibraryID!=b.LibraryID{return p,Fail(409,"collection_library_mismatch","集合属于其他库。")}

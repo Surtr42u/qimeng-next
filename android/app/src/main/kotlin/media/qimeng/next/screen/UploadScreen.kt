@@ -207,6 +207,18 @@ private fun DirectoryDialog(model: LibraryViewModel, libraryId: String, initial:
 
 @Composable
 fun TasksScreen(model: LibraryViewModel) {
+    var authors by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(!authors, { authors = false }, label = { Text("入库 / 整理") })
+            FilterChip(authors, { authors = true }, label = { Text("作者资料") })
+        }
+        Box(Modifier.weight(1f)) { if (authors) AuthorTasksScreen(model) else BatchTasksScreen(model) }
+    }
+}
+
+@Composable
+private fun BatchTasksScreen(model: LibraryViewModel) {
     val state by model.reports.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { if (!state.loaded) model.loadReports() }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -72,6 +72,7 @@ internal class ApiProvider(private val settings: SecureSettings) {
     }
 
     fun api(target: Session): DefaultApi = build(target.baseUrl, client(target))
+    fun apiWithoutRetries(target: Session): DefaultApi = build(target.baseUrl, client(target).newBuilder().retryOnConnectionFailure(false).build())
     private fun build(baseUrl: String, client: OkHttpClient): DefaultApi = Retrofit.Builder()
         .baseUrl(baseUrl.toHttpUrl().resolve("api/v1/")!!).client(client)
         .addConverterFactory(GsonConverterFactory.create(Gson())).build().create(DefaultApi::class.java)

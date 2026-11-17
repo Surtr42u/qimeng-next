@@ -224,6 +224,8 @@ type Principal struct {
  Scopes []string `json:"scopes"`
  BatchID string `json:"batchId,omitempty"`
  AuthorTaskID string `json:"authorTaskId,omitempty"`
+ ParentDelegationID string `json:"parentDelegationId,omitempty"`
+ Generation int64 `json:"generation,omitempty"`
  ExpiresAt time.Time `json:"expiresAt"`
 }
 func (p Principal) Has(scope string) bool {

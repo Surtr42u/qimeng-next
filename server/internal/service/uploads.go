@@ -36,6 +36,7 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  if in.ExpectedHash!=""{if _,e:=hex.DecodeString(in.ExpectedHash);e!=nil||len(in.ExpectedHash)!=64{return model.Upload{},Fail(400,"invalid_hash","源摘要必须是完整 SHA-256。")};in.ExpectedHash=strings.ToLower(in.ExpectedHash)}
  if in.Family!=""&&!domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","自动命名基名无效。")}
  if in.AcquisitionSources==nil{in.AcquisitionSources=[]string{}};in.AcquisitionSources,e=cleanStrings(in.AcquisitionSources,100,2000);if e!=nil{return model.Upload{},e};taxonomy:=model.Asset{};if e=s.resolveTaxonomy(ctx,&taxonomy,in.SourceIDs,in.CharacterIDs);e!=nil{return model.Upload{},e};in.SourceIDs=taxonomy.SourceIDs;in.CharacterIDs=taxonomy.CharacterIDs
+ if in.Family!=""{in.Family=domain.NamingFamily(taxonomy.Source,taxonomy.Characters,in.Family);if !domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","规范出处与角色不能生成合法目标基名。")}}
  if in.SourceMtime!=nil&&(in.SourceMtime.Year()<1970||in.SourceMtime.After(time.Now().Add(24*time.Hour))){return model.Upload{},Fail(400,"invalid_time","源文件时间无效。")}
  if len(in.AuthorIDs)==0&&in.AuthorID!=""{in.AuthorIDs=[]string{in.AuthorID}};authors,e:=s.resolveAuthors(ctx,in.LibraryID,in.AuthorIDs);if e!=nil{return model.Upload{},e};in.AuthorIDs=[]string{};for _,a:=range authors{in.AuthorIDs=append(in.AuthorIDs,a.ID)};in.AuthorID=authors[0].ID
  if in.CollectionID!=""{c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",in.CollectionID);if e!=nil{return model.Upload{},Normalize(e)};if c.LibraryID!=in.LibraryID{return model.Upload{},Fail(409,"collection_library_mismatch","集合属于其他库。")};if c.Kind=="short_drama"{if domain.NumberClass(in.FileName)!="video"{return model.Upload{},Fail(400,"drama_requires_video","短剧集合只接收视频。")};in.Family=c.Name;in.RelativeDirectory=c.Name}}
@@ -121,9 +122,12 @@ func(s *Service)CancelUpload(ctx context.Context,w *Write,id string)error{
  u,e:=s.Upload(ctx,w.Principal,id);if e!=nil{return e};if e=Authorize(w.Principal,"ingest",u.BatchID);e!=nil{return e};if u.State=="ingested"{return Fail(409,"already_ingested","取消上传不会删除已入库媒体。")};u.State="cancelled";q,e:=w.Q();if e!=nil{return e};if e=store.SaveUpload(ctx,q,u);e!=nil{return e};return s.refreshBatch(ctx,q,u.BatchID)
 }
 func(s *Service)directoryNames(ctx context.Context,library,dir string)([]string,error){
- rows,e:=s.DB.DB.QueryContext(ctx,"SELECT relative_path FROM assets WHERE library_id=? AND trashed=0 ORDER BY relative_path",library);if e!=nil{return nil,e};defer rows.Close();names:=[]string{};normalized:=path.Clean(dir)
- for rows.Next(){var p string;if e=rows.Scan(&p);e!=nil{return nil,e};if path.Dir(p)==normalized{names=append(names,path.Base(p))}}
- return names,rows.Err()
+ rows,e:=s.DB.DB.QueryContext(ctx,"SELECT relative_path FROM assets WHERE library_id=? AND trashed=0 ORDER BY relative_path",library);if e!=nil{return nil,e};names:=[]string{};seen:=map[string]bool{};normalized:=path.Clean(dir)
+ add:=func(name string)error{if !seen[name]{seen[name]=true;names=append(names,name)};if len(names)>200000{return Fail(422,"namespace_budget","目标目录超过命名盘点预算，请使用更小的作品目录。")};return nil}
+ for rows.Next(){var p string;if e=rows.Scan(&p);e!=nil{rows.Close();return nil,e};if path.Dir(p)==normalized{if e=add(path.Base(p));e!=nil{rows.Close();return nil,e}}};e=rows.Err();rows.Close();if e!=nil{return nil,e}
+ full:=path.Join("libraries",library,dir);if e=s.safe(full);e!=nil{return nil,e};folder,e:=s.Root.Open(full);if errors.Is(e,os.ErrNotExist){return names,nil};if e!=nil{return nil,e};defer folder.Close()
+ for{entries,readErr:=folder.ReadDir(256);for _,entry:=range entries{if entry.Name()==".qimeng-internal"{continue};if e=add(entry.Name());e!=nil{return nil,e}};if errors.Is(readErr,io.EOF){break};if readErr!=nil{return nil,readErr}}
+ return names,nil
 }
 func(s *Service)Settings()map[string]any{return map[string]any{"maxChunkBytes":MaxChunkBytes,"maxActiveUploads":MaxActiveUploads,"maxBatchItems":MaxBatchItems,"sourceCleanupEnabled":false}}
 func(s *Service)nextEpisode(ctx context.Context,collectionID string)(int,error){var n int;e:=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE(MAX(json_extract(data,'$.page')),0)+1 FROM assets WHERE collection_id=? AND trashed=0",collectionID).Scan(&n);return n,e}

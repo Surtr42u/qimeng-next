@@ -49,6 +49,29 @@ class BudgetAndReferences(unittest.TestCase):
             second.reconcile("original", {"state": "committed", "idempotencyKey": "original:complete"})
             self.assertEqual(second.status()["pending"], [])
 
+    def test_failed_resume_does_not_clear_an_earlier_uncertain_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = State(config(directory), "instance-a", "contract-a")
+            request = state.reserve("upload.file", {"operationId": "original"}, "original")
+            state.finish(request, {"code": "NETWORK_ERROR"}, "original", uncertain=True, completed=False)
+            state.reserve("upload.file", {"operationId": "original"}, "original")
+            state.finish(request, {"code": "task_budget_exhausted"}, "original", completed=False)
+            self.assertEqual(len(state.status()["pending"]), 1)
+            state.finish(request, {"state": "ingested"}, "original")
+            self.assertEqual(state.status()["pending"], [])
+
+    def test_executor_secret_is_not_a_result_reference_and_old_lease_cannot_replace_new(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = State(config(directory), "instance-a", "contract-a")
+            secret = state.executor_secret("task.start:stable-id")
+            self.assertEqual(secret, state.executor_secret("task.start:stable-id"))
+            with self.assertRaises(ToolError):
+                state.read(secret)
+            state.attach_task_credential({"taskId": "task-a", "credential": {"batchId": "task-a", "generation": 2}}, secret)
+            with self.assertRaises(ToolError):
+                state.attach_task_credential({"taskId": "task-a", "credential": {"batchId": "task-a", "generation": 1}}, "old")
+            self.assertEqual(state.task_credential("task-a"), secret)
+
     def test_result_ref_cannot_cross_instance_or_credential(self):
         with tempfile.TemporaryDirectory() as directory:
             first = State(config(directory), "instance-a", "contract-a")

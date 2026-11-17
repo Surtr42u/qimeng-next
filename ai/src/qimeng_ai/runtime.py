@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import threading
+import copy
+import secrets
+from dataclasses import replace
+from datetime import date
 from jsonschema import Draft202012Validator, FormatChecker
 
 from . import __version__, output
@@ -23,12 +27,15 @@ DESCRIPTION_SCHEMA = {"type": "object", "properties": {"tool": {"type": "string"
 
 class Runtime:
     def __init__(self, config: Config, *, contract=None, transport=None):
-        self.config = config
+        # Daily control-plane budget is distinct from each persistent business task.
+        self.config = replace(config, task_id="control:" + date.today().isoformat(), max_seconds=86400) if config.task_id == "interactive" else config
+        self.task_max_seconds = config.max_seconds
         self.contract = contract or load_contract()
         self.transport = transport or Transport(config, self.contract)
         self.operations = {value["tool"]: (identifier, value) for identifier, value
                            in self.contract["operations"].items() if value["tool"]}
         self.state: State | None = None
+        self.base_state: State | None = None
         self.instance_id: str | None = None
         self.lock = threading.RLock()
 
@@ -43,10 +50,11 @@ class Runtime:
             raise ToolError("API_INCOMPATIBLE", "目标服务 API 版本与工具包不兼容")
         if self.instance_id is not None and instance["id"] != self.instance_id:
             raise ToolError("INSTANCE_CHANGED", "同地址实例已变化，请由可信端重新绑定")
-        if self.state is None:
+        if self.base_state is None:
             self.instance_id = instance["id"]
-            self.state = State(self.config, self.instance_id, self.contract["openapiSha256"])
-        return self.state
+            self.base_state = State(self.config, self.instance_id, self.contract["openapiSha256"])
+            self.state = self.base_state
+        return self.base_state
 
     def tools(self) -> list[dict]:
         result = [{"name": name, "description": value["description"],
@@ -67,7 +75,22 @@ class Runtime:
         result.extend(tool_definitions())
         from .research import tool_definitions as research_definitions
         result.extend(research_definitions())
+        from .delegation import tool_definitions as delegation_definitions
+        result.extend(delegation_definitions(self.contract))
+        for tool in result:
+            tool["inputSchema"] = copy.deepcopy(tool["inputSchema"])
+            if tool["name"] not in {"task.start", "task.resume"}:
+                tool["inputSchema"].setdefault("properties", {})["taskId"] = {"type": "string", "minLength": 8, "maxLength": 128,
+                    "description": "task.start/resume返回的任务ID；可信执行器据此选择该任务的受限凭据与预算"}
         return result
+
+    def task_state(self, task_id: str | None) -> State:
+        state = self.connect()
+        self.transport.active_token = state.task_credential(task_id) if task_id else None
+        if task_id:
+            state = State(replace(self.config, task_id=task_id, max_seconds=self.task_max_seconds), self.instance_id, self.contract["openapiSha256"])
+        self.state = state
+        return state
 
     def call(self, name: str, arguments: dict):
         # 一个执行器内部串行写与引用状态。多进程预算另外由SQLite事务保护。
@@ -81,9 +104,11 @@ class Runtime:
             if next(validator.iter_errors(arguments), None) is not None:
                 # 不把ValidationError.message回显，避免包含完整用户输入/本机路径。
                 raise ToolError("INVALID_INPUT", "参数不符合工具契约，请按describe返回的schema修正")
-            state = self.connect()
+            arguments = dict(arguments)
+            task_id = arguments.pop("taskId", None)
+            state = self.task_state(task_id)
             if name == "platform.budget":
-                return state.status()
+                return {"local": state.status(), "server": self.transport.call("getDelegatedBudget", {"id": task_id})} if task_id else state.status()
             key = None
             if not definition["readOnly"]:
                 key = arguments.get("Idempotency-Key") or arguments.get("operationId")
@@ -91,9 +116,11 @@ class Runtime:
                     raise ToolError("OPERATION_ID_REQUIRED", "写入必须提供稳定操作身份，重试沿用原值")
             request = state.reserve(name, arguments, key)
             try:
+                if task_id:
+                    self.transport.call("reserveDelegatedCall", {"id": task_id, "Idempotency-Key": "call-" + secrets.token_hex(16)})
                 value = self._dispatch(name, arguments, state)
             except ToolError as exc:
-                state.finish(request, exc.as_dict(), key, uncertain=exc.uncertain)
+                state.finish(request, exc.as_dict(), key, uncertain=exc.uncertain, completed=False)
                 raise
             except Exception:
                 state.finish(request, {"code": "EXECUTOR_ERROR"}, key, uncertain=bool(key))
@@ -113,7 +140,7 @@ class Runtime:
                     "discovery": "full", "permissions": sorted(self.config.permissions),
                     "tools": [{key: tool[key] for key in ("name", "description", "scope", "readOnly")}
                               for tool in self.tools()],
-                    "workflow": ["task.context", "files.search", "upload.file", "research.submit",
+                    "workflow": ["platform.permissions", "task.start", "task.context", "files.search", "upload.file", "research.submit",
                                  "plan.prepare", "plan.read", "plan.commit", "task.read"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",
                               "计划在Go服务端持久化；用原计划ID和fingerprint提交。",
@@ -129,6 +156,9 @@ class Runtime:
                                arguments.get("offset", 0), arguments.get("limit", 20))
         if name in self.operations:
             return self.transport.call(self.operations[name][0], arguments)
+        if name in {"task.start", "task.resume"}:
+            from .delegation import dispatch
+            return dispatch(self, name, arguments, state)
         if name == "research.probe":
             from .research import probe
             return probe(self, arguments)

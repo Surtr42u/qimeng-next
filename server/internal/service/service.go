@@ -76,6 +76,7 @@ func (s *Service)Authenticate(ctx context.Context,value string)(model.Principal,
  p,err:=store.Get[model.Principal](ctx,s.DB.DB,"SELECT data FROM credentials WHERE token_hash=?",digest([]byte(value)))
  if err!=nil{if !errors.Is(err,sql.ErrNoRows){return p,err};return p,Fail(401,"unauthorized","凭据无效或已撤销。")}
  if !p.ExpiresAt.After(time.Now()){return model.Principal{},Fail(401,"expired","凭据已过期。")}
+ if err=s.validateDelegation(ctx,p);err!=nil{return model.Principal{},err}
  return p,nil
 }
 func Authorize(p model.Principal,scope,batchID string)error{
@@ -98,8 +99,9 @@ func(s *Service)Run(ctx context.Context,p model.Principal,operation,key string,i
  // at the mutation boundary so revocation also rejects work not yet started.
  if p.ID!="owner"&&p.ID!="ai-reader"{
   current,e:=store.Get[model.Principal](ctx,s.DB.DB,"SELECT data FROM credentials WHERE id=?",p.ID)
-  if errors.Is(e,sql.ErrNoRows){return result,Fail(401,"revoked","凭据已撤销，尚未开始的写入已拒绝。")};if e!=nil{return result,e};if !current.ExpiresAt.After(time.Now()){return result,Fail(401,"expired","凭据已过期。")};p=current
+  if errors.Is(e,sql.ErrNoRows){return result,Fail(401,"revoked","凭据已撤销，尚未开始的写入已拒绝。")};if e!=nil{return result,e};if !current.ExpiresAt.After(time.Now()){return result,Fail(401,"expired","凭据已过期。")};if current.Generation!=p.Generation{return result,Fail(401,"lease_changed","任务已由新执行器接续，旧执行器不能继续写入。")};p=current
  }
+ if e:=s.validateDelegation(ctx,p);e!=nil{return result,e}
  if key!=""&&(len(key)<8||len(key)>128){return result,Fail(400,"invalid_idempotency_key","幂等键长度应为 8–128。")}
  hash:=digest(input)
  if key!=""{

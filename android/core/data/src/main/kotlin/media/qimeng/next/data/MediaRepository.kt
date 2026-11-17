@@ -211,6 +211,15 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         val page = provider.api(target()).listBatches(cursor = cursor, limit = 50).bodyOrThrow()
         return Page(page.items.map { it.toModel() }, page.nextCursor)
     }
+    suspend fun authorTasks(cursor: String? = null): Page<AuthorTaskReport> {
+        val page = provider.api(target()).listAuthorTasks(cursor = cursor, limit = 50).bodyOrThrow()
+        return Page(page.items.map { AuthorTaskReport(it.id, it.authorId, it.state.value, it.allowedFields,
+            it.candidateBlocks.orEmpty().map { block -> block.value }, it.allowClear, it.maxUpdates, it.usedUpdates, it.createdAt, it.expiresAt) }, page.nextCursor)
+    }
+    suspend fun cancelAuthorTask(id: String) {
+        val result = provider.api(target()).cancelAuthorTask(id)
+        if (!result.isSuccessful) result.bodyOrThrow()
+    }
 
     suspend fun report(id: String): TaskReport {
         val result = provider.api(target()).getBatch(id).bodyOrThrow()

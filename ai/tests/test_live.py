@@ -14,6 +14,42 @@ from mcp import Client, StdioServerParameters
 
 @unittest.skipUnless(os.environ.get("QIMENG_TEST_BASE") == "http://127.0.0.1:18481", "requires cloud isolated Go service")
 class LiveMCP(unittest.IsolatedAsyncioTestCase):
+    async def test_persistent_permission_creates_and_resumes_task_across_hosts(self):
+        if os.environ.get("CI") != "true":
+            self.fail("live tests must run in cloud")
+        library = self.request("POST", "/libraries", {"name": "Persistent MCP synthetic", "kind": "regular"}, key="mcp-persistent-library")
+        grant = self.request("POST", "/ai/delegations", {
+            "label": "Synthetic cross-host executor", "libraryIds": [library["id"]], "authorIds": [],
+            "allAuthors": False, "allowedFields": [], "candidateBlocks": [], "allowClear": False,
+            "canIngest": True, "canResearch": True, "canOrganize": True,
+            "maxResearchCalls": 2, "maxUpdates": 1, "maxTasksPerDay": 2, "validDays": 1,
+            "maxCallsPerTask": 10, "taskSeconds": 3600,
+        })
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            token = grant["credential"]["token"]
+            async with Client(self.process(Path(first), token, "read,delegate,ingest,research,organize")) as client:
+                result = await client.call_tool("task.start", {"operationId": "mcp-persistent-start", "body": {
+                    "kind": "intake", "label": "Synthetic task", "libraryId": library["id"], "mode": "intelligent"}})
+                self.assertFalse(result.is_error, result.content)
+                task = result.structured_content
+                self.assertNotIn("credential", task)
+                self.assertNotIn(token, str(result.content))
+                original = await client.call_tool("task.context", {"taskId": task["taskId"], "id": task["taskId"]})
+                self.assertFalse(original.is_error, original.content)
+                budget = await client.call_tool("platform.budget", {"taskId": task["taskId"]})
+                self.assertEqual(budget.structured_content["server"]["calls"], 1)
+                async with Client(self.process(Path(second), token, "read,delegate,ingest,research,organize")) as other:
+                    result = await other.call_tool("task.resume", {"operationId": "mcp-persistent-resume", "id": task["taskId"]})
+                    self.assertFalse(result.is_error, result.content)
+                    resumed = await other.call_tool("platform.budget", {"taskId": task["taskId"]})
+                    self.assertEqual(resumed.structured_content["server"]["calls"], 1)
+                    stale = await client.call_tool("task.context", {"taskId": task["taskId"], "id": task["taskId"]})
+                    self.assertTrue(stale.is_error)
+                    context = await other.call_tool("task.context", {"taskId": task["taskId"], "id": task["taskId"]})
+                    self.assertFalse(context.is_error, context.content)
+                    self.assertEqual(context.structured_content["batch"]["id"], task["taskId"])
+        self.request("DELETE", "/ai/delegations/" + grant["delegation"]["id"])
+
     def request(self, method, path, body=None, *, key=None):
         headers = {"Authorization": "Bearer " + os.environ["QIMENG_E2E_TOKEN"]}
         data = None
