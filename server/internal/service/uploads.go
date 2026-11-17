@@ -30,7 +30,8 @@ func(s *Service)Upload(ctx context.Context,p model.Principal,id string)(model.Up
 func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(model.Upload,error){
  if e:=Authorize(w.Principal,"ingest",in.BatchID);e!=nil{return model.Upload{},e}
  library,e:=s.library(ctx,in.LibraryID);if e!=nil{return model.Upload{},e};if !library.Enabled{return model.Upload{},Fail(409,"library_disabled","目标库已停用，不能接收新上传。")}
- if !domain.ValidName(in.FileName)||!domain.ValidRelative(in.RelativeDirectory)||in.Size<1||len(in.Note)>10000||(in.Mode!="ordinary"&&in.Mode!="intelligent"){return model.Upload{},Fail(400,"invalid_upload","上传名称、目标、长度或模式无效。")}
+ if !domain.ValidName(in.FileName)||!domain.ValidMediaPath(in.RelativeDirectory)||in.Size<1||len(in.Note)>10000||(in.Mode!="ordinary"&&in.Mode!="intelligent"){return model.Upload{},Fail(400,"invalid_upload","上传名称、目标、长度或模式无效。")}
+ if in.OriginalFileName==""{in.OriginalFileName=in.FileName};if len(in.OriginalFileName)>1024||strings.ContainsAny(in.OriginalFileName,"/\\:\x00"){return model.Upload{},Fail(400,"invalid_source_name","原始名称只能是文件名，不能包含绝对路径。")};sourcePath:=strings.ReplaceAll(in.SourceRelativePath,"\\","/");if len(sourcePath)>4096||strings.ContainsAny(sourcePath,":\x00")||strings.HasPrefix(sourcePath,"/")||sourcePath==".."||strings.HasPrefix(sourcePath,"../")||(sourcePath!=""&&path.Clean(sourcePath)!=sourcePath){return model.Upload{},Fail(400,"invalid_source_path","来源线索必须是相对路径。")}
  _,mime,supported:=domain.MediaType(in.FileName);if !supported{return model.Upload{},Fail(415,"unsupported_media","不支持该文件类型；不自动解压文件。")};if in.MimeType!=mime{return model.Upload{},Fail(415,"mime_mismatch","声明的 MIME 与文件扩展名不一致。")}
  if in.ExpectedHash!=""{if _,e:=hex.DecodeString(in.ExpectedHash);e!=nil||len(in.ExpectedHash)!=64{return model.Upload{},Fail(400,"invalid_hash","源摘要必须是完整 SHA-256。")};in.ExpectedHash=strings.ToLower(in.ExpectedHash)}
  if in.Family!=""&&!domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","自动命名基名无效。")}
@@ -47,9 +48,11 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
   b,e:=s.Batch(ctx,in.BatchID);if e!=nil{return model.Upload{},e};if b.LibraryID!=in.LibraryID||b.Mode!=in.Mode||b.State=="cancelled"{return model.Upload{},Fail(409,"batch_mismatch","批次目标或状态不允许接收文件。")};var count int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM uploads WHERE batch_id=?",in.BatchID).Scan(&count);e!=nil{return model.Upload{},e};if count>=MaxBatchItems{return model.Upload{},Fail(409,"batch_limit","每批最多接收 100 项。")}
  }
  var active int;var reserved int64
- if e:=s.DB.DB.QueryRowContext(ctx,"SELECT count(*),COALESCE(sum(json_extract(data,'$.size')-json_extract(data,'$.offset')),0) FROM uploads WHERE state='receiving'").Scan(&active,&reserved);e!=nil{return model.Upload{},e}
- if active>=MaxActiveUploads{return model.Upload{},Fail(429,"upload_capacity","同时接收的上传已满，请稍后重试。")};free,e:=freeBytes(s.Config.DataDir);if e!=nil{return model.Upload{},e};if in.Size>free-s.Config.ReserveBytes-reserved{return model.Upload{},Fail(507,"insufficient_storage","可用空间不足以保留上传与存储余量。")}
+ if e:=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM uploads WHERE state='receiving'").Scan(&active);e!=nil{return model.Upload{},e}
+ if e:=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE(sum(json_extract(u.data,'$.size')-json_extract(u.data,'$.offset')),0) FROM uploads u JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId') WHERE u.state='receiving' AND COALESCE(json_extract(l.data,'$.storageId'),'data')=?",library.StorageID).Scan(&reserved);e!=nil{return model.Upload{},e}
+ if active>=MaxActiveUploads{return model.Upload{},Fail(429,"upload_capacity","同时接收的上传已满，请稍后重试。")};diskPath,e:=s.Root.LibraryPath(in.LibraryID);if e!=nil{return model.Upload{},e};free,e:=freeBytes(diskPath);if e!=nil{return model.Upload{},e};if in.Size>free-s.Config.ReserveBytes-reserved{return model.Upload{},Fail(507,"insufficient_storage","可用空间不足以保留上传与存储余量。")}
  u:=model.Upload{UploadInput:in,ID:w.ID("upload"),State:"receiving",CreatedAt:time.Now().UTC()}
+ s.Root.RegisterUpload(u.ID,u.LibraryID);if e=s.ensureParent(uploadPath(u.ID));e!=nil{return u,e}
  f,e:=s.Root.OpenFile(uploadPath(u.ID),os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
  if errors.Is(e,os.ErrExist){if e=s.safe(uploadPath(u.ID));e!=nil{return u,e};info,se:=s.Root.Stat(uploadPath(u.ID));if se!=nil{return u,se};if info.Size()!=0{return u,Fail(409,"upload_orphan_conflict","同操作残留内容需要核对。")};f,e=s.Root.OpenFile(uploadPath(u.ID),os.O_WRONLY,0600)}
  if e!=nil{return u,e};if e=f.Sync();e!=nil{f.Close();return u,e};if e=f.Close();e!=nil{return u,e};if e=s.syncParent(uploadPath(u.ID));e!=nil{return u,e}
@@ -65,7 +68,7 @@ func(s *Service)AppendUpload(ctx context.Context,w *Write,id string,offset int64
   if offset+int64(len(body))>u.Offset{return u,Fail(409,"offset_conflict","请从服务端已保存偏移继续。")};old:=make([]byte,len(body));if _,e=f.ReadAt(old,offset);e!=nil{return u,e};if !bytes.Equal(old,body){return u,Fail(409,"chunk_conflict","重复分片的内容已改变。")};return u,nil
  }
  if offset!=u.Offset{return u,Fail(409,"offset_conflict","请读取当前偏移后继续上传。")}
- free,e:=freeBytes(s.Config.DataDir);if e!=nil{return u,e};if free-int64(len(body))<s.Config.ReserveBytes{return u,Fail(507,"insufficient_storage","存储余量不足，保留已接收分片。")}
+ diskPath,e:=s.Root.LibraryPath(u.LibraryID);if e!=nil{return u,e};free,e:=freeBytes(diskPath);if e!=nil{return u,e};if free-int64(len(body))<s.Config.ReserveBytes{return u,Fail(507,"insufficient_storage","存储余量不足，保留已接收分片。")}
  // An uncommitted tail after a process crash is discarded; only the persisted
  // offset is authoritative. Bytes are flushed before advancing that offset.
  if e=f.Truncate(u.Offset);e!=nil{return u,e};if _,e=f.WriteAt(body,offset);e!=nil{return u,e};if e=f.Sync();e!=nil{return u,e};u.Offset+=int64(len(body));q,e:=w.Q();if e!=nil{return u,e};return u,store.SaveUpload(ctx,q,u)
@@ -87,17 +90,18 @@ func(s *Service)CompleteUpload(ctx context.Context,w *Write,id string)(model.Upl
  return s.ingest(ctx,w,u,nil)
 }
 func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.PlanItem)(model.UploadResult,error){
+ if u.OriginalFileName==""{u.OriginalFileName=u.FileName}
  if e:=s.verify(uploadPath(u.ID),u.Hash,u.Size);e!=nil{return model.UploadResult{},e}
  var duplicate int;if e:=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM assets WHERE hash=? AND size=? AND id!=?",u.Hash,u.Size,u.ReplaceAssetID).Scan(&duplicate);e!=nil{return model.UploadResult{},e}
  if duplicate>0&&u.ReplaceAssetID==""{u.State="duplicate";u.ErrorCode="duplicate_content";u.ErrorMessage="已有相同内容，请由用户决定本项处理；原文件保留。";q,e:=w.Q();if e!=nil{return model.UploadResult{},e};if e=store.SaveUpload(ctx,q,u);e!=nil{return model.UploadResult{},e};if e=s.refreshBatch(ctx,q,u.BatchID);e!=nil{return model.UploadResult{},e};return model.UploadResult{Upload:u},nil}
  now:=time.Now().UTC();kind,mime,_:=domain.MediaType(u.FileName)
  authors,e:=s.resolveAuthors(ctx,u.LibraryID,u.AuthorIDs);if e!=nil{return model.UploadResult{},e};author:=authors[0]
- a:=model.Asset{ID:digest([]byte("asset:"+u.ID))[:32],LibraryID:u.LibraryID,OriginalFileName:u.FileName,FileName:u.FileName,RelativePath:path.Join(u.RelativeDirectory,u.FileName),MediaType:kind,MimeType:mime,Size:u.Size,Hash:u.Hash,Revision:1,TagsRevision:1,ContentVersion:1,AuthorID:author.ID,AuthorName:author.Name,AuthorStatus:"confirmed",CollectionID:u.CollectionID,Tags:[]string{},Characters:[]string{},Note:u.Note,MetadataSource:"upload",SourceMtime:u.SourceMtime,CreatedAt:now,UpdatedAt:now}
+ a:=model.Asset{ID:digest([]byte("asset:"+u.ID))[:32],LibraryID:u.LibraryID,OriginalFileName:u.OriginalFileName,SourceRelativePath:u.SourceRelativePath,FileName:u.FileName,RelativePath:path.Join(u.RelativeDirectory,u.FileName),MediaType:kind,MimeType:mime,Size:u.Size,Hash:u.Hash,Revision:1,TagsRevision:1,ContentVersion:1,AuthorID:author.ID,AuthorName:author.Name,AuthorStatus:"confirmed",CollectionID:u.CollectionID,Tags:[]string{},Characters:[]string{},Note:u.Note,MetadataSource:"upload",SourceMtime:u.SourceMtime,CreatedAt:now,UpdatedAt:now}
  setAuthors(&a,authors);a.AuthorsRevision=1;a.AcquisitionSources=u.AcquisitionSources;if e=s.resolveTaxonomy(ctx,&a,u.SourceIDs,u.CharacterIDs);e!=nil{return model.UploadResult{},e}
  var before *model.Asset;operation:="ingest"
  if u.ReplaceAssetID!=""{
   old,e:=s.Asset(ctx,u.ReplaceAssetID);if e!=nil{return model.UploadResult{},e};if old.Trashed||old.ContentVersion!=u.ExpectedContentVersion{return model.UploadResult{},Fail(409,"replacement_conflict","目标内容版本已变化。")};before=&old;a=old;a.Size=u.Size;a.Hash=u.Hash;a.MimeType=mime;a.MediaType=kind;a.ContentVersion++;a.Revision++;a.UpdatedAt=now;a.SourceMtime=u.SourceMtime
-  a.FileName=strings.TrimSuffix(old.FileName,path.Ext(old.FileName))+strings.ToLower(path.Ext(u.FileName));a.RelativePath=path.Join(path.Dir(old.RelativePath),a.FileName);a.AcquisitionSources=appendUnique(a.AcquisitionSources,u.AcquisitionSources...);operation="replace"
+  a.FileName=strings.TrimSuffix(old.FileName,path.Ext(old.FileName))+strings.ToLower(path.Ext(u.FileName));a.RelativePath=path.Join(path.Dir(old.RelativePath),a.FileName);a.AcquisitionSources=appendUnique(a.AcquisitionSources,u.AcquisitionSources...);a.OriginalFileName=u.OriginalFileName;a.SourceRelativePath=u.SourceRelativePath;operation="replace"
  }else if item!=nil{
   if item.ExpectedHash!=u.Hash{return model.UploadResult{},Fail(409,"plan_content_changed","计划引用的内容已改变。")};a.FileName=item.FileName;a.RelativePath=item.RelativePath;a.CollectionID=item.CollectionID;a.Page=item.Page;a.MetadataSource="ai";authors,e:=s.resolveAuthors(ctx,a.LibraryID,item.AuthorIDs);if e!=nil{return model.UploadResult{},e};setAuthors(&a,authors);if e=s.resolveTaxonomy(ctx,&a,item.SourceIDs,item.CharacterIDs);e!=nil{return model.UploadResult{},e}
  }else if u.Family!=""{
@@ -108,6 +112,7 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
  if !domain.ValidName(a.FileName)||!domain.ValidRelative(a.RelativePath){return model.UploadResult{},Fail(400,"invalid_name","目标命名含不合法字符或坏编码；未发布文件。")}
  if e=s.checkPath(ctx,a.LibraryID,a.RelativePath,a.ID);e!=nil{return model.UploadResult{},e};a.ContentURL="/api/v1/assets/"+a.ID+"/content";if e=s.probe(ctx,uploadPath(u.ID),&a);e!=nil{return model.UploadResult{},e}
  if u.SourceMtime!=nil{if e=s.Root.Chtimes(uploadPath(u.ID),*u.SourceMtime,*u.SourceMtime);e!=nil{return model.UploadResult{},e}}
+ info,e:=s.Root.Stat(uploadPath(u.ID));if e!=nil{return model.UploadResult{},e};modified:=info.ModTime().UTC();a.ContentMtime=&modified
  j:=fileIntent{ID:digest([]byte("publish:"+u.ID))[:32],Kind:operation,Source:uploadPath(u.ID),Target:assetPath(a),Retired:"retired/"+u.ID,UploadID:u.ID,Before:before,After:a}
  a,e=s.runFile(ctx,w,j);if e!=nil{return model.UploadResult{},e};u.State="ingested";u.AssetID=a.ID;return model.UploadResult{Upload:u,Asset:&a},nil
 }

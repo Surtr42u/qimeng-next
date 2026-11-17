@@ -70,7 +70,13 @@ export class UploadQueue {
     if (files.length > this.maxItems || this.entries.size + files.length > 500) throw new Error(`本批最多 ${this.maxItems} 项；队列记录最多 500 项，请先清理已结束记录。`);
     this.publish({ preparing: true });
     try {
-      const batchInput = { libraryId: target.libraryId, mode: target.mode, label: `${files.length} 个文件 · ${new Date().toLocaleString('zh-CN')}` } satisfies Schema<'BatchCreate'>;
+      const batchInput = {
+        libraryId: target.libraryId,
+        mode: target.mode,
+        label: `${files.length} 个文件 · ${new Date().toLocaleString('zh-CN')}`,
+        // OpenAPI's declared intelligent-batch default; ordinary upload requests no research budget.
+        maxResearchCalls: target.mode === 'intelligent' ? 8 : 0,
+      } satisfies Schema<'BatchCreate'>;
       const pending = this.preparingBatch;
       if (pending && (pending.input.libraryId !== target.libraryId || pending.input.mode !== target.mode)) throw new Error('上次批次创建未确认，请先使用相同目标重试。');
       const attempt = pending ?? { key: newId(), input: batchInput };
@@ -81,7 +87,7 @@ export class UploadQueue {
         const relative = file.webkitRelativePath;
         const directory = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '';
         const entry: QueueEntry = { id: newId(), scope: this.scope,
-          request: { ...target, fileName: file.name, size: file.size, mimeType: file.type || 'application/octet-stream', sourceMtime: new Date(file.lastModified).toISOString(), batchId: batch.id,
+          request: { ...target, fileName: file.name, originalFileName: file.name, sourceRelativePath: relative || file.name, size: file.size, mimeType: file.type || 'application/octet-stream', sourceMtime: new Date(file.lastModified).toISOString(), batchId: batch.id,
             relativeDirectory: [target.relativeDirectory, directory].filter(Boolean).join('/') || undefined },
           libraryName, name: file.name, size: file.size, modified: file.lastModified, phase: 'queued', offset: 0, hashProgress: 0, createdAt: new Date().toISOString() };
         this.entries.set(entry.id, entry); this.files.set(entry.id, file); this.persist(entry);
@@ -104,8 +110,9 @@ export class UploadQueue {
       let entry = this.entries.get(id)!;
       this.change(id, { phase: 'hashing', error: undefined });
       const digest = await fileDigest(file, signal, value => this.change(id, { hashProgress: value }, false));
-      if (entry.digest && digest !== entry.digest) throw new Error('所选文件内容已改变。没有继续旧上传，请选择原文件或作为新任务添加。');
-      this.change(id, { digest });
+      const originalDigest = entry.digest ?? entry.request.expectedHash;
+      if (originalDigest && digest !== originalDigest) throw new Error('所选文件内容已改变。没有继续旧上传，请选择原文件或作为新任务添加。');
+      this.change(id, { digest, request: { ...entry.request, expectedHash: digest } });
       entry = this.entries.get(id)!;
       let upload = entry.uploadId
         ? await read(api.GET('/uploads/{id}', { params: { path: { id: entry.uploadId } }, signal }))

@@ -34,6 +34,7 @@ class Config:
     output_bytes: int
     timeout: int
     storages: dict[str, Path]
+    allow_media_to_model: bool
 
     @classmethod
     def load(cls, env=None) -> "Config":
@@ -78,4 +79,5 @@ class Config:
                    positive(env, "QIMENG_AI_MAX_SECONDS", 900, 86400),
                    positive(env, "QIMENG_AI_MAX_UNCHANGED", 3, 100),
                    positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576),
-                   positive(env, "QIMENG_AI_TIMEOUT", 120, 1800), storages)
+                   positive(env, "QIMENG_AI_TIMEOUT", 120, 1800), storages,
+                   env.get("QIMENG_AI_ALLOW_MEDIA_TO_MODEL", "false").lower() in {"1", "true"})

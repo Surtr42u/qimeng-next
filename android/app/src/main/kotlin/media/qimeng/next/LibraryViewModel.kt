@@ -79,6 +79,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val collectionState = MutableStateFlow(ListState<MediaCollection>())
     val collections = collectionState.asStateFlow()
     private var directoryJob: Job? = null
+    private var collectionJob: Job? = null
     private var directoryLocation = ""
     private var detailJob: Job? = null
     private var detailGeneration = RequestGeneration()
@@ -99,7 +100,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 mutableAssetAuthors.value = emptyList()
                 mutableTags.value = emptyList(); mutableTagCursor.value = null
                 mutableLibraries.value = emptyList(); mutableCapabilities.value = null
-                analyticsJob?.cancel(); reviewJob?.cancel(); directoryJob?.cancel()
+                analyticsJob?.cancel(); reviewJob?.cancel(); directoryJob?.cancel(); collectionJob?.cancel()
                 directoryState.value = ListState()
                 collectionState.value = ListState()
                 if (saved.get<String>("uploadInstance") != connection?.instanceId) {
@@ -117,10 +118,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    fun assets(key: String): StateFlow<ListState<Asset>> = lists.getOrPut(key) { MutableStateFlow(ListState()) }.asStateFlow()
+    fun assets(key: String): StateFlow<ListState<Asset>> = assetState(key)
+    private fun assetState(key: String): MutableStateFlow<ListState<Asset>> {
+        lists[key]?.let { return it }
+        val dynamic = lists.keys.filter { it.startsWith("author:") || it.startsWith("collection:") }
+        if ((key.startsWith("author:") || key.startsWith("collection:")) && dynamic.size >= 12) {
+            val expired = dynamic.first()
+            listJobs.remove(expired)?.cancel(); lists.remove(expired); queries.remove(expired); listVersions.remove(expired)
+        }
+        return MutableStateFlow(ListState<Asset>()).also { lists[key] = it }
+    }
     fun query(key: String): AssetQuery = queries[key] ?: AssetQuery()
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
-        val state = lists.getOrPut(key) { MutableStateFlow(ListState()) }
+        val state = assetState(key)
         val previous = queries[key]
         if (next && (state.value.loading || state.value.cursor == null)) return
         if (!next && !force && previous == query && (state.value.loaded || state.value.loading)) return
@@ -252,11 +262,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         mutableTags.value = page.items; mutableTagCursor.value = page.nextCursor
     }
     fun viewSessionId(): String = saved.get<String>("viewSession") ?: UUID.randomUUID().toString().also { saved["viewSession"] = it }
-    fun recordView(asset: Asset, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "view", sessionId = sessionId) }
-    fun recordProgress(asset: Asset, position: Long, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "progress", position, sessionId) }
-    fun recordPlay(asset: Asset, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "play", sessionId = sessionId) }
-    fun recordDwell(asset: Asset, sessionId: String, seconds: Double, startedAt: String) = action(blocking = false) {
-        if (seconds >= 1.0) graph.uploads.event(asset, "dwell", sessionId = sessionId, seconds = seconds, occurredAt = startedAt)
+    fun recordView(asset: Asset, sessionId: String) = graph.recordEvent(asset, "view", sessionId)
+    fun recordProgress(asset: Asset, position: Long, sessionId: String) = graph.recordEvent(asset, "progress", sessionId, positionMs = position)
+    fun recordPlay(asset: Asset, sessionId: String) = graph.recordEvent(asset, "play", sessionId)
+    fun recordDwell(asset: Asset, sessionId: String, seconds: Double, startedAt: String) {
+        if (seconds >= 1.0) graph.recordEvent(asset, "dwell", sessionId, seconds = seconds, occurredAt = startedAt)
     }
     fun mediaClient() = repository.mediaClient()
     private fun publishAsset(asset: Asset) {
@@ -376,7 +386,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         session.value?.let { target -> withContext(Dispatchers.IO) { graph.settings.saveUploadLibrary(target, id) } }
         if (id != uploadLibrary.value) {
             saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""
-            collectionState.value = ListState()
+            collectionJob?.cancel(); collectionState.value = ListState()
         }
         saved["uploadLibrary"] = id
     }
@@ -386,7 +396,23 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun setUploadCollection(id: String?) { saved["uploadCollectionId"] = id }
     fun setUploadNote(note: String) { saved["uploadNote"] = note }
     fun setUploadSources(sources: String) { saved["uploadSources"] = sources }
-    fun loadCollections(next: Boolean = false) = loadPage(collectionState, next) { repository.collections(uploadLibrary.value, it) }
+    fun loadCollections(next: Boolean = false) {
+        if (collectionState.value.loading || (next && collectionState.value.cursor == null)) return
+        val library = uploadLibrary.value
+        val previous = collectionState.value
+        val connection = connectionGeneration
+        collectionState.value = previous.copy(loading = true, error = null)
+        collectionJob = viewModelScope.launch {
+            try {
+                val page = repository.collections(library, if (next) previous.cursor else null)
+                if (library == uploadLibrary.value && connection == connectionGeneration)
+                    collectionState.value = ListState(if (next) previous.items + page.items else page.items, page.nextCursor, loaded = true)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (library == uploadLibrary.value && connection == connectionGeneration) collectionState.value = previous.copy(error = explain(failure))
+            }
+        }
+    }
     fun createCollection(name: String, kind: String, onSaved: () -> Unit) = action {
         repository.createCollection(uploadLibrary.value, name, kind); onSaved(); loadCollections()
     }

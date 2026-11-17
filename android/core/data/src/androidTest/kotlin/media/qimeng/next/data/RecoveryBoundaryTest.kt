@@ -43,6 +43,18 @@ class RecoveryBoundaryTest {
         assertEquals("{broken", file.readText())
     }
 
+    @Test fun backupOnlyAtomicFileWindowRecoversCommittedRecords() = runBlocking {
+        val context = isolatedContext()
+        val queue = QueueStore(context)
+        queue.load()
+        queue.update { it.copy(intakeFailures = listOf(IntakeFailure("fixture", "synthetic.png", "synthetic failure"))) }
+        val base = File(context.filesDir, "transfer-journal.json")
+        assertTrue(base.renameTo(File(base.path + ".bak")))
+        val recovered = QueueStore(context)
+        recovered.load()
+        assertEquals("fixture", recovered.state.value!!.intakeFailures.single().id)
+    }
+
     @Test fun credentialsStayOnTheirOriginAndAreNotFollowedThroughRedirects() {
         val server = MockWebServer()
         val other = MockWebServer()

@@ -41,7 +41,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                     graph.queue.update { it.copy(events = it.events.filterNot { item -> item.id == event.id }) }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: ApiFailure) {
-                    if (failure.status == 404 || failure.status == 409) {
+                    if (failure.status in setOf(400, 404, 409)) {
                         graph.queue.update { snapshot -> snapshot.copy(events = snapshot.events.map {
                             if (it.id == event.id) it.copy(failure = failure.message) else it
                         }) }
@@ -58,6 +58,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 try { transfer(task) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
+                    if (current(task.id)?.state == TransferState.SUCCEEDED) {
+                        graph.queue.reportProblem("服务器结果已保存，本机副本清理未完成；不会重新上传。")
+                        return@forEach
+                    }
                     val transient = failure is IOException && (failure !is ApiFailure || failure.status == 429 || failure.status >= 500)
                     val automatic = transient && runAttemptCount < 4
                     update(task.id) { it.copy(state = if (automatic) TransferState.QUEUED else TransferState.FAILED,
@@ -87,12 +91,14 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             task = current(task.id) ?: return
         }
         if (isStopped || task.state == TransferState.CANCELLED) return
+        check(task.sourceHash?.length == 64) { "传输快照缺少完整摘要，请重新选择文件" }
         var upload = if (task.uploadId == null) {
             api.createUpload(idempotencyKey = "upload-${task.id}", uploadCreate = UploadCreate(libraryId = task.libraryId,
                 fileName = task.name, propertySize = task.bytes, mimeType = task.mimeType,
                 mode = UploadCreate.Mode.entries.first { it.value == task.mode.name.lowercase() }, batchId = task.batchId,
                 sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory, authorIds = task.options.authorIds,
-                collectionId = task.options.collectionId, note = task.options.note, acquisitionSources = task.options.acquisitionSources)).bodyOrThrow()
+                collectionId = task.options.collectionId, note = task.options.note, acquisitionSources = task.options.acquisitionSources,
+                expectedHash = task.sourceHash, originalFileName = task.originalName)).bodyOrThrow()
         } else api.getUpload(task.uploadId!!).bodyOrThrow()
         update(task.id) { it.copy(uploadId = upload.id, offset = upload.offset) }
         if (isStopped || current(task.id)?.state == TransferState.CANCELLED) return
@@ -125,7 +131,12 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             if (it.id == id) it.copy(state = TransferState.SUCCEEDED, assetId = assetId, offset = it.bytes,
                 message = if (state == "staged") "已传输，等待智能整理；来源文件保留" else "已入库；来源文件保留") else it
         }) }
-        current(id)?.let { File(applicationContext.filesDir, "upload-spool/${it.spoolName}").delete() }
+        current(id)?.let { task ->
+            val file = File(applicationContext.filesDir, "upload-spool/${task.spoolName}")
+            if (file.exists() && !file.delete() && file.exists()) {
+                update(id) { it.copy(message = "${it.message}；本机传输副本尚未清理，入库结果保留") }
+            }
+        }
     }
 
     private fun current(id: String) = graph.queue.state.value?.transfers?.find { it.id == id }

@@ -60,7 +60,7 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     }
     TrackDwell(item, model)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (item.mediaType == "video") VideoStage(item, model) else ImageStage(item, model::adjacentAsset)
+        if (item.mediaType == "video") VideoStage(item, model) else ImageStage(item, model::adjacentAsset) { model.openAsset(item.id) }
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
             Text(item.name, style = MaterialTheme.typography.titleLarge)
             item.collectionId?.let { collection -> TextButton(onClick = { model.navigate("collection:$collection") }) { Text("同组作品${item.page?.let { " · 第 $it 项" }.orEmpty()}") } }
@@ -112,7 +112,10 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
         AlertDialog(onDismissRequest = { showInfo = false }, title = { Text("详细信息") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(item.name)
+                if (item.originalName != item.name) Text("来源原名：${item.originalName}")
                 Text("${item.mediaType} · ${formatBytes(item.bytes)}")
+                if (item.width != null && item.height != null) Text("${item.width} × ${item.height}")
+                item.durationMs?.let { Text("时长 ${it / 1000} 秒") }
                 Text("入库时间：${item.addedAt}")
                 Text("内容版本 ${item.version}")
                 TextButton(onClick = { clipboard.setText(AnnotatedString(item.name)); copied = true }) { Text(if (copied) "已复制文件名" else "复制完整文件名") }
@@ -146,7 +149,7 @@ private fun AuthorsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> 
 }
 
 @Composable
-private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit) {
+private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> Unit) {
     var scale by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     val context = LocalContext.current
@@ -183,7 +186,7 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit) {
         }, imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit,
             onError = { error = true }, onSuccess = { error = false },
             modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y })
-        if (error) FilledTonalButton(onClick = { retry++; error = false }) { Text("图片加载失败 · 重试") }
+        if (error) FilledTonalButton(onClick = { retry++; error = false; onReload() }) { Text("图片加载失败 · 重试") }
         Row(Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
             IconButton(onClick = { scale = (scale - 0.5f).coerceAtLeast(1f); if (scale == 1f) offset = Offset.Zero }) { Icon(Icons.Outlined.ZoomOut, "缩小图片", tint = Color.White) }
             IconButton(onClick = { scale = (scale + 0.5f).coerceAtMost(6f) }) { Icon(Icons.Outlined.ZoomIn, "放大图片", tint = Color.White) }

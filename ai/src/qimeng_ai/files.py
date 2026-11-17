@@ -97,7 +97,7 @@ def search(runtime, arguments: dict) -> dict:
             output.append({"name": name, "directory": relative, "kind": "directory"})
         elif item.is_file():
             reference = runtime.state.save({"kind": "file", "storage": storage, "relative": relative,
-                                            "identity": identity(info)})
+                                            "identity": identity(info)}, kind="file")
             output.append({"name": name, "relativePath": relative, "kind": "file", "size": info.st_size,
                            "fileRef": "f_" + reference[2:]})
     next_offset = offset + limit
@@ -110,7 +110,7 @@ def search(runtime, arguments: dict) -> dict:
 def open_reference(runtime, reference: str):
     if "local.read" not in runtime.config.permissions or not reference.startswith("f_"):
         raise ToolError("FILE_REF_DENIED", "需要local.read权限和有效fileRef")
-    record = runtime.state.read("r_" + reference[2:])
+    record = runtime.state.read("r_" + reference[2:], kind="file")
     if not isinstance(record, dict) or record.get("kind") != "file":
         raise ToolError("FILE_REF_INVALID", "引用不是源文件")
     path = guarded_path(runtime.config, record["storage"], record["relative"])

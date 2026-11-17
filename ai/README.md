@@ -23,6 +23,7 @@
 | `QIMENG_AI_MAX_CALLS/MAX_SECONDS/MAX_UNCHANGED` | 默认100次/900秒/3次相同结果；预算持久保存 |
 | `QIMENG_AI_OUTPUT_BYTES` | 默认12288，限制展示结果；不含协议外壳或宿主重复呈现 |
 | `QIMENG_AI_TIMEOUT` | 单HTTP请求默认120秒；超时可能已有副作用，先回读 |
+| `QIMENG_AI_ALLOW_MEDIA_TO_MODEL` | 默认false；显式true才允许artifact以MCP image形式传给模型 |
 
 凭据不通过命令行参数输入、不进入仓库或报告。工具清单默认完整且稳定，兼容不刷新清单的宿主；任务实际上下文、规则和数据仍按需获取。可见工具不等于已获许可，服务端还会执行独立scope和批次限制。
 
@@ -35,7 +36,9 @@
 5. `plan.prepare` 由Go生成最终命名/关联；必要时 `plan.read` 逐项核对，授权范围内用原ID/fingerprint执行 `plan.commit`。
 6. `task.read` / `asset.read` 按输入清单回读，分别报告入库、未知/冲突、备份和来源清理。上传工具保留来源文件。
 
-超长结果返回resultRef与省略声明；`platform.result.read` 用JSON Pointer、offset/limit续读。引用绑定实例、凭据和契约，24小时过期，每个32MiB、总256MiB、最多128项。该缓存失效不等于服务端计划丢失，需重新从原计划ID读取。
+超长结果返回resultRef与省略声明；`platform.result.read` 用JSON Pointer、offset/limit续读。引用绑定实例、凭据和契约，24小时过期，每个32MiB、总256MiB；普通结果最多128项，文件元引用最多10000项，研究图片最多512项，字节总额仍共享。相同内容复用引用。该缓存失效不等于服务端计划丢失，需重新从原计划ID读取。
+
+`research.probe`接收fileRef，安全快照后由ffprobe/ffmpeg读取元信息并抽取最多三帧，不要求作者提示、不自动联网、不写业务。当前本地快照上限2GiB（不限制正式上传），子进程限时、限输出、禁stdin/控制台并使用固定媒体解复用器。`platform.artifact.read`标准MCP图片输出独立授权，每图最多2MiB；普通resultRef续读不能绕过图片授权。CLI仅输出图片元信息。换执行器时的服务端输入/工件接续仍须跟服务端研究产物接口一同验收，不能以本地缓存替代。
 
 作者资料维护采用单独的明确授权任务：可信客户端用 `POST /author-tasks` 指定作者、读取修订、允许字段、是否允许清空、次数及有效期，随后签发只绑定该任务的 `read,author.profile.write` 凭据。模型通过 `author.task.context` 获取需要的信息，使用稳定幂等键执行 `author.profile.update`。正常用户界面仍直接使用本人会话编辑；只有向AI委托时才需要此范围授权。AI修改字段标为candidate，不冒充人工核实；无关字段保留。
 

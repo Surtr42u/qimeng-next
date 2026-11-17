@@ -25,9 +25,10 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
                 if (count <= 0) null else JsonParser.parseString(String(chars, 0, count)).asJsonObject.get("code")?.asString
             } catch (_: Exception) { null }
         }
-        val explanation = if (code() == 409 && errorCode == "tag_deleted") {
-            "标签已被删除。请刷新并移除草稿中的旧标签；确需恢复时，使用“添加”明确新建。"
-        } else when (code()) {
+        val explanation = when {
+            code() == 409 && errorCode == "tag_deleted" -> "标签已被删除。请刷新并移除草稿中的旧标签；确需恢复时，使用“添加”明确新建。"
+            code() == 409 && errorCode == "source_hash_mismatch" -> "传输字节与入队摘要不一致，未入库。请保留原件并重新选择文件。"
+            else -> when (code()) {
             401 -> "登录已失效，请重新登录"
             403 -> "当前连接没有执行此操作的权限"
             404 -> "对象不存在或已被移除"
@@ -36,6 +37,7 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
             429 -> "服务器正忙，请稍后重试"
             in 500..599 -> "服务器暂时无法完成请求"
             else -> "请求失败（HTTP ${code()}）"
+            }
         }
         throw ApiFailure(code(), explanation)
     }

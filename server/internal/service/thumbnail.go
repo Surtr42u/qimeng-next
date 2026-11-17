@@ -13,7 +13,6 @@ import (
  "os"
  "os/exec"
  "path"
- "path/filepath"
  "strconv"
  "time"
 
@@ -30,21 +29,22 @@ func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{
  if builtinImage(a.MimeType){f,e:=s.Root.Open(name);if e!=nil{return e};cfg,_,e:=image.DecodeConfig(f);f.Close();if e!=nil{return Fail(415,"invalid_image","文件不是可解码的图片。")};a.Width=cfg.Width;a.Height=cfg.Height;a.ProbeState="ready";a.ThumbnailURL="/api/v1/assets/"+a.ID+"/thumbnail";return nil}
  if ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");ffmpeg!=""{a.ThumbnailURL="/api/v1/assets/"+a.ID+"/thumbnail"}
  ffprobe:=toolPath("QIMENG_FFPROBE","ffprobe");if ffprobe==""{return nil}
- deadline,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffprobe,"-v","error","-protocol_whitelist","file,pipe","-select_streams","v:0","-show_entries","stream=width,height:format=duration","-of","json",filepath.Join(s.Config.DataDir,filepath.FromSlash(name)))
+ sourcePath,e:=s.Root.AbsolutePath(name);if e!=nil{return e};deadline,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffprobe,"-v","error","-protocol_whitelist","file,pipe","-select_streams","v:0","-show_entries","stream=width,height:format=duration","-of","json",sourcePath)
  output:=&boundedOutput{limit:64<<10};cmd.Stdout=output;cmd.Stderr=io.Discard;if e:=cmd.Run();e!=nil{a.ProbeState="failed";return nil}
  var result struct{Streams []struct{Width,Height int};Format struct{Duration string}}
  if e:=json.Unmarshal(output.Bytes(),&result);e!=nil{return e};if len(result.Streams)==0{a.ProbeState="failed";return nil};a.Width=result.Streams[0].Width;a.Height=result.Streams[0].Height
  if result.Format.Duration!=""{duration,e:=strconv.ParseFloat(result.Format.Duration,64);if e!=nil{return e};if duration>=0&&duration<1e9{a.DurationMs=int64(duration*1000)}};a.ProbeState="ready";return nil
 }
-func(s *Service)thumbnailSource(ctx context.Context,id string)(*os.File,model.Asset,string,string,error){
+func(s *Service)thumbnailSource(ctx context.Context,id string,version int64)(*os.File,model.Asset,string,string,error){
  s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,"","",e};if a.Trashed{return nil,a,"","",Fail(404,"not_found","媒体位于回收站。")}
+ if version>0&&version!=a.ContentVersion{return nil,a,"","",Fail(409,"content_changed","缩略图对应的内容版本已变化，请刷新条目。")}
  cache:="cache/"+a.ID+"/"+strconv.FormatInt(a.ContentVersion,10)+".jpg"
  if e=s.safe(cache);e!=nil{return nil,a,"","",e};if f,e:=s.Root.Open(cache);e==nil{return f,a,cache,"",nil}else if !errors.Is(e,os.ErrNotExist){return nil,a,"","",e}
- snapshot:=path.Dir(cache)+"/"+ID()+".source"+path.Ext(a.FileName)
+ snapshot:="libraries/"+a.LibraryID+"/.qimeng-internal/cache-sources/"+ID()+path.Ext(a.FileName)
  if e=s.linkNoReplace(assetPath(a),snapshot);e!=nil{return nil,a,"","",e};return nil,a,cache,snapshot,nil
 }
-func(s *Service)Thumbnail(ctx context.Context,id string)(*os.File,model.Asset,error){
- cached,a,cache,source,e:=s.thumbnailSource(ctx,id);if e!=nil{return nil,a,e};if cached!=nil{return cached,a,nil};defer s.Root.Remove(source)
+func(s *Service)Thumbnail(ctx context.Context,id string,versions ...int64)(*os.File,model.Asset,error){
+ version:=int64(0);if len(versions)>0{version=versions[0]};cached,a,cache,source,e:=s.thumbnailSource(ctx,id,version);if e!=nil{return nil,a,e};if cached!=nil{return cached,a,nil};defer s.Root.Remove(source)
  select{case thumbnailSlots<-struct{}{}:defer func(){<-thumbnailSlots}();case <-ctx.Done():return nil,a,ctx.Err()}
  var data []byte
  if builtinImage(a.MimeType){
@@ -55,7 +55,7 @@ func(s *Service)Thumbnail(ctx context.Context,id string)(*os.File,model.Asset,er
   var out bytes.Buffer;if e=jpeg.Encode(&out,dst,&jpeg.Options{Quality:82});e!=nil{return nil,a,e};data=out.Bytes()
  }else{
   ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");if ffmpeg==""{return nil,a,Fail(501,"media_tool_unavailable","此格式的缩略图需要配置 FFmpeg。")}
-  deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-max_alloc","67108864","-protocol_whitelist","file,pipe","-i",filepath.Join(s.Config.DataDir,filepath.FromSlash(source)),"-frames:v","1","-vf","scale=480:480:force_original_aspect_ratio=decrease","-f","image2pipe","-vcodec","mjpeg","pipe:1")
+  sourcePath,e:=s.Root.AbsolutePath(source);if e!=nil{return nil,a,e};deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-max_alloc","67108864","-protocol_whitelist","file,pipe","-i",sourcePath,"-frames:v","1","-vf","scale=480:480:force_original_aspect_ratio=decrease","-f","image2pipe","-vcodec","mjpeg","pipe:1")
   output:=&boundedOutput{limit:2<<20};cmd.Stdout=output;cmd.Stderr=io.Discard;if e=cmd.Run();e!=nil{return nil,a,Fail(422,"thumbnail_decode_failed","缩略图生成失败，原件保留。")};data=output.Bytes();if _,e=jpeg.DecodeConfig(bytes.NewReader(data));e!=nil{return nil,a,e}
  }
  if e=s.ensureParent(cache);e!=nil{return nil,a,e};tmp:=path.Dir(cache)+"/"+ID()+".tmp";f,e:=s.Root.OpenFile(tmp,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);if e!=nil{return nil,a,e};defer s.Root.Remove(tmp)

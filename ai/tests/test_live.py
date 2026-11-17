@@ -34,6 +34,7 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
             "QIMENG_AI_STATE_DIR": str(root / "state"), "QIMENG_AI_TASK_ID": "cloud-live",
             "QIMENG_AI_STORAGES": json.dumps({"input": str(root)}),
             "QIMENG_AI_PERMISSIONS": permissions, "QIMENG_AI_MAX_SECONDS": "900",
+            "QIMENG_AI_ALLOW_MEDIA_TO_MODEL": "true",
         })
 
     async def test_stdio_intake_and_author_maintenance(self):
@@ -48,7 +49,7 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
             batch = self.request("POST", "/batches", {"libraryId": library["id"], "mode": "intelligent", "label": "MCP fixture"}, key="mcp-live-batch")
             credential = self.request("POST", "/credentials", {"label": "MCP fixture", "batchId": batch["id"], "scopes": ["read", "ingest", "research", "organize"]})
             try:
-                async with Client(self.process(root, credential["token"], "read,ingest,research,organize,local.read")) as client:
+                async with Client(self.process(root, credential["token"], "read,ingest,research,organize,local.read,local.research")) as client:
                     names = {tool.name for tool in (await client.list_tools()).tools}
                     self.assertIn("upload.file", names)
                     self.assertIn("plan.commit", names)
@@ -57,6 +58,14 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
                         self.assertFalse(result.is_error, result.content)
                         return result.structured_content
                     listing = await call("files.search", {"storage": "input", "query": "sample.png"})
+                    probe = await call("research.probe", {"fileRef": listing["items"][0]["fileRef"], "frames": 1})
+                    self.assertEqual(probe["businessWrites"], 0)
+                    reference = probe["frameRefs"][0]["artifactRef"]
+                    picture = await client.call_tool("platform.artifact.read", {"artifactRef": reference})
+                    self.assertFalse(picture.is_error, picture.content)
+                    self.assertTrue(any(block.type == "image" for block in picture.content))
+                    bypass = await client.call_tool("platform.result.read", {"resultRef": "r_" + reference[2:]})
+                    self.assertTrue(bypass.is_error)
                     uploaded = await call("upload.file", {"fileRef": listing["items"][0]["fileRef"], "operationId": "mcp-live-upload",
                                           "libraryId": library["id"], "batchId": batch["id"], "fileName": "sample.png", "mode": "intelligent"})
                     self.assertEqual(uploaded["status"], "staged")

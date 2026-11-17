@@ -15,13 +15,17 @@ import (
 )
 
 func(s *Service)Libraries(ctx context.Context)(model.Page[model.Library],error){a,e:=store.List[model.Library](ctx,s.DB.DB,"SELECT data FROM libraries ORDER BY name,id LIMIT 100");return model.Page[model.Library]{Items:a},e}
-func(s *Service)CreateLibrary(ctx context.Context,w *Write,name,kind string)(model.Library,error){
+func(s *Service)CreateLibrary(ctx context.Context,w *Write,name,kind string,location ...string)(model.Library,error){
  if err:=Authorize(w.Principal,"admin","");err!=nil{return model.Library{},err}
  name=strings.TrimSpace(name);if name==""||len(name)>120||(kind!="regular"&&kind!="cos"){return model.Library{},Fail(400,"invalid_library","库名称或分类无效。")}
- l:=model.Library{ID:w.ID("library"),Name:name,Kind:kind,Enabled:true,Revision:1,CreatedAt:time.Now().UTC()}
+ storageID,relative:="data","";if len(location)>0&&location[0]!=""{storageID=location[0]};if len(location)>1{relative=location[1]};if !domain.ValidMediaPath(relative){return model.Library{},Fail(400,"invalid_path","库位置须为受信逻辑存储根内的相对目录。")}
+ l:=model.Library{ID:w.ID("library"),Name:name,Kind:kind,Enabled:true,StorageID:storageID,RootRelativePath:relative,Revision:1,CreatedAt:time.Now().UTC()};if storageID=="data"{l.RootRelativePath="libraries/"+l.ID}
+ if e:=s.Root.RegisterLibrary(l.ID,l.StorageID,l.RootRelativePath);e!=nil{return l,Fail(409,"storage_registration_conflict","逻辑存储未配置、路径不可用或与已登记库重叠。")}
+ w.rollback=append(w.rollback,func(){s.Root.UnregisterLibrary(l.ID)})
  if err:=s.Root.MkdirAll("libraries/"+l.ID,0700);err!=nil{return l,err}
  raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};_,e=q.ExecContext(ctx,"INSERT INTO libraries(id,name,kind,data) VALUES(?,?,?,?)",l.ID,l.Name,l.Kind,raw);return l,e
 }
+func(s *Service)Storages()any{return map[string]any{"items":s.Root.Storages()}}
 func(s *Service)library(ctx context.Context,id string)(model.Library,error){a,e:=store.Get[model.Library](ctx,s.DB.DB,"SELECT data FROM libraries WHERE id=?",id);return a,Normalize(e)}
 const assetJSON="json_set(a.data,'$.authorName',au.name,'$.liked',json(CASE WHEN EXISTS(SELECT 1 FROM likes lk WHERE lk.asset_id=a.id AND lk.day=?) THEN 'true' ELSE 'false' END),'$.likeCount',(SELECT count(*) FROM likes lk WHERE lk.asset_id=a.id),'$.source',CASE WHEN json_array_length(json_extract(a.data,'$.sourceIds'))>0 THEN (SELECT group_concat(name,'+') FROM (SELECT s.name FROM json_each(a.data,'$.sourceIds') j JOIN sources s ON s.id=j.value ORDER BY j.key)) ELSE json_extract(a.data,'$.source') END,'$.characters',json(CASE WHEN json_array_length(json_extract(a.data,'$.characterIds'))>0 THEN (SELECT json_group_array(name) FROM (SELECT c.name FROM json_each(a.data,'$.characterIds') j JOIN characters c ON c.id=j.value ORDER BY j.key)) ELSE COALESCE(json_extract(a.data,'$.characters'),'[]') END))"
 func(s *Service)Asset(ctx context.Context,id string)(model.Asset,error){a,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id WHERE a.id=?",time.Now().Format("2006-01-02"),id);return a,Normalize(e)}

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
@@ -19,6 +20,14 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SingleSceneHost(key: String, reducedMotion: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val holder = rememberSaveableStateHolder()
+    var recentDetailKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    SideEffect {
+        if (':' in key && !key.startsWith("tab:") && recentDetailKeys.lastOrNull() != key) {
+            val keys = recentDetailKeys.filterNot { it == key } + key
+            keys.dropLast(12).forEach(holder::removeState)
+            recentDetailKeys = keys.takeLast(12)
+        }
+    }
     val distance = with(LocalDensity.current) { 24.dp.toPx() }
     val disabled = reducedMotion || !ValueAnimator.areAnimatorsEnabled()
     val entrance = remember(key, disabled) { Animatable(if (disabled) 0f else distance) }

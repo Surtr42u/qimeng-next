@@ -8,6 +8,8 @@ type Library struct {
  Name string `json:"name"`
  Kind string `json:"kind"`
  Enabled bool `json:"enabled"`
+ StorageID string `json:"storageId"`
+ RootRelativePath string `json:"rootRelativePath"`
  Revision int64 `json:"revision"`
  CreatedAt time.Time `json:"createdAt"`
 }
@@ -17,6 +19,7 @@ type Asset struct {
  LibraryID string `json:"libraryId"`
  FileName string `json:"fileName"`
  OriginalFileName string `json:"originalFileName"`
+ SourceRelativePath string `json:"sourceRelativePath,omitempty"`
  RelativePath string `json:"relativePath"`
  MediaType string `json:"mediaType"`
  MimeType string `json:"mimeType"`
@@ -44,6 +47,7 @@ type Asset struct {
  CharacterIDs []string `json:"characterIds"`
  MetadataSource string `json:"metadataSource"`
  SourceMtime *time.Time `json:"sourceMtime,omitempty"`
+ ContentMtime *time.Time `json:"contentMtime,omitempty"`
  CreatedAt time.Time `json:"createdAt"`
  UpdatedAt time.Time `json:"updatedAt"`
  ContentURL string `json:"contentUrl"`
@@ -53,6 +57,7 @@ type Asset struct {
  DurationMs int64 `json:"durationMs,omitempty"`
  ProbeState string `json:"probeState"`
  Trashed bool `json:"trashed"`
+ StorageLayoutVersion int `json:"storageLayoutVersion,omitempty"`
  PositionMs int64 `json:"positionMs"`
  PositionContentVersion int64 `json:"positionContentVersion"`
 }
@@ -85,6 +90,8 @@ type Collection struct {
 type UploadInput struct {
  LibraryID string `json:"libraryId"`
  FileName string `json:"fileName"`
+ OriginalFileName string `json:"originalFileName,omitempty"`
+ SourceRelativePath string `json:"sourceRelativePath,omitempty"`
  Size int64 `json:"size"`
  MimeType string `json:"mimeType"`
  ExpectedHash string `json:"expectedHash,omitempty"`

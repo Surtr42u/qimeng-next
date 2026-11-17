@@ -7,6 +7,7 @@ import json
 import sys
 
 from .config import Config
+from .content import ImageResult
 from .errors import ToolError
 from .runtime import Runtime
 
@@ -58,6 +59,8 @@ def main() -> None:
                 result = state.reconcile(args.key, runtime.transport.call("getOperation", {key_name: args.key}))
             else:
                 result = state.status()
+        if isinstance(result, ImageResult):
+            result = {**result.metadata, "mediaContent": "Image content is delivered through MCP; CLI returns metadata only."}
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except ToolError as exc:
         print(json.dumps(exc.as_dict(), ensure_ascii=False), file=sys.stderr)

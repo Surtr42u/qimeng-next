@@ -53,7 +53,16 @@ func TestReplacementPreservesIdentityAndRevisionCheckedMetadata(t *testing.T){
  f:=setup(t);u,_:=f.upload("first.png",10,nil);a:=*f.complete(u).Asset
  r:=f.json("PUT","/assets/"+a.ID+"/tags","replace-tags-1",map[string]any{"expectedRevision":a.TagsRevision,"tags":[]string{"keep"}},200);decode(t,r,&a)
  replacement,_:=f.upload("replacement.png",80,map[string]any{"replaceAssetId":a.ID,"expectedContentVersion":a.ContentVersion});updated:=f.complete(replacement);if updated.Asset.ID!=a.ID||updated.Asset.ContentVersion!=2||len(updated.Asset.Tags)!=1||updated.Asset.Tags[0]!="keep"{t.Fatal("replacement changed identity or relationships")}
+ for _,suffix:=range []string{"content","thumbnail"}{r:=f.request("GET","/assets/"+a.ID+"/"+suffix+"?version=1","",testSecret,nil,nil);if r.Code!=409{t.Fatalf("old %s version accepted: %d",suffix,r.Code)}}
  duplicate,_:=f.upload("duplicate.png",80,nil);result:=f.complete(duplicate);if result.Upload.State!="duplicate"||result.Asset!=nil{t.Fatal("exact duplicate silently ingested")}
+}
+
+func TestCreatePayloadsDoNotAcceptStoredStateAndKeepExplicitZeroBudget(t *testing.T){
+ f:=setup(t)
+ f.json("POST","/batches","reject-batch-state",map[string]any{"libraryId":f.library,"mode":"intelligent","label":"Synthetic","state":"completed","researchCalls":-100},400)
+ f.json("POST","/collections","reject-collection-state",map[string]any{"libraryId":f.library,"name":"Synthetic","kind":"image_set","id":"forged"},400)
+ r:=f.json("POST","/batches","default-research-budget",map[string]any{"libraryId":f.library,"mode":"intelligent","label":"Default budget"},201);var b model.Batch;decode(t,r,&b);if b.MaxResearchCalls!=8{t.Fatalf("default budget = %d",b.MaxResearchCalls)}
+ r=f.json("POST","/batches","zero-research-budget",map[string]any{"libraryId":f.library,"mode":"intelligent","label":"No research","maxResearchCalls":0},201);decode(t,r,&b);if b.MaxResearchCalls!=0{t.Fatalf("explicit zero budget = %d",b.MaxResearchCalls)}
 }
 func TestConcurrentCompletionReplaysOneAsset(t *testing.T){
  f:=setup(t);u,_:=f.upload("concurrent.png",40,nil);var wg sync.WaitGroup;var mu sync.Mutex;ids:=[]string{}

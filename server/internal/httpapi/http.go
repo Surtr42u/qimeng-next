@@ -11,6 +11,7 @@ import (
  "net/url"
  "strconv"
  "strings"
+ "time"
 
  "qimeng.local/next/server/internal/model"
  "qimeng.local/next/server/internal/service"
@@ -49,8 +50,13 @@ func write[T any](a *API,method,pattern string,idempotent bool,fn func(*http.Req
 }
 func limit(r *http.Request)(int,error){v:=r.URL.Query().Get("limit");if v==""{return 0,nil};n,e:=strconv.Atoi(v);if e!=nil{return 0,service.Fail(400,"invalid_limit","分页数量无效。")};return n,nil}
 func revision(r *http.Request)(int64,error){v,e:=strconv.ParseInt(r.URL.Query().Get("expectedRevision"),10,64);if e!=nil||v<1{return 0,service.Fail(400,"revision_required","必须提供当前修订号。")};return v,nil}
+func contentVersion(r *http.Request)(int64,error){raw:=r.URL.Query().Get("version");if raw==""{return 0,nil};v,e:=strconv.ParseInt(raw,10,64);if e!=nil||v<1{return 0,service.Fail(400,"invalid_version","内容版本必须为正整数。")};return v,nil}
 func boolQuery(r *http.Request,name string)(*bool,error){v:=r.URL.Query().Get(name);if v==""{return nil,nil};b,e:=strconv.ParseBool(v);if e!=nil{return nil,service.Fail(400,"invalid_filter","筛选参数无效。")};return &b,nil}
 type revisionBody struct{ExpectedRevision int64 `json:"expectedRevision"`}
+type batchCreateRequest struct{LibraryID string `json:"libraryId"`;Mode string `json:"mode"`;Label string `json:"label"`;MaxResearchCalls *int `json:"maxResearchCalls"`}
+type collectionCreateRequest struct{LibraryID string `json:"libraryId"`;Name string `json:"name"`;Kind string `json:"kind"`;Aliases []string `json:"aliases"`}
+type libraryCreateRequest struct{Name string `json:"name"`;Kind string `json:"kind"`;StorageID string `json:"storageId"`;RootRelativePath string `json:"rootRelativePath"`}
+type eventCreateRequest struct{EventID string `json:"eventId"`;Kind string `json:"kind"`;ContentVersion int64 `json:"contentVersion"`;PositionMs int64 `json:"positionMs"`;SessionID string `json:"sessionId,omitempty"`;Seconds float64 `json:"seconds,omitempty"`;OccurredAt *time.Time `json:"occurredAt,omitempty"`}
 func(a *API)routes(){
  a.mux.HandleFunc("GET /healthz",func(w http.ResponseWriter,r *http.Request){if e:=a.s.DB.DB.PingContext(r.Context());e!=nil{fail(w,e);return};respond(w,200,map[string]string{"status":"ok"})})
  a.mux.HandleFunc("GET /api/v1/instance",func(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"id":a.s.InstanceID,"name":"绮梦 Next","apiVersion":"0.1.0","capabilities":map[string]bool{"aiConfigured":a.s.Config.AIConfigured,"recommendations":true,"rankings":true,"stats":true,"backups":true,"migration":false}})})
@@ -63,15 +69,16 @@ func(a *API)routes(){
  write[credentialRequest](a,"POST","/credentials",false,func(r *http.Request,w *service.Write,in credentialRequest)(any,int,error){if (in.BatchID=="")==(in.AuthorTaskID==""){return nil,0,service.Fail(400,"task_required","AI 凭据必须且只能绑定一个接收或资料维护任务。")};v,e:=a.s.CreateSession(r.Context(),w,in.Label,in.BatchID,in.Scopes,in.AuthorTaskID);return v,201,e})
  write[struct{}](a,"DELETE","/credentials/{id}",false,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){return nil,204,a.s.Revoke(r.Context(),w,r.PathValue("id"))})
  a.get("/libraries",func(r *http.Request)(any,error){return a.s.Libraries(r.Context())})
- write[struct{Name string `json:"name"`;Kind string `json:"kind"`}](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in struct{Name string `json:"name"`;Kind string `json:"kind"`})(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind);return v,201,e})
+ a.get("/storages",func(r *http.Request)(any,error){return a.s.Storages(),nil})
+ write[libraryCreateRequest](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in libraryCreateRequest)(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind,in.StorageID,in.RootRelativePath);return v,201,e})
  a.get("/assets",func(r *http.Request)(any,error){q:=r.URL.Query();n,e:=limit(r);if e!=nil{return nil,e};favorite,e:=boolQuery(r,"favorite");if e!=nil{return nil,e};liked,e:=boolQuery(r,"liked");if e!=nil{return nil,e};return a.s.Assets(r.Context(),service.AssetFilter{LibraryID:q.Get("libraryId"),Q:q.Get("q"),MediaType:q.Get("mediaType"),Kind:q.Get("kind"),AuthorID:q.Get("authorId"),CollectionID:q.Get("collectionId"),Tag:q.Get("tag"),Sort:q.Get("sort"),Cursor:q.Get("cursor"),Favorite:favorite,Liked:liked,Limit:n})})
  a.get("/assets/{id}",func(r *http.Request)(any,error){return a.s.Asset(r.Context(),r.PathValue("id"))})
  write[service.AssetUpdate](a,"PATCH","/assets/{id}",false,func(r *http.Request,w *service.Write,in service.AssetUpdate)(any,int,error){v,e:=a.s.UpdateAsset(r.Context(),w,r.PathValue("id"),in);return v,200,e})
  write[struct{ExpectedRevision int64 `json:"expectedRevision"`;Tags []string `json:"tags"`}](a,"PUT","/assets/{id}/tags",true,func(r *http.Request,w *service.Write,in struct{ExpectedRevision int64 `json:"expectedRevision"`;Tags []string `json:"tags"`})(any,int,error){v,e:=a.s.UpdateTags(r.Context(),w,r.PathValue("id"),in.ExpectedRevision,in.Tags);return v,200,e})
  write[struct{Favorite bool `json:"favorite"`;Liked bool `json:"liked"`}](a,"PUT","/assets/{id}/reaction",true,func(r *http.Request,w *service.Write,in struct{Favorite bool `json:"favorite"`;Liked bool `json:"liked"`})(any,int,error){v,e:=a.s.Reaction(r.Context(),w,r.PathValue("id"),in.Favorite,in.Liked);return v,200,e})
- write[model.Event](a,"POST","/assets/{id}/events",false,func(r *http.Request,w *service.Write,in model.Event)(any,int,error){v,e:=a.s.RecordEvent(r.Context(),w,r.PathValue("id"),in);return v,200,e})
- a.mux.HandleFunc("GET /api/v1/assets/{id}/content",a.auth(func(w http.ResponseWriter,r *http.Request){f,asset,e:=a.s.Content(r.Context(),r.PathValue("id"));if e!=nil{fail(w,e);return};defer f.Close();w.Header().Set("Content-Type",asset.MimeType);w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("ETag",`"`+asset.Hash+`"`);w.Header().Set("Cache-Control","private, no-cache");http.ServeContent(w,r,asset.FileName,asset.UpdatedAt,f)}))
- a.mux.HandleFunc("GET /api/v1/assets/{id}/thumbnail",a.auth(func(w http.ResponseWriter,r *http.Request){f,asset,e:=a.s.Thumbnail(r.Context(),r.PathValue("id"));if e!=nil{fail(w,e);return};defer f.Close();w.Header().Set("Content-Type","image/jpeg");w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Cache-Control","private, no-cache");w.Header().Set("ETag",`"thumb-`+asset.Hash+`"`);http.ServeContent(w,r,"thumbnail.jpg",asset.UpdatedAt,f)}))
+ write[eventCreateRequest](a,"POST","/assets/{id}/events",false,func(r *http.Request,w *service.Write,in eventCreateRequest)(any,int,error){v,e:=a.s.RecordEvent(r.Context(),w,r.PathValue("id"),model.Event{EventID:in.EventID,Kind:in.Kind,ContentVersion:in.ContentVersion,PositionMs:in.PositionMs,SessionID:in.SessionID,Seconds:in.Seconds,OccurredAt:in.OccurredAt});return v,200,e})
+ a.mux.HandleFunc("GET /api/v1/assets/{id}/content",a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=contentVersion(r);if e!=nil{fail(w,e);return};f,asset,e:=a.s.Content(r.Context(),r.PathValue("id"),v);if e!=nil{fail(w,e);return};defer f.Close();w.Header().Set("Content-Type",asset.MimeType);w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("ETag",`"`+asset.Hash+`"`);w.Header().Set("Cache-Control","private, no-cache");http.ServeContent(w,r,asset.FileName,asset.UpdatedAt,f)}))
+ a.mux.HandleFunc("GET /api/v1/assets/{id}/thumbnail",a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=contentVersion(r);if e!=nil{fail(w,e);return};f,asset,e:=a.s.Thumbnail(r.Context(),r.PathValue("id"),v);if e!=nil{fail(w,e);return};defer f.Close();w.Header().Set("Content-Type","image/jpeg");w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Cache-Control","private, no-cache");w.Header().Set("ETag",`"thumb-`+asset.Hash+`"`);http.ServeContent(w,r,"thumbnail.jpg",asset.UpdatedAt,f)}))
  write[struct{ExpectedRevision int64 `json:"expectedRevision"`;RelativePath string `json:"relativePath"`}](a,"POST","/assets/{id}/move",true,func(r *http.Request,w *service.Write,in struct{ExpectedRevision int64 `json:"expectedRevision"`;RelativePath string `json:"relativePath"`})(any,int,error){v,e:=a.s.Move(r.Context(),w,r.PathValue("id"),in.RelativePath,in.ExpectedRevision);return v,200,e})
  write[struct{}](a,"DELETE","/assets/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){rev,e:=revision(r);if e!=nil{return nil,0,e};v,e:=a.s.Trash(r.Context(),w,r.PathValue("id"),rev);return v,200,e})
  a.get("/tags",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Tags(r.Context(),r.URL.Query().Get("cursor"),n)})
@@ -81,7 +88,7 @@ func(a *API)routes(){
  write[service.AuthorInput](a,"POST","/authors",true,func(r *http.Request,w *service.Write,in service.AuthorInput)(any,int,error){v,e:=a.s.CreateAuthor(r.Context(),w,in);return v,201,e})
  write[service.AuthorUpdate](a,"PATCH","/authors/{id}",true,func(r *http.Request,w *service.Write,in service.AuthorUpdate)(any,int,error){v,e:=a.s.UpdateAuthor(r.Context(),w,r.PathValue("id"),in);return v,200,e})
  a.get("/collections",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};q:=r.URL.Query();return a.s.Collections(r.Context(),q.Get("libraryId"),q.Get("q"),q.Get("cursor"),n)})
- write[model.Collection](a,"POST","/collections",true,func(r *http.Request,w *service.Write,in model.Collection)(any,int,error){v,e:=a.s.CreateCollection(r.Context(),w,in);return v,201,e})
+ write[collectionCreateRequest](a,"POST","/collections",true,func(r *http.Request,w *service.Write,in collectionCreateRequest)(any,int,error){v,e:=a.s.CreateCollection(r.Context(),w,model.Collection{LibraryID:in.LibraryID,Name:in.Name,Kind:in.Kind,Aliases:in.Aliases});return v,201,e})
  a.uploadRoutes();a.batchRoutes()
  a.get("/trash",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Assets(r.Context(),service.AssetFilter{Trashed:true,Cursor:r.URL.Query().Get("cursor"),Limit:n})})
  write[revisionBody](a,"POST","/trash/{id}/restore",true,func(r *http.Request,w *service.Write,in revisionBody)(any,int,error){v,e:=a.s.Restore(r.Context(),w,r.PathValue("id"),in.ExpectedRevision);return v,200,e})
@@ -93,6 +100,7 @@ func(a *API)routes(){
  a.analyticsRoutes()
  a.authorTaskRoutes()
  a.managementRoutes()
+ a.scanRoutes()
 }
 func(a *API)uploadRoutes(){
  write[model.UploadInput](a,"POST","/uploads",true,func(r *http.Request,w *service.Write,in model.UploadInput)(any,int,error){v,e:=a.s.CreateUpload(r.Context(),w,in);return v,201,e})
@@ -103,7 +111,7 @@ func(a *API)uploadRoutes(){
 }
 func(a *API)batchRoutes(){
  a.get("/batches",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Batches(r.Context(),principal(r),r.URL.Query().Get("cursor"),n)})
- write[model.Batch](a,"POST","/batches",true,func(r *http.Request,w *service.Write,in model.Batch)(any,int,error){v,e:=a.s.CreateBatch(r.Context(),w,in);return v,201,e})
+ write[batchCreateRequest](a,"POST","/batches",true,func(r *http.Request,w *service.Write,in batchCreateRequest)(any,int,error){budget:=8;if in.MaxResearchCalls!=nil{budget=*in.MaxResearchCalls};v,e:=a.s.CreateBatch(r.Context(),w,model.Batch{LibraryID:in.LibraryID,Mode:in.Mode,Label:in.Label,MaxResearchCalls:budget});return v,201,e})
  a.get("/batches/{id}",func(r *http.Request)(any,error){return a.s.BatchDetail(r.Context(),principal(r),r.PathValue("id"))})
  write[revisionBody](a,"POST","/batches/{id}/cancel",false,func(r *http.Request,w *service.Write,in revisionBody)(any,int,error){v,e:=a.s.CancelBatch(r.Context(),w,r.PathValue("id"),in.ExpectedRevision);return v,200,e})
  a.get("/ai/tasks/{id}/context",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Context(r.Context(),principal(r),r.PathValue("id"),r.URL.Query().Get("cursor"),n)})

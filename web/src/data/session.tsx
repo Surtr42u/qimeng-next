@@ -31,7 +31,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
     previousId.current = instance.data?.id;
   }, [instance.data?.id]);
   if (!instance.data) return <div className="connection-screen"><img src="/icon.svg" width="64" height="64" alt="" /><h1>绮梦影库</h1>{instance.isPending ? <Loading text="正在连接影库…" /> : <ErrorNotice error={instance.error} retry={() => void instance.refetch()} />}</div>;
-  if (instance.data.apiVersion !== '1' && instance.data.apiVersion !== 'v1' && instance.data.apiVersion !== '0.1.0') return <div className="connection-screen"><h1>需要更新客户端</h1><p>当前服务器协议 {instance.data.apiVersion} 与此客户端不兼容。</p></div>;
+  if (instance.data.apiVersion !== '0.1.0') return <div className="connection-screen"><h1>需要更新客户端</h1><p>当前服务器协议 {instance.data.apiVersion} 与此客户端不兼容。</p></div>;
   if (session.isPending) return <div className="connection-screen"><Loading text="正在确认设备会话…" /></div>;
   if (session.error instanceof ApiError && session.error.status === 401) return <LoginForm instanceName={instance.data.name} onSuccess={() => void session.refetch()} />;
   if (!session.data) {

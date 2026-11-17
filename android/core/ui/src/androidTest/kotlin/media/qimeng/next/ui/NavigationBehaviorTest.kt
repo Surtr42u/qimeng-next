@@ -36,7 +36,7 @@ class NavigationBehaviorTest {
         compose.setContent { Fixture() }
         compose.onNodeWithTag("draft").performTextInput("保留的草稿")
         compose.mainClock.autoAdvance = false
-        repeat(5) {
+        repeat(5) { cycle ->
             compose.onNodeWithText("相册").performClick()
             compose.mainClock.advanceTimeBy(16)
             compose.onNodeWithText("我的").performClick()
@@ -44,6 +44,7 @@ class NavigationBehaviorTest {
             compose.onNodeWithText("首页").performClick()
             compose.mainClock.advanceTimeBy(16)
             compose.onAllNodesWithTag("scene").assertCountEquals(1)
+            if (cycle == 0) screenshot("navigation-rapid-first-frame.png")
         }
         compose.mainClock.autoAdvance = true
         compose.onNodeWithTag("draft").assertTextContains("保留的草稿")
@@ -74,9 +75,12 @@ class NavigationBehaviorTest {
     }
 
     private fun screenshot(name: String) {
-        val context = InstrumentationRegistry.getInstrumentation().context
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File(context.getExternalFilesDir(null), name)
-        file.outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it) }
+        compose.waitForIdle()
+        val screenshot = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        file.outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        screenshot.recycle()
     }
 }
 

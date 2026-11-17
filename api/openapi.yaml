@@ -48,6 +48,12 @@ paths:
       responses:
         '204': {description: Revoked}
         default: {$ref: '#/components/responses/Error'}
+  /storages:
+    get:
+      operationId: listStorages
+      responses:
+        '200': {description: Trusted logical storage roots without host paths, content: {application/json: {schema: {$ref: '#/components/schemas/StoragePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /libraries:
     get:
       operationId: listLibraries
@@ -87,6 +93,28 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {type: object, required: [relativePath], properties: {relativePath: {type: string}}}}}}
       responses:
         '201': {description: Directory, content: {application/json: {schema: {$ref: '#/components/schemas/Directory'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /libraries/{id}/scans:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: startLibraryScan
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
+      responses:
+        '202': {description: Persisted scan job; registration is not scan completion, content: {application/json: {schema: {$ref: '#/components/schemas/ScanJob'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /scans/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getLibraryScan
+      responses:
+        '200': {description: Durable scan progress with bounded diagnostics, content: {application/json: {schema: {$ref: '#/components/schemas/ScanJob'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: cancelLibraryScan
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Cancel future indexing; committed items remain, content: {application/json: {schema: {$ref: '#/components/schemas/ScanJob'}}}}
         default: {$ref: '#/components/responses/Error'}
   /assets:
     get:
@@ -132,7 +160,9 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
       operationId: getAssetContent
-      parameters: [{name: Range, in: header, schema: {type: string}}]
+      parameters:
+        - {name: Range, in: header, schema: {type: string}}
+        - {name: version, in: query, schema: {type: integer, format: int64, minimum: 1}, description: Reject with 409 when the captured content version has changed}
       responses:
         '200': {description: Original bytes, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         '206': {description: Byte range, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
@@ -141,6 +171,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
       operationId: getAssetThumbnail
+      parameters: [{name: version, in: query, schema: {type: integer, format: int64, minimum: 1}, description: Reject with 409 rather than cache new bytes as an older version}]
       responses:
         '200': {description: Versioned bounded JPEG preview, content: {image/jpeg: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -830,11 +861,43 @@ components:
     LibraryCreate:
       type: object
       required: [name, kind]
-      properties: {name: {type: string, minLength: 1, maxLength: 120}, kind: {type: string, enum: [regular, cos]}}
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        kind: {type: string, enum: [regular, cos]}
+        storageId: {type: string, default: data, description: Logical root preconfigured by the trusted operator}
+        rootRelativePath: {type: string, description: Existing or new folder within the selected external root; the built-in data storage assigns its own isolated library folder}
     Library:
       allOf:
         - {$ref: '#/components/schemas/LibraryCreate'}
         - {type: object, required: [id, enabled, revision, createdAt], properties: {id: {type: string}, enabled: {type: boolean}, revision: {type: integer, format: int64}, createdAt: {type: string, format: date-time}}}
+    ScanIssue:
+      type: object
+      required: [relativePath, code]
+      properties: {relativePath: {type: string}, code: {type: string}}
+    ScanJob:
+      type: object
+      required: [id, libraryId, state, processed, added, moved, changed, skipped, issueCount, issues, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        libraryId: {type: string}
+        state: {type: string, enum: [queued, running, completed, partial, failed, interrupted, cancelled]}
+        processed: {type: integer}
+        added: {type: integer}
+        moved: {type: integer}
+        changed: {type: integer}
+        skipped: {type: integer}
+        issueCount: {type: integer}
+        issues: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/ScanIssue'}}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    Storage:
+      type: object
+      required: [id, available]
+      properties: {id: {type: string}, available: {type: boolean}}
+    StoragePage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Storage'}}}
     LibraryUpdate:
       type: object
       required: [expectedRevision]
@@ -847,6 +910,7 @@ components:
         libraryId: {type: string}
         fileName: {type: string}
         originalFileName: {type: string}
+        sourceRelativePath: {type: string, description: Original relative source clue; never a host absolute path}
         relativePath: {type: string}
         mediaType: {type: string, enum: [image, animated_image, video]}
         mimeType: {type: string}
@@ -872,7 +936,8 @@ components:
         acquisitionSources: {type: array, items: {type: string}, description: User-provided acquisition channels; separate from the source work identity}
         characters: {type: array, items: {type: string}}
         characterIds: {type: array, items: {type: string}}
-        metadataSource: {type: string, enum: [upload, human, ai]}
+        metadataSource: {type: string, enum: [upload, human, ai, scanner, migration]}
+        contentMtime: {type: string, format: date-time}
         sourceMtime: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
@@ -883,6 +948,7 @@ components:
         durationMs: {type: integer, format: int64}
         probeState: {type: string, enum: [ready, unavailable, failed]}
         trashed: {type: boolean}
+        storageLayoutVersion: {type: integer, description: Server storage layout marker; clients must not infer filesystem paths from it}
         positionMs: {type: integer, format: int64}
         positionContentVersion: {type: integer, format: int64}
     RevisionRequest:
@@ -991,6 +1057,8 @@ components:
       properties:
         libraryId: {type: string}
         fileName: {type: string, minLength: 1, maxLength: 240}
+        originalFileName: {type: string, maxLength: 1024, description: Original source basename retained even when the chosen destination filename differs}
+        sourceRelativePath: {type: string, maxLength: 4096, description: Source-relative clue only; absolute paths and traversal are rejected}
         size: {type: integer, format: int64, minimum: 1}
         mimeType: {type: string}
         expectedHash: {type: string, pattern: '^[0-9a-fA-F]{64}$', description: Optional complete source SHA-256 snapshot. When provided the server must match it before staging or publishing.}

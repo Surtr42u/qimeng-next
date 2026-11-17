@@ -28,7 +28,7 @@ SAF 批选先保存待传快照，允许改名后提交；系统分享可用已�
 
 `captureGlassBackdrop` 只录制导航下面的页面，避免导航递归采样。API 33+ 且硬件加速时，导航重绘真实场景图层，AGSL 根据移动选中胶囊位移采样坐标，实现折射；选中态用弹簧位移与拖动反馈。API 31–32 使用实时采样模糊，不称为折射；API 26–30、软件渲染及关闭玻璃时使用高对比实色材质。
 
-`SingleSceneHost` 同时只保留一个可交互页面，按页面键从首帧初始化入场位移，避免快速切页保留旧页面与其触摸语义；保存容器恢复页面草稿和滚动。系统动画关闭或应用减少动效设置会停用位移及选择弹簧。导航有 Tab/选中语义，触摸目标不小于 48 dp，文字随系统字号，胶囊空隙消费触摸。
+`SingleSceneHost` 同时只保留一个可交互页面，按页面键从首帧初始化入场位移，避免快速切页保留旧页面与其触摸语义；保存容器恢复常驻页与最近 12 个详情页的草稿/滚动，作者和集合查询缓存也有数量上限。系统动画关闭或应用减少动效设置会停用位移及选择弹簧。导航有 Tab/选中语义，触摸目标不小于 48 dp，文字随系统字号，胶囊空隙消费触摸。
 
 这描述源码设计，不替代实际 GPU 截图、帧时长、手势或设备验收。云端模拟器与真机验收须分别记录。
 
@@ -41,6 +41,8 @@ gradle -p android :app:assembleDebug :app:testDebugUnitTest :core:model:test :co
 ```
 
 云端专用 API 35 模拟器再运行 `:core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest`。这些测试覆盖快速切换只有一个活动页面、草稿恢复、减少动效、选择语义、大字/深色导航，以及队列重建、坏记录不伪装空队列、认证同源/重定向/断开边界；合成背景截图写入测试应用 external files 目录。JVM 测试另覆盖前后台停留区段、目标实例与查询代际。不得使用本机默认模拟器或手机，也不能访问旧 8420 实例。
+
+真实链路仪器类为 `media.qimeng.next.test.AndroidRealServerTest`：只允许 runner 参数 `qimengServerUrl=http://127.0.0.1:18481/`，`qimengToken` 来自同 SHA 隔离 Go 服务的临时测试凭据。云端将短 H.264 合成视频放到设备 `/data/local/tmp/qimeng-next-test.mp4`；测试通过仅存在于测试 APK 的 ContentProvider 和真实 WorkManager 验证 PNG/视频入库、标签、收藏、推荐及播放历史，不 mock 服务。完整窗口截图写到目标 APK 的 `getExternalFilesDir("screenshots")`，包含实际 GPU 合成和视频表面。运行命令、显式设备选择及产物回收由云端工作流负责。
 
 锁定版本见 `gradle/libs.versions.toml`。选择已知兼容的稳定版本；官方依据：[AGP 8.9 兼容矩阵](https://developer.android.com/build/releases/agp-8-9-0-release-notes)、[Compose 编译器与 Kotlin](https://developer.android.com/jetpack/androidx/releases/compose-kotlin)、[AndroidX 稳定发布](https://developer.android.com/jetpack/androidx/versions/stable-channel)、[Media3 发布说明](https://developer.android.com/jetpack/androidx/releases/media3)、[Coil 更新记录](https://coil-kt.github.io/coil/changelog/)、[Retrofit](https://square.github.io/retrofit/)、[OpenAPI Kotlin 生成器](https://openapi-generator.tech/docs/generators/kotlin/)。
 

@@ -21,6 +21,7 @@ import (
 
  "qimeng.local/next/server/internal/model"
  "qimeng.local/next/server/internal/store"
+ "qimeng.local/next/server/internal/storage"
 )
 
 type Error struct { Code string `json:"code"`; Message string `json:"message"`; CurrentRevision int64 `json:"currentRevision,omitempty"`; Status int `json:"-"` }
@@ -28,8 +29,8 @@ func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
-type Config struct { DataDir,AdminToken,AIToken string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
-type Service struct { DB *store.Store; Root *os.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB }
+type Config struct { DataDir,AdminToken,AIToken string; StorageRoots map[string]string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
+type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -37,7 +38,7 @@ func New(config Config)(*Service,error){
  if config.AIToken!=""&&len(config.AIToken)<32{return nil,errors.New("QIMENG_AI_TOKEN must contain at least 32 characters")}
  if config.ReserveBytes<=0{config.ReserveBytes=512<<20}
  if err:=os.MkdirAll(config.DataDir,0700);err!=nil{return nil,err}
- root,err:=os.OpenRoot(config.DataDir);if err!=nil{return nil,err}
+ root,err:=storage.Open(config.DataDir,config.StorageRoots);if err!=nil{return nil,err}
  for _,d:=range []string{"libraries","uploads","trash","retired","backups"}{if err=root.MkdirAll(d,0700);err!=nil{root.Close();return nil,err}}
  // SQLite's exclusive ownership lock is held by a separate connection for this
  // process, rather than an unsafe stale-PID file. Main storage remains WAL.
@@ -46,7 +47,11 @@ func New(config Config)(*Service,error){
  if _,err=owner.Exec("CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE");err!=nil{owner.Close();root.Close();return nil,errors.New("another service owns this data directory")}
  db,err:=store.Open(filepath.Join(config.DataDir,"qimeng.sqlite"));if err!=nil{owner.Close();root.Close();return nil,err}
  s:=&Service{DB:db,Root:root,Config:config,owner:owner}
+ s.workCtx,s.stopWork=context.WithCancel(context.Background())
  ctx:=context.Background()
+ libraries,err:=store.List[model.Library](ctx,db.DB,"SELECT data FROM libraries ORDER BY id");if err!=nil{s.Close();return nil,err}
+ for _,library:=range libraries{if err=root.RegisterLibrary(library.ID,library.StorageID,library.RootRelativePath);err!=nil{s.Close();return nil,err}}
+ uploadRows,err:=db.DB.QueryContext(ctx,"SELECT id,json_extract(data,'$.libraryId') FROM uploads");if err!=nil{s.Close();return nil,err};for uploadRows.Next(){var id,libraryID string;if err=uploadRows.Scan(&id,&libraryID);err!=nil{uploadRows.Close();s.Close();return nil,err};root.RegisterUpload(id,libraryID)};err=uploadRows.Err();uploadRows.Close();if err!=nil{s.Close();return nil,err}
  s.InstanceID,err=store.Get[string](ctx,db.DB,"SELECT json_quote(value) FROM settings WHERE key='instance_id'")
  if errors.Is(err,sql.ErrNoRows){s.InstanceID=ID();_,err=db.DB.Exec("INSERT INTO settings(key,value) VALUES('instance_id',?)",s.InstanceID)}
  if err!=nil{s.Close();return nil,err}
@@ -57,9 +62,10 @@ func New(config Config)(*Service,error){
   raw,_:=store.Encode(a);if _,err=db.DB.Exec("INSERT INTO authors(id,name,data) VALUES(?,?,?)",a.ID,a.Name,raw);err!=nil{s.Close();return nil,err}
  }
  if err=s.recoverIntents(ctx);err!=nil{s.Close();return nil,fmt.Errorf("file recovery requires attention: %w",err)}
+ if _,err=db.DB.ExecContext(ctx,"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  return s,nil
 }
-func (s *Service)Close()error{defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
+func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
 func ID()string{var b [16]byte;if _,err:=rand.Read(b[:]);err!=nil{panic(err)};return hex.EncodeToString(b[:])}
 func digest(value []byte)string{h:=sha256.Sum256(value);return hex.EncodeToString(h[:])}
 func token()string{var b [32]byte;if _,err:=rand.Read(b[:]);err!=nil{panic(err)};return base64.RawURLEncoding.EncodeToString(b[:])}
@@ -81,7 +87,7 @@ func Authorize(p model.Principal,scope,batchID string)error{
  return nil
 }
 
-type Write struct{ s *Service; ctx context.Context; Principal model.Principal; tx *sql.Tx; after []func()error; operation,key,inputHash string }
+type Write struct{ s *Service; ctx context.Context; Principal model.Principal; tx *sql.Tx; after []func()error; rollback []func(); operation,key,inputHash string }
 func (w *Write)Q()(store.Querier,error){if w.tx==nil{var e error;w.tx,e=w.s.DB.DB.BeginTx(w.ctx,nil);if e!=nil{return nil,e}};return w.tx,nil}
 func (w *Write)ID(kind string)string{if w.key==""{return ID()};return digest([]byte(w.Principal.ID+"\x00"+w.operation+"\x00"+w.key+"\x00"+kind))[:32]}
 type Result struct{ Body []byte; Status int }
@@ -104,13 +110,13 @@ func(s *Service)Run(ctx context.Context,p model.Principal,operation,key string,i
   if !errors.Is(e,sql.ErrNoRows){return result,e}
  }
  w:=&Write{s:s,ctx:ctx,Principal:p,operation:operation,key:key,inputHash:hash}
- defer func(){if w.tx!=nil{w.tx.Rollback()}}()
+ committed:=false;defer func(){if w.tx!=nil{w.tx.Rollback()};if !committed{for i:=len(w.rollback)-1;i>=0;i--{w.rollback[i]()}}}()
  value,status,err:=fn(w);if err!=nil{return result,Normalize(err)}
  body:=[]byte{}
  if status!=204{body,err=json.Marshal(value);if err!=nil{return result,err}}
  q,err:=w.Q();if err!=nil{return result,err}
  if key!=""{if _,err=q.ExecContext(ctx,"INSERT OR IGNORE INTO idempotency(principal_id,operation,key,input_hash,response,status) VALUES(?,?,?,?,?,?)",p.ID,operation,key,hash,body,status);err!=nil{return result,err}}
- if err=w.tx.Commit();err!=nil{return result,err};w.tx=nil
+ if err=w.tx.Commit();err!=nil{return result,err};w.tx=nil;committed=true
  for _,after:=range w.after{if err=after();err!=nil{return result,Fail(500,"cleanup_pending","业务已提交，文件后处理待恢复；请用同一操作身份回读，勿重新入库。")}}
  return Result{body,status},nil
 }

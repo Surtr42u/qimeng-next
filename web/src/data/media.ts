@@ -5,15 +5,22 @@ import type { Schema } from './client';
 import { invalidateLibrary } from './query';
 import { useRemoteKey } from './session';
 import type { MediaCardModel } from '../components/MediaGrid';
-import { useEventLedger } from './events';
 
 export type Asset = Schema<'Asset'>;
 export type AssetFilters = NonNullable<paths['/assets']['get']['parameters']['query']>;
+export function deduplicateAssetPages<T extends { items: Asset[] }>(pages: T[]): T[] {
+  const seen = new Set<string>();
+  return pages.map(page => ({ ...page, items: page.items.filter(asset => {
+    if (seen.has(asset.id)) return false;
+    seen.add(asset.id); return true;
+  }) }));
+}
 export function useAssets(filters: AssetFilters, enabled = true) {
   const key = useRemoteKey();
   return useInfiniteQuery({ queryKey: [...key, 'assets', filters], initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => read(api.GET('/assets', { params: { query: { ...filters, cursor: pageParam, limit: 48 } }, signal })),
     getNextPageParam: last => last.nextCursor || undefined, enabled,
+    select: data => ({ ...data, pages: deduplicateAssetPages(data.pages) }),
   });
 }
 export function useAsset(id: string) {
@@ -59,10 +66,3 @@ function safeMediaUrl(value: string, version: number) {
   return `${url.pathname}${url.search}`;
 }
 
-export function useRecordEvent(id: string, contentVersion: number) {
-  const ledger = useEventLedger();
-  return useMutation({ mutationFn: (event: Omit<Schema<'EventCreate'>, 'contentVersion'>) => {
-    if (!ledger) throw new Error('浏览记录正在初始化，请稍后重试。');
-    return ledger.record(id, { ...event, contentVersion });
-  } });
-}

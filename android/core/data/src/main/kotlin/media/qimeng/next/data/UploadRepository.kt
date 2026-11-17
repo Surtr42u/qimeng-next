@@ -12,6 +12,7 @@ import media.qimeng.next.model.*
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
@@ -47,6 +48,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
             val file = File(spool, id)
             try {
                 var count = 0L
+                val digest = MessageDigest.getInstance("SHA-256")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(file).use { output ->
                         val buffer = ByteArray(128 * 1024)
@@ -56,13 +58,14 @@ class UploadRepository internal constructor(private val context: Context, val qu
                             if (read < 0) break
                             check(spool.usableSpace > reserve + read) { "手机空间不足，已停止读取" }
                             output.write(buffer, 0, read)
+                            digest.update(buffer, 0, read)
                             count += read
                         }
                         output.fd.sync()
                     }
                 } ?: error("无法读取所选文件")
                 require(count > 0 && (declaredSize == null || declaredSize == count)) { "文件长度已变化，请重新选择" }
-                val draft = UploadDraft(id, name, mime, count, id)
+                val draft = UploadDraft(id, name, mime, count, id, digest.digest().joinToString("") { "%02x".format(it) }, name)
                 queue.update { previous ->
                     check(previous.drafts.size + previous.transfers.count { it.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED) } < 200) { "待传队列已满" }
                     previous.copy(drafts = previous.drafts + draft)
@@ -97,9 +100,10 @@ class UploadRepository internal constructor(private val context: Context, val qu
         queue.update { previous ->
             check(previous.drafts.isNotEmpty()) { "请先选择文件" }
             require(previous.drafts.size <= 100) { "每批最多 100 个文件，请先移除多余的待传项" }
+            check(previous.drafts.all { it.sourceHash.length == 64 }) { "待传快照缺少完整摘要，请重新选择文件" }
             previous.copy(drafts = emptyList(), transfers = previous.transfers + previous.drafts.map {
                 Transfer(it.id, target, libraryId, it.name, it.mimeType, it.bytes, it.spoolName, mode, now,
-                    batchKey, "Android ${previous.drafts.size} 个文件", directory.trim(), options = options)
+                    batchKey, "Android ${previous.drafts.size} 个文件", directory.trim(), options = options, sourceHash = it.sourceHash, originalName = it.originalName)
             })
         }
         schedule()
@@ -135,8 +139,14 @@ class UploadRepository internal constructor(private val context: Context, val qu
     suspend fun clearFinished() {
         val snapshot = queue.state.value ?: return
         val finished = snapshot.transfers.filter { it.state in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED) }
-        queue.update { it.copy(transfers = it.transfers.filterNot { item -> item.id in finished.map(Transfer::id) }, intakeFailures = emptyList()) }
-        withContext(Dispatchers.IO) { finished.forEach { File(spool, it.spoolName).delete() } }
+        val removed = withContext(Dispatchers.IO) { finished.filter {
+            val file = File(spool, it.spoolName)
+            !file.exists() || file.delete() || !file.exists()
+        }.map(Transfer::id).toSet() }
+        val retained = finished.map(Transfer::id).toSet() - removed
+        queue.update { it.copy(transfers = it.transfers.filterNot { item -> item.id in removed }.map { item ->
+            if (item.id in retained) item.copy(message = "本机传输副本清理失败；服务器结果保留，可重试清理") else item
+        }, intakeFailures = emptyList()) }
     }
 
     suspend fun retryEvents() {

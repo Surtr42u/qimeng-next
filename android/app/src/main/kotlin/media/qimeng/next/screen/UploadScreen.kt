@@ -41,7 +41,7 @@ fun UploadScreen(model: LibraryViewModel) {
                 Text("尚未读取到影库。请检查连接或在服务器创建影库。")
                 TextButton(onClick = model::refreshConnection, enabled = !busy) { Text("刷新影库") }
             } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                libraries.forEach { library -> FilterChip(selected == library.id, { model.setUploadLibrary(library.id) }, label = { Text(library.name) }, enabled = library.enabled) }
+                libraries.forEach { library -> FilterChip(selected == library.id, { model.setUploadLibrary(library.id) }, label = { Text(library.name) }, enabled = library.enabled && !busy) }
             }
             OutlinedTextField(directory, model::setUploadDirectory, label = { Text("库内目录（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { chooseDirectory = true }, enabled = libraries.any { it.id == selected && it.enabled }) { Text("浏览 / 创建目录") }

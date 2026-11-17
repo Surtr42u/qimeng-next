@@ -1,9 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useBeforeUnload, useBlocker, useLocation, useNavigationType } from 'react-router-dom';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
-const positions = new Map<string, { x: number; y: number }>();
+const positions = new Map<string, { x: number; y: number; focusHref?: string }>();
 export function usePageRestoration() {
   const location = useLocation();
   const direction = useNavigationType();
@@ -14,26 +14,35 @@ export function usePageRestoration() {
     currentKey.current = key;
     const saved = direction === 'POP' ? positions.get(key) : undefined;
     let cancelled = false;
-    const restore = () => { if (!cancelled) window.scrollTo({ left: saved?.x ?? 0, top: saved?.y ?? 0, behavior: 'instant' }); };
+    let observer: ResizeObserver | undefined;
+    const restore = () => {
+      if (cancelled) return;
+      window.scrollTo({ left: saved?.x ?? 0, top: saved?.y ?? 0, behavior: 'instant' });
+      const focusTarget = saved?.focusHref ? Array.from(document.links).find(link => link.getAttribute('href') === saved.focusHref) : undefined;
+      if (saved && Math.abs(window.scrollY - saved.y) <= 1 && (!saved.focusHref || focusTarget)) {
+        focusTarget?.focus({ preventScroll: true }); cancelled = true; observer?.disconnect();
+      }
+    };
     restore();
     // Cached lists normally restore immediately; delayed image layout can enlarge the document afterwards.
-    const observer = new ResizeObserver(restore);
-    if (saved) observer.observe(document.body);
-    const cancel = () => { cancelled = true; observer.disconnect(); };
+    observer = new ResizeObserver(restore);
+    if (saved && !cancelled) observer.observe(document.body);
+    const cancel = () => { cancelled = true; observer?.disconnect(); };
     window.addEventListener('wheel', cancel, { once: true, passive: true });
     window.addEventListener('touchstart', cancel, { once: true, passive: true });
     window.addEventListener('keydown', cancel, { once: true });
-    const timer = window.setTimeout(cancel, 2500);
     const focusFrame = requestAnimationFrame(() => { if (direction !== 'POP') document.querySelector<HTMLElement>('[data-page-heading]')?.focus({ preventScroll: true }); });
-    return () => { cancel(); clearTimeout(timer); cancelAnimationFrame(focusFrame); window.removeEventListener('wheel', cancel); window.removeEventListener('touchstart', cancel); window.removeEventListener('keydown', cancel); };
+    return () => { cancel(); cancelAnimationFrame(focusFrame); window.removeEventListener('wheel', cancel); window.removeEventListener('touchstart', cancel); window.removeEventListener('keydown', cancel); };
   }, [key, direction]);
   useEffect(() => {
     const save = () => {
-      positions.set(currentKey.current, { x: window.scrollX, y: window.scrollY });
+      const focused = document.activeElement?.closest<HTMLAnchorElement>('a[href]');
+      positions.set(currentKey.current, { x: window.scrollX, y: window.scrollY, focusHref: focused?.getAttribute('href') ?? positions.get(currentKey.current)?.focusHref });
       if (positions.size > 64) { const oldest = positions.keys().next().value; if (oldest) positions.delete(oldest); }
     };
     window.addEventListener('scroll', save, { passive: true });
-    return () => window.removeEventListener('scroll', save);
+    document.addEventListener('focusin', save);
+    return () => { window.removeEventListener('scroll', save); document.removeEventListener('focusin', save); };
   }, []);
 }
 

@@ -25,7 +25,7 @@ type fileIntent struct {
  After model.Asset
  State string
 }
-func assetPath(a model.Asset)string{if a.Trashed{return "trash/"+a.ID+"/"+a.FileName};return "libraries/"+a.LibraryID+"/"+a.RelativePath}
+func assetPath(a model.Asset)string{if a.Trashed{if a.StorageLayoutVersion>=2{return "library-trash/"+a.LibraryID+"/"+a.ID+"/"+a.FileName};return "trash/"+a.ID+"/"+a.FileName};return "libraries/"+a.LibraryID+"/"+a.RelativePath}
 func(s *Service)safe(pathname string)error{
  if !domain.ValidRelative(pathname){return Fail(400,"invalid_path","路径不合法。")}
  parts:=strings.Split(pathname,"/")
@@ -44,7 +44,7 @@ func(s *Service)linkNoReplace(source,target string)error{
  }
  return s.syncParent(target)
 }
-func(s *Service)syncParent(name string)error{f,e:=s.Root.Open(path.Dir(name));if e!=nil{return e};defer f.Close();return syncDirectory(f)}
+func(s *Service)syncParent(name string)error{f,e:=s.Root.OpenParent(name);if e!=nil{return e};defer f.Close();return syncDirectory(f)}
 func(s *Service)removeVerified(name,hash string,size int64)error{if _,e:=s.Root.Lstat(name);errors.Is(e,os.ErrNotExist){return nil}else if e!=nil{return e};if e:=s.verify(name,hash,size);e!=nil{return e};if e:=s.Root.Remove(name);e!=nil{return e};return s.syncParent(name)}
 func(s *Service)saveIntent(ctx context.Context,j fileIntent)error{raw,e:=store.Encode(j);if e!=nil{return e};_,e=s.DB.DB.ExecContext(ctx,"INSERT INTO file_intents(id,kind,state,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,data=excluded.data",j.ID,j.Kind,j.State,raw);return e}
 func(s *Service)prepareFile(ctx context.Context,w *Write,j fileIntent)(fileIntent,error){
@@ -105,13 +105,13 @@ func(s *Service)recoverIntents(ctx context.Context)error{
 }
 func(s *Service)Move(ctx context.Context,w *Write,id,target string,rev int64)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};if a.Revision!=rev{return a,Conflict(a.Revision)}
- if !domain.ValidRelative(target)||target==""{return a,Fail(400,"invalid_path","目标相对路径无效。")};_,mime,ok:=domain.MediaType(target);if !ok||mime!=a.MimeType{return a,Fail(400,"extension_mismatch","改名不能改变媒体格式扩展名。")}
+ if !domain.ValidMediaPath(target)||target==""{return a,Fail(400,"invalid_path","目标相对路径无效。")};_,mime,ok:=domain.MediaType(target);if !ok||mime!=a.MimeType{return a,Fail(400,"extension_mismatch","改名不能改变媒体格式扩展名。")}
  if target==a.RelativePath{return a,nil};if e=s.checkPath(ctx,a.LibraryID,target,a.ID);e!=nil{return a,e}
  old:=a;a.RelativePath=target;a.FileName=path.Base(target);a.Revision++;a.UpdatedAt=time.Now().UTC()
  return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"move",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a})
 }
 func(s *Service)Trash(ctx context.Context,w *Write,id string,rev int64)(model.Asset,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=rev{return a,Conflict(a.Revision)};if a.Trashed{return a,nil};old:=a;a.Trashed=true;a.Revision++;a.UpdatedAt=time.Now().UTC();return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"trash",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a})
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=rev{return a,Conflict(a.Revision)};if a.Trashed{return a,nil};old:=a;a.Trashed=true;a.StorageLayoutVersion=2;a.Revision++;a.UpdatedAt=time.Now().UTC();return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"trash",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a})
 }
 func(s *Service)Restore(ctx context.Context,w *Write,id string,rev int64)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=rev{return a,Conflict(a.Revision)};if !a.Trashed{return a,nil};old:=a;a.Trashed=false
@@ -128,4 +128,4 @@ func(s *Service)availablePath(ctx context.Context,library,relative string)(strin
  for n:=1;n<100000;n++{candidate:=relative;if n>1{candidate=fmt.Sprintf("%s (%d)%s",stem,n,ext)};e:=s.checkPath(ctx,library,candidate,"");if e!=nil{var ae *Error;if errors.As(e,&ae)&&ae.Code=="path_occupied"{continue};return "",e};_,e=s.Root.Lstat("libraries/"+library+"/"+candidate);if errors.Is(e,os.ErrNotExist){return candidate,nil};if e!=nil{return "",e}}
  return "",Fail(409,"name_exhausted","无法分配可用文件名。")
 }
-func(s *Service)Content(ctx context.Context,id string)(*os.File,model.Asset,error){s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,e};if a.Trashed{return nil,a,Fail(404,"not_found","媒体位于回收站。")};name:=assetPath(a);if e=s.safe(name);e!=nil{return nil,a,e};f,e:=s.Root.Open(name);return f,a,e}
+func(s *Service)Content(ctx context.Context,id string,versions ...int64)(*os.File,model.Asset,error){s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,e};if len(versions)>0&&versions[0]>0&&versions[0]!=a.ContentVersion{return nil,a,Fail(409,"content_changed","媒体内容版本已变化，请刷新条目。")};if a.Trashed{return nil,a,Fail(404,"not_found","媒体位于回收站。")};name:=assetPath(a);if e=s.safe(name);e!=nil{return nil,a,e};f,e:=s.Root.Open(name);return f,a,e}

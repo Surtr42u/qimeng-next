@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import media.qimeng.next.model.QueueSnapshot
 import java.io.File
 import java.io.ByteArrayOutputStream
+import java.io.FileNotFoundException
 
 /** Publish after durable commit; a failed journal never masquerades as an empty queue. */
 class QueueStore(context: Context) {
@@ -27,7 +28,9 @@ class QueueStore(context: Context) {
     suspend fun load() = withContext(Dispatchers.IO) {
         lock.withLock {
             try {
-                val data = if (file.baseFile.exists()) {
+                val data = try {
+                    // openRead performs AtomicFile's backup recovery. Checking only the base
+                    // file first would lose a committed journal in the legacy .bak window.
                     file.openRead().use { input ->
                         val output = ByteArrayOutputStream()
                         val buffer = ByteArray(8192)
@@ -41,7 +44,10 @@ class QueueStore(context: Context) {
                         gson.fromJson(bytes.toString(Charsets.UTF_8), QueueSnapshot::class.java)
                             ?: error("传输记录为空")
                     }
-                } else QueueSnapshot()
+                } catch (missing: FileNotFoundException) {
+                    if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists() || File(file.baseFile.path + ".new").exists()) throw missing
+                    QueueSnapshot()
+                }
                 mutableState.value = data
                 mutableError.value = null
             } catch (failure: Exception) {

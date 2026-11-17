@@ -6,6 +6,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from . import __version__, output
 from .config import Config
+from .content import ImageResult
 from .errors import ToolError
 from .state import State
 from .transport import Transport, load_contract
@@ -64,6 +65,8 @@ class Runtime:
         ])
         from .files import tool_definitions
         result.extend(tool_definitions())
+        from .research import tool_definitions as research_definitions
+        result.extend(research_definitions())
         return result
 
     def call(self, name: str, arguments: dict):
@@ -95,9 +98,11 @@ class Runtime:
             except Exception:
                 state.finish(request, {"code": "EXECUTOR_ERROR"}, key, uncertain=bool(key))
                 raise ToolError("EXECUTOR_ERROR", "执行器未能确认结果，请回读原操作", uncertain=bool(key)) from None
-            state.finish(request, value, key)
+            visible = value.metadata if isinstance(value, ImageResult) else value
+            state.finish(request, visible, key)
             try:
-                return output.present(value, state, self.config.output_bytes, self.config.token)
+                presented = output.present(visible, state, self.config.output_bytes, self.config.token)
+                return ImageResult(presented, value.data, value.mime_type) if isinstance(value, ImageResult) else presented
             except ToolError as exc:
                 raise ToolError("RESULT_PRESENTATION_FAILED", "操作已返回，但结果无法完整呈现；按原ID回读",
                                 details={"executionCompleted": True, "cause": exc.code}) from None
@@ -124,5 +129,11 @@ class Runtime:
                                arguments.get("offset", 0), arguments.get("limit", 20))
         if name in self.operations:
             return self.transport.call(self.operations[name][0], arguments)
+        if name == "research.probe":
+            from .research import probe
+            return probe(self, arguments)
+        if name == "platform.artifact.read":
+            from .research import read_artifact
+            return read_artifact(self, arguments["artifactRef"])
         from .files import dispatch
         return dispatch(self, name, arguments)

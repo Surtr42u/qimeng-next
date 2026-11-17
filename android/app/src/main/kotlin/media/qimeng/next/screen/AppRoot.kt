@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
-import coil3.gif.ImageDecoderDecoder
+import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
@@ -41,6 +41,7 @@ fun AppRoot(model: LibraryViewModel) {
     val tab by model.tab.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
+    val queueError by model.queueError.collectAsStateWithLifecycle()
     val dark = when (preferences.theme) { ThemeChoice.SYSTEM -> isSystemInDarkTheme(); ThemeChoice.LIGHT -> false; ThemeChoice.DARK -> true }
     val view = LocalView.current
     val context = LocalContext.current
@@ -50,7 +51,7 @@ fun AppRoot(model: LibraryViewModel) {
     val imageLoader = remember(session) {
         ImageLoader.Builder(context).components {
             if (session != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient() }))
-            if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory()) else add(GifDecoder.Factory())
+            if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
         }.build()
     }
     DisposableEffect(imageLoader) { onDispose { imageLoader.shutdown() } }
@@ -70,7 +71,11 @@ fun AppRoot(model: LibraryViewModel) {
                                 IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
                             }
                         }
-                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (queueError != null && route != "upload") Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(queueError!!, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = { model.navigate("upload") }) { Text("查看传输") }
+                        }
+                        Box(Modifier.fillMaxWidth().height(4.dp)) { if (busy) LinearProgressIndicator(Modifier.fillMaxWidth()) }
                         SingleSceneHost(if (route == "main") "tab:$tab" else route, preferences.reducedMotion, Modifier.weight(1f)) {
                             when {
                                 route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'))

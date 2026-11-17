@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -33,6 +35,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -49,6 +52,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
     val viewingSession = remember(asset.id) { model.viewSessionId() }
     var fullscreen by rememberSaveable(asset.id) { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var staleContent by remember { mutableStateOf(false) }
     val player = remember(asset.id, asset.version) {
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient())))
             .build().apply {
@@ -66,7 +70,10 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
             }
         }
         val listener = object : Player.Listener {
-            override fun onPlayerError(failure: PlaybackException) { error = "视频无法播放，请检查网络或媒体格式" }
+            override fun onPlayerError(failure: PlaybackException) {
+                staleContent = generateSequence<Throwable>(failure) { it.cause }.filterIsInstance<HttpDataSource.InvalidResponseCodeException>().any { it.responseCode == 409 }
+                error = if (staleContent) "媒体内容已更新，请重新读取" else "视频无法播放，请检查网络或媒体格式"
+            }
             override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) model.recordPlay(currentAsset, viewingSession) }
         }
         owner.lifecycle.addObserver(observer); player.addListener(listener)
@@ -84,10 +91,10 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
     if (fullscreen) {
         Dialog(onDismissRequest = { fullscreen = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
             BackHandler { fullscreen = false }
-            PlayerSurface(player, true, error, { error = null; player.prepare() }) { fullscreen = false }
+            PlayerSurface(player, true, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }) { fullscreen = false }
         }
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black))
-    } else PlayerSurface(player, false, error, { error = null; player.prepare() }) { fullscreen = true }
+    } else PlayerSurface(player, false, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }) { fullscreen = true }
     TimelineControls(asset, player)
 }
 
@@ -112,7 +119,8 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
         val original = window?.attributes?.screenBrightness
         onDispose { if (window != null && original != null) window.attributes = window.attributes.apply { screenBrightness = original } }
     }
-    Box((if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)).background(Color.Black)) {
+    Box((if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)).background(Color.Black)
+        .semantics { contentDescription = "视频播放区域" }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply {
             this.player = player; useController = true; controllerAutoShow = true
             setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)

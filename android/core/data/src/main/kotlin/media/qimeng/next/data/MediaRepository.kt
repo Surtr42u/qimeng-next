@@ -234,11 +234,13 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
 
 private fun ApiAsset.toModel(target: Session): Asset {
     val root = target.baseUrl.toHttpUrl()
-    val media = root.resolve(contentUrl) ?: throw IOException("媒体地址无效")
+    val media = (root.resolve(contentUrl) ?: throw IOException("媒体地址无效")).newBuilder()
+        .setQueryParameter("version", contentVersion.toString()).build()
     check(sameOrigin(media, root)) { "服务器返回了不同来源的媒体地址" }
-    val thumbnail = thumbnailUrl?.let { root.resolve(it) ?: throw IOException("缩略图地址无效") }
+    val thumbnail = thumbnailUrl?.let { (root.resolve(it) ?: throw IOException("缩略图地址无效")).newBuilder()
+        .setQueryParameter("version", contentVersion.toString()).build() }
     check(thumbnail == null || sameOrigin(thumbnail, root)) { "服务器返回了不同来源的缩略图地址" }
-    return Asset(id = id, libraryId = libraryId, target = target, name = fileName, relativePath = relativePath, mediaType = mediaType.value, version = contentVersion,
+    return Asset(id = id, libraryId = libraryId, target = target, name = fileName, originalName = originalFileName, relativePath = relativePath, mediaType = mediaType.value, version = contentVersion,
         revision = revision, tagsRevision = tagsRevision, bytes = propertySize, width = width, height = height, durationMs = durationMs,
         authorId = authorId.takeIf(String::isNotBlank), authorIds = authorIds, authorsRevision = authorsRevision, authorName = authorName, tags = tags, favorite = favorite, liked = liked,
         likeCount = likeCount, positionMs = positionMs, positionVersion = positionContentVersion, note = note,

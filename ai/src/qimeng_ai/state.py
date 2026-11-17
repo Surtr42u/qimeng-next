@@ -50,7 +50,7 @@ class State:
               CREATE TABLE IF NOT EXISTS pending (task TEXT NOT NULL, key TEXT NOT NULL,
                 tool TEXT NOT NULL, created REAL NOT NULL, PRIMARY KEY(task,key));
               CREATE TABLE IF NOT EXISTS results (id TEXT PRIMARY KEY, created REAL NOT NULL,
-                value TEXT NOT NULL, bytes INTEGER NOT NULL, digest TEXT NOT NULL);
+                value TEXT NOT NULL, bytes INTEGER NOT NULL, digest TEXT NOT NULL, kind TEXT NOT NULL);
             """)
             db.execute("INSERT OR IGNORE INTO tasks VALUES(?,?,0,?,?)",
                        (config.task_id, time.time(), config.max_calls, config.max_seconds))
@@ -124,25 +124,30 @@ class State:
                 raise ToolError("INVALID_BUDGET", "续期只允许提高既有上限，不能清零调用和开始时间")
             db.execute("UPDATE tasks SET max_calls=?,max_seconds=? WHERE id=?", (calls, seconds, self.config.task_id))
 
-    def save(self, value) -> str:
+    def save(self, value, *, kind: str = "result") -> str:
         data = encode(value)
         size = len(data.encode())
         if size > MAX_RESULT_BYTES:
             raise ToolError("RESULT_TOO_LARGE", "结果超出完整缓存上限，请在服务端使用分页查询")
         with self.transaction() as db:
             db.execute("DELETE FROM results WHERE created<?", (time.time() - RESULT_TTL,))
-            used, count = db.execute("SELECT coalesce(sum(bytes),0),count(*) FROM results").fetchone()
-            if used + size > MAX_CACHE_BYTES or count >= 128:
+            digest = hashlib.sha256(data.encode()).hexdigest()
+            existing = db.execute("SELECT id FROM results WHERE kind=? AND digest=?", (kind, digest)).fetchone()
+            if existing is not None:
+                return existing[0]
+            used = db.execute("SELECT coalesce(sum(bytes),0) FROM results").fetchone()[0]
+            count = db.execute("SELECT count(*) FROM results WHERE kind=?", (kind,)).fetchone()[0]
+            if used + size > MAX_CACHE_BYTES or count >= {"file": 10000, "image": 512}.get(kind, 128):
                 raise ToolError("RESULT_CACHE_FULL", "结果缓存已满，保留已有引用；等待过期或由可信端清理")
             reference = "r_" + secrets.token_hex(16)
-            db.execute("INSERT INTO results VALUES(?,?,?,?,?)", (reference, time.time(), data, size,
-                       hashlib.sha256(data.encode()).hexdigest()))
+            db.execute("INSERT INTO results VALUES(?,?,?,?,?,?)", (reference, time.time(), data, size,
+                       digest, kind))
         return reference
 
-    def read(self, reference: str):
+    def read(self, reference: str, *, kind: str = "result"):
         with self.transaction() as db:
-            row = db.execute("SELECT value,digest FROM results WHERE id=? AND created>=?",
-                             (reference, time.time() - RESULT_TTL)).fetchone()
+            row = db.execute("SELECT value,digest FROM results WHERE id=? AND created>=? AND kind=?",
+                             (reference, time.time() - RESULT_TTL, kind)).fetchone()
         if row is None:
             raise ToolError("RESULT_REF_INVALID", "引用不存在、已过期或不属于当前实例/凭据/契约")
         if hashlib.sha256(row[0].encode()).hexdigest() != row[1]:

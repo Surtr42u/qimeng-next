@@ -3,6 +3,7 @@ package main
 import (
  "context"
  "errors"
+ "encoding/json"
  "log/slog"
  "net/http"
  "os"
@@ -20,7 +21,8 @@ import (
 func main(){if e:=run();e!=nil{slog.Error("service stopped","reason","configuration, storage or listener failure");os.Exit(1)}}
 func run()error{
  if zone:=os.Getenv("QIMENG_TIMEZONE");zone!=""{location,e:=time.LoadLocation(zone);if e!=nil{return e};time.Local=location}
- s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AIToken:os.Getenv("QIMENG_AI_TOKEN"),SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true"});if e!=nil{return e};defer s.Close()
+ var storages map[string]string;if raw:=os.Getenv("QIMENG_STORAGE_ROOTS");raw!=""{if e:=json.Unmarshal([]byte(raw),&storages);e!=nil{return errors.New("QIMENG_STORAGE_ROOTS must be a JSON object of logical names to trusted root paths")}}
+ s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true"});if e!=nil{return e};defer s.Close()
  address:=os.Getenv("QIMENG_LISTEN");if address==""{address="127.0.0.1:8421"};api:=httpapi.New(s);var handler http.Handler=api
  if web:=os.Getenv("QIMENG_WEB_DIR");web!=""{
   files:=http.FileServer(http.Dir(web))

@@ -25,17 +25,21 @@ class ManagementViewModel(application: Application) : AndroidViewModel(applicati
     private var sourceJob: Job? = null
     private var markJob: Job? = null
     private var mutation: Job? = null
+    private var entryKind: String? = null
+    private var markScope: String? = null
     init {
         viewModelScope.launch { graph.settings.session.collect {
             listJob?.cancel(); sourceJob?.cancel(); markJob?.cancel(); mutation?.cancel()
             mutableEntries.value = ListState(); mutableSources.value = ListState(); mutableMarks.value = ListState()
+            entryKind = null; markScope = null
             mutableBusy.value = false; mutableError.value = null
         } }
     }
     fun load(kind: String, next: Boolean = false) {
         if (next && (mutableEntries.value.loading || mutableEntries.value.cursor == null)) return
         listJob?.cancel()
-        val previous = mutableEntries.value
+        val previous: ListState<VocabularyEntry> = if (entryKind == kind) mutableEntries.value else ListState()
+        entryKind = kind
         mutableEntries.value = if (next) previous.copy(loading = true, error = null) else ListState(loading = true)
         listJob = viewModelScope.launch {
             try { val page = repository.vocabulary(kind, if (next) previous.cursor else null)
@@ -62,7 +66,9 @@ class ManagementViewModel(application: Application) : AndroidViewModel(applicati
     fun loadMarks(asset: Asset, next: Boolean = false) {
         if (next && (mutableMarks.value.loading || mutableMarks.value.cursor == null)) return
         markJob?.cancel()
-        val previous = mutableMarks.value
+        val scope = "${asset.target.instanceId}:${asset.id}"
+        val previous: ListState<TimelineMark> = if (markScope == scope) mutableMarks.value else ListState()
+        markScope = scope
         mutableMarks.value = if (next) previous.copy(loading = true, error = null) else ListState(loading = true)
         markJob = viewModelScope.launch {
             try { val page = repository.marks(asset, if (next) previous.cursor else null)

@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, TextContent, Tool
+from mcp.types import CallToolRequestParams, CallToolResult, ImageContent, ListToolsResult, PaginatedRequestParams, TextContent, Tool
 
 from .config import Config
+from .content import ImageResult
 from .errors import ToolError
 from .runtime import Runtime
 
@@ -25,8 +27,14 @@ def create_server(runtime: Runtime) -> Server:
             failed = False
         except ToolError as exc:
             value, failed = exc.as_dict(), True
+        picture = value if isinstance(value, ImageResult) else None
+        if picture is not None:
+            value = picture.metadata
         text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        return CallToolResult(content=[TextContent(type="text", text=text)],
+        blocks = [TextContent(type="text", text=text)]
+        if picture is not None:
+            blocks.append(ImageContent(type="image", data=base64.b64encode(picture.data).decode(), mime_type=picture.mime_type))
+        return CallToolResult(content=blocks,
                               structured_content=value if isinstance(value, dict) else {"result": value},
                               is_error=failed)
 
