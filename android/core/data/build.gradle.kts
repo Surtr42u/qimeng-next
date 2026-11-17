@@ -2,7 +2,7 @@ plugins { alias(libs.plugins.android.library); alias(libs.plugins.kotlin.android
 android {
     namespace = "media.qimeng.next.data"
     compileSdk = 35
-    defaultConfig { minSdk = 26 }
+    defaultConfig { minSdk = 26; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 kotlin { jvmToolchain(17) }
@@ -17,4 +17,7 @@ dependencies {
     implementation(libs.retrofit.gson)
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

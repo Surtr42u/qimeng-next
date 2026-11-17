@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
@@ -59,8 +60,6 @@ fun LiquidNavigation(items: List<NavigationItem>, selected: Int, backdrop: Glass
         .then(rememberBackdropModifier(backdrop, { animated }, items.size, glass))
         .background(fill)
         .border(1.dp, colors.outlineVariant.copy(alpha = 0.55f), shape)
-        // Consume the capsule's gaps, so touches never reach a media card below it.
-        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
         .pointerInput(items.size, selected) {
             detectHorizontalDragGestures(
                 onDragStart = { drag = (it.x / width * items.size - 0.5f).coerceIn(0f, (items.lastIndex).toFloat()) },
@@ -78,12 +77,15 @@ fun LiquidNavigation(items: List<NavigationItem>, selected: Int, backdrop: Glass
             drawRoundRect(highlight, Offset(cell * animated + inset, inset), Size(cell - inset * 2, size.height - inset * 2), CornerRadius(size.height / 2))
         }
     ) {
+        // A pointer-only sibling behind the controls consumes gaps without adding an empty
+        // accessibility button or hiding the child tabs from TalkBack.
+        Box(Modifier.matchParentSize().pointerInput(Unit) { detectTapGestures { } })
         Row(Modifier.fillMaxWidth().selectableGroup().padding(6.dp)) {
             items.forEachIndexed { index, item ->
                 Column(Modifier.weight(1f).heightIn(min = 60.dp).clip(shape)
                     .selectable(selected = index == selected, role = Role.Tab, onClick = {
                         if (index != selected) {
-                            if (!noMotion) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!noMotion) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSelect(index)
                         }
                     }).padding(horizontal = 2.dp, vertical = 8.dp),

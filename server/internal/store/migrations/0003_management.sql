@@ -1,0 +1,11 @@
+CREATE TABLE tags(name TEXT PRIMARY KEY,revision INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+INSERT INTO tags(name,revision,created_at,updated_at) SELECT DISTINCT tag,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM asset_tags;
+CREATE TABLE timeline_marks(id TEXT PRIMARY KEY,asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,position_ms INTEGER NOT NULL,data TEXT NOT NULL);
+CREATE INDEX timeline_marks_asset ON timeline_marks(asset_id,position_ms,id);
+CREATE TABLE sources(id TEXT PRIMARY KEY,name TEXT NOT NULL,data TEXT NOT NULL);
+CREATE TABLE characters(id TEXT PRIMARY KEY,source_id TEXT NOT NULL REFERENCES sources(id),name TEXT NOT NULL,data TEXT NOT NULL);
+CREATE INDEX characters_source ON characters(source_id,name,id);
+CREATE TABLE asset_sources(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,source_id TEXT NOT NULL REFERENCES sources(id),PRIMARY KEY(asset_id,source_id));
+CREATE TABLE asset_characters(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,character_id TEXT NOT NULL REFERENCES characters(id),PRIMARY KEY(asset_id,character_id));
+CREATE TABLE author_tombstones(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,deleted_at TEXT NOT NULL);
+INSERT INTO schema_version VALUES(3);

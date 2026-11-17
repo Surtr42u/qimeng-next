@@ -25,6 +25,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
 import coil3.gif.ImageDecoderDecoder
+import coil3.gif.GifDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.ThemeChoice
@@ -49,7 +50,7 @@ fun AppRoot(model: LibraryViewModel) {
     val imageLoader = remember(session) {
         ImageLoader.Builder(context).components {
             if (session != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient() }))
-            if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory())
+            if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory()) else add(GifDecoder.Factory())
         }.build()
     }
     DisposableEffect(imageLoader) { onDispose { imageLoader.shutdown() } }

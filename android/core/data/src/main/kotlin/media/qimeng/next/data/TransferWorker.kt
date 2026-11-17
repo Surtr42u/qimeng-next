@@ -37,7 +37,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 try {
                     api.recordEvent(id = event.assetId, eventCreate = EventCreate(eventId = event.id,
                         kind = EventCreate.Kind.entries.first { it.value == event.kind }, contentVersion = event.contentVersion,
-                        positionMs = event.positionMs)).bodyOrThrow()
+                        positionMs = event.positionMs, sessionId = event.sessionId, seconds = event.seconds, occurredAt = event.occurredAt)).bodyOrThrow()
                     graph.queue.update { it.copy(events = it.events.filterNot { item -> item.id == event.id }) }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: ApiFailure) {
@@ -86,13 +86,15 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             update(task.id) { it.copy(batchId = batch.id) }
             task = current(task.id) ?: return
         }
+        if (isStopped || task.state == TransferState.CANCELLED) return
         var upload = if (task.uploadId == null) {
             api.createUpload(idempotencyKey = "upload-${task.id}", uploadCreate = UploadCreate(libraryId = task.libraryId,
-                fileName = task.name, size = task.bytes, mimeType = task.mimeType,
+                fileName = task.name, propertySize = task.bytes, mimeType = task.mimeType,
                 mode = UploadCreate.Mode.entries.first { it.value == task.mode.name.lowercase() }, batchId = task.batchId,
                 sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory)).bodyOrThrow()
         } else api.getUpload(task.uploadId!!).bodyOrThrow()
         update(task.id) { it.copy(uploadId = upload.id, offset = upload.offset) }
+        if (isStopped || current(task.id)?.state == TransferState.CANCELLED) return
         if (upload.state.value in setOf("ingested", "staged")) {
             finish(task.id, upload.assetId, upload.state.value)
             return
@@ -128,7 +130,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
     private fun current(id: String) = graph.queue.state.value?.transfers?.find { it.id == id }
     private suspend fun update(id: String, transform: (Transfer) -> Transfer) {
         graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
-            if (it.id == id && it.state != TransferState.CANCELLED) transform(it) else it
+            if (it.id != id) it else {
+                val updated = transform(it)
+                if (it.state == TransferState.CANCELLED) updated.copy(state = it.state, message = it.message) else updated
+            }
         }) }
     }
 

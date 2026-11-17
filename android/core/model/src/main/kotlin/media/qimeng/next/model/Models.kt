@@ -4,10 +4,13 @@ data class Session(val baseUrl: String, val instanceId: String, val label: Strin
 enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 data class Preferences(val theme: ThemeChoice = ThemeChoice.SYSTEM, val reducedMotion: Boolean = false, val glass: Boolean = true)
 
-data class Library(val id: String, val name: String)
+data class Library(val id: String, val name: String, val kind: String)
 data class Asset(
     val id: String,
+    val libraryId: String,
+    val target: Session,
     val name: String,
+    val relativePath: String,
     val mediaType: String,
     val version: Long,
     val revision: Long,
@@ -17,15 +20,20 @@ data class Asset(
     val height: Int?,
     val durationMs: Long?,
     val authorId: String?,
+    val authorIds: List<String>,
+    val authorsRevision: Long,
     val authorName: String?,
     val tags: List<String>,
     val favorite: Boolean,
     val liked: Boolean,
+    val likeCount: Long,
     val positionMs: Long,
+    val positionVersion: Long,
     val note: String,
     val contentUrl: String,
     val thumbnailUrl: String,
     val addedAt: String,
+    val rankingScore: Long? = null,
 )
 data class AssetQuery(
     val text: String = "",
@@ -37,9 +45,12 @@ data class AssetQuery(
     val favorite: Boolean? = null,
     val liked: Boolean? = null,
     val sort: String = "added_desc",
+    val source: String = "assets",
+    val seed: Long = 1,
+    val period: String = "week",
 )
 data class Page<T>(val items: List<T>, val nextCursor: String?)
-data class Author(val id: String, val name: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long)
+data class Author(val id: String, val name: String, val kind: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long)
 data class TaskItem(val id: String, val fileName: String, val state: String, val message: String, val assetId: String?)
 data class TaskReport(val id: String, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>)
 data class HistoryEntry(val id: String, val assetId: String, val name: String, val kind: String, val positionMs: Long, val createdAt: String)
@@ -71,7 +82,7 @@ data class Transfer(
     val message: String = "等待传输",
 )
 data class PendingEvent(val id: String, val target: Session, val assetId: String, val kind: String, val positionMs: Long, val contentVersion: Long,
-    val failure: String? = null)
+    val sessionId: String, val seconds: Double = 0.0, val occurredAt: String, val failure: String? = null)
 data class UploadDraft(val id: String, val name: String, val mimeType: String, val bytes: Long, val spoolName: String)
 data class QueueSnapshot(val transfers: List<Transfer> = emptyList(), val events: List<PendingEvent> = emptyList(), val drafts: List<UploadDraft> = emptyList())
 

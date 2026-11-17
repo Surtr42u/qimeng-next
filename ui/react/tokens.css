@@ -1,0 +1,35 @@
+:root {
+  color-scheme: dark;
+  --qm-bg: #14131d; --qm-surface: #211e2d; --qm-surface-raised: #2a2639;
+  --qm-glass: rgb(36 32 51 / .68); --qm-glass-strong: rgb(37 32 51 / .88);
+  --qm-text: #f3effa; --qm-muted: #b0a8c3; --qm-faint: #847a98;
+  --qm-accent: #bf9dff; --qm-accent-ink: #201431; --qm-accent-soft: rgb(191 157 255 / .16);
+  --qm-cyan: #72d6d1; --qm-border: rgb(213 194 249 / .14);
+  --qm-highlight: rgb(255 255 255 / .36); --qm-shadow: 0 14px 48px rgb(0 0 0 / .26);
+  --qm-danger: #ffabae; --qm-danger-soft: rgb(245 86 100 / .1);
+  --qm-warning: #efd394; --qm-success: #83d4bc;
+  --qm-aurora: radial-gradient(ellipse at 7% 0%, rgb(111 75 173 / .16), transparent 45%), radial-gradient(ellipse at 95% 65%, rgb(46 119 125 / .1), transparent 50%);
+  --qm-radius: 20px; --qm-radius-sm: 12px; --qm-radius-pill: 999px;
+  --qm-motion-fast: 160ms; --qm-motion-page: 240ms; --qm-motion-lens: 420ms;
+  --qm-ease: cubic-bezier(.2,.8,.2,1); --qm-spring: cubic-bezier(.22,1.22,.36,1);
+  --qm-blur: 22px; --qm-saturate: 1.45;
+  --qm-space: 8px; --qm-focus: 0 0 0 3px var(--qm-accent);
+  --qm-nav-height: 68px; --qm-z-nav: 20; --qm-z-dialog: 60;
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --qm-bg: #f5f3f9; --qm-surface: #fff; --qm-surface-raised: #f0ebf7;
+  --qm-glass: rgb(255 255 255 / .65); --qm-glass-strong: rgb(255 255 255 / .9);
+  --qm-text: #292238; --qm-muted: #6e627e; --qm-faint: #897c98;
+  --qm-accent: #7754ad; --qm-accent-ink: #fff; --qm-accent-soft: rgb(119 84 173 / .11);
+  --qm-cyan: #287e80; --qm-border: rgb(85 58 116 / .15);
+  --qm-highlight: rgb(255 255 255 / .94); --qm-shadow: 0 12px 36px rgb(75 48 103 / .11);
+  --qm-danger: #b12e48; --qm-danger-soft: rgb(177 46 72 / .07);
+  --qm-warning: #8b6416; --qm-success: #21705a;
+  --qm-aurora: radial-gradient(ellipse at 10% 0%, rgb(185 156 226 / .2), transparent 45%), radial-gradient(ellipse at 90% 65%, rgb(104 211 205 / .12), transparent 50%);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --qm-motion-fast: 0ms; --qm-motion-page: 0ms; --qm-motion-lens: 0ms; }
+}

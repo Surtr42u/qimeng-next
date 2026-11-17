@@ -103,6 +103,7 @@ fun ServerScreen(model: LibraryViewModel) {
     val session by model.session.collectAsStateWithLifecycle()
     var confirm by rememberSaveable { mutableStateOf(false) }
     var create by rememberSaveable { mutableStateOf(false) }
+    var disconnect by rememberSaveable { mutableStateOf(false) }
     val libraries by model.libraries.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -118,11 +119,16 @@ fun ServerScreen(model: LibraryViewModel) {
             TextButton(onClick = { create = true }) { Text("创建影库") }
         }
         OutlinedButton(onClick = { confirm = true }) { Text("退出并切换服务器") }
+        TextButton(onClick = { disconnect = true }) { Text("服务器离线时，仅断开本机") }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("退出当前登录？") },
         text = { Text("将撤销当前会话。尚未发送的传输保留，重新连接原服务器后可重试。") },
         confirmButton = { TextButton(onClick = { confirm = false; model.logout() }) { Text("退出登录") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("取消") } })
+    if (disconnect) AlertDialog(onDismissRequest = { disconnect = false }, title = { Text("仅断开本机连接？") },
+        text = { Text("清除本机凭据后可以登录其他服务器。此操作无法撤销离线服务器上的会话，服务器恢复后可在服务端撤销。") },
+        confirmButton = { TextButton(onClick = { disconnect = false; model.disconnect() }) { Text("断开本机") } },
+        dismissButton = { TextButton(onClick = { disconnect = false }) { Text("取消") } })
     if (create) {
         var name by rememberSaveable { mutableStateOf("") }
         var cos by rememberSaveable { mutableStateOf(false) }
@@ -174,7 +180,7 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
             item.sources.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = model::followAuthor, enabled = !busy) { Text(if (item.followed) "取消关注" else "关注作者") }
-                TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑档案") }
+                if (item.kind != "cos") TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑档案") }
             }
         }
         MediaBrowser(model, "author:$id", author = id)

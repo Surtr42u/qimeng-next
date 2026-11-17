@@ -2,6 +2,7 @@ package media.qimeng.next.screen
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.media.AudioManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -19,10 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -43,13 +46,14 @@ import media.qimeng.next.model.Asset
 fun VideoStage(asset: Asset, model: LibraryViewModel) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
+    val viewingSession = remember(asset.id) { model.viewSessionId() }
     var fullscreen by rememberSaveable(asset.id) { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val player = remember(asset.id, asset.version) {
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient())))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(asset.contentUrl))
-                seekTo(asset.positionMs)
+                if (asset.positionVersion == asset.version) seekTo(asset.positionMs)
                 prepare()
             }
     }
@@ -58,22 +62,23 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
                 player.pause()
-                model.recordProgress(currentAsset, player.currentPosition)
+                model.recordProgress(currentAsset, player.currentPosition, viewingSession)
             }
         }
         val listener = object : Player.Listener {
             override fun onPlayerError(failure: PlaybackException) { error = "视频无法播放，请检查网络或媒体格式" }
+            override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) model.recordPlay(currentAsset, viewingSession) }
         }
         owner.lifecycle.addObserver(observer); player.addListener(listener)
         onDispose {
-            model.recordProgress(currentAsset, player.currentPosition)
+            model.recordProgress(currentAsset, player.currentPosition, viewingSession)
             owner.lifecycle.removeObserver(observer); player.removeListener(listener); player.release()
         }
     }
     LaunchedEffect(player) {
         while (true) {
             delay(10_000)
-            if (player.isPlaying) model.recordProgress(currentAsset, player.currentPosition)
+            if (player.isPlaying) model.recordProgress(currentAsset, player.currentPosition, viewingSession)
         }
     }
     if (fullscreen) {
@@ -100,7 +105,8 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
         onDispose { player.removeListener(listener) }
     }
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val window = (context as? Activity)?.window
+    val view = LocalView.current
+    val window = (view.parent as? DialogWindowProvider)?.window ?: context.activity()?.window
     DisposableEffect(window) {
         val original = window?.attributes?.screenBrightness
         onDispose { if (window != null && original != null) window.attributes = window.attributes.apply { screenBrightness = original } }
@@ -144,10 +150,19 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
                     }
                 }
             })
-        IconButton(onClick = toggleFullscreen, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+        IconButton(onClick = toggleFullscreen, modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(8.dp)) {
             Icon(if (fullscreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen, if (fullscreen) "退出全屏" else "进入全屏", tint = Color.White)
         }
         feedback?.let { Text(it, Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.65f)).padding(12.dp), color = Color.White) }
         error?.let { TextButton(onClick = onRetry, modifier = Modifier.align(Alignment.Center)) { Text("$it · 重试", color = Color.White) } }
     }
+}
+
+private fun Context.activity(): Activity? {
+    var context: Context = this
+    while (context is ContextWrapper) {
+        if (context is Activity) return context
+        context = context.baseContext
+    }
+    return context as? Activity
 }

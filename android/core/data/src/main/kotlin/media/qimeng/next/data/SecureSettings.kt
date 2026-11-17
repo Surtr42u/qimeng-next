@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import media.qimeng.next.model.Preferences
 import media.qimeng.next.model.Session
+import media.qimeng.next.model.sameTarget
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -37,7 +38,7 @@ class SecureSettings(context: Context) {
 
     @Synchronized
     fun tokenFor(target: Session): String {
-        check(target == mutableSession.value) { "连接已变更，请重新登录此任务所属服务器" }
+        check(sameTarget(target, mutableSession.value)) { "连接已变更，请重新登录此任务所属服务器" }
         val encoded = storage.getString("token", null) ?: error("登录凭据已移除")
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
         require(bytes.size > 12) { "登录凭据损坏，请重新登录" }

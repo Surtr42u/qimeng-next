@@ -9,6 +9,7 @@ class DataGraph private constructor(context: Context) {
     internal val provider = ApiProvider(settings)
     val queue = QueueStore(context)
     val media = MediaRepository(settings, provider)
+    val analytics = AnalyticsRepository(settings, provider)
     val uploads = UploadRepository(context, queue, settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

@@ -1,0 +1,6 @@
+{
+  "id": "/", "name": "绮梦影库", "short_name": "绮梦",
+  "lang": "zh-CN", "start_url": "/", "scope": "/", "display": "standalone",
+  "background_color": "#14131d", "theme_color": "#14131d",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

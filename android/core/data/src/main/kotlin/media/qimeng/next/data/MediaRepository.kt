@@ -11,6 +11,7 @@ import media.qimeng.next.sdk.model.TagsUpdate
 import media.qimeng.next.sdk.model.LibraryCreate
 import media.qimeng.next.sdk.model.RevisionRequest
 import media.qimeng.next.sdk.model.MoveRequest
+import media.qimeng.next.sdk.api.DefaultApi
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 import java.util.UUID
@@ -38,6 +39,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         if (!result.isSuccessful && result.code() != 401) throw ApiFailure(result.code(), "无法撤销登录，请重试")
         settings.clearSession()
     }
+    suspend fun disconnect() = withContext(Dispatchers.IO) { settings.clearSession() }
 
     suspend fun capabilities(): ServerCapabilities {
         val target = target()
@@ -46,18 +48,31 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return ServerCapabilities(instance.capabilities.aiConfigured, instance.capabilities.recommendations, instance.capabilities.rankings)
     }
 
-    suspend fun libraries(): List<Library> = provider.api(target()).listLibraries().bodyOrThrow().items.map { Library(it.id, it.name) }
+    suspend fun libraries(): List<Library> = provider.api(target()).listLibraries().bodyOrThrow().items.map { Library(it.id, it.name, it.kind.value) }
     suspend fun createLibrary(name: String, cos: Boolean): Library {
         val value = provider.api(target()).createLibrary(idempotencyKey = UUID.randomUUID().toString(),
             libraryCreate = LibraryCreate(name = name, kind = LibraryCreate.Kind.entries.first { it.value == if (cos) "cos" else "regular" })).bodyOrThrow()
-        return Library(value.id, value.name)
+        return Library(value.id, value.name, value.kind.value)
     }
 
     suspend fun assets(query: AssetQuery, cursor: String? = null): Page<Asset> {
         val target = target()
+        if (query.source == "recommendations") {
+            val page = provider.api(target).getRecommendations(seed = query.seed, cursor = cursor, limit = 50,
+                kind = query.kind?.let { value -> DefaultApi.KindGetRecommendations.entries.first { it.value == value } },
+                mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeGetRecommendations.entries.first { it.value == value } }).bodyOrThrow()
+            return Page(page.items.map { it.toModel(target) }, page.nextCursor)
+        }
+        if (query.source == "rankings") {
+            val page = provider.api(target).getRankings(period = DefaultApi.PeriodGetRankings.entries.first { it.value == query.period },
+                kind = query.kind?.let { value -> DefaultApi.KindGetRankings.entries.first { it.value == value } }, cursor = cursor, limit = 50).bodyOrThrow()
+            return Page(page.items.map { it.asset.toModel(target).copy(rankingScore = it.score) }, page.nextCursor)
+        }
         val page = provider.api(target).listAssets(cursor = cursor, limit = 50, libraryId = query.libraryId,
-            q = query.text.takeIf { it.isNotBlank() }, mediaType = query.mediaType, kind = query.kind,
-            authorId = query.authorId, tag = query.tag, favorite = query.favorite, liked = query.liked, sort = query.sort).bodyOrThrow()
+            q = query.text.takeIf { it.isNotBlank() }, mediaType = query.mediaType?.let { type -> DefaultApi.MediaTypeListAssets.entries.first { it.value == type } },
+            kind = query.kind?.let { kind -> DefaultApi.KindListAssets.entries.first { it.value == kind } },
+            authorId = query.authorId, tag = query.tag, favorite = query.favorite, liked = query.liked,
+            sort = DefaultApi.SortListAssets.entries.first { it.value == query.sort }).bodyOrThrow()
         return Page(page.items.map { it.toModel(target) }, page.nextCursor)
     }
 
@@ -83,6 +98,11 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         val target = target()
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision, note = note))
             .bodyOrThrow().toModel(target)
+    }
+    suspend fun updateAuthors(asset: Asset, ids: List<String>): Asset {
+        val target = target()
+        return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
+            authorIds = ids, expectedAuthorsRevision = asset.authorsRevision)).bodyOrThrow().toModel(target)
     }
 
     suspend fun tags(): List<String> = provider.api(target()).listTags().bodyOrThrow().items
@@ -148,13 +168,15 @@ private fun ApiAsset.toModel(target: Session): Asset {
     val root = target.baseUrl.toHttpUrl()
     val media = root.resolve(contentUrl) ?: throw IOException("媒体地址无效")
     check(sameOrigin(media, root)) { "服务器返回了不同来源的媒体地址" }
-    return Asset(id = id, name = fileName, mediaType = mediaType.value, version = contentVersion,
-        revision = revision, tagsRevision = tagsRevision, bytes = size, width = null, height = null, durationMs = null,
-        authorId = authorId.takeIf(String::isNotBlank), authorName = authorName, tags = tags, favorite = favorite, liked = liked,
-        positionMs = if (positionContentVersion == contentVersion) positionMs else 0, note = note,
-        contentUrl = media.toString(), thumbnailUrl = media.toString(), addedAt = createdAt)
+    val thumbnail = thumbnailUrl?.let { root.resolve(it) ?: throw IOException("缩略图地址无效") }
+    check(thumbnail == null || sameOrigin(thumbnail, root)) { "服务器返回了不同来源的缩略图地址" }
+    return Asset(id = id, libraryId = libraryId, target = target, name = fileName, relativePath = relativePath, mediaType = mediaType.value, version = contentVersion,
+        revision = revision, tagsRevision = tagsRevision, bytes = propertySize, width = width, height = height, durationMs = durationMs,
+        authorId = authorId.takeIf(String::isNotBlank), authorIds = authorIds, authorsRevision = authorsRevision, authorName = authorName, tags = tags, favorite = favorite, liked = liked,
+        likeCount = likeCount, positionMs = positionMs, positionVersion = positionContentVersion, note = note,
+        contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt)
 }
 
-private fun ApiAuthor.toModel() = Author(id, name, aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision)
+private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision)
 private fun ApiBatch.toModel() = TaskReport(id, mode.value, state.value,
     "${label} · 备份：${backupState.value} · 来源：${cleanupState.value}", createdAt, emptyList())

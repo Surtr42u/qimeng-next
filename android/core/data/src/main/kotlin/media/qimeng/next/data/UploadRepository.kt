@@ -98,11 +98,12 @@ class UploadRepository internal constructor(private val context: Context, val qu
         schedule()
     }
 
-    suspend fun event(asset: Asset, kind: String, positionMs: Long = 0) {
-        val target = settings.session.value ?: return
+    suspend fun event(asset: Asset, kind: String, positionMs: Long = 0, sessionId: String,
+                      seconds: Double = 0.0, occurredAt: String = Instant.now().toString()) {
         queue.update { snapshot ->
             check(snapshot.events.size < 1000) { "浏览记录补传队列已满，请连接服务器后再试" }
-            snapshot.copy(events = snapshot.events + PendingEvent(UUID.randomUUID().toString(), target, asset.id, kind, positionMs.coerceAtLeast(0), asset.version))
+            snapshot.copy(events = snapshot.events + PendingEvent(UUID.randomUUID().toString(), asset.target, asset.id, kind,
+                positionMs.coerceAtLeast(0), asset.version, sessionId, seconds, occurredAt))
         }
         schedule()
     }

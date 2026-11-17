@@ -1,0 +1,26 @@
+.qm-glass { background: var(--qm-glass); border: 1px solid var(--qm-border); box-shadow: inset 0 1px 0 var(--qm-highlight), var(--qm-shadow); backdrop-filter: blur(var(--qm-blur)) saturate(var(--qm-saturate)); -webkit-backdrop-filter: blur(var(--qm-blur)) saturate(var(--qm-saturate)); }
+.qm-nav { position: relative; isolation: isolate; display: flex; align-items: stretch; padding: 6px; border-radius: var(--qm-radius-pill); overflow: hidden; }
+.qm-nav__lens { position: absolute; z-index: -1; inset: 6px auto 6px 0; border-radius: var(--qm-radius-pill); background: linear-gradient(155deg,var(--qm-highlight),transparent 42%), var(--qm-accent-soft); border: 1px solid var(--qm-highlight); box-shadow: inset 0 -3px 8px var(--qm-accent-soft), 0 2px 8px var(--qm-border); transition: transform var(--qm-motion-lens) var(--qm-spring), width var(--qm-motion-lens) var(--qm-spring); pointer-events: none; backdrop-filter: blur(3px) saturate(1.8); }
+.qm-nav__item { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px; min-width: 52px; padding: 9px 14px; border-radius: var(--qm-radius-pill); color: var(--qm-muted); text-decoration: none; font-size: 11px; font-weight: 600; -webkit-tap-highlight-color: transparent; }
+.qm-nav__item[aria-current="page"] { color: var(--qm-text); }
+.qm-nav__icon { display: flex; transition: transform var(--qm-motion-lens) var(--qm-spring), color var(--qm-motion-fast); }
+.qm-nav__item[aria-current="page"] .qm-nav__icon { transform: translateY(-1px) scale(1.1); color: var(--qm-accent); }
+.qm-nav__item:active .qm-nav__icon { transform: scale(.86); }
+.qm-nav__item:focus-visible { outline: 2px solid var(--qm-accent); outline-offset: -3px; }
+.qm-segment { display: inline-flex; max-width: 100%; flex-wrap: wrap; gap: 3px; padding: 4px; background: var(--qm-surface); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); }
+.qm-segment button { font: inherit; font-size: 13px; border: 0; border-radius: 8px; padding: 7px 13px; background: transparent; color: var(--qm-muted); cursor: pointer; transition: background var(--qm-motion-fast), color var(--qm-motion-fast); }
+.qm-segment button[aria-selected="true"] { background: var(--qm-accent-soft); color: var(--qm-accent); }
+.qm-segment button:focus-visible { outline: 2px solid var(--qm-accent); outline-offset: -1px; }
+.qm-route-surface { min-height: 55vh; }
+.qm-optics { position: absolute; width: 0; height: 0; pointer-events: none; }
+@supports (backdrop-filter: url(#qm-glass-refraction)) {
+  .qm-nav { backdrop-filter: url(#qm-glass-refraction) blur(12px) saturate(var(--qm-saturate)); }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .qm-glass { background: var(--qm-surface); }
+  .qm-nav__lens { background: var(--qm-surface-raised); }
+}
+@media (forced-colors: active) {
+  .qm-nav__lens { border: 2px solid Highlight; }
+  .qm-nav__item[aria-current="page"], .qm-segment button[aria-selected="true"] { outline: 2px solid Highlight; }
+}

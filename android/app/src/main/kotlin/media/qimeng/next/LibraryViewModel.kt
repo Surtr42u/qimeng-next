@@ -9,6 +9,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.model.*
+import java.util.UUID
 
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null)
@@ -38,6 +39,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val asset = mutableAsset.asStateFlow()
     private val mutableAuthor = MutableStateFlow<Author?>(null)
     val author = mutableAuthor.asStateFlow()
+    private val mutableAssetAuthors = MutableStateFlow<List<Author>>(emptyList())
+    val assetAuthors = mutableAssetAuthors.asStateFlow()
     private val mutableReport = MutableStateFlow<TaskReport?>(null)
     val report = mutableReport.asStateFlow()
     private val mutableStats = MutableStateFlow<InventoryStats?>(null)
@@ -72,6 +75,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 detailGeneration.next()
                 lists.values.forEach { it.value = ListState() }
                 mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
+                mutableAssetAuthors.value = emptyList()
                 mutableLibraries.value = emptyList(); mutableCapabilities.value = null
                 authorState.value = ListState(); historyState.value = ListState(); reportState.value = ListState()
                 trashState.value = ListState()
@@ -132,7 +136,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         mutableCapabilities.value = caps
         mutableLibraries.value = libraries
         graph.uploads.schedule()
-        if (uploadLibrary.value.isEmpty() && libraries.size == 1) setUploadLibrary(libraries.single().id)
+        if (uploadLibrary.value.isEmpty() && libraries.size == 1) persistUploadLibrary(libraries.single().id)
         if (saved.get<Boolean>("sharedUpload") == true && queue.value?.drafts?.isNotEmpty() == true && uploadLibrary.value.isNotEmpty()) {
             graph.uploads.enqueue(uploadLibrary.value, uploadDirectory.value, UploadMode.ORDINARY)
             saved["sharedUpload"] = false
@@ -141,12 +145,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     fun login(address: String, token: String) = action { repository.login(address, token) }
     fun logout() = action { repository.logout(); saved["route"] = "main" }
+    fun disconnect() = action { repository.disconnect(); saved["route"] = "main" }
     fun clearMessage() { mutableMessage.value = null }
 
     fun openAsset(id: String, sourceKey: String? = null) {
+        if (route.value != "asset:$id" || saved.get<String>("viewAsset") != id) {
+            saved["viewSession"] = UUID.randomUUID().toString()
+            saved["viewAsset"] = id
+        }
         if (sourceKey != null) saved["detailListKey"] = sourceKey
         navigate("asset:$id")
         mutableAsset.value = null
+        mutableAssetAuthors.value = emptyList()
         detailJob?.cancel()
         val ticket = detailGeneration.next()
         val connection = connectionGeneration
@@ -155,7 +165,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 val result = repository.asset(id)
                 if (!detailGeneration.isCurrent(ticket) || connection != connectionGeneration) return@launch
                 mutableAsset.value = result
-                graph.uploads.event(result, "view")
+                val names = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
+                if (detailGeneration.isCurrent(ticket) && connection == connectionGeneration) mutableAssetAuthors.value = names
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (detailGeneration.isCurrent(ticket)) mutableMessage.value = explain(failure) }
         }
@@ -183,8 +194,21 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val current = mutableAsset.value ?: return@action
         publishAsset(repository.updateNote(current, note)); onSaved()
     }
+    fun saveAuthors(ids: List<String>, onSaved: () -> Unit) = action {
+        val current = mutableAsset.value ?: return@action
+        val result = repository.updateAuthors(current, ids)
+        publishAsset(result)
+        mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
+        onSaved()
+    }
     fun loadTags() = action { mutableTags.value = repository.tags() }
-    fun recordProgress(asset: Asset, position: Long) = action(blocking = false) { graph.uploads.event(asset, "progress", position) }
+    fun viewSessionId(): String = saved.get<String>("viewSession") ?: UUID.randomUUID().toString().also { saved["viewSession"] = it }
+    fun recordView(asset: Asset, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "view", sessionId = sessionId) }
+    fun recordProgress(asset: Asset, position: Long, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "progress", position, sessionId) }
+    fun recordPlay(asset: Asset, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "play", sessionId = sessionId) }
+    fun recordDwell(asset: Asset, sessionId: String, seconds: Double, startedAt: String) = action(blocking = false) {
+        if (seconds >= 1.0) graph.uploads.event(asset, "dwell", sessionId = sessionId, seconds = seconds, occurredAt = startedAt)
+    }
     fun mediaClient() = repository.mediaClient()
     private fun publishAsset(asset: Asset) {
         if (mutableAsset.value?.id == asset.id) mutableAsset.value = asset
@@ -229,9 +253,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun loadStatistics() = action { mutableStats.value = repository.statistics() }
 
-    fun setUploadLibrary(id: String) {
+    fun setUploadLibrary(id: String) = action(blocking = false) { persistUploadLibrary(id) }
+    private suspend fun persistUploadLibrary(id: String) {
+        session.value?.let { target -> withContext(Dispatchers.IO) { graph.settings.saveUploadLibrary(target, id) } }
         saved["uploadLibrary"] = id
-        session.value?.let { graph.settings.saveUploadLibrary(it, id) }
     }
     fun setUploadDirectory(directory: String) { saved["uploadDirectory"] = directory }
     fun setUploadMode(mode: UploadMode) { saved["uploadMode"] = mode.name }
@@ -255,7 +280,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun clearUploads() = action { graph.uploads.clearFinished() }
     fun reloadQueue() = action { graph.queue.load(); graph.uploads.schedule() }
     fun retryEvents() = action { graph.uploads.retryEvents() }
-    fun savePreferences(preferences: Preferences) = action { graph.settings.savePreferences(preferences) }
+    fun savePreferences(preferences: Preferences) = action { withContext(Dispatchers.IO) { graph.settings.savePreferences(preferences) } }
 
     private fun <T> loadPage(state: MutableStateFlow<ListState<T>>, next: Boolean, loader: suspend (String?) -> Page<T>) {
         if (state.value.loading || (next && state.value.cursor == null)) return
@@ -275,7 +300,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         if (blocking && mutableBusy.value) return
         val generation = connectionGeneration
         if (blocking) mutableBusy.value = true
-        mutableMessage.value = null
+        if (blocking) mutableMessage.value = null
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try { operation() }
             catch (cancelled: CancellationException) { throw cancelled }

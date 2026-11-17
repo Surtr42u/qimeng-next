@@ -37,7 +37,7 @@ fun normalizedServer(input: String): String {
     val url = input.trim().toHttpUrl()
     require(url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) { "地址不能包含凭据、查询或片段" }
     require(url.encodedPath == "/") { "请输入服务器根地址" }
-    require(url.isHttps || url.host in setOf("localhost", "127.0.0.1", "[::1]", "::1")) { "请使用 HTTPS 或本机隧道地址" }
+    require(url.isHttps || url.host in setOf("localhost", "127.0.0.1")) { "请使用 HTTPS 或本机隧道地址" }
     return url.toString()
 }
 

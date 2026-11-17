@@ -101,7 +101,7 @@ class State:
                     "pending": [dict(item) for item in pending]}
 
     def reconcile(self, key: str, authoritative: dict) -> dict:
-        if authoritative.get("state") not in {"completed", "not_applied", "failed"}:
+        if authoritative.get("state") != "committed" or authoritative.get("idempotencyKey") != key:
             raise ToolError("STILL_UNCERTAIN", "服务没有可核验终态，保留未决写入")
         with self.transaction() as db:
             db.execute("DELETE FROM pending WHERE task=? AND key=?", (self.config.task_id, key))

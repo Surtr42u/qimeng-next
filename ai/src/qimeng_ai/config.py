@@ -71,6 +71,8 @@ class Config:
             if not isinstance(value, str) or not name.isidentifier() or not Path(value).is_absolute():
                 raise ToolError("CONFIG_INVALID", "存储必须使用逻辑名和绝对路径")
             storages[name] = Path(value)
+        if positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576) < 2048:
+            raise ToolError("CONFIG_INVALID", "输出预算至少2048字节，以容纳执行结果和恢复引用")
         return cls(origin, token, directory, env.get("QIMENG_AI_TASK_ID", "interactive"), permissions,
                    positive(env, "QIMENG_AI_MAX_CALLS", 100, 10000),
                    positive(env, "QIMENG_AI_MAX_SECONDS", 900, 86400),

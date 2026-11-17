@@ -54,7 +54,7 @@ internal fun rememberBackdropModifier(backdrop: GlassBackdrop, selectedFraction:
     val capability = glassCapability(Build.VERSION.SDK_INT, LocalView.current.isHardwareAccelerated, enabled)
     val crop = rememberGraphicsLayer()
     var location by remember { mutableStateOf(Offset.Zero) }
-    val effect = remember(capability) { if (capability == GlassCapability.REFRACTED) RefractionEffect() else null }
+    val effect = remember(capability) { if (Build.VERSION.SDK_INT >= 33 && capability == GlassCapability.REFRACTED) RefractionEffect() else null }
     return Modifier.onGloballyPositioned { location = it.positionInRoot() }.drawWithContent {
         if (backdrop.recorded && capability != GlassCapability.SOLID) {
             crop.record {
