@@ -9,6 +9,7 @@
 可选配置：
 
 - `QIMENG_WEB_DIR`：同源 Web 发布目录，支持客户端路由。
+- `QIMENG_ADMIN_PASSWORD`：可选日常登录密码，至少12个字符、至多1024字节。启动时以随机盐和PBKDF2-HMAC-SHA256派生校验值，不写入数据库/回执/日志，子进程环境移除此项。原密码输入界面交换独立设备会话；密码不是API Bearer凭据。变更配置并重启即可改变后续登录密码，已签发设备会话继续按自身撤销/过期规则管理。
 - `QIMENG_STORAGE_ROOTS`：可信运维配置的 JSON 对象，键为逻辑存储 ID，值为该存储的绝对根。路径只进入运行配置，不进入源码、API 或日志。未配置时使用内置 `data` 存储；注册库只接受逻辑 ID 与根内相对目录。
 - `QIMENG_TIMEZONE`：IANA 时区，在数据库启动前加载；缺省使用宿主时区，非法值阻止启动。
 - `QIMENG_SECURE_COOKIES=true`：HTTPS 会话 cookie；反向代理须保持同源协议与 Host。
@@ -18,7 +19,9 @@
 - `QIMENG_STARTUP_RECEIPT` 与 `QIMENG_LAUNCH_ID`：可选宿主启动回执，必须同时设置；私有绝对文件路径与本次随机启动身份。成功绑定监听器后原子写入实例ID和实际地址，不写凭据。
 - `QIMENG_EPHEMERAL_TLS=true`：仅供受监督回环实例；为本次进程生成TLS证书，在私有回执中提供公开DER。宿主必须只信该证书并保留正常主机名校验。默认关闭，PC/NAS原运行方式不变。
 
-首次配置凭据不是业务密码注册；设备用 `POST /sessions` 换取独立可撤销会话。本人可用 `POST /ai/delegations` 一次配置长期AI操作范围，此后执行器自动创建或接续受限任务。长期凭据本身只有read/delegate，实际写入使用与批次/资料任务绑定的派生凭据；不能签发管理员scope。撤销父授权同时撤销派生凭据，接续任务轮换generation并拒绝旧执行器的在途排队写入。单批次签发方式仍可用。根凭据只应进入受信配置。
+设备用 `POST /sessions`的`password`或可信`token`二选一换取独立可撤销会话；空输入不获得远程权限。本机自动登录由独立宿主提供随机bootstrap并绑定本次证书，不是远程免密码入口。本人可用 `POST /ai/delegations` 一次配置长期AI操作范围，此后执行器自动创建或接续受限任务。长期凭据本身只有read/delegate，实际写入使用与批次/资料任务绑定的派生凭据；不能签发管理员scope。撤销父授权同时撤销派生凭据，接续任务轮换generation并拒绝旧执行器的在途排队写入。单批次签发方式仍可用。根凭据只应进入受信配置。
+
+密码验证使用[Go标准库PBKDF2](https://pkg.go.dev/crypto/pbkdf2)与[OWASP建议](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)的600,000次HMAC-SHA256，32字节随机盐。单实例每分钟最多20次登录尝试、最多2个同时进行的密码派生，防止弱密码暴力试探和不受限CPU消耗；部署仍须按同源HTTPS/可信隧道访问。
 
 ## 数据布局与恢复
 

@@ -29,6 +29,7 @@ func(s *Service)Upload(ctx context.Context,p model.Principal,id string)(model.Up
 }
 func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(model.Upload,error){
  if e:=Authorize(w.Principal,"ingest",in.BatchID);e!=nil{return model.Upload{},e}
+ if e:=s.uploadsAllowed(ctx);e!=nil{return model.Upload{},e}
  library,e:=s.library(ctx,in.LibraryID);if e!=nil{return model.Upload{},e};if !library.Enabled{return model.Upload{},Fail(409,"library_disabled","目标库已停用，不能接收新上传。")}
  if !domain.ValidName(in.FileName)||!domain.ValidMediaPath(in.RelativeDirectory)||in.Size<1||len(in.Note)>10000||(in.Mode!="ordinary"&&in.Mode!="intelligent"){return model.Upload{},Fail(400,"invalid_upload","上传名称、目标、长度或模式无效。")}
  if in.OriginalFileName==""{in.OriginalFileName=in.FileName};if len(in.OriginalFileName)>1024||strings.ContainsAny(in.OriginalFileName,"/\\:\x00"){return model.Upload{},Fail(400,"invalid_source_name","原始名称只能是文件名，不能包含绝对路径。")};sourcePath:=strings.ReplaceAll(in.SourceRelativePath,"\\","/");if len(sourcePath)>4096||strings.ContainsAny(sourcePath,":\x00")||strings.HasPrefix(sourcePath,"/")||sourcePath==".."||strings.HasPrefix(sourcePath,"../")||(sourcePath!=""&&path.Clean(sourcePath)!=sourcePath){return model.Upload{},Fail(400,"invalid_source_path","来源线索必须是相对路径。")}
@@ -63,6 +64,7 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  if e=store.SaveUpload(ctx,q,u);e!=nil{return u,e};if e=s.refreshBatch(ctx,q,u.BatchID);e!=nil{return u,e};return u,nil
 }
 func(s *Service)AppendUpload(ctx context.Context,w *Write,id string,offset int64,body []byte)(model.Upload,error){
+ if e:=s.uploadsAllowed(ctx);e!=nil{return model.Upload{},e}
  u,e:=s.Upload(ctx,w.Principal,id);if e!=nil{return u,e};if e=Authorize(w.Principal,"ingest",u.BatchID);e!=nil{return u,e};if u.State!="receiving"{return u,Fail(409,"upload_sealed","上传已经封存，不能再写分片。")};if len(body)==0||int64(len(body))>MaxChunkBytes||offset<0||offset>u.Size||int64(len(body))>u.Size-offset{return u,Fail(400,"invalid_chunk","分片长度或偏移无效。")}
  b,e:=s.Batch(ctx,u.BatchID);if e!=nil{return u,e};if b.State=="cancelled"{return u,Fail(409,"batch_cancelled","批次已取消。")}
  if e=s.safe(uploadPath(u.ID));e!=nil{return u,e};f,e:=s.Root.OpenFile(uploadPath(u.ID),os.O_RDWR,0600);if e!=nil{return u,e};defer f.Close()
@@ -85,6 +87,7 @@ func(s *Service)CompleteUpload(ctx context.Context,w *Write,id string)(model.Upl
  u,e:=s.Upload(ctx,w.Principal,id);if e!=nil{return model.UploadResult{},e};if e=Authorize(w.Principal,"ingest",u.BatchID);e!=nil{return model.UploadResult{},e}
  if u.State=="ingested"{a,e:=s.Asset(ctx,u.AssetID);if e!=nil{return model.UploadResult{Upload:u},e};return model.UploadResult{Upload:u,Asset:&a},nil}
  if u.State=="duplicate"{return model.UploadResult{Upload:u},nil};if u.State=="cancelled"{return model.UploadResult{},Fail(409,"upload_cancelled","上传已取消。")}
+ if e=s.uploadsAllowed(ctx);e!=nil{return model.UploadResult{},e}
  b,e:=s.Batch(ctx,u.BatchID);if e!=nil{return model.UploadResult{},e};if b.State=="cancelled"{return model.UploadResult{},Fail(409,"batch_cancelled","批次已取消，已接收内容保留。")}
  if u.Offset!=u.Size{return model.UploadResult{},Fail(409,"upload_incomplete","尚未接收完整文件。")}
  if u.Hash==""{u.Hash,e=s.inspectUpload(u);if e!=nil{return model.UploadResult{},e};u.State="staged";if e=store.SaveUpload(ctx,s.DB.DB,u);e!=nil{return model.UploadResult{},e}}
@@ -92,6 +95,7 @@ func(s *Service)CompleteUpload(ctx context.Context,w *Write,id string)(model.Upl
  return s.ingest(ctx,w,u,nil)
 }
 func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.PlanItem)(model.UploadResult,error){
+ if e:=s.uploadsAllowed(ctx);e!=nil{return model.UploadResult{},e}
  if u.OriginalFileName==""{u.OriginalFileName=u.FileName}
  if e:=s.verify(uploadPath(u.ID),u.Hash,u.Size);e!=nil{return model.UploadResult{},e}
  var duplicate int;if e:=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM assets WHERE hash=? AND size=? AND id!=?",u.Hash,u.Size,u.ReplaceAssetID).Scan(&duplicate);e!=nil{return model.UploadResult{},e}
@@ -133,7 +137,6 @@ func(s *Service)directoryNames(ctx context.Context,library,dir string)([]string,
  for{entries,readErr:=folder.ReadDir(256);for _,entry:=range entries{if entry.Name()==".qimeng-internal"{continue};if e=add(entry.Name());e!=nil{return nil,e}};if errors.Is(readErr,io.EOF){break};if readErr!=nil{return nil,readErr}}
  return names,nil
 }
-func(s *Service)Settings()map[string]any{return map[string]any{"maxChunkBytes":MaxChunkBytes,"maxActiveUploads":MaxActiveUploads,"maxBatchItems":MaxBatchItems,"sourceCleanupEnabled":false}}
 func(s *Service)nextEpisode(ctx context.Context,collectionID string)(int,error){
  c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",collectionID);if e!=nil{return 0,Normalize(e)};var maximum int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE(MAX(json_extract(data,'$.page')),0) FROM assets WHERE collection_id=?",collectionID).Scan(&maximum);e!=nil{return 0,e};names,e:=s.directoryNames(ctx,c.LibraryID,c.Name);if e!=nil{return 0,e};return domain.NextChapter(c.Name,names,maximum),nil
 }

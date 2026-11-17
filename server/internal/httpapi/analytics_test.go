@@ -20,7 +20,7 @@ func TestActivityProjectionsRecommendationPaginationAndPreferenceConflict(t *tes
  var overview service.Overview;decode(t,f.json("GET","/stats/overview?range=7d","",nil,200),&overview)
  if overview.Totals.Views!=1||overview.Totals.Seconds!=12||overview.ViewedAssets!=1||overview.AverageViewsPerFile==nil||*overview.AverageViewsPerFile!=1{t.Fatalf("bad activity: %+v",overview)}
  var review service.Review;decode(t,f.json("GET","/stats/review?range=7d","",nil,200),&review)
- if review.FirstViews!=1||review.ReturnViews!=0||review.TotalSeconds!=12||len(review.Hours)!=24{t.Fatalf("bad review: %+v",review)}
+ if review.FirstViews!=1||review.ReturnViews!=0||review.ViewCount!=1||review.TotalSeconds!=12||review.ImageSeconds!=12||review.VideoSeconds!=0||review.AnimatedSeconds!=0||review.FromDay==""||review.ToDay==""||review.PreviousFromDay==""||review.PreviousToDay==""||len(review.Hours)!=24{t.Fatalf("bad review: %+v",review)}
  var recommendation service.RecommendationPage;decode(t,f.json("GET","/recommendations?seed=42&limit=1","",nil,200),&recommendation)
  seen:=map[string]bool{};for{for _,asset:=range recommendation.Items{if seen[asset.ID]{t.Fatal("recommendation page repeated an asset")};seen[asset.ID]=true};if recommendation.NextCursor==""{break};cursor:=recommendation.NextCursor;recommendation=service.RecommendationPage{};decode(t,f.json("GET","/recommendations?seed=42&limit=1&cursor="+url.QueryEscape(cursor),"",nil,200),&recommendation)}
  if len(seen)!=3{t.Fatalf("recommendation omitted input: %d",len(seen))}
@@ -44,6 +44,7 @@ func TestActivityRankingsAndSharedTrendDimensions(t *testing.T){
  }
  f.json("POST","/assets/"+first.ID+"/events","",map[string]any{"eventId":"rank-dwell-synthetic","kind":"dwell","seconds":9.9,"contentVersion":first.ContentVersion},200)
  for _,route:=range []string{"top-authors","top-tags"}{var page service.ActivityRankingPage;decode(t,f.json("GET","/stats/"+route+"?range=7d","",nil,200),&page);if len(page.Items)!=1||page.Items[0].Views!=2||page.Items[0].Assets!=2||page.Items[0].Seconds!=9{t.Fatalf("%s aggregate: %+v",route,page)}}
+ var mixed service.TopInterests;decode(t,f.json("GET","/stats/top-interests?range=7d","",nil,200),&mixed);if len(mixed.Items)!=2||mixed.Items[0].Kind!="author"||mixed.Items[0].ID!=author.ID||mixed.Items[0].Views!=2||mixed.Items[1].Kind!="tag"||mixed.Items[1].Views!=2{t.Fatalf("mixed ranking lost stable tie order: %+v",mixed)}
  var dwell service.ActivityRankingPage;decode(t,f.json("GET","/stats/most-viewed?range=7d&metric=seconds","",nil,200),&dwell);if len(dwell.Items)!=1||dwell.Items[0].Asset==nil||dwell.Items[0].ID!=first.ID||dwell.Items[0].Value!=9{t.Fatalf("dwell ranking: %+v",dwell)}
  var page service.ActivityRankingPage;decode(t,f.json("GET","/stats/most-viewed?range=7d&limit=1","",nil,200),&page);if page.NextCursor==""{t.Fatal("missing ranking cursor")};firstID:=page.Items[0].ID;cursor:=page.NextCursor;page=service.ActivityRankingPage{}
  decode(t,f.json("GET","/stats/most-viewed?range=7d&limit=1&cursor="+url.QueryEscape(cursor),"",nil,200),&page);if len(page.Items)!=1||page.Items[0].ID==firstID||page.NextCursor!=""{t.Fatal("ranking page repeated/skipped")}

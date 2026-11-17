@@ -4,7 +4,7 @@
 
 ## 身份与错误
 
-`GET /instance` 返回实例身份和明确能力。客户端缓存、队列和任务绑定实例 ID，不只绑定 URL。`POST /sessions` 用受信设备配置凭据换取独立会话；API 接受 Bearer，同源 Web 接受 HttpOnly、SameSite=Strict cookie。cookie 写入检查 Origin。媒体原件使用同源 cookie 或带 Bearer 的客户端流式请求，支持 Range，不把 token 放 URL。
+`GET /instance` 返回实例身份和明确能力。客户端缓存、队列和任务绑定实例 ID，不只绑定 URL。`POST /sessions`用`password`或可信`token`二选一换取独立会话；登录密码仅在此交换，不能充当API Bearer。每台设备会话独立，单设备退出不撤销其他设备。API接受Bearer，同源Web接受HttpOnly、SameSite=Strict cookie。cookie写入检查Origin。媒体原件使用同源cookie或带Bearer的客户端流式请求，支持Range，不把token放URL。
 
 错误为 `{code,message,currentRevision?}`。权限拒绝 403；对象或内容变化、重复、名称冲突 409；不支持格式 415；有界上传/空间不足为 429/507。错误不能被客户端转成空列表或保存成功。
 
@@ -12,11 +12,21 @@
 
 相册 `/assets/facets` 使用与媒体列表相同的筛选谓词。分区和类型按固定顺序返回；作者行混合常规出处与 COS 作者，角色行混合常规角色与 COS 目录作品。客户端只回传服务给出的 `workKeys`/`roleKeys`，同一行选项 OR、行间 AND；请求某行候选时只省自身行的选项，固定作者、收藏、历史等约束仍保留。`totalOptions` 是经过 `facetQ` 的候选总数，不是媒体数，也不是本页长度。
 
+固定标签路由 `tag` 始终与可选 `tags/tagMode` 组合相 AND。文件管理使用 `libraryId+directory`：显式空字符串是库根，缺省代表不过滤；默认只含直接子文件，`recursive=true` 才包括后代目录。普通浏览、历史和搜索隐藏停用库，管理浏览可明确 `includeDisabled=true`；统计库存、原件和按 ID 读取详情保持，停用不等于删除记录。
+
 默认排序为文件日期；收藏排序使用真实 `favoritedAt`，重复收藏不会刷新时间，取消后再次收藏才重新计时。`dateCounts=true` 仅首屏返回 `{date,fileCount}` 精确文件日期分桶，包含完整筛选集。`tzOffsetMinutes` 使用客户端相对 UTC 的东向分钟数（东八区 480、西五区 −300），缺省 0；它也决定日历时间筛选边界。来源未知的文件日期不虚构日期桶，仍计入总匹配数。翻页不重新计算日期桶。
 
 播放/观看范围和大小范围由 Go 解释 `playRange`/`viewRange`/`sizeRange`。`low` 为 1–5、`mid` 为 5–20，端点按界面文字包含；`<1MB` 和 `>50MB` 为严格边界，1–10 和 10–50 包含端点，MB 桶按 1,048,576 字节。客户端传枚举，不重复换算。
 
 ## 写入与回放
+
+`GET/PUT /settings`保留原设置页的扫描与上传语义。默认`scan.workers=0`自动、`scan.thumbEdge=800`预留、`upload.autoAccept=true`；PUT需完整三项及`expectedRevision`，遗漏不以零值替代。自动并发按可用CPU及内存保守取1–8库，手动1–32；队列最多64个活动任务，同库不能重复排队。调整只影响后续准入，不打断运行任务；等待和运行均可取消。上传开关关闭后拒绝新会话、分片与新发布，已接收内容和已完成回执保留，取消/查询仍可用。
+
+缩略图`size=sm|md|lg`对应长边256/512/1024，缺省md。预留`thumbEdge`保存不改变此管线。缓存包含内容版本、策略与尺寸，ETag取实际缩略图字节摘要；旧版本或原件已变拒绝返回另一内容，原件出口始终逐字节直出。
+
+浏览回顾返回服务端日历窗口`fromDay/toDay/previousFromDay/previousToDay`和本期/前期`viewCount/previousViewCount`，不让客户端猜前期。`all`起点和前期日期为空串；固定窗口前期等长且紧邻，本期或前期无浏览都不可比较。`totalSeconds/imageSeconds/animatedSeconds/videoSeconds`来自日聚合，三类型互斥，包含只有停留而没有新增浏览的日期；视频项仍是详情停留。
+
+`/stats/top-interests`专门给原Android混合Top3卡提供作者/标签结果，Go按views降序、同分作者在前、再按稳定身份升序选出最多三项。多作者/标签各自完整计数，客户端只展示与跳转，不自行拼接截断榜单。
 
 创建、文件动作、上传完成和 AI 提交使用稳定 `Idempotency-Key`（8–128 字符）。同凭据、同操作、同键且输入不变回放原响应；输入改变返回冲突。业务数据与回执同事务保存。`GET /operations/{key}` 只读取当前凭据的回执；键用于多个操作时加 `operation`。`not_recorded` 不证明文件副作用从未开始，应使用原输入与原键重试或读取上传/资产状态。
 
@@ -31,6 +41,8 @@
 `GET /storages` 只返回可信逻辑根 ID，不泄露本机绝对路径。创建库可指定 `storageId` 和 `rootRelativePath` 原地登记目录；内置 `data` 存储始终分配隔离目录。登记不等于扫描已完成。媒体原件与缩略图请求可传 `version`，与当前内容版本不符返回 409，不把新版字节填入旧版缓存地址。
 
 视频时间轴通过 `/assets/{id}/timeline` 管理；修改携带标记修订与当前内容版本。旧版标记继续可读，客户端应明确标示版本差异，不自动跳转到推测的新位置。
+
+旧 v2 事件和时间轴未携带来源内容版本，迁入后读接口使用 `contentVersion=0` 表示未知；不能将它绑定到当前文件版本或自动跳转。写接口仍要求当前版本至少为 1。历史响应的原事件 ID 按读取约束保存，不套用新上报 ID 的长度限制；累计统计不因此重放或删改。
 
 ## 上传与智能批次
 

@@ -19,6 +19,17 @@ type ActivityRankingItem struct {
 type ActivityRankingPage struct { Items []ActivityRankingItem `json:"items"`; NextCursor string `json:"nextCursor,omitempty"`; Range string `json:"range"`; Metric string `json:"metric"` }
 type activityRankingCursor struct { Value int64 `json:"value"`; ID string `json:"id"`; Filter string `json:"filter"` }
 
+type TopInterest struct {Kind string `json:"kind"`;ID string `json:"id"`;Name string `json:"name"`;Views int64 `json:"views"`}
+type TopInterests struct {Range string `json:"range"`;Items []TopInterest `json:"items"`}
+func(s *Service)TopInterests(ctx context.Context,window string)(TopInterests,error){
+ result:=TopInterests{Range:window,Items:[]TopInterest{}};start,e:=rangeStart(window);if e!=nil{return result,e}
+ rows,e:=s.DB.DB.QueryContext(ctx,`WITH totals AS(SELECT d.asset_id,sum(d.views) views FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? GROUP BY d.asset_id HAVING sum(d.views)>0), interests AS(
+ SELECT 'author' kind,au.id,au.name,sum(t.views) views FROM totals t JOIN asset_authors aa ON aa.asset_id=t.asset_id JOIN authors au ON au.id=aa.author_id GROUP BY au.id
+ UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.views) FROM totals t JOIN asset_tags at ON at.asset_id=t.asset_id GROUP BY at.tag)
+ SELECT kind,id,name,views FROM interests ORDER BY views DESC,kind ASC,id ASC LIMIT 3`,dayString(start))
+ if e!=nil{return result,e};defer rows.Close();for rows.Next(){var item TopInterest;if e=rows.Scan(&item.Kind,&item.ID,&item.Name,&item.Views);e!=nil{return result,e};result.Items=append(result.Items,item)};return result,rows.Err()
+}
+
 // Aggregate once per asset before expanding many-to-many authors/tags. Disabled
 // libraries remain in historical reports; trashed or deleted assets do not.
 func(s *Service)ActivityRanking(ctx context.Context,kind,window,metric,cursor string,count int)(ActivityRankingPage,error){

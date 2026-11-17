@@ -25,6 +25,8 @@ func TestBrowseUsesOnePredicateForSearchMultipleDimensionsAndFacets(t *testing.T
  page=assetsAt(t,f,"?authorIds="+beta.ID+"&sourceIds="+first.ID+"&sourceIds="+second.ID);if *page.TotalMatched!=2{t.Fatal("source multi-selection is not OR")}
  f.json("PUT","/assets/"+a.ID+"/tags","query-tags-both",map[string]any{"expectedRevision":a.TagsRevision,"tags":[]string{"one","two"}},200);f.json("PUT","/assets/"+b.ID+"/tags","query-tags-one",map[string]any{"expectedRevision":b.TagsRevision,"tags":[]string{"one"}},200)
  if *assetsAt(t,f,"?tags=one&tags=two&tagMode=all").TotalMatched!=1||*assetsAt(t,f,"?tags=one&tags=two&tagMode=any").TotalMatched!=2{t.Fatal("tag modes diverged")}
+ if *assetsAt(t,f,"?tag=two&tags=one&tags=missing&tagMode=any").TotalMatched!=1{t.Fatal("fixed tag route became an optional OR term")}
+ r=f.json("GET","/assets/facets?row=works&tag=two&tags=one&tags=missing","",nil,200);var constrained model.Page[service.AssetFacet];decode(t,r,&constrained);if constrained.TotalMatched==nil||*constrained.TotalMatched!=1{t.Fatal("facet did not preserve the fixed tag constraint")}
  r=f.json("GET","/assets/facets?row=works&authorId="+beta.ID,"",nil,200);var facets model.Page[service.AssetFacet];decode(t,r,&facets);if facets.TotalMatched==nil||*facets.TotalMatched!=2||facets.TotalOptions==nil||*facets.TotalOptions!=2||len(facets.Items)!=2{t.Fatal("facet ignored fixed author or counted a different subset")};for _,facet:=range facets.Items{if facet.Kind!="source"||facet.Count!=1{t.Fatal("facet counted incompatible source dimensions")}}
  r=f.json("GET","/assets/facets?row=works&authorId="+beta.ID+"&limit=1","",nil,200);decode(t,r,&facets);if len(facets.Items)!=1||*facets.TotalOptions!=2||facets.NextCursor==""{t.Fatal("paginated facet used loaded length as total options")}
  r=f.json("GET","/authors?kind=regular&sort=files","",nil,200);var authors model.Page[model.Author];decode(t,r,&authors);if authors.Items[0].ID!=beta.ID||authors.Items[0].FileCount!=2{t.Fatal("author file sorting was not server-derived")}
@@ -37,6 +39,15 @@ func TestDateCountsUseRequestedLocalDayAndExcludeCursorFromWholeCounts(t *testin
  next:=assetsAt(t,f,"?dateCounts=true&tzOffsetMinutes=480&limit=1&cursor="+first.NextCursor);if next.DateCounts!=nil||len(next.Items)!=1{t.Fatal("continuation recalculated day buckets or broke the stable cursor")}
  utc:=assetsAt(t,f,"?dateCounts=true");if utc.DateCounts==nil||len(*utc.DateCounts)!=1||(*utc.DateCounts)[0].FileCount!=2{t.Fatal("default date-count offset was not UTC")}
  r:=f.json("GET","/assets/facets?row=partitions","",nil,200);var facets model.Page[service.AssetFacet];decode(t,r,&facets);if len(facets.Items)!=3||facets.Items[0].ID!="all"||facets.Items[1].ID!="regular"||facets.Items[2].ID!="cos"{t.Fatal("fixed partition order changed with counts")}
+}
+
+func TestDirectoryFilesAreExactAndDisabledLibrariesStayBrowsableOnlyExplicitly(t *testing.T){
+ f:=setup(t);u,_:=f.upload("root-file.png",124,nil);root:=*f.complete(u).Asset;u,_=f.upload("direct.png",125,map[string]any{"relativeDirectory":"目录%"});_ = f.complete(u);u,_=f.upload("nested.png",126,map[string]any{"relativeDirectory":"目录%/子目录"});_ = f.complete(u)
+ page:=assetsAt(t,f,"?libraryId="+f.library+"&directory=");if *page.TotalMatched!=1||page.Items[0].ID!=root.ID{t.Fatal("empty directory did not mean exact library root")}
+ query:="?libraryId="+f.library+"&directory="+url.QueryEscape("目录%");page=assetsAt(t,f,query);if *page.TotalMatched!=1||page.Items[0].FileName!="direct.png"{t.Fatal("directory matching treated Unicode length or percent as a wildcard")};if *assetsAt(t,f,query+"&recursive=true").TotalMatched!=2{t.Fatal("explicit recursive directory omitted descendants")}
+ f.json("GET","/assets?directory=","",nil,400);f.json("GET","/assets?libraryId="+f.library+"&directory=../outside","",nil,400)
+ f.json("PATCH","/libraries/"+f.library,"disable-library-visibility",map[string]any{"expectedRevision":1,"enabled":false},200);if *assetsAt(t,f,"").TotalMatched!=0||*assetsAt(t,f,"?includeDisabled=true").TotalMatched!=3{t.Fatal("disabled library visibility was inconsistent")};f.json("GET","/assets/"+root.ID,"",nil,200)
+ r:=f.json("GET","/stats","",nil,200);var stats map[string]int64;decode(t,r,&stats);if stats["assets"]!=3{t.Fatal("disabling a library erased inventory counts")}
 }
 
 func TestAssetAndAuthorKeysetSurviveInsertionAndDeletionBeforeCursor(t *testing.T){

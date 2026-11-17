@@ -3,6 +3,8 @@ package httpapi
 
 import (
  "context"
+ "crypto/sha256"
+ "encoding/hex"
  "encoding/json"
  "errors"
  "io"
@@ -61,7 +63,7 @@ func(a *API)routes(){
  a.mux.HandleFunc("GET /healthz",func(w http.ResponseWriter,r *http.Request){if e:=a.s.DB.DB.PingContext(r.Context());e!=nil{fail(w,e);return};respond(w,200,map[string]string{"status":"ok"})})
  a.mux.HandleFunc("GET /api/v1/instance",func(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"id":a.s.InstanceID,"name":"绮梦 Next","apiVersion":"0.1.0","capabilities":map[string]bool{"aiConfigured":a.s.Config.AIConfigured,"recommendations":true,"rankings":true,"stats":true,"backups":true,"migration":false}})})
  a.mux.HandleFunc("POST /api/v1/sessions",func(w http.ResponseWriter,r *http.Request){
-  if !originOK(r,a.s.Config.SecureCookies){fail(w,service.Fail(403,"origin_denied","请求来源不匹配。"));return};in,_,e:=decode[struct{Token string `json:"token"`;Label string `json:"label"`}](w,r);if e!=nil{fail(w,e);return};p,e:=a.s.Authenticate(r.Context(),in.Token);if e!=nil{fail(w,e);return}
+  if !originOK(r,a.s.Config.SecureCookies){fail(w,service.Fail(403,"origin_denied","请求来源不匹配。"));return};in,_,e:=decode[service.SessionInput](w,r);if e!=nil{fail(w,e);return};p,e:=a.s.AuthenticateLogin(r.Context(),in);if e!=nil{fail(w,e);return}
   out,e:=a.s.Run(r.Context(),p,"createSession","",nil,func(tx *service.Write)(any,int,error){v,e:=a.s.CreateSession(r.Context(),tx,in.Label,"",nil);return v,201,e});if e!=nil{fail(w,e);return};var session model.Principal;if e=json.Unmarshal(out.Body,&session);e!=nil{fail(w,e);return};http.SetCookie(w,&http.Cookie{Name:"qimeng_session",Value:session.Token,Path:"/",HttpOnly:true,Secure:a.s.Config.SecureCookies,SameSite:http.SameSiteStrictMode,Expires:session.ExpiresAt});result(w,out)
  })
  a.get("/sessions/current",func(r *http.Request)(any,error){return principal(r),nil})
@@ -78,7 +80,7 @@ func(a *API)routes(){
  write[struct{Favorite bool `json:"favorite"`;Liked bool `json:"liked"`}](a,"PUT","/assets/{id}/reaction",true,func(r *http.Request,w *service.Write,in struct{Favorite bool `json:"favorite"`;Liked bool `json:"liked"`})(any,int,error){v,e:=a.s.Reaction(r.Context(),w,r.PathValue("id"),in.Favorite,in.Liked);return v,200,e})
  write[eventCreateRequest](a,"POST","/assets/{id}/events",false,func(r *http.Request,w *service.Write,in eventCreateRequest)(any,int,error){v,e:=a.s.RecordEvent(r.Context(),w,r.PathValue("id"),model.Event{EventID:in.EventID,Kind:in.Kind,ContentVersion:in.ContentVersion,PositionMs:in.PositionMs,SessionID:in.SessionID,Seconds:in.Seconds,OccurredAt:in.OccurredAt});return v,200,e})
  a.mux.HandleFunc("GET /api/v1/assets/{id}/content",a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=contentVersion(r);if e!=nil{fail(w,e);return};f,asset,e:=a.s.Content(r.Context(),r.PathValue("id"),v);if e!=nil{fail(w,e);return};defer f.Close();w.Header().Set("Content-Type",asset.MimeType);w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("ETag",`"`+asset.Hash+`"`);w.Header().Set("Cache-Control","private, no-cache");http.ServeContent(w,r,asset.FileName,asset.UpdatedAt,f)}))
- a.mux.HandleFunc("GET /api/v1/assets/{id}/thumbnail",a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=contentVersion(r);if e!=nil{fail(w,e);return};f,asset,e:=a.s.Thumbnail(r.Context(),r.PathValue("id"),v);if e!=nil{fail(w,e);return};defer f.Close();w.Header().Set("Content-Type","image/jpeg");w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Cache-Control","private, no-cache");w.Header().Set("ETag",`"thumb-`+asset.Hash+`"`);http.ServeContent(w,r,"thumbnail.jpg",asset.UpdatedAt,f)}))
+ a.mux.HandleFunc("GET /api/v1/assets/{id}/thumbnail",a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=contentVersion(r);if e!=nil{fail(w,e);return};f,asset,e:=a.s.ThumbnailSize(r.Context(),r.PathValue("id"),v,r.URL.Query().Get("size"));if e!=nil{fail(w,e);return};defer f.Close();hash:=sha256.New();if _,e=io.Copy(hash,f);e!=nil{fail(w,e);return};if _,e=f.Seek(0,io.SeekStart);e!=nil{fail(w,e);return};w.Header().Set("Content-Type","image/jpeg");w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Cache-Control","private, no-cache");w.Header().Set("ETag",`"thumb-`+hex.EncodeToString(hash.Sum(nil))+`"`);http.ServeContent(w,r,"thumbnail.jpg",asset.UpdatedAt,f)}))
  write[struct{ExpectedRevision int64 `json:"expectedRevision"`;RelativePath string `json:"relativePath"`}](a,"POST","/assets/{id}/move",true,func(r *http.Request,w *service.Write,in struct{ExpectedRevision int64 `json:"expectedRevision"`;RelativePath string `json:"relativePath"`})(any,int,error){v,e:=a.s.Move(r.Context(),w,r.PathValue("id"),in.RelativePath,in.ExpectedRevision);return v,200,e})
  write[struct{}](a,"DELETE","/assets/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){rev,e:=revision(r);if e!=nil{return nil,0,e};v,e:=a.s.Trash(r.Context(),w,r.PathValue("id"),rev);return v,200,e})
  a.get("/tags",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Tags(r.Context(),r.URL.Query().Get("cursor"),n)})
@@ -94,7 +96,8 @@ func(a *API)routes(){
  write[revisionBody](a,"POST","/trash/{id}/restore",true,func(r *http.Request,w *service.Write,in revisionBody)(any,int,error){v,e:=a.s.Restore(r.Context(),w,r.PathValue("id"),in.ExpectedRevision);return v,200,e})
  write[struct{}](a,"DELETE","/trash/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){rev,e:=revision(r);if e!=nil{return nil,0,e};return nil,204,a.s.Purge(r.Context(),w,r.PathValue("id"),rev)})
  a.get("/stats",func(r *http.Request)(any,error){return a.s.Stats(r.Context())})
- a.get("/settings",func(r *http.Request)(any,error){return a.s.Settings(),nil})
+ a.get("/settings",func(r *http.Request)(any,error){return a.s.Settings(r.Context())})
+ write[service.SettingsUpdate](a,"PUT","/settings",true,func(r *http.Request,w *service.Write,in service.SettingsUpdate)(any,int,error){v,e:=a.s.UpdateSettings(r.Context(),w,in);return v,200,e})
  write[struct{}](a,"POST","/backups",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){v,e:=a.s.CreateBackup(r.Context(),w);return v,201,e})
  a.get("/operations/{key}",func(r *http.Request)(any,error){return a.s.Operation(r.Context(),principal(r),r.PathValue("key"),r.URL.Query().Get("operation"))})
  a.analyticsRoutes()

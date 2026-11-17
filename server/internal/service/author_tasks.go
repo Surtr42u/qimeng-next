@@ -54,6 +54,7 @@ func(s *Service)prepareAuthorTask(ctx context.Context,id string,in AuthorTaskCre
  blocks,e:=cleanStrings(in.CandidateBlocks,3,32);if e!=nil{return result,e};if len(fields)+len(blocks)==0{return result,Fail(400,"fields_required","至少授权一个资料字段或候选资料块。")}
  for _,block:=range blocks{if block!="x"&&block!="basic"&&block!="accounts"{return result,Fail(400,"invalid_blocks","候选资料块无效。")}}
  for _,field:=range fields{switch field{case "name","biography","homepage","aliases":default:return result,Fail(400,"invalid_fields","不支持的资料字段。")}}
+ for _,field:=range fields{if author.Kind=="cos"&&field=="name"{return result,Fail(400,"cos_name_is_directory_identity","COS名称由目录确定；可授权basic候选资料块维护公开名称。")}}
  if in.MaxUpdates==0{in.MaxUpdates=1};if in.ExpiresInSeconds==0{in.ExpiresInSeconds=3600}
  if in.MaxUpdates<1||in.MaxUpdates>10||in.ExpiresInSeconds<60||in.ExpiresInSeconds>86400{return result,Fail(400,"invalid_budget","维护次数或有效期超出允许范围。")}
  now:=time.Now().UTC();result=AuthorTask{ID:id,AuthorID:author.ID,ExpectedRevision:author.Revision,

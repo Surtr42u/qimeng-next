@@ -28,13 +28,14 @@ func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
-type Config struct { DataDir,AdminToken,AIToken string; StorageRoots map[string]string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
-type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup }
+type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
+type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; password *passwordLogin; loginLimit loginBudget }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
  if config.DataDir==""{return nil,errors.New("QIMENG_DATA_DIR is required")}
  if config.AIToken!=""&&len(config.AIToken)<32{return nil,errors.New("QIMENG_AI_TOKEN must contain at least 32 characters")}
+ password,err:=preparePassword(config.AdminPassword);if err!=nil{return nil,err};config.AdminPassword=""
  if config.ReserveBytes<=0{config.ReserveBytes=512<<20}
  if err:=os.MkdirAll(config.DataDir,0700);err!=nil{return nil,err}
  root,err:=storage.Open(config.DataDir,config.StorageRoots);if err!=nil{return nil,err}
@@ -45,7 +46,7 @@ func New(config Config)(*Service,error){
  owner,err:=sql.Open("sqlite",ownerURL+"?_pragma=busy_timeout(0)");if err!=nil{root.Close();return nil,err};owner.SetMaxOpenConns(1)
  if _,err=owner.Exec("CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE");err!=nil{owner.Close();root.Close();var coded interface{Code()int};if errors.As(err,&coded)&&(coded.Code()&255==5||coded.Code()&255==6){return nil,errors.New("another service owns this data directory")};return nil,fmt.Errorf("initialize ownership database: %w",err)}
  db,err:=store.Open(filepath.Join(config.DataDir,"qimeng.sqlite"));if err!=nil{owner.Close();root.Close();return nil,err}
- s:=&Service{DB:db,Root:root,Config:config,owner:owner}
+ s:=&Service{DB:db,Root:root,Config:config,owner:owner,scanWake:make(chan struct{}),password:password,loginLimit:loginBudget{slots:make(chan struct{},2)}}
  s.workCtx,s.stopWork=context.WithCancel(context.Background())
  ctx:=context.Background()
  libraries,err:=store.List[model.Library](ctx,db.DB,"SELECT data FROM libraries ORDER BY id");if err!=nil{s.Close();return nil,err}

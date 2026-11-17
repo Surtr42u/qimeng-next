@@ -39,4 +39,5 @@ Thumbs.db
 api/generated/
 web/src/api/generated/
 android/sdk/src/
+android/embedded/src/main/assets/third-party/
 server/internal/transport/generated/

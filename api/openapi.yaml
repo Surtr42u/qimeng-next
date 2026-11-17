@@ -180,7 +180,10 @@ paths:
         - {name: kind, in: query, schema: {type: string, enum: [regular, cos]}}
         - {name: authorId, in: query, schema: {type: string}}
         - {name: collectionId, in: query, schema: {type: string}}
-        - {name: tag, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/FixedTag'}
+        - {$ref: '#/components/parameters/DirectoryFilter'}
+        - {$ref: '#/components/parameters/RecursiveFilter'}
+        - {$ref: '#/components/parameters/IncludeDisabled'}
         - {name: favorite, in: query, schema: {type: boolean}}
         - {name: liked, in: query, schema: {type: boolean}}
         - {$ref: '#/components/parameters/ViewRange'}
@@ -224,6 +227,10 @@ paths:
         - {name: libraryId, in: query, schema: {type: string}}
         - {name: q, in: query, schema: {type: string, maxLength: 200}}
         - {name: facetQ, in: query, schema: {type: string, maxLength: 200}}
+        - {$ref: '#/components/parameters/FixedTag'}
+        - {$ref: '#/components/parameters/DirectoryFilter'}
+        - {$ref: '#/components/parameters/RecursiveFilter'}
+        - {$ref: '#/components/parameters/IncludeDisabled'}
         - {name: kind, in: query, schema: {type: string, enum: [regular, cos]}}
         - {name: mediaType, in: query, schema: {type: string, enum: [image, animated_image, video]}}
         - {name: authorId, in: query, schema: {type: string}}
@@ -311,7 +318,9 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
       operationId: getAssetThumbnail
-      parameters: [{name: version, in: query, schema: {type: integer, format: int64, minimum: 1}, description: Reject with 409 rather than cache new bytes as an older version}]
+      parameters:
+        - {name: version, in: query, schema: {type: integer, format: int64, minimum: 1}, description: Reject with 409 rather than cache new bytes as an older version}
+        - {name: size, in: query, schema: {type: string, enum: [sm, md, lg], default: md}, description: Preview long edge 256/512/1024; never changes original media}
       responses:
         '200': {description: Versioned bounded JPEG preview, content: {image/jpeg: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -474,6 +483,10 @@ paths:
     get:
       operationId: listHistory
       parameters:
+        - {$ref: '#/components/parameters/FixedTag'}
+        - {$ref: '#/components/parameters/DirectoryFilter'}
+        - {$ref: '#/components/parameters/RecursiveFilter'}
+        - {$ref: '#/components/parameters/IncludeDisabled'}
         - {$ref: '#/components/parameters/TZOffsetMinutes'}
         - {$ref: '#/components/parameters/ViewRange'}
         - {$ref: '#/components/parameters/PlayRange'}
@@ -724,6 +737,14 @@ paths:
       responses:
         '200': {description: Server-owned operational limits, content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
         default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateSettings
+      description: Owner-only full settings update with revision protection. Scan concurrency affects subsequent admissions; upload gate is checked for new chunks and publication. thumbEdge retains its explicitly reserved UI meaning.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsUpdate'}}}}
+      responses:
+        '200': {description: Persisted configuration and actual operational limits, content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /operations/{key}:
     get:
       operationId: getOperation
@@ -909,6 +930,14 @@ paths:
       parameters: [{$ref: '#/components/parameters/StatsRange'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses:
         '200': {description: Existing-asset author activity ordered by views then stable identity, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityRankingPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /stats/top-interests:
+    get:
+      operationId: getTopInterests
+      description: Mixed author and tag Top 3 for the existing Android statistics card; views descending then authors before tags then stable identity. Computed once by the server.
+      parameters: [{$ref: '#/components/parameters/StatsRange'}]
+      responses:
+        '200': {description: Server-selected mixed Top 3, content: {application/json: {schema: {$ref: '#/components/schemas/TopInterests'}}}}
         default: {$ref: '#/components/responses/Error'}
   /stats/top-tags:
     get:
@@ -1139,6 +1168,10 @@ components:
     bearerAuth: {type: http, scheme: bearer}
     sessionCookie: {type: apiKey, in: cookie, name: qimeng_session}
   parameters:
+    FixedTag: {name: tag, in: query, schema: {type: string}, description: 'Fixed tag route constraint; AND with tags/tagMode rather than folded into that selectable group'}
+    DirectoryFilter: {name: directory, in: query, schema: {type: string}, description: 'Exact library-relative directory; empty string is the root and omission disables this filter. Requires libraryId.'}
+    RecursiveFilter: {name: recursive, in: query, schema: {type: boolean, default: false}, description: 'When directory is present include descendants; default returns only direct files'}
+    IncludeDisabled: {name: includeDisabled, in: query, schema: {type: boolean, default: false}, description: 'Explicit management browsing of disabled libraries; ordinary browse/search hides them while statistics and direct details remain available'}
     TZOffsetMinutes: {name: tzOffsetMinutes, in: query, schema: {type: integer, minimum: -840, maximum: 840, default: 0}, description: 'Client local offset east of UTC in minutes: UTC+8=480 and UTC-5=-300. Applies to file-date buckets and calendar filters.'}
     ViewRange: {name: viewRange, in: query, schema: {type: string, enum: [all, none, low, mid, high], default: all}, description: 'none=0; low=1–5 inclusive; mid=5–20 inclusive; high>20'}
     PlayRange: {name: playRange, in: query, schema: {type: string, enum: [all, none, low, mid, high], default: all}, description: 'none=0; low=1–5 inclusive; mid=5–20 inclusive; high>20'}
@@ -1466,17 +1499,42 @@ components:
         changePoints: {type: number, format: double}
         currentViews: {type: integer, format: int64}
         previousViews: {type: integer, format: int64}
-    BrowsingReview:
+    TopInterests:
       type: object
-      required: [range, firstViews, returnViews, distinctAssets, activeDays, totalSeconds, comparisonAvailable, hours, changes]
+      required: [range, items]
       properties:
         range: {type: string}
+        items:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            required: [kind, id, name, views]
+            properties:
+              kind: {type: string, enum: [author, tag]}
+              id: {type: string}
+              name: {type: string}
+              views: {type: integer, format: int64, minimum: 1}
+    BrowsingReview:
+      type: object
+      required: [range, fromDay, toDay, previousFromDay, previousToDay, viewCount, previousViewCount, firstViews, returnViews, distinctAssets, activeDays, totalSeconds, imageSeconds, animatedSeconds, videoSeconds, comparisonAvailable, hours, changes]
+      properties:
+        range: {type: string}
+        fromDay: {type: string, description: First server-local date inclusive; empty for all}
+        toDay: {type: string, description: Current server-local date inclusive}
+        previousFromDay: {type: string, description: Previous equal calendar window start; empty for all}
+        previousToDay: {type: string, description: Previous equal calendar window end inclusive; empty for all}
+        viewCount: {type: integer, format: int64, minimum: 0}
+        previousViewCount: {type: integer, format: int64, minimum: 0}
         firstViews: {type: integer, format: int64}
         returnViews: {type: integer, format: int64}
         distinctAssets: {type: integer}
         activeDays: {type: integer}
         comparisonAvailable: {type: boolean}
         totalSeconds: {type: integer, format: int64}
+        imageSeconds: {type: integer, format: int64, minimum: 0}
+        animatedSeconds: {type: integer, format: int64, minimum: 0}
+        videoSeconds: {type: integer, format: int64, minimum: 0, description: Detail dwell time; not playback duration}
         hours: {type: array, minItems: 24, maxItems: 24, items: {$ref: '#/components/schemas/ReviewHour'}}
         changes: {type: array, maxItems: 6, items: {$ref: '#/components/schemas/InterestChange'}}
     Error:
@@ -1505,8 +1563,12 @@ components:
             migration: {type: boolean}
     SessionCreate:
       type: object
-      required: [token, label]
-      properties: {token: {type: string}, label: {type: string, maxLength: 80}}
+      required: [label]
+      description: Supply exactly one of password or token. Password is accepted only here and exchanged for a separate revocable session; it is never a Bearer API credential.
+      properties:
+        token: {type: string, maxLength: 1024, description: Trusted bootstrap or existing owner device session}
+        password: {type: string, maxLength: 1024, description: Configured login password; owner bootstrap also accepted for initial trusted setup}
+        label: {type: string, maxLength: 80}
     CredentialCreate:
       type: object
       required: [label, scopes]
@@ -1720,12 +1782,23 @@ components:
         sessionId: {type: string, maxLength: 128}
         seconds: {type: number, format: double, minimum: 0, maximum: 86400, description: 'Dwell duration; floor to whole seconds, values below one second are rejected for dwell'}
         occurredAt: {type: string, format: date-time, description: 'UTC start of the visible segment; server receipt time if omitted'}
-        contentVersion: {type: integer, format: int64}
+        contentVersion: {type: integer, format: int64, minimum: 1}
         positionMs: {type: integer, format: int64, minimum: 0}
     HistoryEvent:
-      allOf:
-        - {$ref: '#/components/schemas/EventCreate'}
-        - {type: object, required: [assetId, createdAt], properties: {assetId: {type: string}, fileName: {type: string}, createdAt: {type: string, format: date-time}, asset: {$ref: '#/components/schemas/Asset'}}}
+      type: object
+      required: [eventId, kind, contentVersion, assetId, createdAt]
+      properties:
+        eventId: {type: string, minLength: 1, maxLength: 4096, description: 'Original portable or live event identity; never reconstructed during migration'}
+        kind: {type: string, enum: [view, play, progress, dwell]}
+        sessionId: {type: string}
+        seconds: {type: number, format: double, minimum: 0}
+        occurredAt: {type: string, format: date-time}
+        contentVersion: {type: integer, format: int64, minimum: 0, description: 'Zero means the source event carried no content version; it does not identify the current file version'}
+        positionMs: {type: integer, format: int64, minimum: 0}
+        assetId: {type: string}
+        fileName: {type: string}
+        createdAt: {type: string, format: date-time}
+        asset: {$ref: '#/components/schemas/Asset'}
     MoveRequest:
       type: object
       required: [expectedRevision, relativePath]
@@ -1962,12 +2035,34 @@ components:
         trash: {type: integer, format: int64}
     Settings:
       type: object
-      required: [maxChunkBytes, maxActiveUploads, maxBatchItems, sourceCleanupEnabled]
+      required: [revision, scan, upload, effectiveScanWorkers, maxChunkBytes, maxActiveUploads, maxBatchItems, sourceCleanupEnabled]
       properties:
+        revision: {type: integer, format: int64}
+        scan: {$ref: '#/components/schemas/ScanSettings'}
+        upload: {$ref: '#/components/schemas/UploadSettings'}
+        effectiveScanWorkers: {type: integer, minimum: 1, maximum: 32}
         maxChunkBytes: {type: integer, format: int64}
         maxActiveUploads: {type: integer}
         maxBatchItems: {type: integer}
         sourceCleanupEnabled: {type: boolean}
+    ScanSettings:
+      type: object
+      required: [workers, thumbEdge]
+      properties:
+        workers: {type: integer, minimum: 0, maximum: 32, default: 0, description: 0 uses conservative CPU and available-memory admission; 1–32 explicit libraries}
+        thumbEdge: {type: integer, minimum: 200, maximum: 1600, default: 800, description: Reserved setting retained for UI parity; does not alter the thumbnail pipeline}
+    UploadSettings:
+      type: object
+      required: [autoAccept]
+      properties:
+        autoAccept: {type: boolean, default: true, description: False pauses receiving and publication without discarding existing staged inputs}
+    SettingsUpdate:
+      type: object
+      required: [expectedRevision, scan, upload]
+      properties:
+        expectedRevision: {type: integer, format: int64}
+        scan: {$ref: '#/components/schemas/ScanSettings'}
+        upload: {$ref: '#/components/schemas/UploadSettings'}
     Directory:
       type: object
       required: [relativePath, name]
@@ -1991,12 +2086,21 @@ components:
         positionMs: {type: integer, format: int64, minimum: 0}
         label: {type: string, minLength: 1, maxLength: 200}
         color: {type: string, pattern: '^#[0-9a-fA-F]{6}$'}
-        contentVersion: {type: integer, format: int64}
+        contentVersion: {type: integer, format: int64, minimum: 1}
         expectedRevision: {type: integer, format: int64, description: Required when updating an existing mark}
     TimelineMark:
-      allOf:
-        - {$ref: '#/components/schemas/TimelineInput'}
-        - {type: object, required: [id, assetId, revision, createdAt, updatedAt], properties: {id: {type: string}, assetId: {type: string}, revision: {type: integer, format: int64}, createdAt: {type: string, format: date-time}, updatedAt: {type: string, format: date-time}}}
+      type: object
+      required: [id, assetId, positionMs, label, contentVersion, revision, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        assetId: {type: string}
+        positionMs: {type: integer, format: int64, minimum: 0}
+        label: {type: string}
+        color: {type: string}
+        contentVersion: {type: integer, format: int64, minimum: 0, description: 'Zero means unknown legacy version; do not automatically seek until explicitly revalidated against current content'}
+        revision: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
     TimelinePage:
       type: object
       required: [items]

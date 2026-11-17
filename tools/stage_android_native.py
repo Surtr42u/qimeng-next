@@ -27,3 +27,7 @@ for abi in ("arm64-v8a", "x86_64"):
         if path.stat().st_size != entry["bytes"] or digest != entry["sha256"]:
             raise SystemExit("Native artifact integrity check failed")
         shutil.copy2(path, target / entry["name"])
+    notices = root / "android/embedded/src/main/assets/third-party" / abi
+    notices.mkdir(parents=True, exist_ok=True)
+    for name in ("FFmpeg-LICENSE.txt", "dav1d-LICENSE.txt", "manifest.json"):
+        shutil.copy2(source / name, notices / name)
