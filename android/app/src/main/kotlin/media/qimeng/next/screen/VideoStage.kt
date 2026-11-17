@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -25,6 +26,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -40,17 +42,23 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 
 /** The sole platform-view bridge uses the official Media3 player; gesture orchestration is new Compose code. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VideoStage(asset: Asset, model: LibraryViewModel) {
+fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modifier,
+    onPlayerActiveChanged: (Boolean) -> Unit = {}, onPlaybackChromeChanged: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val viewingSession = remember(asset.id) { model.viewSessionId() }
     var fullscreen by rememberSaveable(asset.id) { mutableStateOf(false) }
+    var activated by rememberSaveable(asset.id) { mutableStateOf(false) }
+    var timeline by rememberSaveable(asset.id) { mutableStateOf(false) }
     var savedPosition by rememberSaveable(asset.id, asset.version) { mutableLongStateOf(if (asset.positionVersion == asset.version) asset.positionMs else 0) }
     var error by remember { mutableStateOf<String?>(null) }
     var staleContent by remember { mutableStateOf(false) }
@@ -65,6 +73,8 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
     }
     // The disposing player's final position belongs to its original content version.
     val playbackAsset = remember(player) { asset }
+    LaunchedEffect(activated) { onPlayerActiveChanged(activated) }
+    BackHandler(activated && !fullscreen && !timeline) { player.pause(); activated = false }
     DisposableEffect(player, owner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
@@ -101,23 +111,39 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
             }
         }
     }
-    if (fullscreen) {
+    Box(modifier) {
+    if (!activated) {
+        Box(Modifier.fillMaxSize().semantics { contentDescription = "视频播放区域" }
+            .pointerInput(player) { detectTapGestures(onTap = { activated = true; player.play() }, onDoubleTap = { activated = true; player.play() }) },
+            contentAlignment = Alignment.Center) {
+            AsyncImage(model = ImageRequest.Builder(context).data(asset.thumbnailUrl)
+                .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail")
+                .diskCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail").build(),
+                imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+        }
+    } else if (fullscreen) {
         Dialog(onDismissRequest = { fullscreen = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
             BackHandler { fullscreen = false }
-            PlayerSurface(player, true, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }) { fullscreen = false }
+            PlayerSurface(player, true, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }, Modifier.fillMaxSize(), onPlaybackChromeChanged) { fullscreen = false }
         }
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black))
-    } else PlayerSurface(player, false, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }) { fullscreen = true }
-    TimelineControls(asset, player)
+        Box(Modifier.fillMaxSize().background(Color.Black))
+    } else PlayerSurface(player, false, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }, Modifier.fillMaxSize(), onPlaybackChromeChanged) { fullscreen = true }
+    if (activated && !fullscreen) IconButton(onClick = { timeline = true; player.pause() }, modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(8.dp)) {
+        Icon(Icons.Outlined.BookmarkAdd, "时间轴标记", tint = Color.White)
+    }
+    }
+    if (timeline) ModalBottomSheet(onDismissRequest = { timeline = false }) { TimelineControls(asset, player) }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?, onRetry: () -> Unit, toggleFullscreen: () -> Unit) {
+private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?, onRetry: () -> Unit, modifier: Modifier,
+    onChromeChanged: (Boolean) -> Unit, toggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     var feedback by remember { mutableStateOf<String?>(null) }
     var playing by remember(player) { mutableStateOf(player.isPlaying) }
     var showControls by remember { mutableStateOf(true) }
+    LaunchedEffect(showControls, playing) { onChromeChanged(showControls || !playing) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying; if (!isPlaying) showControls = true }
@@ -132,12 +158,13 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
         val original = window?.attributes?.screenBrightness
         onDispose { if (window != null && original != null) window.attributes = window.attributes.apply { screenBrightness = original } }
     }
-    Box((if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f)).background(Color.Black)
+    Box(modifier.background(Color.Black)
         .semantics { contentDescription = "视频播放区域" }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply {
             this.player = player; useController = true; controllerAutoShow = true
             setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
             setControllerHideOnTouch(false)
+            setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility -> showControls = visibility == android.view.View.VISIBLE })
         } }, update = {
             it.player = player; it.controllerShowTimeoutMs = if (playing) 3000 else 0
             if (showControls || !playing) it.showController() else it.hideController()

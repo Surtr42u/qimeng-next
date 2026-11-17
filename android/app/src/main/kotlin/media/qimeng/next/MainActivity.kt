@@ -26,6 +26,11 @@ class MainActivity : ComponentActivity() {
         receiveShare(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        model.restoreLocalConnection()
+    }
+
     private fun receiveShare(intent: Intent) {
         val uris = when (intent.action) {
             Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))

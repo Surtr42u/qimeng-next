@@ -89,7 +89,7 @@ func Authorize(p model.Principal,scope,batchID string)error{
 
 type Write struct{ s *Service; ctx context.Context; Principal model.Principal; tx *sql.Tx; after []func()error; rollback []func(); operation,key,inputHash string }
 func (w *Write)Q()(store.Querier,error){if w.tx==nil{var e error;w.tx,e=w.s.DB.DB.BeginTx(w.ctx,nil);if e!=nil{return nil,e}};return w.tx,nil}
-func (w *Write)ID(kind string)string{if w.key==""{return ID()};return digest([]byte(w.Principal.ID+"\x00"+w.operation+"\x00"+w.key+"\x00"+kind))[:32]}
+func (w *Write)ID(kind string)string{if w.key==""{return ID()};return digest([]byte(w.s.InstanceID+"\x00"+w.Principal.ID+"\x00"+w.operation+"\x00"+w.key+"\x00"+kind))[:32]}
 type Result struct{ Body []byte; Status int }
 // Run serializes state changes and commits the result receipt in the same SQLite
 // transaction as business records. A file intent is made durable before disk IO.

@@ -1,6 +1,6 @@
 # Android 客户端
 
-从空目录编写的 Kotlin / Compose 客户端，应用包名 `media.qimeng.next`。不包含手机后端、媒体业务数据库或双向备份合并。旧 Android 只用于核对产品行为与视觉约束，没有导入旧 Kotlin 源码。
+独立 Kotlin / Compose 客户端，应用包名 `media.qimeng.next`。客户端不拥有媒体业务数据库或双向备份合并。用户已明确保留本机离线与远程双模式：可移除 embedded 模块运行同一个新 Go 服务，装配契约见 [本机运行模块](embedded/README.md)，当前仍在接通。业务与数据层从空目录编写；用户授权复用旧纯展示 UI 以保持界面一致，复用清单与边界见 [UI 来源](UI_SOURCES.md)。
 
 ## 分层
 
@@ -11,6 +11,8 @@
 - `app`：ViewModel 管理查询代际、会话与用户草稿；页面只调用 ViewModel，不引用 SDK。
 
 主要导航保留首页、相册、数据、我的；上传、报告、作者、历史、收藏和设置经原类型入口进入。页面的保存状态与查询状态分别保留；换服务器清空旧实例的浏览数据，持久传输仍绑定原地址与实例身份。
+
+2026-11-17 界面复核确认当前页面结构存在偏离，不能把功能接线称为旧版界面已保留。具体源码对照、纠偏顺序与截图缺口见 [现行界面对照](UI_PARITY.md)；后续严格恢复现行布局与操作，只加入用户授权的过渡和导航材质效果。
 
 ## 当前源码行为
 
@@ -23,6 +25,8 @@
 SAF 批选先保存待传快照，允许改名后提交；系统分享可用已选择的目标直接提交，未登录/未选择位置时保留待传项。普通上传为默认，智能整理显式选择。可浏览/创建库内目录、选择本批多作者、组图/短剧集合、获取渠道及备注；编号只由 Go 决定。文件提供器字节先复制到应用私有空间，以固定重试输入；原件不删除。WorkManager 按原操作身份恢复批次、上传句柄及服务器 offset，再传分片；失败项不阻塞其他独立文件。取消先持久化，成功入库与等待智能整理分别报告。读取失败的输入逐项保留本机结果。清理传输记录不删除服务器媒体。私有副本存在手机可用空间预算。
 
 管理入口包括作者创建/编辑/关注/删除/合并、标签词表、原作与角色词表、影库启停、媒体改名移动和回收站恢复；永久删除是回收站内单独确认的操作。同组入口仍逐件展示媒体。常规作者与 COS 能力分开；修改携带基础修订，冲突保持草稿与明确错误，不静默覆盖。标签草稿保留打开时的关系修订，刷新不会自动给旧整组草稿套上新修订；全局已删除标签只能通过明确的“添加”请求重建。获取渠道和原作/出处是不同字段。
+
+作者资料按 X / 基本资料 / 其他账号分别读取和保存，候选需用户载入草稿并明确保存；部分候选中缺失的字段保留当前值，显式空值表示清除。修改简介原文时不沿用未核对的旧译文。头像只加载当前实例认证的缓存地址，远程网址交由服务器获取；本地头像经系统文件选择上传。合并与删除保留档案为只读入口。AI 接入设置提供最小默认只读权限、明确写入范围和预算、一次显示凭据及撤销；凭据不进入保存状态、备份或日志。
 
 ## 材质和动效
 
@@ -37,12 +41,14 @@ SAF 批选先保存待传快照，允许改名后提交；系统分享可用已�
 仅云端执行：JDK 17、Gradle 8.11.1、Android SDK 35 / Build Tools 35.0.0。先运行仓库 SDK 生成脚本，再运行：
 
 ```sh
-gradle -p android :app:assembleDebug :app:testDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintDebug --stacktrace
+gradle -p android -Pqimeng.embedded=false :app:assembleClientDebug :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug --stacktrace
 ```
 
 云端专用 API 35 模拟器再运行 `:core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest`。这些测试覆盖快速切换只有一个活动页面、草稿恢复、减少动效、选择语义、大字/深色导航，以及队列重建、坏记录不伪装空队列、认证同源/重定向/断开边界；合成背景截图写入测试应用 external files 目录。JVM 测试另覆盖前后台停留区段、目标实例与查询代际。不得使用本机默认模拟器或手机，也不能访问旧 8420 实例。
 
 真实链路仪器类为 `media.qimeng.next.test.AndroidRealServerTest`：只允许 runner 参数 `qimengServerUrl=http://127.0.0.1:18481/`，`qimengToken` 来自同 SHA 隔离 Go 服务的临时测试凭据。云端将短 H.264 合成视频放到设备 `/data/local/tmp/qimeng-next-test.mp4`；测试通过仅存在于测试 APK 的 ContentProvider 和真实 WorkManager 验证 PNG/视频入库、标签、收藏、推荐及播放历史，不 mock 服务。完整窗口截图写到目标 APK 的 `getExternalFilesDir("screenshots")`，包含实际 GPU 合成和视频表面。运行命令、显式设备选择及产物回收由云端工作流负责。
+
+client 仪器任务为 `:app:connectedClientDebugAndroidTest`。本机原生产物按 embedded README 云端装配后构建 `:app:assembleEmbeddedDebug`；隔离清空合成应用数据，再单独运行 `:app:connectedEmbeddedDebugAndroidTest`，限定类 `media.qimeng.next.test.EmbeddedRuntimeTest` 且显式参数 `qimengEmbedded=true`。该测试验证受包 Go 在 App UID 下启动、TLS pin 与正常 SDK 登录、同一实例的库数据经停止 / 重启仍在，并要求新启动更换临时证书。不能用这条基础测试代替全部本机媒体 / 后台 / 迁移验收。
 
 锁定版本见 `gradle/libs.versions.toml`。选择已知兼容的稳定版本；官方依据：[AGP 8.9 兼容矩阵](https://developer.android.com/build/releases/agp-8-9-0-release-notes)、[Compose 编译器与 Kotlin](https://developer.android.com/jetpack/androidx/releases/compose-kotlin)、[AndroidX 稳定发布](https://developer.android.com/jetpack/androidx/versions/stable-channel)、[Media3 发布说明](https://developer.android.com/jetpack/androidx/releases/media3)、[Coil 更新记录](https://coil-kt.github.io/coil/changelog/)、[Retrofit](https://square.github.io/retrofit/)、[OpenAPI Kotlin 生成器](https://openapi-generator.tech/docs/generators/kotlin/)。
 

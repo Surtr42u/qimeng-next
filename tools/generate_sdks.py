@@ -35,7 +35,20 @@ UniqueSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
 
 
 def read_specification():
-    return yaml.load((ROOT / "api/openapi.yaml").read_bytes(), Loader=UniqueSafeLoader)
+    document = yaml.load((ROOT / "api/openapi.yaml").read_bytes(), Loader=UniqueSafeLoader)
+    def inspect(value, path="openapi"):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"example", "examples", "default"}:
+                    continue
+                if child is None:
+                    raise ValueError(f"Empty OpenAPI mapping at {path}.{key}; quote inline descriptions containing commas")
+                inspect(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                inspect(child, f"{path}[{index}]")
+    inspect(document)
+    return document
 
 
 def run(*args: str, cwd: Path = ROOT) -> None:

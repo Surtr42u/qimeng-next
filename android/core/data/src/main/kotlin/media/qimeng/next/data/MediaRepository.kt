@@ -21,6 +21,7 @@ import media.qimeng.next.sdk.api.DefaultApi
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import media.qimeng.next.sdk.model.Asset as ApiAsset
 import media.qimeng.next.sdk.model.Author as ApiAuthor
 import media.qimeng.next.sdk.model.Batch as ApiBatch
@@ -28,24 +29,32 @@ import media.qimeng.next.sdk.model.Batch as ApiBatch
 /** Only this data boundary knows generated DTOs. UI and ViewModels use client models. */
 class MediaRepository internal constructor(val settings: SecureSettings, private val provider: ApiProvider) {
     val session = settings.session
+    private val authenticationGeneration = AtomicLong()
+    private val authenticationLock = Any()
     private fun target() = session.value ?: error("请先登录服务器")
 
-    suspend fun login(address: String, token: String) = withContext(Dispatchers.IO) {
+    suspend fun login(address: String, token: String, certificateDerBase64: String? = null, expectedInstanceId: String? = null, rememberAddress: Boolean = false) = withContext(Dispatchers.IO) {
+        val (attempt, connection) = synchronized(authenticationLock) { authenticationGeneration.incrementAndGet() to settings.transportRevision.value }
         val root = normalizedServer(address)
-        val api = provider.anonymous(root)
+        val api = provider.anonymous(root, certificateDerBase64)
         val instance = api.getInstance().bodyOrThrow()
+        check(expectedInstanceId == null || instance.id == expectedInstanceId) { "服务实例与启动回执不匹配" }
         require(instance.apiVersion == "0.1.0") { "服务器协议不兼容，请同步更新客户端与服务器" }
         val created = api.createSession(SessionCreate(token = token, label = "Android 客户端")).bodyOrThrow()
         val secret = created.token ?: throw IOException("服务器未返回登录凭据")
-        settings.saveSession(Session(root, instance.id, instance.name), secret)
+        synchronized(authenticationLock) {
+            check(attempt == authenticationGeneration.get() && connection == settings.transportRevision.value) { "登录期间连接已改变，已保留较新的选择" }
+            settings.saveSession(Session(root, instance.id, instance.name), secret, certificateDerBase64, rememberAddress)
+        }
     }
 
     suspend fun logout() = withContext(Dispatchers.IO) {
+        val attempt = synchronized(authenticationLock) { authenticationGeneration.incrementAndGet() }
         val result = provider.api(target()).deleteCurrentSession()
         if (!result.isSuccessful && result.code() != 401) throw ApiFailure(result.code(), "无法撤销登录，请重试")
-        settings.clearSession()
+        synchronized(authenticationLock) { if (attempt == authenticationGeneration.get()) settings.clearSession() }
     }
-    suspend fun disconnect() = withContext(Dispatchers.IO) { settings.clearSession() }
+    suspend fun disconnect() = withContext(Dispatchers.IO) { synchronized(authenticationLock) { authenticationGeneration.incrementAndGet(); settings.clearSession() } }
 
     suspend fun capabilities(): ServerCapabilities {
         val target = target()
@@ -92,16 +101,44 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         }
         if (query.source == "rankings") {
             val page = provider.api(target).getRankings(period = DefaultApi.PeriodGetRankings.entries.first { it.value == query.period },
-                kind = query.kind?.let { value -> DefaultApi.KindGetRankings.entries.first { it.value == value } }, cursor = cursor, limit = 50).bodyOrThrow()
+                kind = query.kind?.let { value -> DefaultApi.KindGetRankings.entries.first { it.value == value } },
+                mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeGetRankings.entries.first { it.value == value } }, cursor = cursor, limit = 50).bodyOrThrow()
             return Page(page.items.map { it.asset.toModel(target).copy(rankingScore = it.score) }, page.nextCursor)
         }
         val page = provider.api(target).listAssets(cursor = cursor, limit = 50, libraryId = query.libraryId,
             q = query.text.takeIf { it.isNotBlank() }, mediaType = query.mediaType?.let { type -> DefaultApi.MediaTypeListAssets.entries.first { it.value == type } },
             kind = query.kind?.let { kind -> DefaultApi.KindListAssets.entries.first { it.value == kind } },
             authorId = query.authorId, collectionId = query.collectionId, tag = query.tag, favorite = query.favorite, liked = query.liked,
-            sort = DefaultApi.SortListAssets.entries.first { it.value == query.sort }).bodyOrThrow()
-        return Page(page.items.map { it.toModel(target) }, page.nextCursor)
+            sort = DefaultApi.SortListAssets.entries.first { it.value == query.sort },
+            order = DefaultApi.OrderListAssets.entries.first { it.value == query.order },
+            workKeys = query.workKeys, roleKeys = query.roleKeys, tags = query.tags, history = query.history,
+            tagMode = DefaultApi.TagModeListAssets.entries.first { it.value == query.tagMode },
+            viewRange = DefaultApi.ViewRangeListAssets.entries.first { it.value == query.viewRange },
+            playRange = DefaultApi.PlayRangeListAssets.entries.first { it.value == query.playRange },
+            sizeRange = DefaultApi.SizeRangeListAssets.entries.first { it.value == query.sizeRange },
+            timeRange = DefaultApi.TimeRangeListAssets.entries.first { it.value == query.timeRange }, fromYear = query.fromYear, toYear = query.toYear,
+            dateCounts = cursor == null, tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
+        return Page(page.items.map { it.toModel(target) }, page.nextCursor, page.totalMatched, page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) })
     }
+
+    suspend fun facets(row: String, query: AssetQuery, cursor: String? = null, search: String? = null): FacetResult {
+        val page = provider.api(target()).getAssetFacets(row = DefaultApi.RowGetAssetFacets.entries.first { it.value == row },
+            cursor = cursor, limit = 50, libraryId = query.libraryId, q = query.text.takeIf(String::isNotBlank), facetQ = search,
+            kind = query.kind?.let { value -> DefaultApi.KindGetAssetFacets.entries.first { it.value == value } },
+            mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeGetAssetFacets.entries.first { it.value == value } },
+            authorId = query.authorId, collectionId = query.collectionId, favorite = query.favorite, liked = query.liked,
+            workKeys = query.workKeys, roleKeys = query.roleKeys, tags = (query.tags + listOfNotNull(query.tag)).distinct(), history = query.history,
+            tagMode = DefaultApi.TagModeGetAssetFacets.entries.first { it.value == query.tagMode },
+            viewRange = DefaultApi.ViewRangeGetAssetFacets.entries.first { it.value == query.viewRange },
+            playRange = DefaultApi.PlayRangeGetAssetFacets.entries.first { it.value == query.playRange },
+            sizeRange = DefaultApi.SizeRangeGetAssetFacets.entries.first { it.value == query.sizeRange },
+            timeRange = DefaultApi.TimeRangeGetAssetFacets.entries.first { it.value == query.timeRange }, fromYear = query.fromYear, toYear = query.toYear,
+            tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
+        return FacetResult(page.items.map { FacetChoice(it.key, it.kind.value, it.id, it.name, it.count) }, page.nextCursor, page.totalMatched, page.totalOptions)
+    }
+
+    suspend fun searchSuggestions(query: String, recommend: Boolean = false): List<SearchWord> = provider.api(target())
+        .getSearchSuggestions(q = query, recommend = recommend, limit = 20).bodyOrThrow().items.map { SearchWord(it.id, it.type.value, it.name) }
 
     suspend fun asset(id: String): Asset {
         val target = target()

@@ -46,3 +46,12 @@ func TestRevokedAuthenticatedPrincipalCannotStartWrite(t *testing.T){
  testMutation(t,s,"revoke-device",func(w *Write)(any,int,error){return nil,204,s.Revoke(ctx,w,issued.ID)})
  if _,e=s.Run(ctx,authenticated,"queued-write","queued-write-key",nil,func(*Write)(any,int,error){t.Fatal("revoked principal reached business mutation");return nil,204,nil});e==nil{t.Fatal("revocation was not rechecked at write boundary")}
 }
+
+func TestDeterministicResourceIdentityIsNamespacedByInstance(t *testing.T){
+ ctx:=context.Background();ids:=[]string{}
+ for index:=0;index<2;index++{s,e:=New(Config{DataDir:t.TempDir(),AdminToken:"synthetic-same-owner-secret-00000000000000",ReserveBytes:1});if e!=nil{t.Fatal(e)};defer s.Close();p:=model.Principal{ID:"owner",Scopes:[]string{"admin"}}
+  create:=func(w *Write)(any,int,error){v,e:=s.CreateLibrary(ctx,w,"Same input","regular");return v,201,e};first,e:=s.Run(ctx,p,"create-library","same-owner-same-key",[]byte("identical input"),create);if e!=nil{t.Fatal(e)};var library model.Library;if e=json.Unmarshal(first.Body,&library);e!=nil{t.Fatal(e)};ids=append(ids,library.ID)
+  again,e:=s.Run(ctx,p,"create-library","same-owner-same-key",[]byte("identical input"),func(*Write)(any,int,error){t.Fatal("committed operation was not replayed");return nil,0,nil});if e!=nil||!bytes.Equal(first.Body,again.Body){t.Fatal("same-instance replay changed")}
+ }
+ if ids[0]==ids[1]{t.Fatal("different instances assigned the same deterministic identity")}
+}

@@ -4,7 +4,7 @@ data class ProfileAccount(val platform: String, val identifier: String, val url:
 data class ProfileValues(val handle: String? = null, val displayName: String? = null,
     val biographyOriginal: String? = null, val biographyZh: String? = null, val avatarSourceUrl: String? = null,
     val summary: String? = null, val note: String? = null, val accounts: List<ProfileAccount>? = null,
-    val profileUrl: String? = null, val publicName: String? = null, val remark: String? = null)
+    val profileUrl: String? = null, val publicName: String? = null, val remark: String? = null, val identityStatus: String? = null)
 data class ProfileEvidence(val url: String, val title: String, val fields: List<String>, val status: String, val note: String, val checkedAt: String?)
 data class ProfileAvatar(val url: String, val cacheKey: String, val origin: String, val sourceUrl: String, val fetchedAt: String)
 data class ProfileBlock(val block: String, val revision: Long, val values: ProfileValues, val evidence: List<ProfileEvidence>,

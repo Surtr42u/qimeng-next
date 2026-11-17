@@ -1,6 +1,5 @@
 package media.qimeng.next.screen
 
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -8,6 +7,7 @@ import android.content.Context
 import android.os.Build
 import android.os.PersistableBundle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,14 +34,15 @@ import media.qimeng.next.ui.ErrorNotice
 @Composable
 fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewModel()) {
     val state by model.state.collectAsStateWithLifecycle()
+    val filter by model.filter.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val secret by model.secret.collectAsStateWithLifecycle()
     val reconcile by model.reconcileRequired.collectAsStateWithLifecycle()
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     var creating by rememberSaveable { mutableStateOf(false) }
     var revoking by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(busy) { }
-    LaunchedEffect(Unit) { if (state.data == null) model.refresh() }
+    LaunchedEffect(Unit) { if (!state.loaded) model.refresh() }
     LaunchedEffect(secret) { if (secret != null) creating = false }
     DisposableEffect(model) { onDispose { if (activity?.isChangingConfigurations != true) model.dismissSecret() } }
     Column(Modifier.fillMaxSize()) {
@@ -52,14 +53,19 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
                 Text("默认只读可查询全库。影库与作者选择限制写入范围，不限制读取。正常授权任务由工具自动接续，无需逐批复制任务凭据。")
                 Row {
                     Button(onClick = { model.clearCreationError(); creating = true }, enabled = !busy && !reconcile) { Text("新增 AI 接入") }
-                    TextButton(onClick = model::refresh, enabled = !busy) { Text("刷新") }
+                    TextButton(onClick = { model.refresh() }, enabled = !busy) { Text("刷新") }
+                }
+            } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("active" to "有效", "expired" to "过期", "revoked" to "撤销", "all" to "全部").forEach { (key, label) ->
+                    FilterChip(filter == key, { model.refresh(state = key) }, enabled = !busy, label = { Text(label) })
                 }
             } }
             if (state.loading || busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            if (reconcile) item { ErrorNotice("上次创建结果未确认，请刷新核对连接后再继续。", model::refresh) }
-            state.error?.let { item { ErrorNotice(it, model::refresh) } }
-            if (state.data?.isEmpty() == true) item { Text("尚未配置 AI 接入") }
-            items(state.data.orEmpty(), key = { it.id }) { grant -> ContentCard {
+            if (reconcile) item { ErrorNotice("上次创建结果未确认，请刷新有效连接核对后再继续。") { model.refresh(state = "active") } }
+            state.error?.let { item { ErrorNotice(it) { model.refresh() } } }
+            if (state.loaded && state.items.isEmpty()) item { Text("此状态暂无 AI 接入") }
+            items(state.items, key = { it.id }) { grant -> ContentCard {
                 Text(grant.label, style = MaterialTheme.typography.titleMedium)
                 Text("${mapOf("active" to "有效", "revoked" to "已撤销", "expired" to "已过期")[grant.state] ?: "状态待核对"} · 到期 ${grant.expiresAt}")
                 Text("全库只读 · ${if (grant.canIngest) "可新增媒体" else "不可新增媒体"} · ${if (grant.canResearch) "可研究" else "不可研究"} · ${if (grant.canOrganize) "可整理" else "不可整理"}")
@@ -68,6 +74,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
                 Text("每日 ${grant.maxTasksPerDay} 个任务；每任务最多 ${grant.maxUpdates} 次资料更新、${grant.maxResearchCalls} 次研究", style = MaterialTheme.typography.bodySmall)
                 if (grant.state == "active") TextButton(onClick = { revoking = grant.id }, enabled = !busy) { Text("撤销接入") }
             } }
+            if (state.cursor != null) item { TextButton(onClick = { model.refresh(next = true) }, enabled = !busy && !state.loading) { Text("加载更多接入") } }
         }
     }
     if (creating) AIAccessForm(library, model) { creating = false }

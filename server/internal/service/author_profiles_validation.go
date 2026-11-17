@@ -37,6 +37,7 @@ func profileFields(values ProfileValues) map[string]bool {
   "biographyOriginal": values.BiographyOriginal != nil, "biographyZh": values.BiographyZh != nil,
   "avatarSourceUrl": values.AvatarSourceURL != nil, "summary": values.Summary != nil,
   "note": values.Note != nil, "accounts": values.Accounts != nil,
+  "identityStatus": values.IdentityStatus != nil,
   "publicName": values.PublicName != nil, "remark": values.Remark != nil,
  }
 }
@@ -45,7 +46,7 @@ func fieldBelongs(block, field string) bool {
  switch block {
  case "x": return field == "handle" || field == "profileUrl" || field == "displayName" || field == "biographyOriginal" || field == "biographyZh" || field == "avatarSourceUrl"
  case "basic": return field == "publicName" || field == "summary" || field == "remark" || field == "note"
- case "accounts": return field == "accounts"
+ case "accounts": return field == "accounts" || field == "identityStatus"
  }
  return false
 }
@@ -75,6 +76,7 @@ func validateProfileValues(block string, values ProfileValues) (int,error) {
    }
   }
  }
+ if values.IdentityStatus!=nil && *values.IdentityStatus!="empty" && *values.IdentityStatus!="candidate" && *values.IdentityStatus!="verified" { return 0,Fail(400,"invalid_identity_status","身份核实状态无效。") }
  return count,nil
 }
 
@@ -103,5 +105,6 @@ func mergeProfileValues(current,patch ProfileValues) ProfileValues {
  if patch.Remark!=nil { current.Remark=patch.Remark }
  if patch.Note!=nil { current.Note=patch.Note }
  if patch.Accounts!=nil { current.Accounts=patch.Accounts }
+ if patch.IdentityStatus!=nil { current.IdentityStatus=patch.IdentityStatus }
  return current
 }

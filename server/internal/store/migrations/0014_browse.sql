@@ -1,0 +1,11 @@
+ALTER TABLE assets ADD COLUMN file_date INTEGER;
+ALTER TABLE assets ADD COLUMN favorited_at TEXT;
+ALTER TABLE assets ADD COLUMN cos_work_id TEXT NOT NULL DEFAULT '';
+UPDATE assets SET file_date=CAST(unixepoch(COALESCE(json_extract(data,'$.sourceMtime'),json_extract(data,'$.contentMtime')),'subsec')*1000 AS INTEGER),favorited_at=CASE WHEN favorite=1 THEN qimeng_time_key(json_extract(data,'$.favoritedAt')) END;
+CREATE INDEX assets_file_date ON assets(trashed,file_date DESC,id DESC);
+CREATE INDEX assets_library_file_date ON assets(library_id,trashed,file_date DESC,id DESC);
+CREATE INDEX assets_favorite_time ON assets(favorite,trashed,favorited_at DESC,id DESC);
+CREATE INDEX assets_cos_work ON assets(cos_work_id,trashed,id);
+CREATE TABLE cos_works(id TEXT PRIMARY KEY,library_id TEXT NOT NULL REFERENCES libraries(id),author_id TEXT NOT NULL REFERENCES authors(id),relative_directory TEXT NOT NULL,name TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(library_id,relative_directory));
+CREATE INDEX cos_works_author ON cos_works(author_id,name,id);
+UPDATE events SET created_at=qimeng_time_key(created_at);

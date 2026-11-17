@@ -17,6 +17,13 @@ data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val e
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     private val graph = (application as QimengApplication).graph
+    private val runtime = (application as QimengApplication).runtime
+    private val localConnection = (application as QimengApplication).localConnection
+    val localRuntimeAvailable = runtime.available
+    val localRuntimeStatus = runtime.status
+    val recentServers = graph.settings.recentServers
+    val transportRevision = graph.settings.transportRevision
+    val localConnectionError = localConnection.error
     private val repository = graph.media
     val session = repository.session
     val preferences = graph.settings.preferences
@@ -32,6 +39,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val uploadCollectionId = saved.getStateFlow<String?>("uploadCollectionId", null)
     val uploadNote = saved.getStateFlow("uploadNote", "")
     val uploadSources = saved.getStateFlow("uploadSources", "")
+    val uploadFamily = saved.getStateFlow("uploadFamily", "")
+    val uploadAutoName = saved.getStateFlow("uploadAutoName", false)
     private val mutableMessage = MutableStateFlow<String?>(null)
     val message = mutableMessage.asStateFlow()
     private val mutableBusy = MutableStateFlow(false)
@@ -113,7 +122,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 directoryState.value = ListState()
                 collectionState.value = ListState()
                 if (saved.get<String>("uploadInstance") != connection?.instanceId) {
-                    saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""
+                    saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""; saved["uploadFamily"] = ""; saved["uploadAutoName"] = false
                 }
                 saved["uploadInstance"] = connection?.instanceId
                 analyticsState.value = LoadState(); reviewState.value = LoadState(); recommendationState.value = null
@@ -193,7 +202,16 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    fun login(address: String, token: String) = action { repository.login(address, token) }
+    fun login(address: String, token: String) = action { repository.login(address, token, rememberAddress = true) }
+    fun loginLocal() = action { connectLocal(forceLogin = true) }
+    fun stopLocal() = action { runtime.stop() }
+    fun restoreLocalConnection() {
+        if (runtime.available && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
+    }
+    private suspend fun connectLocal(forceLogin: Boolean) {
+        localConnection.connect(forceLogin)
+        refreshConnection()
+    }
     fun logout() = action { repository.logout(); saved["route"] = "main" }
     fun disconnect() = action { repository.disconnect(); saved["route"] = "main" }
     fun clearMessage() { mutableMessage.value = null }
@@ -230,6 +248,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         // A sibling replaces the detail scene, without growing its return stack.
         saved["route"] = "asset:${next.id}"
         openAsset(next.id)
+    }
+
+    fun detailPosition(id: String): Pair<Int, Int> {
+        val batch = saved.get<String>("detailListKey")?.let { lists[it]?.value?.items }.orEmpty()
+        return batch.indexOfFirst { it.id == id } to batch.size
     }
 
     fun changeReaction(favorite: Boolean, liked: Boolean) = action {
@@ -294,6 +317,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         action { val result = repository.author(id); if (route.value == "author:$id") mutableAuthor.value = result }
     }
     fun followAuthor() = action { mutableAuthor.value?.let { mutableAuthor.value = repository.follow(it) } }
+    fun followAssetAuthor(author: Author) = action {
+        val updated = repository.follow(author)
+        mutableAssetAuthors.value = mutableAssetAuthors.value.map { if (it.id == author.id) updated else it }
+        if (mutableAuthor.value?.id == author.id) mutableAuthor.value = updated
+    }
     fun editAuthor(name: String, aliases: List<String>, biography: String, homepage: String, onSaved: () -> Unit) = action {
         mutableAuthor.value?.let { mutableAuthor.value = repository.editAuthor(it, name, aliases, biography, homepage); onSaved() }
     }
@@ -414,17 +442,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private suspend fun persistUploadLibrary(id: String) {
         session.value?.let { target -> withContext(Dispatchers.IO) { graph.settings.saveUploadLibrary(target, id) } }
         if (id != uploadLibrary.value) {
-            saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""
+            saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""; saved["uploadFamily"] = ""; saved["uploadAutoName"] = false
             collectionJob?.cancel(); collectionState.value = ListState()
         }
         saved["uploadLibrary"] = id
     }
     fun setUploadDirectory(directory: String) { saved["uploadDirectory"] = directory }
     fun setUploadMode(mode: UploadMode) { saved["uploadMode"] = mode.name }
-    fun setUploadAuthors(ids: List<String>) { saved["uploadAuthorIds"] = ids; saved["uploadSources"] = "" }
+    fun setUploadAuthors(ids: List<String>) { saved["uploadAuthorIds"] = ids }
     fun setUploadCollection(id: String?) { saved["uploadCollectionId"] = id }
     fun setUploadNote(note: String) { saved["uploadNote"] = note }
     fun setUploadSources(sources: String) { saved["uploadSources"] = sources }
+    fun setUploadFamily(family: String) { saved["uploadFamily"] = family }
+    fun setUploadAutoName(enabled: Boolean) { saved["uploadAutoName"] = enabled }
     fun loadCollections(next: Boolean = false) {
         if (next && (collectionState.value.loading || collectionState.value.cursor == null)) return
         collectionJob?.cancel()
@@ -459,9 +489,23 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
     fun startUpload() = action {
-        check(libraries.value.any { it.id == uploadLibrary.value && it.enabled }) { "请选择正在接收上传的影库" }
-        graph.uploads.enqueue(uploadLibrary.value, uploadDirectory.value, UploadMode.valueOf(uploadMode.value),
-            UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank)))
+        val target = session.value ?: error("请先连接服务器")
+        val libraryId = uploadLibrary.value
+        val directory = uploadDirectory.value
+        val mode = UploadMode.valueOf(uploadMode.value)
+        val draftFiles = queue.value?.drafts.orEmpty()
+        check(libraries.value.any { it.id == libraryId && it.enabled }) { "请选择正在接收上传的影库" }
+        val family = uploadFamily.value.trim().takeIf { mode == UploadMode.ORDINARY && (uploadAutoName.value || uploadCollectionId.value != null) }?.takeIf(String::isNotBlank)
+        val options = UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank), family)
+        if (mode == UploadMode.ORDINARY && (uploadAutoName.value || options.collectionId != null)) {
+            val inspection = graph.naming.inspect(NamingRequest(libraryId, directory, family.orEmpty(), options.collectionId,
+                if (draftFiles.isNotEmpty() && draftFiles.all { it.mimeType.startsWith("video/") }) "video" else "image",
+                options.note, draftFiles.map { NamingFile(it.id, it.name) }))
+            check(inspection.preview != null) { "请先填写作品基名并选择文件" }
+        }
+        check(sameTarget(target, session.value)) { "服务器已改变，请重新确认上传位置" }
+        check(draftFiles == queue.value?.drafts.orEmpty()) { "待传文件已改变，请核对本批后重试" }
+        graph.uploads.enqueue(libraryId, directory, mode, options)
     }
     fun renameDraft(id: String, name: String, onSaved: () -> Unit) = action { graph.uploads.renameDraft(id, name); onSaved() }
     fun removeDraft(id: String) = action { graph.uploads.discardDraft(id) }

@@ -7,7 +7,7 @@ data class Preferences(val theme: ThemeChoice = ThemeChoice.SYSTEM, val reducedM
 data class Library(val id: String, val name: String, val kind: String, val enabled: Boolean, val revision: Long)
 data class Directory(val path: String, val name: String)
 data class MediaCollection(val id: String, val name: String, val kind: String)
-data class UploadOptions(val authorIds: List<String> = emptyList(), val collectionId: String? = null, val note: String = "", val acquisitionSources: List<String> = emptyList())
+data class UploadOptions(val authorIds: List<String> = emptyList(), val collectionId: String? = null, val note: String = "", val acquisitionSources: List<String> = emptyList(), val family: String? = null)
 data class Asset(
     val id: String,
     val libraryId: String,
@@ -53,19 +53,36 @@ data class AssetQuery(
     val tag: String? = null,
     val favorite: Boolean? = null,
     val liked: Boolean? = null,
-    val sort: String = "added_desc",
+    val sort: String = "default",
     val source: String = "assets",
     val seed: Long = 1,
     val period: String = "week",
     val collectionId: String? = null,
+    val order: String = "desc",
+    val workKeys: List<String> = emptyList(),
+    val roleKeys: List<String> = emptyList(),
+    val tags: List<String> = emptyList(),
+    val tagMode: String = "any",
+    val history: Boolean? = null,
+    val viewRange: String = "all",
+    val playRange: String = "all",
+    val sizeRange: String = "all",
+    val timeRange: String = "all",
+    val fromYear: Int? = null,
+    val toYear: Int? = null,
 )
-data class Page<T>(val items: List<T>, val nextCursor: String?)
-data class Author(val id: String, val name: String, val kind: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long)
+data class DateCount(val date: String, val count: Long)
+data class Page<T>(val items: List<T>, val nextCursor: String?, val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList())
+data class FacetChoice(val key: String, val kind: String, val id: String, val name: String, val count: Long)
+data class FacetResult(val items: List<FacetChoice>, val nextCursor: String?, val totalMatched: Long, val totalOptions: Long)
+data class SearchWord(val id: String, val type: String, val name: String)
+data class Author(val id: String, val name: String, val kind: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long,
+    val fileCount: Long? = null, val viewCount: Long? = null, val acquisitionSources: List<String> = emptyList())
 data class TaskItem(val id: String, val fileName: String, val state: String, val message: String, val assetId: String?)
 data class TaskReport(val id: String, val revision: Long, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>)
 data class AuthorTaskReport(val id: String, val authorId: String, val state: String, val allowedFields: List<String>,
     val candidateBlocks: List<String>, val allowClear: Boolean, val maxUpdates: Int, val usedUpdates: Int, val createdAt: String, val expiresAt: String)
-data class HistoryEntry(val id: String, val assetId: String, val name: String, val kind: String, val positionMs: Long, val createdAt: String)
+data class HistoryEntry(val id: String, val assetId: String, val name: String, val kind: String, val positionMs: Long, val createdAt: String, val asset: Asset? = null)
 data class InventoryStats(val assets: Long, val images: Long, val videos: Long, val bytes: Long, val favorites: Long, val authors: Long, val events: Long, val trash: Long)
 data class ServerCapabilities(val aiConfigured: Boolean, val recommendations: Boolean, val rankings: Boolean)
 
@@ -114,3 +131,12 @@ class RequestGeneration {
 }
 
 fun canRetry(state: TransferState): Boolean = state == TransferState.FAILED || state == TransferState.WAITING
+
+/** Collection pages and chapters are assigned at completion, so an unresolved earlier item blocks its followers. */
+fun collectionPredecessor(task: Transfer, transfers: List<Transfer>): Transfer? {
+    val collection = task.options.collectionId ?: return null
+    return transfers.asSequence().takeWhile { it.id != task.id }.firstOrNull {
+        sameTarget(it.target, task.target) && it.libraryId == task.libraryId && it.options.collectionId == collection &&
+            it.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED)
+    }
+}

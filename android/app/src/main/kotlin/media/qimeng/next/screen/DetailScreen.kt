@@ -1,6 +1,8 @@
 package media.qimeng.next.screen
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -25,9 +27,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -36,14 +42,24 @@ import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.theme.isQimengDarkTheme
 import java.text.Collator
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(model: LibraryViewModel, id: String) {
     val asset by model.asset.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val assetAuthors by model.assetAuthors.collectAsStateWithLifecycle()
+    val message by model.message.collectAsStateWithLifecycle()
+    var chromeVisible by rememberSaveable(id) { mutableStateOf(true) }
+    var zoomImmersive by rememberSaveable(id) { mutableStateOf(false) }
+    var resetImage by rememberSaveable(id) { mutableIntStateOf(0) }
+    var playerActive by rememberSaveable(id) { mutableStateOf(false) }
+    var playbackChrome by rememberSaveable(id) { mutableStateOf(true) }
+    var showAuthorSheet by rememberSaveable(id) { mutableStateOf(false) }
+    var showEditor by rememberSaveable(id) { mutableStateOf(false) }
     var showTags by rememberSaveable(id) { mutableStateOf(false) }
     var showNote by rememberSaveable(id) { mutableStateOf(false) }
     var showInfo by rememberSaveable(id) { mutableStateOf(false) }
@@ -55,24 +71,47 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     LaunchedEffect(id) { if (asset?.id != id) model.openAsset(id) }
     val item = asset?.takeIf { it.id == id }
     if (item == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { TextButton(onClick = { model.openAsset(id) }, enabled = !busy) { Text("正在读取详情 · 点击重试") } }
+        Box(Modifier.fillMaxSize()) {
+            DetailTopChrome(true, -1, 0, model::back, {})
+            Column(Modifier.align(Alignment.Center).padding(16.dp)) {
+                message?.let { ErrorNotice(it) }
+                TextButton(onClick = { model.openAsset(id) }, enabled = !busy) { Text("正在读取详情 · 点击重试") }
+            }
+        }
         return
     }
     TrackDwell(item, model)
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (item.mediaType == "video") VideoStage(item, model) else ImageStage(item, model::adjacentAsset) { model.openAsset(item.id) }
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
+    val visible = chromeVisible && !zoomImmersive && !playerActive
+    DetailSystemBars(if (playerActive) playbackChrome else !zoomImmersive, lightIcons = playerActive || !visible)
+    BackHandler(item.mediaType != "video" && (!chromeVisible || zoomImmersive)) { resetImage++; chromeVisible = true }
+    val position = model.detailPosition(id)
+    val backdrop = if (visible) MaterialTheme.colorScheme.background else Color.Black
+    Box(Modifier.fillMaxSize().background(backdrop)) {
+        if (item.mediaType == "video") VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
+        else ImageStage(item, model::adjacentAsset, { model.openAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
+        DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))
+        DetailBottomChrome(visible, item, busy || item.liked, busy, { model.changeReaction(item.favorite, true) },
+            { model.changeReaction(!item.favorite, item.liked) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))
+    }
+    if (showAuthorSheet) ModalBottomSheet(onDismissRequest = { showAuthorSheet = false }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("作者", style = MaterialTheme.typography.titleLarge)
+            if (assetAuthors.isEmpty()) Text("该文件暂无关联作者")
+            assetAuthors.forEach { author ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AuthorAvatar(author.id, author.name, 56.dp)
+                    Text(author.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(onClick = { model.followAssetAuthor(author) }, enabled = !busy) { Text(if (author.followed) "已关注" else "关注") }
+                }
+                TextButton(onClick = { showAuthorSheet = false; model.openAuthor(author.id) }) { Text("进入作者主页") }
+            }
+            TextButton(onClick = { showAuthorSheet = false; showEditor = true }) { Text("编辑作者与来源") }
+        }
+    }
+    if (showEditor) ModalBottomSheet(onDismissRequest = { showEditor = false }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(item.name, style = MaterialTheme.typography.titleLarge)
             item.collectionId?.let { collection -> TextButton(onClick = { model.navigate("collection:$collection") }) { Text("同组作品${item.page?.let { " · 第 $it 项" }.orEmpty()}") } }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(item.favorite, { model.changeReaction(!item.favorite, item.liked) }, label = { Text("收藏") }, enabled = !busy,
-                    leadingIcon = { Icon(Icons.Outlined.Bookmark, null, Modifier.size(18.dp)) })
-                FilterChip(item.liked, { model.changeReaction(item.favorite, true) }, label = { Text(if (item.liked) "今日已赞 · ${item.likeCount}" else "点赞 · ${item.likeCount}") }, enabled = !busy && !item.liked,
-                    leadingIcon = { Icon(Icons.Outlined.FavoriteBorder, null, Modifier.size(18.dp)) })
-                TextButton(onClick = { showInfo = true }) { Text("详细信息") }
-            }
-            assetAuthors.forEach { author -> TextButton(onClick = { model.openAuthor(author.id) }) { Text(author.name) } }
-            if (assetAuthors.isEmpty()) item.authorId?.let { authorId -> TextButton(onClick = { model.openAuthor(authorId) }) { Text(item.authorName?.takeIf(String::isNotBlank) ?: "查看作者档案") } }
             TextButton(onClick = { showAuthors = true; model.loadAuthors() }) { Text("修改关联作者") }
             if (item.positionMs > 0 && item.positionVersion != item.version) Text("旧内容版本的播放位置为 ${item.positionMs / 1000} 秒。媒体已替换，本次从头播放。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("标签", style = MaterialTheme.typography.titleSmall)
@@ -88,12 +127,8 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
                 TextButton(onClick = { showRename = true }) { Text("改名 / 移动") }
                 TextButton(onClick = { showTrash = true }) { Text("移到回收站", color = MaterialTheme.colorScheme.error) }
             }
+            message?.let { ErrorNotice(it) }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            OutlinedButton(onClick = { model.adjacentAsset(-1) }) { Text("上一项") }
-            OutlinedButton(onClick = { model.adjacentAsset(1) }) { Text("下一项") }
-        }
-        Spacer(Modifier.height(24.dp))
     }
     if (showTags) TagsDialog(item, model) { showTags = false }
     if (showAuthors) AuthorsDialog(item, model) { showAuthors = false }
@@ -109,8 +144,9 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     if (showInfo) {
         val clipboard = LocalClipboardManager.current
         var copied by remember { mutableStateOf(false) }
-        AlertDialog(onDismissRequest = { showInfo = false }, title = { Text("详细信息") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ModalBottomSheet(onDismissRequest = { showInfo = false }) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("详细信息", style = MaterialTheme.typography.titleLarge)
                 Text(item.name)
                 if (item.originalName != item.name) Text("来源原名：${item.originalName}")
                 Text("${item.mediaType} · ${formatBytes(item.bytes)}")
@@ -119,7 +155,11 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
                 Text("入库时间：${item.addedAt}")
                 Text("内容版本 ${item.version}")
                 TextButton(onClick = { clipboard.setText(AnnotatedString(item.name)); copied = true }) { Text(if (copied) "已复制文件名" else "复制完整文件名") }
-            } }, confirmButton = { TextButton(onClick = { showInfo = false }) { Text("关闭") } })
+                Text("目录：${item.relativePath.substringBeforeLast('/', "")}")
+                Text("路径：${item.relativePath}")
+                TextButton(onClick = { showInfo = false; showEditor = true }) { Text("编辑作者与来源") }
+            }
+        }
     }
 }
 
@@ -149,15 +189,18 @@ private fun AuthorsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> 
 }
 
 @Composable
-private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> Unit) {
+private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> Unit, modifier: Modifier,
+    onToggleChrome: () -> Unit, onZoom: (Boolean) -> Unit, reset: Int) {
     var scale by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(1f) }
     var panX by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(0f) }
     var panY by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(0f) }
     val context = LocalContext.current
     var error by remember(asset.id) { mutableStateOf(false) }
     var retry by remember(asset.id) { mutableIntStateOf(0) }
-    Box(Modifier.fillMaxWidth().heightIn(min = 280.dp, max = 620.dp).aspectRatio(0.85f).background(Color.Black)
-        .pointerInput(asset.id) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f; panX = 0f; panY = 0f }) }
+    LaunchedEffect(scale > 1f) { onZoom(scale > 1f) }
+    LaunchedEffect(reset) { if (reset > 0) { scale = 1f; panX = 0f; panY = 0f } }
+    Box(modifier
+        .pointerInput(asset.id) { detectTapGestures(onTap = { onToggleChrome() }, onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f; panX = 0f; panY = 0f }) }
         .pointerInput(asset.id) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
@@ -189,9 +232,23 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
             onError = { error = true }, onSuccess = { error = false },
             modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = panX; translationY = panY })
         if (error) FilledTonalButton(onClick = { retry++; error = false; onReload() }) { Text("图片加载失败 · 重试") }
-        Row(Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
-            IconButton(onClick = { scale = (scale - 0.5f).coerceAtLeast(1f); if (scale == 1f) { panX = 0f; panY = 0f } }) { Icon(Icons.Outlined.ZoomOut, "缩小图片", tint = Color.White) }
-            IconButton(onClick = { scale = (scale + 0.5f).coerceAtMost(6f) }) { Icon(Icons.Outlined.ZoomIn, "放大图片", tint = Color.White) }
+    }
+}
+
+@Composable
+private fun DetailSystemBars(visible: Boolean, lightIcons: Boolean) {
+    val window = LocalActivity.current?.window ?: return
+    val view = LocalView.current
+    val dark = isQimengDarkTheme()
+    DisposableEffect(window) {
+        onDispose { WindowCompat.getInsetsController(window, view).show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    SideEffect {
+        WindowCompat.getInsetsController(window, view).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            isAppearanceLightStatusBars = !dark && !lightIcons
+            isAppearanceLightNavigationBars = !dark && !lightIcons
+            if (visible) show(WindowInsetsCompat.Type.systemBars()) else hide(WindowInsetsCompat.Type.systemBars())
         }
     }
 }

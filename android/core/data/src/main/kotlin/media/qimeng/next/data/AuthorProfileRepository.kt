@@ -79,18 +79,19 @@ class AuthorProfileRepository internal constructor(private val context: Context,
     suspend fun archive(authorId: String, archiveId: String): ProfileDocument {
         val target = target()
         val value = provider.api(target).getAuthorProfileArchive(id = authorId, archiveId = archiveId).bodyOrThrow()
-        return ProfileDocument(target, value.authorId, false, value.blocks.map { it.toModel(target) })
+        return ProfileDocument(target, authorId, false, value.blocks.map { it.toModel(target) })
     }
 }
 
 private fun AuthorProfileBlock.toModel(target: Session) = ProfileBlock(block.value, revision, propertyValues.toModel(), evidence.map { it.toModel() }, source.value, updatedAt, avatar?.toModel(target))
 private fun AuthorProfileValues.toModel() = ProfileValues(handle = handle, displayName = displayName, biographyOriginal = biographyOriginal,
     biographyZh = biographyZh, avatarSourceUrl = avatarSourceUrl, summary = summary, note = note,
-    accounts = accounts?.map { ProfileAccount(it.platform, it.identifier, it.url, it.publishingUrl) }, profileUrl = profileUrl, publicName = publicName, remark = remark)
+    accounts = accounts?.map { ProfileAccount(it.platform, it.identifier, it.url, it.publishingUrl) }, profileUrl = profileUrl, publicName = publicName, remark = remark, identityStatus = identityStatus?.value)
 private fun ProfileValues.toApi() = AuthorProfileValues(handle = handle, displayName = displayName, biographyOriginal = biographyOriginal,
     biographyZh = biographyZh, avatarSourceUrl = avatarSourceUrl, summary = summary, note = note,
     accounts = accounts?.map { AuthorProfileAccount(platform = it.platform, identifier = it.identifier, url = it.url, publishingUrl = it.publishingUrl) },
-    profileUrl = profileUrl, publicName = publicName, remark = remark)
+    profileUrl = profileUrl, publicName = publicName, remark = remark,
+    identityStatus = identityStatus?.let { value -> AuthorProfileValues.IdentityStatus.entries.first { it.value == value } })
 private fun AuthorProfileEvidence.toModel() = ProfileEvidence(url, title, fields, status.value, note, checkedAt)
 private fun ProfileEvidence.toApi() = AuthorProfileEvidence(url = url, title = title, fields = fields,
     status = AuthorProfileEvidence.Status.entries.first { it.value == status }, note = note, checkedAt = checkedAt)

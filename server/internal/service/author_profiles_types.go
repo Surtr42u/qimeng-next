@@ -26,6 +26,7 @@ type ProfileValues struct {
  Remark *string `json:"remark,omitempty"`
  Note *string `json:"note,omitempty"`
  Accounts *[]ProfileAccount `json:"accounts,omitempty"`
+ IdentityStatus *string `json:"identityStatus,omitempty"`
 }
 
 type ProfileEvidence struct {

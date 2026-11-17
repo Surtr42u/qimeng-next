@@ -41,7 +41,7 @@ func(s *Service)RecordEvent(ctx context.Context,w *Write,id string,in model.Even
  }
  in.AssetID=id;in.FileName=a.FileName;in.CreatedAt=occurred
  raw,e:=store.Encode(in);if e!=nil{return in,e};q,e:=w.Q();if e!=nil{return in,e}
- if _,e=q.ExecContext(ctx,"INSERT INTO events(event_id,asset_id,created_at,data) VALUES(?,?,?,?)",in.EventID,id,occurred.Format(time.RFC3339Nano),raw);e!=nil{return in,e}
+ if _,e=q.ExecContext(ctx,"INSERT INTO events(event_id,asset_id,created_at,data) VALUES(?,?,?,?)",in.EventID,id,dateKey(occurred),raw);e!=nil{return in,e}
  views,plays,seconds:=int64(0),int64(0),int64(0)
  switch in.Kind {case "view":views=1;case "play":plays=1;case "dwell":seconds=int64(in.Seconds)}
  if views+plays>0{if _,e=q.ExecContext(ctx,"INSERT INTO event_sessions VALUES(?,?,?,?,?)",id,in.SessionID,in.Kind,day,in.EventID);e!=nil{return in,e}}
@@ -54,9 +54,7 @@ func(s *Service)RecordEvent(ctx context.Context,w *Write,id string,in model.Even
 }
 
 func(s *Service)History(ctx context.Context,cursor string,limit int)(model.Page[model.Event],error){
- n,e:=limited(limit,50);if e!=nil{return model.Page[model.Event]{},e};o,e:=pageOffset(cursor,"history");if e!=nil{return model.Page[model.Event]{},e}
- a,e:=store.List[model.Event](ctx,s.DB.DB,`WITH latest AS (SELECT data,created_at,event_id,row_number() OVER(PARTITION BY asset_id ORDER BY created_at DESC,event_id DESC) AS position FROM events WHERE json_extract(data,'$.kind')='view') SELECT data FROM latest WHERE position=1 ORDER BY created_at DESC,event_id DESC LIMIT ? OFFSET ?`,n+1,o)
- return paged(a,n,o,"history"),e
+ return s.FilteredHistory(ctx,AssetFilter{Cursor:cursor,Limit:limit})
 }
 
 func(s *Service)Stats(ctx context.Context)(map[string]int64,error){

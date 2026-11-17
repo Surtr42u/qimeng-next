@@ -134,6 +134,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
             if (item.id == id && item.state != TransferState.SUCCEEDED) item.copy(state = TransferState.CANCELLED,
                 message = "已停止后续发送；已在服务器提交的结果保留") else item
         }) }
+        schedule()
     }
 
     suspend fun clearFinished() {

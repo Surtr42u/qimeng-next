@@ -2,13 +2,19 @@ package media.qimeng.next.data
 
 import media.qimeng.next.model.AIAccessGrant
 import media.qimeng.next.model.AIAccessPolicy
+import media.qimeng.next.model.Page
+import media.qimeng.next.sdk.api.DefaultApi
 import media.qimeng.next.sdk.model.AIDelegation
 import media.qimeng.next.sdk.model.AIDelegationPolicy
 import java.io.IOException
 
 class AIAccessRepository internal constructor(private val settings: SecureSettings, private val provider: ApiProvider) {
     private fun api() = provider.api(settings.session.value ?: error("请先登录服务器"))
-    suspend fun list(): List<AIAccessGrant> = api().listAIDelegations().bodyOrThrow().items.map { it.toModel() }
+    suspend fun list(state: String, cursor: String? = null): Page<AIAccessGrant> {
+        val page = api().listAIDelegations(cursor = cursor, limit = 50,
+            state = DefaultApi.StateListAIDelegations.entries.first { it.value == state }).bodyOrThrow()
+        return Page(page.items.map { it.toModel() }, page.nextCursor)
+    }
 
     /** The one-time secret is only returned to the creation callback, never journaled. */
     suspend fun create(policy: AIAccessPolicy): Pair<AIAccessGrant, String> {

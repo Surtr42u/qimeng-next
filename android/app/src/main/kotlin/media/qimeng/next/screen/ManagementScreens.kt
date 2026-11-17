@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -19,56 +20,108 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
+import media.qimeng.next.ui.component.*
+import media.qimeng.next.ui.icon.*
+import media.qimeng.next.ui.theme.softDaylightShadow
+import media.qimeng.next.ui.theme.isQimengDarkTheme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(model: LibraryViewModel) {
-    val session by model.session.collectAsStateWithLifecycle()
     val preferences by model.preferences.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 128.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        PageHeader("我的")
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Text("我的内容", style = MaterialTheme.typography.titleSmall)
-            SettingsRow("收藏", "保存喜欢的作品", Icons.Outlined.Bookmark) { model.navigate("favorites") }
-            SettingsRow("浏览历史", "继续上次播放与浏览", Icons.Outlined.History) { model.navigate("history") }
-            SettingsRow("作者", "作者档案与关注", Icons.Outlined.People) { model.navigate("authors") }
-        }
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Text("影库与连接", style = MaterialTheme.typography.titleSmall)
-            SettingsRow("上传新文件", "系统文件、分享与持久传输队列", Icons.Outlined.Upload) { model.navigate("upload") }
-            SettingsRow("任务中心", "智能整理、逐项结果与等待原因", Icons.Outlined.Assignment) { model.navigate("reports") }
-            SettingsRow("回收站", "恢复误删的媒体", Icons.Outlined.DeleteOutline) { model.navigate("trash") }
-            SettingsRow("标签", "维护词表与媒体关联", Icons.Outlined.Label) { model.navigate("vocabulary:tags") }
-            SettingsRow("原作 / 出处", "维护名称与别名", Icons.Outlined.MenuBook) { model.navigate("vocabulary:sources") }
-            SettingsRow("角色", "维护角色及所属出处", Icons.Outlined.Badge) { model.navigate("vocabulary:characters") }
-            SettingsRow("服务器", session?.label.orEmpty(), Icons.Outlined.Dns) { model.navigate("server") }
-        }
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Text("使用偏好", style = MaterialTheme.typography.titleSmall)
-            SettingsRow("外观", "${themeName(preferences.theme)} · ${if (preferences.glass) "玻璃导航" else "实色导航"}", Icons.Outlined.Palette) { model.navigate("appearance") }
-            SettingsRow("推荐偏好", "选择适合你的浏览方式", Icons.Outlined.Tune) { model.navigate("recommendation") }
-            SettingsRow("AI 接入", "只读与写入权限、连接凭据和撤销", Icons.Outlined.Key) { model.navigate("ai-access") }
-        }
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Text("绮梦 Next · 0.1.0-dev", style = MaterialTheme.typography.titleSmall)
-            Text("媒体与业务数据由当前连接的服务器保存。", style = MaterialTheme.typography.bodySmall)
+    val inventory by model.statistics.collectAsStateWithLifecycle()
+    val recommendation by model.recommendationPreferences.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
+    var confirmLogout by rememberSaveable { mutableStateOf(false) }
+    var showPreferences by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { model.loadStatistics(); if (recommendation == null) model.loadRecommendationPreferences() }
+    // Presentation hierarchy and dimensions retained from the existing SettingsScreen.
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 128.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { Column(Modifier.padding(top = 12.dp)) {
+            Text("我的", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            QimengPageIntro("你的收藏、浏览足迹与影库偏好")
+            Text("当前媒体库", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InventoryCountCard("图片", inventory?.images, Modifier.weight(1f))
+                InventoryCountCard("视频", inventory?.videos, Modifier.weight(1f))
+            }
+        } }
+        item { QimengSettingsGroup("我的内容") {
+            QimengSettingsRow(FavoriteBookmarkIcon, "收藏", "留住喜欢的图片和视频", { model.navigate("favorites") })
+            QimengSettingsRow(HistoryRecentIcon, "浏览历史", "接着查看最近打开的作品", { model.navigate("history") })
+            QimengSettingsRow(AuthorPeopleIcon, "作者管理", "名称、别名、来源与关注", { model.navigate("authors") })
+        } }
+        item { QimengSettingsGroup("影库与连接") {
+            QimengSettingsRow(CloudUploadIcon, "数据管理", "上传、媒体库、词表与备份", { model.navigate("data-manage") })
+            QimengSettingsRow(ServerDnsIcon, "服务器", "连接地址与登录", { model.navigate("server") })
+        } }
+        item { QimengSettingsGroup("使用偏好") {
+            QimengSettingsRow(PaletteColorIcon, "外观", "${themeName(preferences.theme)} · ${if (preferences.glass) "液态玻璃" else "纯色"}", { model.navigate("appearance") })
+            val preset = recommendation?.presets?.entries?.find { it.value == recommendation?.weights }?.key
+            QimengSettingsRow(TuneSlidersIcon, "推荐偏好", if (recommendation == null) "正在读取…" else mapOf("balanced" to "均衡", "familiar" to "熟悉内容", "explore" to "探索", "fresh" to "新鲜内容")[preset] ?: "自定义偏好", { showPreferences = true })
+            QimengSettingsRow(Icons.Outlined.Key, "AI 接入", "只读与写入权限、连接凭据和撤销", { model.navigate("ai-access") })
+        } }
+        item { QimengSettingsGroup("关于") { QimengSettingsRow(InfoCircleIcon, "版本信息", "客户端 0.1.0-dev", null) } }
+        item { OutlinedButton(onClick = { confirmLogout = true }, enabled = !busy,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) { Text("退出登录") } }
+    }
+    if (confirmLogout) AlertDialog(onDismissRequest = { confirmLogout = false }, title = { Text("退出当前登录？") },
+        text = { Text("退出后可重新连接服务器，未完成的传输记录会保留。") },
+        confirmButton = { TextButton(onClick = { confirmLogout = false; model.logout() }, enabled = !busy) { Text("退出登录") } },
+        dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("取消") } })
+    if (showPreferences) ModalBottomSheet(onDismissRequest = { if (!busy) showPreferences = false }) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.8f)) { RecommendationSettings(model) }
+    }
+}
+
+/** Source: existing SettingsCards.CountCard; only the count type changes to the API's Long. */
+@Composable
+internal fun InventoryCountCard(title: String, count: Long?, modifier: Modifier = Modifier) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(16.dp),
+        shadowElevation = if (isQimengDarkTheme()) 1.dp else 0.dp,
+        modifier = modifier.heightIn(min = 88.dp).softDaylightShadow()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.Center) {
+            Text(title, style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+            Text(count?.toString() ?: "—", style = MaterialTheme.typography.headlineMedium.copy(fontSize = 24.sp, fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
 
 @Composable
-private fun SettingsRow(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, Modifier.padding(end = 16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+fun DataManageScreen(model: LibraryViewModel) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        QimengPageIntro("从添加作品到整理和备份，照顾好你的媒体库。")
+        QimengSettingsGroup("入库与整理") {
+            QimengSettingsRow(CloudUploadIcon, "上传文件", "从系统文件中选择图片和视频", { model.navigate("upload") })
+            QimengSettingsRow(FolderManagedIcon, "库管理", "注册目录、扫描内容与管理媒体库", { model.navigate("libraries") })
+            QimengSettingsRow(Icons.Outlined.Assignment, "任务中心", "普通上传与智能整理的逐项结果", { model.navigate("reports") })
         }
-        Icon(Icons.Outlined.ChevronRight, null)
+        QimengSettingsGroup("词表与关联") {
+            QimengSettingsRow(VocabularyBookIcon, "词表维护", "编辑出处、角色与标签", { model.navigate("vocabulary-manage") })
+        }
+        QimengSettingsGroup("备份与存储") {
+            QimengSettingsRow(Icons.Outlined.DeleteOutline, "回收站", "恢复移除的媒体", { model.navigate("trash") })
+        }
+    }
+}
+
+@Composable
+fun VocabularyManageScreen(model: LibraryViewModel) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        QimengSettingsGroup("词表与关联") {
+            QimengSettingsRow(LabelTagIcon, "标签", "维护词表与媒体关联", { model.navigate("vocabulary:tags") })
+            QimengSettingsRow(VocabularyBookIcon, "原作 / 出处", "维护名称与别名", { model.navigate("vocabulary:sources") })
+            QimengSettingsRow(AuthorPeopleIcon, "角色", "维护角色及所属出处", { model.navigate("vocabulary:characters") })
+        }
     }
 }
 
@@ -104,7 +157,7 @@ fun AppearanceScreen(model: LibraryViewModel) {
 }
 
 @Composable
-fun ServerScreen(model: LibraryViewModel) {
+fun ServerScreen(model: LibraryViewModel, librariesOnly: Boolean = false) {
     val session by model.session.collectAsStateWithLifecycle()
     var confirm by rememberSaveable { mutableStateOf(false) }
     var create by rememberSaveable { mutableStateOf(false) }
@@ -112,13 +165,13 @@ fun ServerScreen(model: LibraryViewModel) {
     val libraries by model.libraries.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        ContentCard {
+        if (!librariesOnly) ContentCard {
             Text("当前连接", style = MaterialTheme.typography.titleMedium)
             Text(session?.label.orEmpty()); Text(session?.baseUrl.orEmpty())
             Text("切换服务器前，现有传输始终保留原来的目标。", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = model::refreshConnection) { Text("检查连接") }
         }
-        ContentCard {
+        if (librariesOnly) ContentCard {
             Text("影库", style = MaterialTheme.typography.titleMedium)
             libraries.forEach { library ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -129,8 +182,10 @@ fun ServerScreen(model: LibraryViewModel) {
             }
             TextButton(onClick = { create = true }) { Text("创建影库") }
         }
-        OutlinedButton(onClick = { confirm = true }) { Text("退出并切换服务器") }
-        TextButton(onClick = { disconnect = true }) { Text("服务器离线时，仅断开本机") }
+        if (!librariesOnly) {
+            OutlinedButton(onClick = { confirm = true }) { Text("退出并切换服务器") }
+            TextButton(onClick = { disconnect = true }) { Text("服务器离线时，仅断开本机") }
+        }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("退出当前登录？") },
         text = { Text("将撤销当前会话。尚未发送的传输保留，重新连接原服务器后可重试。") },
@@ -170,7 +225,8 @@ fun AuthorsScreen(model: LibraryViewModel) {
         items(state.items, key = { it.id }) { author ->
             ContentCard(Modifier.fillMaxWidth().clickable { model.openAuthor(author.id) }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(author.name.take(1), Modifier.padding(end = 18.dp), style = MaterialTheme.typography.headlineMedium)
+                    AuthorAvatar(author.id, author.name)
+                    Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) { Text(author.name, style = MaterialTheme.typography.titleMedium); if (author.aliases.isNotEmpty()) Text(author.aliases.joinToString(" · "), style = MaterialTheme.typography.bodySmall) }
                     if (author.followed) Text("已关注", color = MaterialTheme.colorScheme.primary)
                 }
@@ -193,13 +249,18 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
     if (item == null) { TextButton(onClick = { model.openAuthor(id) }, enabled = !busy) { Text("读取作者 · 重试") }; return }
     Column(Modifier.fillMaxSize()) {
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Text(item.name, style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                AuthorAvatar(item.id, item.name, 64.dp)
+                Text(item.name, style = MaterialTheme.typography.headlineSmall)
+            }
             if (item.aliases.isNotEmpty()) Text(item.aliases.joinToString(" / "))
             if (item.biography.isNotBlank()) Text(item.biography, Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()))
             item.sources.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            AuthorProfileSummary(item.id)
+            TextButton(onClick = { model.navigate("profile:${item.id}") }) { Text("完整资料、账号与候选") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = model::followAuthor, enabled = !busy) { Text(if (item.followed) "取消关注" else "关注作者") }
-                if (item.kind != "cos") TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑档案") }
+                if (item.kind != "cos") TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑名称与基本信息") }
             }
             if (item.kind != "cos") Row {
                 TextButton(onClick = { model.loadAuthors(); merging = true }, enabled = !busy) { Text("合并重复作者") }

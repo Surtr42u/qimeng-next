@@ -23,6 +23,8 @@ type fileIntent struct {
  PrincipalID,Operation,Key,InputHash string
  Before *model.Asset
  After model.Asset
+ COSAuthor *model.Author `json:"cosAuthor,omitempty"`
+ COSWork *model.CosWork `json:"cosWork,omitempty"`
  State string
 }
 func assetPath(a model.Asset)string{if a.Trashed{if a.StorageLayoutVersion>=2{return "library-trash/"+a.LibraryID+"/"+a.ID+"/"+a.FileName};return "trash/"+a.ID+"/"+a.FileName};return "libraries/"+a.LibraryID+"/"+a.RelativePath}
@@ -71,6 +73,7 @@ func(s *Service)applyFile(j fileIntent)error{
 }
 func(s *Service)commitFile(ctx context.Context,q store.Querier,j fileIntent)error{
  var receipt any=j.After;status:=200
+ if e:=saveCOSPlacement(ctx,q,j.COSAuthor,j.COSWork);e!=nil{return e}
  if j.Kind=="purge"{if _,e:=q.ExecContext(ctx,"DELETE FROM assets WHERE id=?",j.After.ID);e!=nil{return e}}else if e:=store.SaveAsset(ctx,q,j.After);e!=nil{return e}
  if j.UploadID!=""{
   u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};u.AssetID=j.After.ID;u.State="ingested";u.ErrorCode="";u.ErrorMessage="";if e=store.SaveUpload(ctx,q,u);e!=nil{return e}
@@ -90,6 +93,7 @@ func(s *Service)finishFile(ctx context.Context,j fileIntent)error{
  j.State="done";return s.saveIntent(ctx,j)
 }
 func(s *Service)runFile(ctx context.Context,w *Write,j fileIntent)(model.Asset,error){
+ if j.Kind=="ingest"||j.Kind=="move"||j.Kind=="restore"{var e error;j.COSAuthor,j.COSWork,e=s.planCOSPlacement(ctx,s.DB.DB,&j.After);if e!=nil{return j.After,e}}
  j,e:=s.prepareFile(ctx,w,j);if e!=nil{return j.After,e}
  if j.State=="prepared"{if e=s.applyFile(j);e!=nil{return j.After,e}}
  q,e:=w.Q();if e!=nil{return j.After,e};if e=s.commitFile(ctx,q,j);e!=nil{return j.After,e}

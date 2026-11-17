@@ -11,11 +11,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    flavorDimensions += "runtime"
+    productFlavors {
+        create("client") { dimension = "runtime" }
+        if (providers.gradleProperty("qimeng.embedded").orNull != "false") create("embedded") { dimension = "runtime" }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    packaging {
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libqimeng*.so", "**/libffmpeg_cli.so", "**/libffprobe_cli.so") }
+    }
 }
 kotlin { jvmToolchain(17) }
 dependencies {
+    implementation(project(":runtime-api"))
+    if (providers.gradleProperty("qimeng.embedded").orNull != "false") add("embeddedImplementation", project(":embedded"))
     implementation(project(":core:model"))
     implementation(project(":core:data"))
     implementation(project(":core:ui"))

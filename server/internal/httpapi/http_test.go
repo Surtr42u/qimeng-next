@@ -89,6 +89,16 @@ func TestCookieOriginAndInvalidMedia(t *testing.T){
  r=f.json("POST","/uploads","invalid-path-upload",map[string]any{"libraryId":f.library,"fileName":"../escape.png","size":10,"mimeType":"image/png","mode":"ordinary"},400);io.Copy(io.Discard,r.Result().Body)
 }
 
+func TestExplicitHTTPSProxyOriginKeepsHostAndSchemeChecks(t *testing.T){
+ f:=setup(t);f.s.Config.SecureCookies=true
+ body:=[]byte(`{"token":"`+testSecret+`","label":"Synthetic HTTPS proxy"}`)
+ response:=f.request("POST","/sessions","","",body,map[string]string{"Origin":"https://example.com"});if response.Code!=201{t.Fatal(response.Body.String())}
+ cookies:=response.Result().Cookies();if len(cookies)!=1||!cookies[0].Secure{t.Fatal("HTTPS deployment did not issue a secure cookie")}
+ for _,origin:=range []string{"https://unrelated.invalid","http://example.com"}{r:=f.request("POST","/sessions","","",body,map[string]string{"Origin":origin});if r.Code!=403{t.Fatal("scheme or host mismatch accepted")}}
+ f.s.Config.SecureCookies=false
+ forged:=f.request("POST","/sessions","","",body,map[string]string{"Origin":"https://example.com","X-Forwarded-Proto":"https"});if forged.Code!=403{t.Fatal("untrusted forwarded header changed configured origin")}
+}
+
 func TestExpectedSourceHashRejectsMixedOrChangedBytesBeforePublication(t *testing.T){
  f:=setup(t);body:=pngBytes(t,33);wrong:=sha256.Sum256([]byte("a different source snapshot"))
  in:=map[string]any{"libraryId":f.library,"fileName":"hash-guard.png","size":len(body),"mimeType":"image/png","mode":"ordinary","expectedHash":fmt.Sprintf("%x",wrong)}

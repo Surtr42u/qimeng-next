@@ -15,6 +15,7 @@ class DataGraph private constructor(context: Context) {
     val management = ManagementRepository(settings, provider)
     val aiAccess = AIAccessRepository(settings, provider)
     val authorProfiles = AuthorProfileRepository(context, settings, provider)
+    val naming = NamingRepository(settings, provider)
     val uploads = UploadRepository(context, queue, settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

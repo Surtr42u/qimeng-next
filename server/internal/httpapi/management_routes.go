@@ -7,6 +7,8 @@ import (
 )
 
 func(a *API)managementRoutes(){
+ a.get("/acquisition-vocabulary",func(r *http.Request)(any,error){return a.s.AcquisitionVocabulary(r.Context())})
+ write[service.AcquisitionVocabularyUpdate](a,"PUT","/acquisition-vocabulary",true,func(r *http.Request,w *service.Write,in service.AcquisitionVocabularyUpdate)(any,int,error){v,e:=a.s.UpdateAcquisitionVocabulary(r.Context(),w,in);return v,200,e})
  write[struct{}](a,"DELETE","/authors/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){rev,e:=revision(r);if e!=nil{return nil,0,e};return nil,204,a.s.DeleteAuthor(r.Context(),w,r.PathValue("id"),rev)})
  write[service.AuthorMergeInput](a,"POST","/authors/merge",true,func(r *http.Request,w *service.Write,in service.AuthorMergeInput)(any,int,error){v,e:=a.s.MergeAuthors(r.Context(),w,in);return v,200,e})
  write[service.LibraryUpdate](a,"PATCH","/libraries/{id}",true,func(r *http.Request,w *service.Write,in service.LibraryUpdate)(any,int,error){v,e:=a.s.UpdateLibrary(r.Context(),w,r.PathValue("id"),in);return v,200,e})

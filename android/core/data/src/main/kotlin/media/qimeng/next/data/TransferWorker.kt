@@ -51,6 +51,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             val pending = graph.queue.state.value!!.transfers.filter { it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) }
             if (pending.isNotEmpty()) setForeground(notification())
             pending.forEach { task ->
+                if (collectionPredecessor(task, graph.queue.state.value!!.transfers) != null) {
+                    update(task.id) { it.copy(message = "等待同一集合前面的文件完成；请先处理前项失败或明确停止前项") }
+                    return@forEach
+                }
                 if (!sameTarget(task.target, graph.settings.session.value)) {
                     update(task.id) { it.copy(state = TransferState.WAITING, message = "请连接任务原来的服务器") }
                     return@forEach
@@ -98,6 +102,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 mode = UploadCreate.Mode.entries.first { it.value == task.mode.name.lowercase() }, batchId = task.batchId,
                 sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory, authorIds = task.options.authorIds,
                 collectionId = task.options.collectionId, note = task.options.note, acquisitionSources = task.options.acquisitionSources,
+                family = task.options.family,
                 expectedHash = task.sourceHash, originalFileName = task.originalName)).bodyOrThrow()
         } else api.getUpload(task.uploadId!!).bodyOrThrow()
         update(task.id) { it.copy(uploadId = upload.id, offset = upload.offset) }

@@ -29,11 +29,11 @@ func fail(w http.ResponseWriter,err error){
 func errorType(err error)string{if err==nil{return "none"};return "io_or_persistence"}
 func respond(w http.ResponseWriter,status int,value any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.Header().Set("Cache-Control","no-store");w.WriteHeader(status);if status!=204{if e:=json.NewEncoder(w).Encode(value);e!=nil{slog.Error("response write failed")}}}
 func result(w http.ResponseWriter,r service.Result){w.Header().Set("Content-Type","application/json; charset=utf-8");w.Header().Set("Cache-Control","no-store");w.WriteHeader(r.Status);if len(r.Body)>0{if _,e:=w.Write(r.Body);e!=nil{slog.Error("response write failed")}}}
-func originOK(r *http.Request)bool{o:=r.Header.Get("Origin");if o==""{return true};u,e:=url.Parse(o);if e!=nil{return false};scheme:="http";if r.TLS!=nil{scheme="https"};return u.Scheme==scheme&&u.Host==r.Host&&u.User==nil}
+func originOK(r *http.Request,secureOrigin ...bool)bool{o:=r.Header.Get("Origin");if o==""{return true};u,e:=url.Parse(o);if e!=nil{return false};scheme:="http";if r.TLS!=nil||len(secureOrigin)>0&&secureOrigin[0]{scheme="https"};return u.Scheme==scheme&&u.Host==r.Host&&u.User==nil}
 func(a *API)auth(next http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){
  token:=strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ");if token==r.Header.Get("Authorization")&&token!=""{fail(w,service.Fail(401,"invalid_authorization","仅支持 Bearer 凭据。"));return}
  cookieAuth:=false;if token==""{if c,e:=r.Cookie("qimeng_session");e==nil{token=c.Value;cookieAuth=true}}
- if cookieAuth&&r.Method!="GET"&&r.Method!="HEAD"&&!originOK(r){fail(w,service.Fail(403,"origin_denied","请求来源与当前服务不一致。"));return}
+ if cookieAuth&&r.Method!="GET"&&r.Method!="HEAD"&&!originOK(r,a.s.Config.SecureCookies){fail(w,service.Fail(403,"origin_denied","请求来源与当前服务不一致。"));return}
  p,e:=a.s.Authenticate(r.Context(),token);if e!=nil{fail(w,e);return};if e=service.Authorize(p,"read","");e!=nil{fail(w,e);return};next(w,r.WithContext(context.WithValue(r.Context(),principalKey{},p)))
 }}
 func(a *API)get(pattern string,fn func(*http.Request)(any,error)){a.mux.HandleFunc("GET /api/v1"+pattern,a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=fn(r);if e!=nil{fail(w,e);return};respond(w,200,v)}))}
@@ -61,7 +61,7 @@ func(a *API)routes(){
  a.mux.HandleFunc("GET /healthz",func(w http.ResponseWriter,r *http.Request){if e:=a.s.DB.DB.PingContext(r.Context());e!=nil{fail(w,e);return};respond(w,200,map[string]string{"status":"ok"})})
  a.mux.HandleFunc("GET /api/v1/instance",func(w http.ResponseWriter,r *http.Request){respond(w,200,map[string]any{"id":a.s.InstanceID,"name":"绮梦 Next","apiVersion":"0.1.0","capabilities":map[string]bool{"aiConfigured":a.s.Config.AIConfigured,"recommendations":true,"rankings":true,"stats":true,"backups":true,"migration":false}})})
  a.mux.HandleFunc("POST /api/v1/sessions",func(w http.ResponseWriter,r *http.Request){
-  if !originOK(r){fail(w,service.Fail(403,"origin_denied","请求来源不匹配。"));return};in,_,e:=decode[struct{Token string `json:"token"`;Label string `json:"label"`}](w,r);if e!=nil{fail(w,e);return};p,e:=a.s.Authenticate(r.Context(),in.Token);if e!=nil{fail(w,e);return}
+  if !originOK(r,a.s.Config.SecureCookies){fail(w,service.Fail(403,"origin_denied","请求来源不匹配。"));return};in,_,e:=decode[struct{Token string `json:"token"`;Label string `json:"label"`}](w,r);if e!=nil{fail(w,e);return};p,e:=a.s.Authenticate(r.Context(),in.Token);if e!=nil{fail(w,e);return}
   out,e:=a.s.Run(r.Context(),p,"createSession","",nil,func(tx *service.Write)(any,int,error){v,e:=a.s.CreateSession(r.Context(),tx,in.Label,"",nil);return v,201,e});if e!=nil{fail(w,e);return};var session model.Principal;if e=json.Unmarshal(out.Body,&session);e!=nil{fail(w,e);return};http.SetCookie(w,&http.Cookie{Name:"qimeng_session",Value:session.Token,Path:"/",HttpOnly:true,Secure:a.s.Config.SecureCookies,SameSite:http.SameSiteStrictMode,Expires:session.ExpiresAt});result(w,out)
  })
  a.get("/sessions/current",func(r *http.Request)(any,error){return principal(r),nil})
@@ -71,7 +71,7 @@ func(a *API)routes(){
  a.get("/libraries",func(r *http.Request)(any,error){return a.s.Libraries(r.Context())})
  a.get("/storages",func(r *http.Request)(any,error){return a.s.Storages(),nil})
  write[libraryCreateRequest](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in libraryCreateRequest)(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind,in.StorageID,in.RootRelativePath);return v,201,e})
- a.get("/assets",func(r *http.Request)(any,error){q:=r.URL.Query();n,e:=limit(r);if e!=nil{return nil,e};favorite,e:=boolQuery(r,"favorite");if e!=nil{return nil,e};liked,e:=boolQuery(r,"liked");if e!=nil{return nil,e};return a.s.Assets(r.Context(),service.AssetFilter{LibraryID:q.Get("libraryId"),Q:q.Get("q"),MediaType:q.Get("mediaType"),Kind:q.Get("kind"),AuthorID:q.Get("authorId"),CollectionID:q.Get("collectionId"),Tag:q.Get("tag"),Sort:q.Get("sort"),Cursor:q.Get("cursor"),Favorite:favorite,Liked:liked,Limit:n})})
+ a.get("/assets",func(r *http.Request)(any,error){f,e:=assetFilterRequest(r);if e!=nil{return nil,e};return a.s.Assets(r.Context(),f)})
  a.get("/assets/{id}",func(r *http.Request)(any,error){return a.s.Asset(r.Context(),r.PathValue("id"))})
  write[service.AssetUpdate](a,"PATCH","/assets/{id}",false,func(r *http.Request,w *service.Write,in service.AssetUpdate)(any,int,error){v,e:=a.s.UpdateAsset(r.Context(),w,r.PathValue("id"),in);return v,200,e})
  write[struct{ExpectedRevision int64 `json:"expectedRevision"`;Tags []string `json:"tags"`}](a,"PUT","/assets/{id}/tags",true,func(r *http.Request,w *service.Write,in struct{ExpectedRevision int64 `json:"expectedRevision"`;Tags []string `json:"tags"`})(any,int,error){v,e:=a.s.UpdateTags(r.Context(),w,r.PathValue("id"),in.ExpectedRevision,in.Tags);return v,200,e})
@@ -82,8 +82,8 @@ func(a *API)routes(){
  write[struct{ExpectedRevision int64 `json:"expectedRevision"`;RelativePath string `json:"relativePath"`}](a,"POST","/assets/{id}/move",true,func(r *http.Request,w *service.Write,in struct{ExpectedRevision int64 `json:"expectedRevision"`;RelativePath string `json:"relativePath"`})(any,int,error){v,e:=a.s.Move(r.Context(),w,r.PathValue("id"),in.RelativePath,in.ExpectedRevision);return v,200,e})
  write[struct{}](a,"DELETE","/assets/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){rev,e:=revision(r);if e!=nil{return nil,0,e};v,e:=a.s.Trash(r.Context(),w,r.PathValue("id"),rev);return v,200,e})
  a.get("/tags",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Tags(r.Context(),r.URL.Query().Get("cursor"),n)})
- a.get("/history",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.History(r.Context(),r.URL.Query().Get("cursor"),n)})
- a.get("/authors",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};f,e:=boolQuery(r,"following");if e!=nil{return nil,e};return a.s.Authors(r.Context(),r.URL.Query().Get("q"),r.URL.Query().Get("cursor"),n,f!=nil&&*f)})
+ a.get("/history",func(r *http.Request)(any,error){f,e:=assetFilterRequest(r);if e!=nil{return nil,e};return a.s.FilteredHistory(r.Context(),f)})
+ a.get("/authors",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};f,e:=boolQuery(r,"following");if e!=nil{return nil,e};return a.s.Authors(r.Context(),r.URL.Query().Get("q"),r.URL.Query().Get("cursor"),n,f!=nil&&*f,r.URL.Query().Get("kind"),r.URL.Query().Get("sort"))})
  a.get("/authors/{id}",func(r *http.Request)(any,error){return a.s.Author(r.Context(),r.PathValue("id"))})
  write[service.AuthorInput](a,"POST","/authors",true,func(r *http.Request,w *service.Write,in service.AuthorInput)(any,int,error){v,e:=a.s.CreateAuthor(r.Context(),w,in);return v,201,e})
  write[service.AuthorUpdate](a,"PATCH","/authors/{id}",true,func(r *http.Request,w *service.Write,in service.AuthorUpdate)(any,int,error){v,e:=a.s.UpdateAuthor(r.Context(),w,r.PathValue("id"),in);return v,200,e})
@@ -106,6 +106,7 @@ func(a *API)routes(){
  a.authorProfileRoutes()
  a.namingRoutes()
  a.migrationRoutes()
+ a.browseRoutes()
 }
 func(a *API)uploadRoutes(){
  write[model.UploadInput](a,"POST","/uploads",true,func(r *http.Request,w *service.Write,in model.UploadInput)(any,int,error){v,e:=a.s.CreateUpload(r.Context(),w,in);return v,201,e})

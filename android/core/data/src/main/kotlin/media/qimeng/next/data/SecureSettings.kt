@@ -23,14 +23,19 @@ class SecureSettings(context: Context) {
     private val mutableSession = MutableStateFlow<Session?>(null)
     private val mutablePreferences = MutableStateFlow(Preferences())
     private val mutableError = MutableStateFlow<String?>(null)
+    private val mutableRecentServers = MutableStateFlow<List<String>>(emptyList())
+    private val mutableTransportRevision = MutableStateFlow(0L)
     val session = mutableSession.asStateFlow()
     val preferences = mutablePreferences.asStateFlow()
     val error = mutableError.asStateFlow()
+    val recentServers = mutableRecentServers.asStateFlow()
+    val transportRevision = mutableTransportRevision.asStateFlow()
 
     init {
         try {
             storage.getString("session", null)?.let { mutableSession.value = gson.fromJson(it, Session::class.java) }
             storage.getString("preferences", null)?.let { mutablePreferences.value = gson.fromJson(it, Preferences::class.java) }
+            storage.getString("recent-servers", null)?.let { mutableRecentServers.value = gson.fromJson(it, Array<String>::class.java).toList() }
         } catch (_: Exception) {
             mutableError.value = "连接配置无法读取，请重新登录。原有传输记录仍保留。"
         }
@@ -48,13 +53,23 @@ class SecureSettings(context: Context) {
     }
 
     @Synchronized
-    fun saveSession(session: Session, token: String) {
+    fun saveSession(session: Session, token: String, certificateDerBase64: String? = null, rememberAddress: Boolean = false) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray()), Base64.NO_WRAP)
-        check(storage.edit().putString("session", gson.toJson(session)).putString("token", encrypted).commit()) { "无法保存登录凭据" }
+        val recent = if (rememberAddress) (listOf(session.baseUrl) + mutableRecentServers.value).distinct().take(5) else mutableRecentServers.value
+        check(storage.edit().putString("session", gson.toJson(session)).putString("token", encrypted)
+            .putString("certificate", certificateDerBase64).putString("recent-servers", gson.toJson(recent)).commit()) { "无法保存登录凭据" }
         mutableSession.value = session
+        mutableTransportRevision.value++
+        mutableRecentServers.value = recent
         mutableError.value = null
+    }
+
+    @Synchronized
+    fun certificateFor(target: Session): String? {
+        check(sameTarget(target, mutableSession.value)) { "连接已变更" }
+        return storage.getString("certificate", null)
     }
 
     fun savePreferences(preferences: Preferences) {
@@ -69,8 +84,9 @@ class SecureSettings(context: Context) {
 
     @Synchronized
     fun clearSession() {
-        check(storage.edit().remove("session").remove("token").commit()) { "无法清除登录凭据" }
+        check(storage.edit().remove("session").remove("token").remove("certificate").commit()) { "无法清除登录凭据" }
         mutableSession.value = null
+        mutableTransportRevision.value++
     }
 
     private fun key(): SecretKey {

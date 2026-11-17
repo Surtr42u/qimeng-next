@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -82,7 +83,7 @@ fun LiquidNavigation(items: List<NavigationItem>, selected: Int, backdrop: Glass
         Box(Modifier.matchParentSize().pointerInput(Unit) { detectTapGestures { } })
         Row(Modifier.fillMaxWidth().selectableGroup().padding(6.dp)) {
             items.forEachIndexed { index, item ->
-                Column(Modifier.weight(1f).heightIn(min = 60.dp).clip(shape)
+                Column(Modifier.weight(1f).heightIn(min = 60.dp).clip(shape).testTag("navigation:${item.key}")
                     .selectable(selected = index == selected, role = Role.Tab, onClick = {
                         if (index != selected) {
                             if (!noMotion) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

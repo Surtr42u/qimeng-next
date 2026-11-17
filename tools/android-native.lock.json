@@ -1,0 +1,17 @@
+{
+  "ndk": "28.2.13676358",
+  "androidApi": 26,
+  "pageAlignment": 16384,
+  "ffmpeg": {
+    "repository": "https://github.com/FFmpeg/FFmpeg.git",
+    "version": "9.0.2",
+    "commit": "946fcce07b6dcd0331c8cc609192aeff5e1924f8",
+    "license": "LGPL-2.1-or-later"
+  },
+  "dav1d": {
+    "repository": "https://github.com/videolan/dav1d.git",
+    "version": "1.5.4",
+    "commit": "54706fc6bc0cdecab7e9593974a4039cc038fca7",
+    "license": "BSD-2-Clause"
+  }
+}

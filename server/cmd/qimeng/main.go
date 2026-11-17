@@ -22,7 +22,7 @@ func main(){if e:=run();e!=nil{slog.Error("service stopped","reason","configurat
 func run()error{
  if zone:=os.Getenv("QIMENG_TIMEZONE");zone!=""{location,e:=time.LoadLocation(zone);if e!=nil{return e};time.Local=location}
  var storages map[string]string;if raw:=os.Getenv("QIMENG_STORAGE_ROOTS");raw!=""{if e:=json.Unmarshal([]byte(raw),&storages);e!=nil{return errors.New("QIMENG_STORAGE_ROOTS must be a JSON object of logical names to trusted root paths")}}
- s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true"});if e!=nil{return e};defer s.Close()
+ s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true"||os.Getenv("QIMENG_EPHEMERAL_TLS")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true"});if e!=nil{return e};defer s.Close()
  address:=os.Getenv("QIMENG_LISTEN");if address==""{address="127.0.0.1:8421"};api:=httpapi.New(s);var handler http.Handler=api
  if web:=os.Getenv("QIMENG_WEB_DIR");web!=""{
   files:=http.FileServer(http.Dir(web))
@@ -36,6 +36,7 @@ func run()error{
   })
  }
  server:=&http.Server{Addr:address,Handler:handler,ReadHeaderTimeout:10*time.Second,IdleTimeout:90*time.Second,MaxHeaderBytes:32<<10}
+ listener,e:=supervisedListener(address,s.InstanceID,os.Getenv("QIMENG_STARTUP_RECEIPT"),os.Getenv("QIMENG_LAUNCH_ID"),os.Getenv("QIMENG_EPHEMERAL_TLS")=="true");if e!=nil{return e};defer listener.Close()
  ctx,stop:=signal.NotifyContext(context.Background(),os.Interrupt,syscall.SIGTERM);defer stop();done:=make(chan error,1)
- go func(){done<-server.ListenAndServe()}();select{case e:=<-done:if errors.Is(e,http.ErrServerClosed){return nil};return e;case <-ctx.Done():shutdown,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel();return server.Shutdown(shutdown)}
+ go func(){done<-server.Serve(listener)}();select{case e:=<-done:if errors.Is(e,http.ErrServerClosed){return nil};return e;case <-ctx.Done():shutdown,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel();return server.Shutdown(shutdown)}
 }

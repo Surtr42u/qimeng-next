@@ -99,7 +99,8 @@ func convertImportedProfile(in importedCreatorProfile)([]AuthorProfileBlock,erro
   x.ProfileURL=&in.XProfile.URL;x.BiographyOriginal=&in.XProfile.Biography;x.BiographyZh=in.XProfile.BiographyZh
   if handle:=canonicalXProfile(in.XProfile.URL);handle!="" { x.Handle=&handle }
  }
- candidates:=[]struct{block string;values ProfileValues}{{"x",x},{"basic",basic},{"accounts",ProfileValues{Accounts:&accounts}}}
+ accountValues:=ProfileValues{Accounts:&accounts};if in.Status!=""{accountValues.IdentityStatus=&in.Status}
+ candidates:=[]struct{block string;values ProfileValues}{{"x",x},{"basic",basic},{"accounts",accountValues}}
  result:=[]AuthorProfileBlock{}
  for _,item:=range candidates {
   if _,err:=validateProfileValues(item.block,item.values);err!=nil { return nil,err }

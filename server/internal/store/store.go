@@ -64,6 +64,8 @@ func SaveAsset(ctx context.Context,q Querier,a model.Asset)error{
  raw,err:=Encode(a);if err!=nil{return err}
  _,err=q.ExecContext(ctx,`INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,created_at,updated_at,favorite,liked,trashed,data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,file_name=excluded.file_name,media_type=excluded.media_type,author_id=excluded.author_id,collection_id=excluded.collection_id,hash=excluded.hash,size=excluded.size,revision=excluded.revision,updated_at=excluded.updated_at,favorite=excluded.favorite,liked=excluded.liked,trashed=excluded.trashed,data=excluded.data`,a.ID,a.LibraryID,a.RelativePath,a.FileName,a.MediaType,a.AuthorID,a.CollectionID,a.Hash,a.Size,a.Revision,a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"),a.Favorite,a.Liked,a.Trashed,raw)
  if err!=nil{return err}
+ var fileDate,favoritedAt any;if a.SourceMtime!=nil{fileDate=a.SourceMtime.UnixMilli()}else if a.ContentMtime!=nil{fileDate=a.ContentMtime.UnixMilli()};if a.Favorite&&a.FavoritedAt!=nil{favoritedAt=a.FavoritedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")}
+ if _,err=q.ExecContext(ctx,"UPDATE assets SET file_date=?,favorited_at=?,cos_work_id=? WHERE id=?",fileDate,favoritedAt,a.CosWorkID,a.ID);err!=nil{return err}
  if _,err=q.ExecContext(ctx,"DELETE FROM asset_authors WHERE asset_id=?",a.ID);err!=nil{return err}
  for _,authorID:=range a.AuthorIDs{if _,err=q.ExecContext(ctx,"INSERT INTO asset_authors(asset_id,author_id) VALUES(?,?)",a.ID,authorID);err!=nil{return err}}
  if _,err=q.ExecContext(ctx,"DELETE FROM asset_tags WHERE asset_id=?",a.ID);err!=nil{return err}

@@ -1,9 +1,9 @@
 package media.qimeng.next.screen
 
-import android.app.Activity
 import android.animation.ValueAnimator
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -30,6 +30,10 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
+import media.qimeng.next.ui.icon.HomeIcon
+import media.qimeng.next.ui.icon.AlbumIcon
+import media.qimeng.next.ui.icon.StatsIcon
+import media.qimeng.next.ui.icon.ProfileIcon
 
 val LocalMediaImages = staticCompositionLocalOf<ImageLoader> { error("ImageLoader missing") }
 
@@ -37,6 +41,7 @@ val LocalMediaImages = staticCompositionLocalOf<ImageLoader> { error("ImageLoade
 fun AppRoot(model: LibraryViewModel) {
     val preferences by model.preferences.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
+    val transportRevision by model.transportRevision.collectAsStateWithLifecycle()
     val route by model.route.collectAsStateWithLifecycle()
     val tab by model.tab.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
@@ -45,11 +50,14 @@ fun AppRoot(model: LibraryViewModel) {
     val dark = when (preferences.theme) { ThemeChoice.SYSTEM -> isSystemInDarkTheme(); ThemeChoice.LIGHT -> false; ThemeChoice.DARK -> true }
     val view = LocalView.current
     val context = LocalContext.current
+    val activity = LocalActivity.current
     val imageTarget = session
     SideEffect {
-        (context as? Activity)?.window?.let { WindowCompat.getInsetsController(it, view).isAppearanceLightStatusBars = !dark }
+        activity?.window?.let { WindowCompat.getInsetsController(it, view).apply {
+            isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark
+        } }
     }
-    val imageLoader = remember(session) {
+    val imageLoader = remember(session, transportRevision) {
         ImageLoader.Builder(context).components {
             if (imageTarget != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient(imageTarget) }))
             if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
@@ -63,24 +71,26 @@ fun AppRoot(model: LibraryViewModel) {
             } else {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = rememberGlassBackdrop()
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+                val detailRoute = route.startsWith("asset:")
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (route != "main" && route != "ai-access") PageHeader(routeTitle(route), model::back)
-                        if (message != null) {
+                        if (!detailRoute && route != "main" && route != "ai-access") PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
                                 IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
                             }
                         }
-                        if (queueError != null && route != "upload") Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (!detailRoute && queueError != null && route != "upload") Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(queueError!!, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                             TextButton(onClick = { model.navigate("upload") }) { Text("查看传输") }
                         }
-                        Box(Modifier.fillMaxWidth().height(4.dp)) { if (busy) LinearProgressIndicator(Modifier.fillMaxWidth()) }
                         SingleSceneHost(if (route == "main") "tab:$tab" else route, preferences.reducedMotion, Modifier.weight(1f)) {
                             when {
                                 route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'))
                                 route.startsWith("author:") -> AuthorDetailScreen(model, route.substringAfter(':'))
+                                route.startsWith("profile:") -> AuthorProfileScreen(route.substringAfter(':'), model)
+                                route.startsWith("profile-archive:") -> AuthorProfileScreen(route.split(':')[1], model, archiveId = route.split(':')[2])
                                 route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'))
                                 route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
                                 route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
@@ -95,6 +105,9 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(model)
                                 route == "server" -> ServerScreen(model)
+                                route == "libraries" -> ServerScreen(model, librariesOnly = true)
+                                route == "data-manage" -> DataManageScreen(model)
+                                route == "vocabulary-manage" -> VocabularyManageScreen(model)
                                 route == "trash" -> TrashScreen(model)
                                 route == "recommendation" -> RecommendationSettings(model)
                                 route == "ai-access" -> AIAccessScreen(model)
@@ -108,8 +121,8 @@ fun AppRoot(model: LibraryViewModel) {
                         }
                     }
                     if (route == "main") LiquidNavigation(
-                        items = listOf(NavigationItem("home", "首页", Icons.Outlined.Home), NavigationItem("albums", "相册", Icons.Outlined.PhotoLibrary),
-                            NavigationItem("stats", "数据", Icons.Outlined.BarChart), NavigationItem("me", "我的", Icons.Outlined.Person)),
+                        items = listOf(NavigationItem("home", "首页", HomeIcon), NavigationItem("albums", "相册", AlbumIcon),
+                            NavigationItem("stats", "数据", StatsIcon), NavigationItem("me", "我的", ProfileIcon)),
                         selected = tab, backdrop = backdrop, reducedMotion = preferences.reducedMotion, glass = preferences.glass,
                         onSelect = model::selectTab,
                         modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp).widthIn(max = 480.dp).fillMaxWidth())
@@ -157,6 +170,8 @@ fun PageHeader(title: String, onBack: (() -> Unit)? = null, backEnabled: Boolean
 private fun routeTitle(route: String) = when {
     route.startsWith("asset:") -> "作品详情"
     route.startsWith("author:") -> "作者档案"
+    route.startsWith("profile:") -> "作者资料"
+    route.startsWith("profile-archive:") -> "保留的历史档案"
     route.startsWith("task:") -> "任务报告"
     route.startsWith("review:") -> "浏览回顾"
     route.startsWith("vocabulary:") -> vocabularyTitle(route.substringAfter(':'))
@@ -164,5 +179,5 @@ private fun routeTitle(route: String) = when {
     route.startsWith("tag:") -> "标签：${route.substringAfter(':')}"
     route.startsWith("ranking:") -> "浏览统计详情"
     else -> mapOf("search" to "搜索", "favorites" to "收藏", "authors" to "作者", "history" to "浏览历史", "upload" to "上传",
-        "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "trash" to "回收站", "recommendation" to "推荐偏好")[route] ?: "绮梦影库"
+        "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "libraries" to "库管理", "data-manage" to "数据管理", "vocabulary-manage" to "词表维护", "trash" to "回收站", "recommendation" to "推荐偏好")[route] ?: "绮梦影库"
 }

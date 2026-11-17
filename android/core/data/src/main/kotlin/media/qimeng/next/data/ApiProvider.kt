@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonParser
 import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.api.DefaultApi
+import media.qimeng.next.transport.PinnedTls
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -55,20 +56,33 @@ fun normalizedServer(input: String): String {
 internal class ApiProvider(private val settings: SecureSettings) {
     private val baseClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build()
-    @Volatile private var cachedClient: Pair<Session, OkHttpClient>? = null
+    private data class ClientKey(val target: Session, val certificate: String?)
+    @Volatile private var cachedClient: Pair<ClientKey, OkHttpClient>? = null
 
-    fun anonymous(baseUrl: String): DefaultApi = build(baseUrl, baseClient)
+    fun anonymous(baseUrl: String, certificateDerBase64: String? = null): DefaultApi = build(baseUrl, trustedClient(baseUrl, certificateDerBase64))
+
+    private fun trustedClient(baseUrl: String, certificate: String?): OkHttpClient {
+        if (certificate == null) return baseClient
+        require(baseUrl.toHttpUrl().isHttps) { "指定服务器证书需要 HTTPS" }
+        val tls = PinnedTls(certificate)
+        return baseClient.newBuilder().sslSocketFactory(tls.socketFactory, tls.trustManager).build()
+    }
 
     fun client(target: Session): OkHttpClient {
-        cachedClient?.takeIf { it.first == target }?.let { return it.second }
+        val certificate = try { settings.certificateFor(target) } catch (_: Exception) { throw ApiFailure(401, "连接已变更，请重新登录") }
+        val key = ClientKey(target, certificate)
+        cachedClient?.takeIf { it.first == key }?.let { return it.second }
         val expected = target.baseUrl.toHttpUrl()
-        return baseClient.newBuilder().addInterceptor { chain ->
+        return trustedClient(target.baseUrl, certificate).newBuilder().addInterceptor { chain ->
             val url = chain.request().url
             if (!sameOrigin(url, expected)) throw IOException("拒绝向其他服务器发送媒体凭据")
-            val token = try { settings.tokenFor(target) }
+            val token = try {
+                check(settings.certificateFor(target) == certificate) { "连接证书已更新" }
+                settings.tokenFor(target)
+            }
             catch (_: Exception) { throw ApiFailure(401, "登录凭据不可用或连接已变更，请重新登录") }
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
-        }.build().also { cachedClient = target to it }
+        }.build().also { cachedClient = key to it }
     }
 
     fun api(target: Session): DefaultApi = build(target.baseUrl, client(target))

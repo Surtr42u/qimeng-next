@@ -77,26 +77,27 @@ class AndroidRealServerTest {
         assertTrue(picture.thumbnailUrl.isNotEmpty())
         assertTrue((video.durationMs ?: 0) > 0)
 
-        compose.onNodeWithText("首页").performClick()
-        compose.onNodeWithContentDescription("刷新").performClick()
+        compose.onNodeWithTag("navigation:home").performClick()
+        compose.onNodeWithTag("media-browser:home:0").performTouchInput { swipeDown() }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
         screenshot("real-server-home.png")
         compose.onNodeWithContentDescription(picture.name).performClick()
-        compose.waitUntil(30_000) { compose.onAllNodesWithText("管理标签").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("管理标签").performScrollTo().performClick()
+        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("标签").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("标签").performClick()
         compose.onNodeWithText("新建标签").performTextInput("安卓云端标签")
         compose.onNodeWithText("添加").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithText("安卓云端标签").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("保存").performClick()
         await { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }
-        compose.onNodeWithText("收藏").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("收藏").performClick()
         await { graph.media.asset(picture.id).favorite }
         screenshot("real-server-detail.png")
 
         compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithContentDescription(video.name).performClick()
+        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("视频播放区域").performTouchInput { doubleClick(center) }
         await { graph.media.history().items.any { it.assetId == video.id && it.kind == "play" } }
         compose.onNodeWithContentDescription("进入全屏").performClick()
         compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()

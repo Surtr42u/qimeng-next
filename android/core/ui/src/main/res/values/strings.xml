@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_back_desc">返回</string>
+    <string name="ui_filter_icon_desc">筛选</string>
+    <string name="ui_columns_icon_desc">切换列数</string>
+    <string name="ui_values_expand">展开 ⌄</string>
+    <string name="ui_values_collapse">收起 ⌃</string>
+</resources>

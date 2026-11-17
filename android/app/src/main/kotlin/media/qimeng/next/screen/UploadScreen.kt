@@ -16,13 +16,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.NamingViewModel
 import media.qimeng.next.model.*
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
 
 @Composable
-fun UploadScreen(model: LibraryViewModel) {
+fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel()) {
     val libraries by model.libraries.collectAsStateWithLifecycle()
     val selected by model.uploadLibrary.collectAsStateWithLifecycle()
     val directory by model.uploadDirectory.collectAsStateWithLifecycle()
@@ -31,6 +33,16 @@ fun UploadScreen(model: LibraryViewModel) {
     val queueError by model.queueError.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
+    val autoName by model.uploadAutoName.collectAsStateWithLifecycle()
+    val family by model.uploadFamily.collectAsStateWithLifecycle()
+    val collectionId by model.uploadCollectionId.collectAsStateWithLifecycle()
+    val note by model.uploadNote.collectAsStateWithLifecycle()
+    val namingState by naming.state.collectAsStateWithLifecycle()
+    var numberClass by rememberSaveable { mutableStateOf("image") }
+    val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null)
+    val namingRequest = if (needsNaming && selected.isNotEmpty()) NamingRequest(selected, directory, family.trim(), collectionId, numberClass, note,
+        queue?.drafts.orEmpty().map { NamingFile(it.id, it.name) }) else null
+    LaunchedEffect(namingRequest) { naming.inspect(namingRequest) }
     var renameId by rememberSaveable { mutableStateOf<String?>(null) }
     var chooseDirectory by rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) model.receiveFiles(it) }
@@ -43,7 +55,7 @@ fun UploadScreen(model: LibraryViewModel) {
             } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 libraries.forEach { library -> FilterChip(selected == library.id, { model.setUploadLibrary(library.id) }, label = { Text(library.name) }, enabled = library.enabled && !busy) }
             }
-            OutlinedTextField(directory, model::setUploadDirectory, label = { Text("库内目录（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(directory, model::setUploadDirectory, enabled = !busy, label = { Text("库内目录（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { chooseDirectory = true }, enabled = libraries.any { it.id == selected && it.enabled }) { Text("浏览 / 创建目录") }
         } }
         item { ContentCard {
@@ -58,6 +70,8 @@ fun UploadScreen(model: LibraryViewModel) {
             Text("文件选择后可预览名称再开始；来源原件保留。", style = MaterialTheme.typography.bodySmall)
         } }
         item { UploadAssociations(model) }
+        if (mode == UploadMode.ORDINARY.name) item { UploadNamingCard(autoName, family, collectionId, numberClass, namingRequest, namingState,
+            busy, model::setUploadAutoName, model::setUploadFamily, { numberClass = it }, { naming.inspect(namingRequest) }) }
         queueError?.let { item { ErrorNotice(it, model::reloadQueue) } }
         items(queue?.drafts.orEmpty(), key = { "draft:${it.id}" }) { draft ->
             ContentCard {
@@ -70,7 +84,9 @@ fun UploadScreen(model: LibraryViewModel) {
             }
         }
         if (queue?.drafts?.isNotEmpty() == true) item {
-            Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled }, modifier = Modifier.fillMaxWidth()) { Text("开始上传 ${queue!!.drafts.size} 个文件") }
+            Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled } &&
+                (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.preview != null)),
+                modifier = Modifier.fillMaxWidth()) { Text("开始上传 ${queue!!.drafts.size} 个文件") }
         }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("任务结果", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)

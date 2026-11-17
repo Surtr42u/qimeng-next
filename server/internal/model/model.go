@@ -36,10 +36,13 @@ type Asset struct {
  AuthorName string `json:"authorName"`
  AuthorStatus string `json:"authorStatus"`
  CollectionID string `json:"collectionId,omitempty"`
+ CosWorkID string `json:"cosWorkId,omitempty"`
+ COSDirectoryAuthorID string `json:"cosDirectoryAuthorId,omitempty"`
  Page int `json:"page,omitempty"`
  Tags []string `json:"tags"`
  Favorite bool `json:"favorite"`
  FavoriteUpdatedAt *time.Time `json:"favoriteUpdatedAt,omitempty"`
+ FavoritedAt *time.Time `json:"favoritedAt,omitempty"`
  Liked bool `json:"liked"`
  LikeCount int64 `json:"likeCount"`
  Note string `json:"note"`
@@ -72,10 +75,13 @@ type Author struct {
  Biography string `json:"biography"`
  Aliases []string `json:"aliases"`
  Homepage string `json:"homepage"`
+ AcquisitionSources []string `json:"acquisitionSources"`
  Revision int64 `json:"revision"`
  Placeholder bool `json:"placeholder"`
  Following bool `json:"following"`
  FollowingUpdatedAt *time.Time `json:"followingUpdatedAt,omitempty"`
+ FileCount int64 `json:"fileCount"`
+ ViewCount int64 `json:"viewCount"`
  FieldStatus map[string]string `json:"fieldStatus"`
  CreatedAt time.Time `json:"createdAt"`
  UpdatedAt time.Time `json:"updatedAt"`
@@ -90,6 +96,8 @@ type Collection struct {
  Revision int64 `json:"revision"`
  CreatedAt time.Time `json:"createdAt"`
 }
+
+type CosWork struct {ID string `json:"id"`;LibraryID string `json:"libraryId"`;AuthorID string `json:"authorId"`;RelativeDirectory string `json:"relativeDirectory"`;Name string `json:"name"`;Revision int64 `json:"revision"`;CreatedAt time.Time `json:"createdAt"`}
 
 type UploadInput struct {
  LibraryID string `json:"libraryId"`
@@ -106,6 +114,7 @@ type UploadInput struct {
  AuthorID string `json:"authorId,omitempty"`
  AuthorIDs []string `json:"authorIds,omitempty"`
  CollectionID string `json:"collectionId,omitempty"`
+ CosWorkID string `json:"cosWorkId,omitempty"`
  Note string `json:"note,omitempty"`
  AcquisitionSources []string `json:"acquisitionSources,omitempty"`
  SourceIDs []string `json:"sourceIds,omitempty"`
@@ -210,6 +219,7 @@ type Plan struct {
 }
 
 type Event struct {
+ Asset *Asset `json:"asset,omitempty"`
  EventID string `json:"eventId"`
  AssetID string `json:"assetId"`
  FileName string `json:"fileName"`
@@ -236,7 +246,11 @@ func (p Principal) Has(scope string) bool {
  for _, s := range p.Scopes { if s == "admin" || s == scope { return true } }
  return false
 }
+type DateCountBucket struct {Date string `json:"date"`;FileCount int64 `json:"fileCount"`}
 type Page[T any] struct {
  Items []T `json:"items"`
  NextCursor string `json:"nextCursor,omitempty"`
+ TotalMatched *int64 `json:"totalMatched,omitempty"`
+ TotalOptions *int64 `json:"totalOptions,omitempty"`
+ DateCounts *[]DateCountBucket `json:"dateCounts,omitempty"`
 }

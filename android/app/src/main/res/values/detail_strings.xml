@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 详情页文案（M4-3 3a）。资源名 detail_ 前缀避免合并冲突（home/login 同款约定）。 -->
+    <!-- 排版基准 = Web AssetDetailPage.tsx（B站式）移动端移植；交互规格见 LEGACY_REQUIREMENTS §A（标签）。 -->
+
+    <!-- 顶行 -->
+    <string name="detail_back">返回</string>
+    <!-- 「i/N」批次序号（现由顶部渐变 chrome 承担展示——V2 删舞台下 pager 行）。
+        任务Y Y2：去「/」两侧空格对齐旧版——旧仓库 MediaDetailFragment "%d/%d".format
+        （L406），渲染形如「8/3822」无空格 -->
+    <string name="detail_batch_position">%1$d/%2$d</string>
+
+    <!-- 加载 / 错误 -->
+    <string name="detail_loading">加载中…</string>
+    <string name="detail_retry">重试</string>
+    <!-- 错误态兜底文案（errorMessage 缺失时显示；曾误用 detail_tag_empty「暂无标签」——修补归位） -->
+    <string name="detail_error_generic">加载失败，请重试</string>
+
+    <!-- 媒体舞台（3a 占位） -->
+    <string name="detail_media_stage">媒体预览</string>
+    <string name="detail_play_video">播放视频</string>
+    <!-- 图片舞台无障碍描述（3b ZoomImageView 桥接：手势语义入文案，TalkBack 用户可发现交互） -->
+    <string name="detail_image_zoom_desc">图片预览，双指缩放，左右滑动切换相邻</string>
+    <!-- 图片态解码失败提示（RES #27：损坏原件不黑屏哑失败；Coil Target 不区分网络/解码失败）。
+        2026-09-18 文案分档：传输类失败（超时/断流，重试即恢复的多数派）改用 detail_image_network_failed，
+        本条只留给真解码失败——此前一律报「可能已损坏」误导用户 -->
+    <string name="detail_image_decode_failed">该文件无法解码，可能已损坏或格式不受支持</string>
+    <!-- 图片态传输类失败提示（2026-09-18 分档新增：isNetworkTransferFailure 归因） -->
+    <string name="detail_image_network_failed">网络不畅，图片加载失败，请重试</string>
+    <!-- 图片态内存不足提示（第三百六十四笔分档新增：classifyImageFailure 把 OOM 与
+        真解码失败区分——原两分法把内存压力误报成「文件损坏」误导用户） -->
+    <string name="detail_image_memory_failed">手机内存不足，图片加载失败，请重试或稍后再看</string>
+
+    <!-- 尺寸格式串（任务X X2：下滑区 meta 行退役，其浏览/播放两条计数文案随之删除；
+        resolution 保留——详细信息 Sheet「尺寸」行沿用，值格式口径单源） -->
+    <string name="detail_meta_resolution">%1$d×%2$d</string>
+
+    <!-- 互动行 -->
+    <string name="detail_like">点赞</string>
+    <string name="detail_favorite">收藏</string>
+    <string name="detail_favorite_active">已收藏</string>
+
+    <!-- 文件操作（任务G G1b：整理——Web FileOpsButton/FileOpsDialogs/MoveDialog 同语义文案。
+        任务V V3：四胶囊行重排，「整理」胶囊文字沿用本条；detail_file_ops_delete 随互动行
+        删除钮退役删除（删除归整理弹窗入口，确认文案 detail_delete_* 仍在）。
+        任务W W3：「整理」胶囊退役（四胶囊换作者），本条保留——整理弹窗族保守保留无入口
+        （JumpSheet 口径，后果记档待拍板台账） -->
+    <string name="detail_file_ops_move">整理</string>
+    <string name="detail_move_title">整理文件</string>
+    <!-- 对齐 Web MoveDialog desc：同名拒绝不覆盖语义 -->
+    <string name="detail_move_desc">修改文件名或目标目录；目标位置已有同名文件时将被拒绝（不覆盖）。</string>
+    <string name="detail_move_name_placeholder">新文件名（含扩展名）</string>
+    <string name="detail_move_dir_placeholder">目标目录</string>
+    <string name="detail_move_dir_hint">库内相对路径，留空 = 库根</string>
+    <string name="detail_move_confirm">保存</string>
+    <!-- Web dirLabel(空串)=「库根」的 Android 侧等价词 -->
+    <string name="detail_move_root_dir">库根</string>
+    <string name="detail_move_toast_both">已移动到「%1$s」并重命名为「%2$s」</string>
+    <string name="detail_move_toast_moved">已移动到「%1$s」</string>
+    <string name="detail_move_toast_renamed">已重命名为「%1$s」</string>
+    <!-- 删除确认（Web FileOpsDialogs ConfirmDialog 文案逐字；铁律4=移入回收站非物理删除） -->
+    <string name="detail_delete_title">移入回收站「%1$s」？</string>
+    <string name="detail_delete_desc">文件将移入回收站并从媒体库移除（浏览/点赞等记录保留）。\n可在维护页「回收站」恢复。</string>
+    <string name="detail_delete_confirm">移入回收站</string>
+    <string name="detail_delete_toast">「%1$s」已移入回收站（可在维护页恢复）</string>
+
+    <!-- 标签行 / 标签管理弹窗（LEGACY §A：当前标签空态=暂无标签；弹窗外层可滚动）。
+        任务V V3：detail_tag_manage / detail_tag_add 随下滑区标签行只读化删除——
+        编辑入口收敛到首屏「标签」胶囊（detail_chrome_tag） -->
+    <string name="detail_tag_sheet_title">标签管理</string>
+    <!-- detail_tag_sheet_desc（副标题说明行）已随 U10-2b 删除：用户反馈「标签间隔太多」，
+        旧版弹窗本无此行；草稿整体替换语义由「保存」钮自身表达 -->
+    <string name="detail_tag_section_current">当前标签</string>
+    <string name="detail_tag_section_pool">全部标签 · 按名称排列</string>
+    <string name="detail_tag_selected_count">已选 %1$d 个</string>
+    <string name="detail_tag_create">添加</string>
+    <string name="detail_tag_empty">暂无标签</string>
+    <string name="detail_tag_new_placeholder">新建标签，回车确认</string>
+    <!-- U10-2 D8：原「新建」文字钮退役换「＋」图标钮，TalkBack 语义由本条承接（contentDescription）；
+        原 detail_tag_create 随文字钮删除 -->
+    <string name="detail_tag_add_desc">新建标签</string>
+    <string name="detail_tag_remove_selection">移除勾选</string>
+    <string name="detail_save">保存</string>
+    <string name="detail_cancel">取消</string>
+
+    <!-- 作者（作者卡/作者 Sheet 共用；无作者不渲染条目；isCos 追加「 ·COS」在代码拼接——
+        Web authorDisplayName 同口径）。任务W W3：作者胶囊文字同源本条；
+        detail_author_open_collection 供作者 Sheet「进入作者主页」钮 -->
+    <string name="detail_authors_title">作者</string>
+    <string name="detail_follow">+ 关注</string>
+    <string name="detail_followed">已关注</string>
+    <string name="detail_author_open_collection">进入作者主页</string>
+    <!-- 前导空格必须 \u0020 转义：AAPT 会裁掉字符串资源首尾空白（2026-09-07 模拟器文本证据发现渲染成「作者名·COS」缺空格） -->
+    <string name="detail_author_cos_suffix">\u0020·COS</string>
+
+    <!-- 沉浸 chrome（任务I I7，GUIDE_UI §详情页 L171/172）：顶/底渐变操作层按钮无障碍文案。
+        任务V V3：底部四胶囊后 detail_chrome_tag 兼作「标签」胶囊文字与无障碍文案；
+        detail_chrome_jump 随「快速转跳」不进四胶囊删除（DetailJumpSheet 组件保留无入口）。
+        任务W W3：「接下来播放」三条字符串随推荐栏整段退役删除；「整理」胶囊退役
+        （detail_file_ops_move 保留——整理弹窗族保守保留无入口，JumpSheet 口径） -->
+    <string name="detail_chrome_info">信息</string>
+    <string name="detail_chrome_tag">标签</string>
+
+    <!-- 信息 BottomSheet（GUIDE_UI L169/171；无「完成」按钮——下滑/点外部关闭）。
+        任务X X3 旧版移植扩行（2026-09-12 用户拍板「详细信息应该和旧版移植」）：
+        行序对齐旧版 showInfoSheet=文件名/作品/出处/日期/大小/类型/尺寸/时长/目录/路径 -->
+    <string name="detail_info_sheet_title">详细信息</string>
+    <string name="detail_info_filename">文件名</string>
+    <string name="detail_info_work">作品</string>
+    <string name="detail_info_source">出处</string>
+    <string name="detail_info_date">日期</string>
+    <string name="detail_info_size">大小</string>
+    <string name="detail_info_type">类型</string>
+    <string name="detail_info_resolution">尺寸</string>
+    <string name="detail_info_duration">时长</string>
+    <string name="detail_info_directory">目录</string>
+    <string name="detail_info_path">路径</string>
+
+    <!-- 快速转跳 BottomSheet（GUIDE_UI L172：当前文件关联作者列表，点击进作者集合页） -->
+    <string name="detail_jump_sheet_title">快速转跳</string>
+    <string name="detail_jump_empty">该文件暂无关联作者</string>
+
+    <!-- 资产编辑页（2026-09-25：上传挂靠退役批——作者关联与来源维护从上传页迁入编辑页；
+        入口 = 作者 Sheet「编辑作者与来源」行）。
+        2026-10-11 按名新建修订：回车未命中联想不再报「仅能关联已有作者」，改入「待新建」
+        名单随 PUT /assets/{id}/authors 的 newAuthorNames 交服务端复用/新建；
+        原 asset_edit_only_existing_authors 文案随旧行为退役删除 -->
+    <string name="asset_edit_title">编辑作者与来源</string>
+    <string name="asset_edit_authors_section">已关联作者</string>
+    <string name="asset_edit_no_authors">尚未关联作者，可在下方添加</string>
+    <string name="asset_edit_remove_author">移除</string>
+    <string name="asset_edit_add_author_section">添加作者</string>
+    <string name="asset_edit_sources_label">来源</string>
+    <string name="asset_edit_sources_hint">每个作者可单独维护来源区</string>
+    <string name="asset_edit_sources_loading">正在读取该作者的既有来源…</string>
+    <string name="asset_edit_sources_load_failed">无法读取既有来源，为避免覆盖旧数据，请重试。</string>
+    <string name="asset_edit_save">保存</string>
+    <string name="asset_edit_saving">保存中…</string>
+    <string name="asset_edit_saving_notice">正在保存修改，请稍候。保存过程中暂时不能编辑或返回。</string>
+    <string name="asset_edit_load_failed">加载资产信息失败，请重试</string>
+    <string name="asset_edit_save_failed">保存失败：请重试</string>
+    <string name="asset_edit_author_exists">该作者已关联</string>
+    <string name="asset_edit_author_name_too_long">作者名过长（最多 200 字）</string>
+    <!-- 待新建名单满额提示（Web pendingAuthorRejectionText too-many 分支逐字对齐；
+         数字 = VM 的 NEW_AUTHOR_NAMES_MAX，与协议 maxItems:20 双写） -->
+    <string name="asset_edit_pending_authors_full">待新建作者最多 20 个，请先保存本页再继续添加</string>
+    <string name="asset_edit_discard_title">有未保存的修改</string>
+    <string name="asset_edit_discard_desc">离开将丢失本次文件名、作者与来源编辑，确定离开吗？</string>
+    <string name="asset_edit_discard_confirm">放弃修改离开</string>
+    <string name="asset_edit_discard_cancel">继续编辑</string>
+    <!-- 详情信息弹窗：完整文件名复制（2026-11-07 搜索文件名需求） -->
+    <string name="detail_info_copy_filename">复制文件名</string>
+    <string name="detail_info_filename_copied">已复制文件名</string>
+</resources>
