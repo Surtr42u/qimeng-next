@@ -1,0 +1,4 @@
+# 从官方 PyPI 核实的直接依赖；传递版本/哈希由云端锁入 requirements.lock。
+mcp==2.3.0
+httpx==0.28.1
+jsonschema==4.26.0

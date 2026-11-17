@@ -1,0 +1,144 @@
+"""仅在 CI 从唯一 OpenAPI 生成客户端及来源锁；不含业务实现。"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import urllib.request
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+OPENAPI_GENERATOR = "7.27.0"
+OAPI_CODEGEN = "v2.8.2"
+
+
+def run(*args: str, cwd: Path = ROOT) -> None:
+    subprocess.run(args, cwd=cwd, check=True)
+
+
+def kotlin() -> None:
+    cache = ROOT / "build" / "toolchain"
+    cache.mkdir(parents=True, exist_ok=True)
+    name = f"openapi-generator-cli-{OPENAPI_GENERATOR}.jar"
+    url = f"https://repo.maven.apache.org/maven2/org/openapitools/openapi-generator-cli/{OPENAPI_GENERATOR}/{name}"
+    jar = cache / name
+    with urllib.request.urlopen(url + ".sha256", timeout=60) as response:
+        expected = response.read(1024).decode().strip().split()[0]
+    with urllib.request.urlopen(url, timeout=120) as response:
+        content = response.read(100 * 1024 * 1024)
+    if hashlib.sha256(content).hexdigest() != expected:
+        raise RuntimeError("OpenAPI generator SHA-256 mismatch")
+    jar.write_bytes(content)
+    run("java", "-jar", str(jar), "generate", "-i", "api/openapi.yaml", "-g", "kotlin",
+        "--library", "jvm-retrofit2", "-o", "api/generated/kotlin",
+        "--api-package", "media.qimeng.next.sdk.api",
+        "--model-package", "media.qimeng.next.sdk.model",
+        "--invoker-package", "media.qimeng.next.sdk.infrastructure",
+        "--additional-properties", "serializationLibrary=gson,dateLibrary=string,useCoroutines=true,useResponseAsReturnType=true,packageName=media.qimeng.next.sdk,hideGenerationTimestamp=true,enumPropertyNaming=original",
+        "--global-property", "apiTests=false,modelTests=false,apiDocs=false,modelDocs=false")
+
+
+def go() -> None:
+    destination = ROOT / "server/internal/transport/generated"
+    destination.mkdir(parents=True, exist_ok=True)
+    run("go", "run", f"github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{OAPI_CODEGEN}",
+        "-generate", "types,client", "-package", "generated", "-o", str(destination / "api.gen.go"),
+        str(ROOT / "api/openapi.yaml"), cwd=ROOT / "server")
+
+
+def resolve(document: dict, value, stack: tuple[str, ...] = ()):
+    if isinstance(value, list):
+        return [resolve(document, child, stack) for child in value]
+    if not isinstance(value, dict):
+        return value
+    if "$ref" in value:
+        reference = value["$ref"]
+        if not reference.startswith("#/") or reference in stack:
+            raise ValueError(f"Unsupported external or recursive tool schema: {reference}")
+        node = document
+        for part in reference[2:].split("/"):
+            node = node[part.replace("~1", "/").replace("~0", "~")]
+        return resolve(document, {**node, **{k: v for k, v in value.items() if k != "$ref"}}, stack + (reference,))
+    output = {key: resolve(document, child, stack) for key, child in value.items() if key != "nullable"}
+    if value.get("nullable") and isinstance(output.get("type"), str):
+        output["type"] = [output["type"], "null"]
+    return output
+
+
+def python_contract() -> None:
+    """生成操作路由、参数和 schema；AI 只调用显式声明的 x-ai-tool 操作。"""
+    raw = (ROOT / "api/openapi.yaml").read_bytes()
+    document = yaml.safe_load(raw)
+    tool_map = json.loads((ROOT / "ai/tool-map.json").read_text(encoding="utf-8"))
+    operations = {}
+    for path, item in document["paths"].items():
+        for method, operation in item.items():
+            if method not in {"get", "post", "put", "patch", "delete", "head"}:
+                continue
+            identifier = operation["operationId"]
+            parameters = [resolve(document, value) for value in item.get("parameters", []) + operation.get("parameters", [])]
+            properties, required = {}, []
+            for parameter in parameters:
+                name = parameter["name"]
+                properties[name] = parameter.get("schema", {})
+                if parameter.get("required"):
+                    required.append(name)
+            body = resolve(document, operation.get("requestBody", {}))
+            content = body.get("content", {})
+            if "application/json" in content:
+                properties["body"] = content["application/json"].get("schema", {})
+                if body.get("required"):
+                    required.append("body")
+            operations[identifier] = {
+                "method": method.upper(), "path": path, "parameters": parameters,
+                "body": "application/json" if "application/json" in content else next(iter(content), None),
+                "description": operation.get("description", operation.get("summary", identifier)),
+                "tool": operation.get("x-ai-tool", tool_map.get(identifier, {}).get("tool")),
+                "scope": operation.get("x-ai-scope", tool_map.get(identifier, {}).get("scope", "read")),
+                "inputSchema": {"type": "object", "properties": properties,
+                                "required": required, "additionalProperties": False},
+            }
+    target = ROOT / "api/generated/python/operations.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"openapiSha256": hashlib.sha256(raw).hexdigest(),
+                                 "apiVersion": document["info"]["version"],
+                                 "basePath": document["servers"][0]["url"], "operations": operations},
+                                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def source_lock() -> None:
+    directories = ("api/generated/kotlin/src/main/kotlin", "api/generated/python",
+                   "server/internal/transport/generated", "web/src/api/generated")
+    files = {}
+    for directory in directories:
+        path = ROOT / directory
+        if not path.is_dir():
+            raise RuntimeError(f"Missing SDK output: {directory}")
+        for child in sorted(path.rglob("*")):
+            if child.is_file():
+                files[child.relative_to(ROOT).as_posix()] = hashlib.sha256(child.read_bytes()).hexdigest()
+    lock = {"schemaVersion": 1, "openapiSha256": hashlib.sha256((ROOT / "api/openapi.yaml").read_bytes()).hexdigest(),
+            "generators": {"kotlin": OPENAPI_GENERATOR, "go": OAPI_CODEGEN,
+                           "typescript": "web/package-lock.json", "python": "tools/generate_sdks.py"}, "files": files}
+    (ROOT / "api/sdk.lock").write_text(json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def main() -> None:
+    if os.environ.get("CI") != "true":
+        raise SystemExit("SDK generation is cloud-only; run the GitHub Actions workflow.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target", choices=["all", "go", "typescript", "kotlin", "python", "lock"], default="all")
+    target = parser.parse_args().target
+    actions = {"go": go, "typescript": lambda: run("npm", "run", "generate:api", cwd=ROOT / "web"),
+               "kotlin": kotlin, "python": python_contract, "lock": source_lock}
+    for name, action in actions.items():
+        if target in ("all", name):
+            action()
+
+
+if __name__ == "__main__":
+    main()

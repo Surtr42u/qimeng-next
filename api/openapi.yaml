@@ -1,0 +1,744 @@
+openapi: 3.0.3
+info:
+  title: Qimeng Next API
+  version: 0.1.0
+  description: Single-user media authority. All writes use server revisions; AI credentials are bound to one intake batch.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+paths:
+  /instance:
+    get:
+      operationId: getInstance
+      security: []
+      responses:
+        '200': {description: Instance, content: {application/json: {schema: {$ref: '#/components/schemas/Instance'}}}}
+  /sessions:
+    post:
+      operationId: createSession
+      security: []
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionCreate'}}}}
+      responses:
+        '201': {description: Session and HttpOnly cookie, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /sessions/current:
+    get:
+      operationId: getCurrentSession
+      responses:
+        '200': {description: Session without secret, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteCurrentSession
+      responses:
+        '204': {description: Session revoked}
+        default: {$ref: '#/components/responses/Error'}
+  /credentials:
+    post:
+      operationId: createCredential
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CredentialCreate'}}}}
+      responses:
+        '201': {description: Batch-bound credential, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /credentials/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    delete:
+      operationId: revokeCredential
+      responses:
+        '204': {description: Revoked}
+        default: {$ref: '#/components/responses/Error'}
+  /libraries:
+    get:
+      operationId: listLibraries
+      responses:
+        '200': {description: Libraries, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createLibrary
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryCreate'}}}}
+      responses:
+        '201': {description: Library, content: {application/json: {schema: {$ref: '#/components/schemas/Library'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets:
+    get:
+      operationId: listAssets
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: libraryId, in: query, schema: {type: string}}
+        - {name: q, in: query, schema: {type: string, maxLength: 200}}
+        - {name: mediaType, in: query, schema: {type: string, enum: [image, animated_image, video]}}
+        - {name: kind, in: query, schema: {type: string, enum: [regular, cos]}}
+        - {name: authorId, in: query, schema: {type: string}}
+        - {name: collectionId, in: query, schema: {type: string}}
+        - {name: tag, in: query, schema: {type: string}}
+        - {name: favorite, in: query, schema: {type: boolean}}
+        - {name: liked, in: query, schema: {type: boolean}}
+        - {name: sort, in: query, schema: {type: string, enum: [added_desc, updated_desc, name_asc], default: added_desc}}
+      responses:
+        '200': {description: Media page, content: {application/json: {schema: {$ref: '#/components/schemas/AssetPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAsset
+      responses:
+        '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateAsset
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetUpdate'}}}}
+      responses:
+        '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: trashAsset
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {name: expectedRevision, in: query, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Trashed asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/content:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAssetContent
+      parameters: [{name: Range, in: header, schema: {type: string}}]
+      responses:
+        '200': {description: Original bytes, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '206': {description: Byte range, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/tags:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: updateAssetTags
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TagsUpdate'}}}}
+      responses:
+        '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/reaction:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: updateReaction
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ReactionUpdate'}}}}
+      responses:
+        '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/events:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: recordEvent
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EventCreate'}}}}
+      responses:
+        '200': {description: Saved event, content: {application/json: {schema: {$ref: '#/components/schemas/HistoryEvent'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/move:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: moveAsset
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MoveRequest'}}}}
+      responses:
+        '200': {description: Moved asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /tags:
+    get:
+      operationId: listTags
+      responses:
+        '200': {description: Active tag vocabulary, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {type: string}}}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /history:
+    get:
+      operationId: listHistory
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Events in server receipt order, content: {application/json: {schema: {$ref: '#/components/schemas/HistoryPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors:
+    get:
+      operationId: listAuthors
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: q, in: query, schema: {type: string}}
+        - {name: following, in: query, schema: {type: boolean}}
+      responses:
+        '200': {description: Authors, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAuthor
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorCreate'}}}}
+      responses:
+        '201': {description: Author, content: {application/json: {schema: {$ref: '#/components/schemas/Author'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAuthor
+      responses:
+        '200': {description: Author, content: {application/json: {schema: {$ref: '#/components/schemas/Author'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateAuthor
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdate'}}}}
+      responses:
+        '200': {description: Author, content: {application/json: {schema: {$ref: '#/components/schemas/Author'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections:
+    get:
+      operationId: listCollections
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: q, in: query, schema: {type: string}}
+        - {name: libraryId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Collections, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createCollection
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionCreate'}}}}
+      responses:
+        '201': {description: Collection, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /uploads:
+    post:
+      operationId: createUpload
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UploadCreate'}}}}
+      responses:
+        '201': {description: Durable upload session, content: {application/json: {schema: {$ref: '#/components/schemas/Upload'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /uploads/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getUpload
+      responses:
+        '200': {description: Authoritative offset and result, content: {application/json: {schema: {$ref: '#/components/schemas/Upload'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: cancelUpload
+      responses:
+        '204': {description: Incomplete upload cancelled; published assets are unaffected}
+        default: {$ref: '#/components/responses/Error'}
+  /uploads/{id}/content:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: appendUpload
+      parameters: [{name: Upload-Offset, in: header, required: true, schema: {type: integer, format: int64, minimum: 0}}]
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+      responses:
+        '200': {description: Saved offset; chunks are at most 8 MiB, content: {application/json: {schema: {$ref: '#/components/schemas/Upload'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /uploads/{id}/complete:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: completeUpload
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Ordinary upload is ingested; intelligent upload is staged, content: {application/json: {schema: {$ref: '#/components/schemas/UploadResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches:
+    get:
+      operationId: listBatches
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Batches, content: {application/json: {schema: {$ref: '#/components/schemas/BatchPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createBatch
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BatchCreate'}}}}
+      responses:
+        '201': {description: Accepted batch, content: {application/json: {schema: {$ref: '#/components/schemas/Batch'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getBatch
+      responses:
+        '200': {description: Durable item report, content: {application/json: {schema: {$ref: '#/components/schemas/BatchDetail'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/cancel:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: cancelBatch
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
+      responses:
+        '200': {description: Cancelled future work; committed results remain, content: {application/json: {schema: {$ref: '#/components/schemas/Batch'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /ai/tasks/{id}/context:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getTaskContext
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Bounded context and next actions, content: {application/json: {schema: {$ref: '#/components/schemas/TaskContext'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/research:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: submitResearch
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchSubmit'}}}}
+      responses:
+        '200': {description: Candidate evidence saved without changing confirmed metadata, content: {application/json: {schema: {$ref: '#/components/schemas/Batch'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/plans:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: preparePlan
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PlanCreate'}}}}
+      responses:
+        '201': {description: Complete immutable naming plan, content: {application/json: {schema: {$ref: '#/components/schemas/Plan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/plans/{planId}:
+    parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/PlanId'}]
+    get:
+      operationId: getPlan
+      responses:
+        '200': {description: Full persisted plan, content: {application/json: {schema: {$ref: '#/components/schemas/Plan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/plans/{planId}/commit:
+    parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/PlanId'}]
+    post:
+      operationId: commitPlan
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [fingerprint], properties: {fingerprint: {type: string}}}}}} 
+      responses:
+        '200': {description: Per-item authoritative results; inspect failures, content: {application/json: {schema: {$ref: '#/components/schemas/BatchDetail'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /trash:
+    get:
+      operationId: listTrash
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Recoverable assets, content: {application/json: {schema: {$ref: '#/components/schemas/AssetPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /trash/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: restoreAsset
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
+      responses:
+        '200': {description: Restored original identity and relationships, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /trash/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    delete:
+      operationId: purgeAsset
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {name: expectedRevision, in: query, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '204': {description: Explicit permanent removal; historical events remain}
+        default: {$ref: '#/components/responses/Error'}
+  /stats:
+    get:
+      operationId: getStats
+      responses:
+        '200': {description: Exact counts; no replacement recommendation formula, content: {application/json: {schema: {$ref: '#/components/schemas/Stats'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /settings:
+    get:
+      operationId: getSettings
+      responses:
+        '200': {description: Server-owned operational limits, content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /backups:
+    post:
+      operationId: createBackupManifest
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '201': {description: Consistent database snapshot and original-version manifest; not proof of independent backup, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+    sessionCookie: {type: apiKey, in: cookie, name: qimeng_session}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: string}}
+    PlanId: {name: planId, in: path, required: true, schema: {type: string}}
+    Cursor: {name: cursor, in: query, schema: {type: string}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8, maxLength: 128}}
+  responses:
+    Error:
+      description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        currentRevision: {type: integer, format: int64}
+    Instance:
+      type: object
+      required: [id, name, apiVersion, capabilities]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        apiVersion: {type: string}
+        capabilities:
+          type: object
+          required: [aiConfigured, recommendations, rankings, stats, backups, migration]
+          properties:
+            aiConfigured: {type: boolean}
+            recommendations: {type: boolean}
+            rankings: {type: boolean}
+            stats: {type: boolean}
+            backups: {type: boolean}
+            migration: {type: boolean}
+    SessionCreate:
+      type: object
+      required: [token, label]
+      properties: {token: {type: string}, label: {type: string, maxLength: 80}}
+    CredentialCreate:
+      type: object
+      required: [label, batchId, scopes]
+      properties:
+        label: {type: string, maxLength: 80}
+        batchId: {type: string}
+        scopes: {type: array, items: {type: string, enum: [read, ingest, research, organize]}}
+    Session:
+      type: object
+      required: [id, label, scopes, expiresAt]
+      properties:
+        id: {type: string}
+        token: {type: string, description: Only returned on creation}
+        label: {type: string}
+        scopes: {type: array, items: {type: string}}
+        batchId: {type: string}
+        expiresAt: {type: string, format: date-time}
+    LibraryCreate:
+      type: object
+      required: [name, kind]
+      properties: {name: {type: string, minLength: 1, maxLength: 120}, kind: {type: string, enum: [regular, cos]}}
+    Library:
+      allOf:
+        - {$ref: '#/components/schemas/LibraryCreate'}
+        - {type: object, required: [id, revision, createdAt], properties: {id: {type: string}, revision: {type: integer, format: int64}, createdAt: {type: string, format: date-time}}}
+    Asset:
+      type: object
+      required: [id, libraryId, fileName, originalFileName, relativePath, mediaType, mimeType, size, hash, revision, tagsRevision, contentVersion, authorId, authorStatus, tags, favorite, liked, note, createdAt, updatedAt, contentUrl, trashed, positionMs, positionContentVersion]
+      properties:
+        id: {type: string}
+        libraryId: {type: string}
+        fileName: {type: string}
+        originalFileName: {type: string}
+        relativePath: {type: string}
+        mediaType: {type: string, enum: [image, animated_image, video]}
+        mimeType: {type: string}
+        size: {type: integer, format: int64}
+        hash: {type: string}
+        revision: {type: integer, format: int64}
+        tagsRevision: {type: integer, format: int64}
+        contentVersion: {type: integer, format: int64}
+        authorId: {type: string}
+        authorName: {type: string}
+        authorStatus: {type: string, enum: [unknown, confirmed]}
+        collectionId: {type: string}
+        page: {type: integer}
+        tags: {type: array, items: {type: string}}
+        favorite: {type: boolean}
+        liked: {type: boolean}
+        note: {type: string}
+        source: {type: string}
+        characters: {type: array, items: {type: string}}
+        metadataSource: {type: string, enum: [upload, human, ai]}
+        sourceMtime: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        contentUrl: {type: string}
+        trashed: {type: boolean}
+        positionMs: {type: integer, format: int64}
+        positionContentVersion: {type: integer, format: int64}
+    RevisionRequest:
+      type: object
+      required: [expectedRevision]
+      properties: {expectedRevision: {type: integer, format: int64, minimum: 1}}
+    AssetUpdate:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: {type: integer, format: int64}
+        authorId: {type: string}
+        note: {type: string, maxLength: 10000}
+        source: {type: string, maxLength: 200}
+        characters: {type: array, maxItems: 50, items: {type: string, maxLength: 200}}
+    TagsUpdate:
+      type: object
+      required: [expectedRevision, tags]
+      properties:
+        expectedRevision: {type: integer, format: int64, description: Compare Asset.tagsRevision, not the overall revision}
+        tags: {type: array, maxItems: 100, items: {type: string, minLength: 1, maxLength: 100}}
+    ReactionUpdate:
+      type: object
+      required: [favorite, liked]
+      properties: {favorite: {type: boolean}, liked: {type: boolean}}
+    EventCreate:
+      type: object
+      required: [eventId, kind, contentVersion]
+      properties:
+        eventId: {type: string, minLength: 8, maxLength: 128}
+        kind: {type: string, enum: [view, play, progress]}
+        contentVersion: {type: integer, format: int64}
+        positionMs: {type: integer, format: int64, minimum: 0}
+    HistoryEvent:
+      allOf:
+        - {$ref: '#/components/schemas/EventCreate'}
+        - {type: object, required: [assetId, createdAt], properties: {assetId: {type: string}, fileName: {type: string}, createdAt: {type: string, format: date-time}}}
+    MoveRequest:
+      type: object
+      required: [expectedRevision, relativePath]
+      properties: {expectedRevision: {type: integer, format: int64}, relativePath: {type: string, maxLength: 500}}
+    AuthorCreate:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        biography: {type: string, maxLength: 20000}
+        aliases: {type: array, maxItems: 100, items: {type: string}}
+        homepage: {type: string, maxLength: 2000}
+        batchId: {type: string}
+    Author:
+      allOf:
+        - {$ref: '#/components/schemas/AuthorCreate'}
+        - type: object
+          required: [id, revision, placeholder, following, fieldStatus, createdAt, updatedAt]
+          properties:
+            id: {type: string}
+            revision: {type: integer, format: int64}
+            placeholder: {type: boolean}
+            following: {type: boolean}
+            fieldStatus: {type: object, additionalProperties: {type: string, enum: [missing, candidate, confirmed]}}
+            createdAt: {type: string, format: date-time}
+            updatedAt: {type: string, format: date-time}
+    AuthorUpdate:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: {type: integer, format: int64}
+        name: {type: string, maxLength: 200}
+        biography: {type: string, maxLength: 20000}
+        homepage: {type: string, maxLength: 2000}
+        aliases: {type: array, maxItems: 100, items: {type: string}}
+        following: {type: boolean}
+    CollectionCreate:
+      type: object
+      required: [libraryId, name, kind]
+      properties:
+        libraryId: {type: string}
+        name: {type: string, minLength: 1, maxLength: 200}
+        kind: {type: string, enum: [image_set, short_drama]}
+        aliases: {type: array, maxItems: 100, items: {type: string}}
+    Collection:
+      allOf:
+        - {$ref: '#/components/schemas/CollectionCreate'}
+        - {type: object, required: [id, revision, createdAt], properties: {id: {type: string}, revision: {type: integer, format: int64}, createdAt: {type: string, format: date-time}}}
+    UploadCreate:
+      type: object
+      required: [libraryId, fileName, size, mimeType, mode]
+      properties:
+        libraryId: {type: string}
+        fileName: {type: string, minLength: 1, maxLength: 240}
+        size: {type: integer, format: int64, minimum: 1}
+        mimeType: {type: string}
+        mode: {type: string, enum: [ordinary, intelligent]}
+        batchId: {type: string}
+        sourceMtime: {type: string, format: date-time}
+        relativeDirectory: {type: string, maxLength: 500}
+        authorId: {type: string}
+        collectionId: {type: string}
+        note: {type: string, maxLength: 10000}
+        family: {type: string, maxLength: 200, description: Optional automatic work numbering requested by the user}
+        replaceAssetId: {type: string, description: Admin device only; explicit replacement intent}
+        expectedContentVersion: {type: integer, format: int64}
+    Upload:
+      allOf:
+        - {$ref: '#/components/schemas/UploadCreate'}
+        - type: object
+          required: [id, offset, state, createdAt]
+          properties:
+            id: {type: string}
+            offset: {type: integer, format: int64}
+            state: {type: string, enum: [receiving, staged, ingested, duplicate, cancelled, failed]}
+            assetId: {type: string}
+            hash: {type: string}
+            errorCode: {type: string}
+            errorMessage: {type: string}
+            createdAt: {type: string, format: date-time}
+    UploadResult:
+      type: object
+      required: [upload]
+      properties: {upload: {$ref: '#/components/schemas/Upload'}, asset: {$ref: '#/components/schemas/Asset'}}
+    BatchCreate:
+      type: object
+      required: [libraryId, mode, label]
+      properties:
+        libraryId: {type: string}
+        mode: {type: string, enum: [ordinary, intelligent]}
+        label: {type: string, maxLength: 200}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100, default: 8}
+    Batch:
+      allOf:
+        - {$ref: '#/components/schemas/BatchCreate'}
+        - type: object
+          required: [id, state, revision, researchCalls, backupState, cleanupState, createdAt, updatedAt]
+          properties:
+            id: {type: string}
+            state: {type: string, enum: [receiving, waiting_executor, ready, partial, completed, cancelled]}
+            revision: {type: integer, format: int64}
+            researchCalls: {type: integer}
+            backupState: {type: string, enum: [not_covered, awaiting_external_backup]}
+            cleanupState: {type: string, enum: [retained]}
+            createdAt: {type: string, format: date-time}
+            updatedAt: {type: string, format: date-time}
+    BatchItem:
+      type: object
+      required: [upload, researchOutcome, candidates]
+      properties:
+        upload: {$ref: '#/components/schemas/Upload'}
+        researchOutcome: {type: string}
+        candidates: {type: array, items: {$ref: '#/components/schemas/ResearchCandidate'}}
+    BatchDetail:
+      type: object
+      required: [batch, items, plans]
+      properties:
+        batch: {$ref: '#/components/schemas/Batch'}
+        items: {type: array, items: {$ref: '#/components/schemas/BatchItem'}}
+        plans: {type: array, items: {$ref: '#/components/schemas/PlanSummary'}}
+    ResearchCandidate:
+      type: object
+      required: [sourceUrl, evidence]
+      properties:
+        authorId: {type: string}
+        name: {type: string, maxLength: 200}
+        sourceUrl: {type: string, maxLength: 2000}
+        evidence: {type: string, maxLength: 4000}
+    ResearchSubmit:
+      type: object
+      required: [expectedRevision, uploadId, expectedHash, outcome, candidates, callsUsed]
+      properties:
+        expectedRevision: {type: integer, format: int64}
+        uploadId: {type: string}
+        expectedHash: {type: string}
+        outcome: {type: string, enum: [candidates, unknown, conflict]}
+        candidates: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ResearchCandidate'}}
+        callsUsed: {type: integer, minimum: 1, maximum: 100}
+    PlanInput:
+      type: object
+      required: [uploadId, family]
+      properties:
+        uploadId: {type: string}
+        family: {type: string, minLength: 1, maxLength: 200}
+        authorId: {type: string}
+        groupKey: {type: string, maxLength: 100}
+        collectionId: {type: string}
+        page: {type: integer, minimum: 1}
+    PlanCreate:
+      type: object
+      required: [expectedRevision, items]
+      properties:
+        expectedRevision: {type: integer, format: int64}
+        items: {type: array, minItems: 1, maxItems: 100, items: {$ref: '#/components/schemas/PlanInput'}}
+    PlanItem:
+      type: object
+      required: [uploadId, fileName, relativePath, authorId, expectedHash]
+      properties:
+        uploadId: {type: string}
+        fileName: {type: string}
+        relativePath: {type: string}
+        authorId: {type: string}
+        collectionId: {type: string}
+        page: {type: integer}
+        expectedHash: {type: string}
+    PlanSummary:
+      type: object
+      required: [id, state, fingerprint]
+      properties: {id: {type: string}, state: {type: string}, fingerprint: {type: string}}
+    Plan:
+      allOf:
+        - {$ref: '#/components/schemas/PlanSummary'}
+        - type: object
+          required: [batchId, batchRevision, directoryFingerprint, items]
+          properties:
+            batchId: {type: string}
+            batchRevision: {type: integer, format: int64}
+            directoryFingerprint: {type: string}
+            items: {type: array, items: {$ref: '#/components/schemas/PlanItem'}}
+    TaskContext:
+      type: object
+      required: [batch, policyVersion, nextActions, remainingResearchCalls, items, limitations]
+      properties:
+        batch: {$ref: '#/components/schemas/Batch'}
+        policyVersion: {type: string}
+        nextActions: {type: array, items: {type: string}}
+        remainingResearchCalls: {type: integer}
+        items: {type: array, items: {$ref: '#/components/schemas/BatchItem'}}
+        nextCursor: {type: string}
+        limitations: {type: array, items: {type: string}}
+    Stats:
+      type: object
+      required: [assets, images, videos, bytes, favorites, authors, events, trash]
+      properties:
+        assets: {type: integer, format: int64}
+        images: {type: integer, format: int64}
+        videos: {type: integer, format: int64}
+        bytes: {type: integer, format: int64}
+        favorites: {type: integer, format: int64}
+        authors: {type: integer, format: int64}
+        events: {type: integer, format: int64}
+        trash: {type: integer, format: int64}
+    Settings:
+      type: object
+      required: [maxChunkBytes, maxActiveUploads, maxBatchItems, sourceCleanupEnabled]
+      properties:
+        maxChunkBytes: {type: integer, format: int64}
+        maxActiveUploads: {type: integer}
+        maxBatchItems: {type: integer}
+        sourceCleanupEnabled: {type: boolean}
+    Backup:
+      type: object
+      required: [id, state, createdAt, snapshotHash, assetCount, manifestHash]
+      properties:
+        id: {type: string}
+        state: {type: string, enum: [awaiting_external_backup]}
+        createdAt: {type: string, format: date-time}
+        snapshotHash: {type: string}
+        assetCount: {type: integer}
+        manifestHash: {type: string}
+    AssetPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Asset'}}, nextCursor: {type: string}}
+    LibraryPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Library'}}, nextCursor: {type: string}}
+    AuthorPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Author'}}, nextCursor: {type: string}}
+    CollectionPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Collection'}}, nextCursor: {type: string}}
+    HistoryPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/HistoryEvent'}}, nextCursor: {type: string}}
+    BatchPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Batch'}}, nextCursor: {type: string}}

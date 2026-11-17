@@ -1,0 +1,42 @@
+# 构建与依赖
+node_modules/
+dist/
+build/
+.gradle/
+.kotlin/
+target/
+__pycache__/
+*.pyc
+*.exe
+*.dll
+*.so
+*.dylib
+*.apk
+*.aab
+# 私有配置与真实数据
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+local.properties
+*.db
+*.db-*
+*.sqlite*
+/data/
+/media/
+*.log
+*.err
+*.key
+*.pem
+*.jks
+*.keystore
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+# CI 生成客户端；来源锁单独受版本控制
+api/generated/
+web/src/api/generated/
+android/sdk/src/
+server/internal/transport/generated/

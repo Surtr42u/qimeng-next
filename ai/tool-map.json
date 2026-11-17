@@ -1,0 +1,23 @@
+{
+  "getInstance": {"tool": "platform.instance", "scope": "read"},
+  "listLibraries": {"tool": "library.query", "scope": "read"},
+  "listAssets": {"tool": "asset.query", "scope": "read"},
+  "getAsset": {"tool": "asset.read", "scope": "read"},
+  "listAuthors": {"tool": "author.query", "scope": "read"},
+  "getAuthor": {"tool": "author.read", "scope": "read"},
+  "createAuthor": {"tool": "author.create", "scope": "organize"},
+  "listCollections": {"tool": "collection.query", "scope": "read"},
+  "listTags": {"tool": "tag.query", "scope": "read"},
+  "getStats": {"tool": "statistics.read", "scope": "read"},
+  "getUpload": {"tool": "upload.status", "scope": "read"},
+  "createUpload": {"tool": "upload.prepare", "scope": "ingest"},
+  "completeUpload": {"tool": "upload.complete", "scope": "ingest"},
+  "getBatch": {"tool": "task.read", "scope": "read"},
+  "listBatches": {"tool": "task.query", "scope": "read"},
+  "getTaskContext": {"tool": "task.context", "scope": "read"},
+  "submitResearch": {"tool": "research.submit", "scope": "research"},
+  "preparePlan": {"tool": "plan.prepare", "scope": "organize"},
+  "getPlan": {"tool": "plan.read", "scope": "read"},
+  "commitPlan": {"tool": "plan.commit", "scope": "organize"},
+  "getOperation": {"tool": "operation.read", "scope": "read"}
+}
