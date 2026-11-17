@@ -6,7 +6,7 @@
 
 | 旧纯展示文件（`core/ui/src/main/java/media/qimeng/app/core/ui/`） | 新文件（`core/ui/src/main/kotlin/media/qimeng/next/ui/`） | 适配 |
 | --- | --- | --- |
-| `theme/Color.kt`, `Dimens.kt`, `Shape.kt`, `Type.kt`, `Theme.kt`, `SoftDaylight.kt` | 同名 `theme/` 文件 | 仅包名；旧中性配色、字型、尺寸及日间阴影原值保留。根 `ui/Theme.kt` 为现有调用兼容转发。 |
+| `theme/Color.kt`, `Dimens.kt`, `Shape.kt`, `Type.kt`, `Theme.kt`, `SoftDaylight.kt`, `ButtonColors.kt` | 同名 `theme/` 文件 | 仅包名；旧中性配色、字型、尺寸及日间阴影原值保留。根 `ui/Theme.kt` 为现有调用兼容转发。 |
 | `glass/GlassColors.kt`, `GlassSurface.kt`, `GlassButtons.kt`, `PressScale.kt` | 同名 `glass/` 文件 | 包名 / 主题引用；这是旧静态展示玻璃与按压反馈，不将它宣称为新导航的背景折射。 |
 | `component/QimengSegPill.kt`, `QimengSegmentedControl.kt`, `QimengSettings.kt`, `QimengPills.kt`, `QimengTitleRow.kt`, `QimengCapsuleTextField.kt` | 同名 `component/` 文件 | 包名、资源与主题引用；不含网络或业务算法。 |
 | `icon/QimengIcons.kt`, `QimengManageIcons.kt`, `QimengDetailIcons.kt` | 同名 `icon/` 文件 | 包名与尺寸引用，保留原图标路径及 Material Icons 来源注释。 |
@@ -14,7 +14,9 @@
 
 页面级已复用 / 适配：旧 `feature/detail/DetailChromeBars.kt`、`DetailChromeIcons.kt`、`DetailSections.kt` 与 `res/values/strings.xml` 放入新 app 的 `screen/` 与详情资源，参数改接新 Asset，点赞 / 收藏字段名按新模型映射；不引用旧 ViewModel。旧 `SettingsScreen` 的分组层级、`SettingsCards.CountCard` 与 `HomeScreen.HomeTopRow` 布局接入新页面；`QimengMediaGrid.AssetCard` 的 16:9 / 5dp / 24px 与仅搜索附标题呈现接入新 MediaTile。
 
-以上说明实际来源，不代表页面已完全对齐。详情信息 / 作者编辑 / 播放器控制、相册与搜索、统计及上传仍需按 UI_PARITY 继续恢复和同数据基准比对。
+旧 `feature/login/LoginScreen.kt` 的双模式卡、地址卡、胶囊密码与提交区域复用到新 `screen/LoginScreen.kt`，原登录文案进入 `login_strings.xml`；私有本机启动与 NAS 密码交换均走新接口。自动发现尚未接通，在原信息位置明确显示进度说明，不伪报已搜索或放无效刷新操作。旧 `feature/search/SearchScreen.kt` 的顶行、三态布局、词条与结果筛选形式及结果输入触摸呈现接到新的 SearchViewModel；不复制旧查询业务。
+
+以上说明实际来源，不代表页面已完全对齐。详情信息 / 作者编辑 / 播放器控制、相册、搜索日期分组、统计及上传仍需按 UI_PARITY 继续恢复和同数据基准比对。
 
 旧纯展示注释中的历史工程路径仅说明来源，不转移其架构规则。新业务调用仍由生成 SDK → Repository → ViewModel → UI 完成。
 

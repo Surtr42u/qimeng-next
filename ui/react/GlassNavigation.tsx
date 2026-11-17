@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
+import { SelectionLens } from './SelectionLens';
 
 export type NavigationItem = {
   id: string;
@@ -128,7 +129,7 @@ export function SegmentedControl<T extends string>({
       ref={root}
       role="tablist"
       aria-label={label}
-      className="qm-segment"
+      className="qm-segment qm-selection-host"
       onKeyDown={(event) => {
         const index = options.findIndex((option) => option.value === value);
         const target =
@@ -150,6 +151,7 @@ export function SegmentedControl<T extends string>({
           ?.focus();
       }}
     >
+      <SelectionLens host={root} selected='[aria-selected="true"]' selectionKey={value} />
       {options.map((option, index) => (
         <button
           key={option.value}

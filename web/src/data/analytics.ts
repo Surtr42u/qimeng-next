@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api, read, operationHeaders } from "./client";
 import type { Schema } from "./client";
 import { useRemoteKey } from "./session";
@@ -21,6 +21,7 @@ export function useRecommendations(
   const key = useRemoteKey();
   return useInfiniteQuery({
     queryKey: [...key, "recommendations", seed, kind, mediaType],
+    placeholderData: keepPreviousData,
     initialPageParam: undefined as string | undefined,
     enabled,
     queryFn: ({ pageParam, signal }) =>
@@ -45,6 +46,7 @@ export function useRankings(
   const key = useRemoteKey();
   return useInfiniteQuery({
     queryKey: [...key, "rankings", period, mediaType],
+    placeholderData: keepPreviousData,
     initialPageParam: undefined as string | undefined,
     enabled,
     queryFn: ({ pageParam, signal }) =>
@@ -83,6 +85,21 @@ export function useReview(range: StatsRange) {
     queryKey: [...key, "review", range],
     queryFn: ({ signal }) =>
       read(api.GET("/stats/review", { params: { query: { range } }, signal })),
+  });
+}
+export type ActivityRankingKind = 'authors' | 'tags' | 'assets';
+export function useActivityRanking(kind: ActivityRankingKind, range: StatsRange, metric: 'views' | 'seconds' = 'views', limit = 30) {
+  const key = useRemoteKey();
+  return useInfiniteQuery({
+    queryKey: [...key, 'activity-ranking', kind, range, metric, limit],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const query = { range, cursor: pageParam, limit };
+      if (kind === 'authors') return read(api.GET('/stats/top-authors', { params: { query }, signal }));
+      if (kind === 'tags') return read(api.GET('/stats/top-tags', { params: { query }, signal }));
+      return read(api.GET('/stats/most-viewed', { params: { query: { ...query, metric } }, signal }));
+    },
+    getNextPageParam: page => page.nextCursor || undefined,
   });
 }
 export function useRecommendationPreferences() {

@@ -33,14 +33,28 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     private val authenticationLock = Any()
     private fun target() = session.value ?: error("请先登录服务器")
 
-    suspend fun login(address: String, token: String, certificateDerBase64: String? = null, expectedInstanceId: String? = null, rememberAddress: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun login(address: String, token: String, certificateDerBase64: String? = null, expectedInstanceId: String? = null, rememberAddress: Boolean = false) =
+        authenticate(address, SessionCreate(token = token, label = "Android 客户端"), certificateDerBase64, expectedInstanceId, rememberAddress)
+
+    suspend fun loginWithPassword(address: String, password: String, certificateDerBase64: String? = null,
+                                  expectedInstanceId: String? = null, rememberAddress: Boolean = true) {
+        require(password.isNotEmpty()) { "请输入服务器密码" }
+        authenticate(address, SessionCreate(password = password, label = "Android 客户端"), certificateDerBase64, expectedInstanceId, rememberAddress)
+    }
+
+    private suspend fun authenticate(address: String, credentials: SessionCreate, certificateDerBase64: String? = null,
+                                     expectedInstanceId: String? = null, rememberAddress: Boolean = false) = withContext(Dispatchers.IO) {
         val (attempt, connection) = synchronized(authenticationLock) { authenticationGeneration.incrementAndGet() to settings.transportRevision.value }
         val root = normalizedServer(address)
         val api = provider.anonymous(root, certificateDerBase64)
         val instance = api.getInstance().bodyOrThrow()
         check(expectedInstanceId == null || instance.id == expectedInstanceId) { "服务实例与启动回执不匹配" }
         require(instance.apiVersion == "0.1.0") { "服务器协议不兼容，请同步更新客户端与服务器" }
-        val created = api.createSession(SessionCreate(token = token, label = "Android 客户端")).bodyOrThrow()
+        val created = try { api.createSession(credentials).bodyOrThrow() }
+        catch (failure: ApiFailure) {
+            if (failure.status == 401 && credentials.password != null) throw ApiFailure(401, "密码错误，请重新输入")
+            throw failure
+        }
         val secret = created.token ?: throw IOException("服务器未返回登录凭据")
         synchronized(authenticationLock) {
             check(attempt == authenticationGeneration.get() && connection == settings.transportRevision.value) { "登录期间连接已改变，已保留较新的选择" }
@@ -138,7 +152,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun searchSuggestions(query: String, recommend: Boolean = false): List<SearchWord> = provider.api(target())
-        .getSearchSuggestions(q = query, recommend = recommend, limit = 20).bodyOrThrow().items.map { SearchWord(it.id, it.type.value, it.name) }
+        .getSearchSuggestions(q = query, recommend = recommend, limit = 10).bodyOrThrow().items.map { SearchWord(it.id, it.type.value, it.name) }
 
     suspend fun asset(id: String): Asset {
         val target = target()

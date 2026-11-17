@@ -18,6 +18,15 @@ export function useScan(id: string) {
 export function useCancelScan(id: string) {
   return useMutation({ mutationFn: (key: string) => read(api.DELETE('/scans/{id}', { params: { path: { id }, header: operationHeaders(key) } })), onSuccess: invalidateLibrary });
 }
+export function useScans(libraryId?: string, state?: Schema<'ScanJob'>['state']) {
+  const key = useRemoteKey();
+  return useInfiniteQuery({
+    queryKey: [...key, 'scans', libraryId, state], initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => read(api.GET('/scans', { params: { query: { libraryId, state, cursor: pageParam, limit: 30 } }, signal })),
+    getNextPageParam: page => page.nextCursor || undefined,
+    refetchInterval: query => query.state.data?.pages.some(page => page.items.some(item => ['queued', 'running'].includes(item.state))) ? 5000 : false,
+  });
+}
 export function useAuthorTasks(state?: Schema<'AuthorTask'>['state']) {
   const key = useRemoteKey();
   return useInfiniteQuery({ queryKey: [...key, 'author-tasks', state], initialPageParam: undefined as string | undefined,

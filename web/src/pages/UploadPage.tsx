@@ -22,6 +22,9 @@ import { Icon } from "../components/Icon";
 import { bytes } from "../lib/format";
 import { droppedFiles } from "../lib/drop-files";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { NamingControls } from './NamingControls';
+import { previewNamingFiles } from '../data/naming';
+import type { NamingFilePreview } from '../data/naming';
 
 const phaseNames: Record<UploadPhase, string> = {
   waiting_file: "等待重选原文件",
@@ -52,6 +55,11 @@ export function UploadPage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [reading, setReading] = useState(false);
+  const [automaticName, setAutomaticName] = useState(false);
+  const [family, setFamily] = useState('');
+  const [previewing, setPreviewing] = useState(false);
+  const [namePreview, setNamePreview] = useState<NamingFilePreview[]>([]);
+  const [retryFiles, setRetryFiles] = useState<readonly File[]>();
   const authors = useAuthors(authorQ);
   const collections = useCollections(libraryId || undefined);
   const selected = libraries.data?.items.find((item) => item.id === libraryId);
@@ -65,11 +73,19 @@ export function UploadPage() {
     !!upload.queue &&
     upload.initialized &&
     !upload.preparing &&
-    !reading;
+    !reading && !previewing && (!automaticName || !!family.trim() || !!collectionId);
   const add = async (files: readonly File[]) => {
-    if (!ready || !selected || !upload.queue) return;
+    if (!ready || !selected || !upload.queue || !settings.data) return;
     setError(null);
+    setRetryFiles(undefined);
     try {
+      if (files.length > settings.data.maxBatchItems) throw new Error(`本批最多 ${settings.data.maxBatchItems} 个文件，请分批选取。`);
+      const naming = { libraryId: selected.id, relativeDirectory: directory || undefined, family: automaticName || collectionId ? family.trim() || undefined : undefined, collectionId: collectionId || undefined, note };
+      if (mode === 'ordinary' && (automaticName || collectionId)) {
+        setPreviewing(true);
+        const kind = collections.data?.pages.flatMap(page => page.items).find(item => item.id === collectionId)?.kind;
+        setNamePreview(await previewNamingFiles(files, naming, kind));
+      } else setNamePreview([]);
       await upload.queue.add(
         files,
         {
@@ -83,11 +99,15 @@ export function UploadPage() {
             .map((value) => value.trim())
             .filter(Boolean),
           note,
+          family: automaticName || collectionId ? family.trim() || undefined : undefined,
         },
         selected.name,
       );
     } catch (failure) {
       setError(failure);
+      setRetryFiles(files);
+    } finally {
+      setPreviewing(false);
     }
   };
   return (
@@ -141,6 +161,7 @@ export function UploadPage() {
                     setAuthorId("");
                     setAuthorName("");
                     setAcquisition("");
+                    setNamePreview([]); setRetryFiles(undefined); setFamily('');
                   }}
                 >
                   <option value="">选择媒体库</option>
@@ -159,6 +180,7 @@ export function UploadPage() {
                 onChange={setDirectory}
               />
             </section>
+            <NamingControls libraryId={libraryId} directory={directory} collectionId={collectionId} enabled={automaticName} family={family} setEnabled={setAutomaticName} setFamily={setFamily} busy={previewing || upload.preparing} />
             <details className="panel">
               <summary>作者、集合与备注（可选）</summary>
               <div className="form-stack section-space">
@@ -335,8 +357,10 @@ export function UploadPage() {
               {collectionId && " · 已选定作品集合"}
             </p>
             {upload.preparing && <Loading text="正在创建持久批次…" />}
+            {previewing && <Loading text="正在预览选定文件的名称…" />}
             {reading && <Loading text="正在读取目录…" />}
             <ErrorNotice error={error} />
+            {retryFiles && <button className="button" disabled={!ready} onClick={() => void add(retryFiles)}>按当前目标重试选定文件</button>}
           </section>
         </div>
       )}
@@ -349,6 +373,7 @@ export function UploadPage() {
           清理已结束记录
         </button>
       </div>
+      {namePreview.length > 0 && <details className="panel section-space"><summary>本次选取的命名预览（{namePreview.length} 项）</summary><p className="muted">这是入队时的服务端预览，不占用编号。其他设备同时入库时，实际名称以队列的入库结果与任务回读为准。</p><div className="profile-raw">{namePreview.map((item, index) => <p key={index}>{item.sourceName} → {item.relativePath}</p>)}</div></details>}
       <p className="muted">
         目标与关联以入队时的选择为准。清理记录不会删除媒体。
       </p>
@@ -422,6 +447,8 @@ export function UploadRow({ entry }: { entry: QueueEntry }) {
           {entry.error}
         </p>
       )}
+      {entry.waitingFor && <p className="muted">保持命名顺序，等待前项“{entry.waitingFor}”完成。前项失败或暂停时，请先重试或明确取消前项。</p>}
+      {entry.actualFileName && entry.actualFileName !== entry.name && <p>已保存为：{entry.actualFileName}</p>}
       <div className="actions">
         {entry.assetId && (
           <Link

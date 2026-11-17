@@ -1,11 +1,45 @@
-.detail-aside > .author-identity { flex: 0 0 auto; }
-.video-exit { display: none; position: absolute; z-index: 3; top: max(14px,env(safe-area-inset-top)); right: max(14px,env(safe-area-inset-right)); background: var(--qm-glass-strong); backdrop-filter: blur(14px); }
-.video-stage--fullscreen > .video-exit, .video-stage:fullscreen > .video-exit { display: inline-flex; }
+.detail-aside > .author-identity {
+  flex: 0 0 auto;
+}
+.video-exit {
+  display: none;
+  position: absolute;
+  z-index: 3;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  background: var(--qm-glass-strong);
+  backdrop-filter: blur(14px);
+}
+.video-stage--fullscreen > .video-exit,
+.video-stage:fullscreen > .video-exit {
+  display: inline-flex;
+}
 @media (min-width: 1101px) {
-  .detail-layout { --qm-detail-stage-height: max(330px, min(73vh, 800px)); }
-  .detail-layout--video { --qm-detail-stage-height: max(320px, min(65vh, 680px)); }
-  .detail-aside { height: var(--qm-detail-stage-height); }
-  .detail-aside .related-panel { min-height: 0; max-height: none; }
-  .detail-layout--video .video-stage:not(.video-stage--fullscreen):not(:fullscreen) { height: var(--qm-detail-stage-height); }
-  .detail-layout--video .video-stage:not(.video-stage--fullscreen):not(:fullscreen) video { flex: 1; height: 0; min-height: 0; max-height: none; aspect-ratio: auto; object-fit: contain; }
+  .detail-layout {
+    --qm-detail-stage-height: max(330px, min(73vh, 800px));
+  }
+  .detail-layout--video {
+    --qm-detail-stage-height: max(320px, min(65vh, 680px));
+  }
+  .detail-aside {
+    height: var(--qm-detail-stage-height);
+  }
+  .detail-aside .related-panel {
+    min-height: 0;
+    max-height: none;
+  }
+  .detail-layout--video
+    .video-stage:not(.video-stage--fullscreen):not(:fullscreen) {
+    height: var(--qm-detail-stage-height);
+  }
+  .detail-layout--video
+    .video-stage:not(.video-stage--fullscreen):not(:fullscreen)
+    video {
+    flex: 1;
+    height: 0;
+    min-height: 0;
+    max-height: none;
+    aspect-ratio: auto;
+    object-fit: contain;
+  }
 }

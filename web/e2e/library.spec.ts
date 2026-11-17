@@ -18,7 +18,7 @@ test("cursor pagination and search keep the active query isolated", async ({
   await mockLibrary(page);
   await page.goto("/album");
   await expect(page.locator(".media-card")).toHaveCount(48);
-  await page.getByRole("button", { name: "加载更多", exact: true }).scrollIntoViewIfNeeded();
+  await page.locator('.media-card').last().scrollIntoViewIfNeeded();
   await expect(page.locator(".media-card")).toHaveCount(72);
   await page.getByRole("textbox", { name: "搜索媒体" }).fill("合成场景 71");
   await page.getByRole("textbox", { name: "搜索媒体" }).press("Enter");
@@ -51,7 +51,7 @@ test("rapid navigation retains one page and the selected navigation semantics", 
   await mockLibrary(page);
   await page.goto("/album");
   const nav = page.getByRole("navigation", {
-    name: isMobile ? "主导航" : "桌面主导航",
+    name: "主导航",
     exact: true,
   });
   for (const name of ["我的", "数据", "首页", "相册"])
@@ -77,7 +77,7 @@ test("return restores browsing position and image viewer restores focus", async 
   await expect(page.locator(".media-card")).toHaveCount(48);
   const card = page.locator(".media-card").nth(30);
   await card.scrollIntoViewIfNeeded();
-  const scrollBefore = await page.evaluate(() => window.scrollY);
+  const scrollBefore = await page.locator('[data-scroll-root]').evaluate(element => element.scrollTop);
   await card.click();
   await page.getByRole("button", { name: "查看原图并缩放" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -87,7 +87,7 @@ test("return restores browsing position and image viewer restores focus", async 
   ).toBeFocused();
   await page.getByRole("button", { name: "返回浏览" }).click();
   await expect
-    .poll(() => page.evaluate(() => window.scrollY))
+    .poll(() => page.locator('[data-scroll-root]').evaluate(element => element.scrollTop))
     .toBeGreaterThan(Math.max(0, scrollBefore - 80));
 });
 
@@ -95,15 +95,11 @@ test("keyboard selection, reduced motion and light mode remain usable", async ({
   page,
 }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem('qimeng.theme', 'dark'));
   await mockLibrary(page);
   await page.goto("/settings");
-  const dark = page.getByRole("tab", { name: "暮色玻璃" });
-  await dark.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: "晨雾玻璃" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await page.getByRole('button', { name: '明暗主题', exact: true }).focus();
+  await page.keyboard.press('Space');
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.screenshot({
     path: testInfo.outputPath("synthetic-settings-light.png"),
@@ -111,25 +107,18 @@ test("keyboard selection, reduced motion and light mode remain usable", async ({
   });
 });
 
-test("a slow preference save confirms its own snapshot while preserving newer edits", async ({
+test("recommendation presets save immediately and prevent overlapping writes", async ({
   page,
 }) => {
   const fixture = await mockLibrary(page);
   await page.goto("/settings");
-  await page.getByText("自定义权重", { exact: true }).click();
-  await page.getByRole("spinbutton", { name: "发现", exact: true }).fill("0.2");
   fixture.holdPreference = true;
-  await page.getByRole("button", { name: "保存偏好", exact: true }).click();
+  await page.getByRole('button', { name: '深度探索', exact: true }).click();
   await expect.poll(() => !!fixture.releasePreference).toBe(true);
-  await page
-    .getByRole("spinbutton", { name: "发现", exact: true })
-    .fill("0.35");
+  await expect(page.getByRole('button', { name: '新鲜优先', exact: true })).toBeDisabled();
   fixture.releasePreference?.();
-  await expect(
-    page.getByRole("spinbutton", { name: "发现", exact: true }),
-  ).toHaveValue("0.35");
-  await expect(page.getByText("有未保存的修改", { exact: true })).toBeVisible();
-  expect(fixture.weights.discovery).toBe(0.2);
+  await expect(page.getByRole('button', { name: '深度探索', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(fixture.weights.discovery).toBe(0.3);
 });
 
 test("review shares use server percent units and hour controls work by keyboard", async ({
@@ -137,9 +126,10 @@ test("review shares use server percent units and hour controls work by keyboard"
 }) => {
   await mockLibrary(page);
   await page.goto("/data/review?range=30d");
-  await page.getByText("详情 / 收起", { exact: true }).click();
-  await expect(page.getByText("50.0% · 6 次", { exact: true })).toBeVisible();
-  const bars = page.getByRole("group", { name: "24小时浏览停留" });
+  await page.getByRole('button', { name: '晨光，查看详情' }).click();
+  await expect(page.locator('.review-interest-values').getByText('50.0', { exact: false })).toContainText('50.0');
+  await expect(page.locator('.review-interest-values').getByText('6 次浏览', { exact: true })).toBeVisible();
+  const bars = page.getByRole("group", { name: "24小时浏览时长" });
   await bars.getByRole("button").first().focus();
   await page.keyboard.press("End");
   await expect(bars.getByRole("button").last()).toBeFocused();

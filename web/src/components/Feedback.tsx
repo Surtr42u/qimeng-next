@@ -59,12 +59,11 @@ export function EmptyState({
   );
 }
 
-export function Loading({ text = "正在读取…" }: { text?: string }) {
+export function Loading({ text = "加载中…" }: { text?: string }) {
   return (
-    <div className="loading" role="status">
-      <span className="spinner" aria-hidden="true" />
+    <p className="grid-empty" role="status">
       {text}
-    </div>
+    </p>
   );
 }
 
@@ -79,7 +78,8 @@ export function PageHeading({
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    if (document.activeElement === document.body) heading.current?.focus({ preventScroll: true });
+    if (document.activeElement === document.body)
+      heading.current?.focus({ preventScroll: true });
   }, []);
   return (
     <div className="page-heading">

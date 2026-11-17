@@ -102,6 +102,28 @@
   outline: 2px solid var(--qm-accent);
   outline-offset: -1px;
 }
+.qm-selection-host { position: relative; isolation: isolate; }
+.qm-selection-host > a, .qm-selection-host > button { position: relative; z-index: 1; }
+.qm-selection-lens {
+  position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(155deg, var(--qm-highlight), transparent 42%), var(--qm-accent-soft);
+  border: 1px solid color-mix(in oklab, var(--qm-primary) 26%, transparent);
+  box-shadow: inset 0 -3px 8px var(--qm-accent-soft), 0 2px 8px var(--qm-border);
+  backdrop-filter: blur(3px) saturate(1.8);
+  -webkit-backdrop-filter: blur(3px) saturate(1.8);
+  transition: transform var(--qm-motion-lens) var(--qm-spring), width var(--qm-motion-lens) var(--qm-spring), height var(--qm-motion-lens) var(--qm-spring);
+}
+.qm-selection-host button[aria-selected="true"] { background: transparent; }
+.qm-selection-host > a:active, .qm-selection-host > button:active { transform: scale(.95); }
+@supports (backdrop-filter: url(#qm-glass-refraction)) {
+  .qm-selection-lens { backdrop-filter: url(#qm-glass-refraction) blur(3px) saturate(1.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qm-selection-lens { transition: none; }
+  .qm-selection-host > a:active, .qm-selection-host > button:active { transform: none; }
+}
+@media (forced-colors: active) { .qm-selection-lens { border: 2px solid Highlight; background: Canvas; } }
 .qm-route-surface {
   min-height: 55vh;
 }

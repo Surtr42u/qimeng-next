@@ -27,6 +27,7 @@ async function mockProfiles(page: Page) {
     const method = route.request().method();
     const send = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (url.pathname.endsWith('/profile')) return send(profile);
+    if (url.pathname.endsWith('/profile-summary')) return send({ authorId: profile.authorId, xRevision: profile.blocks[0]!.revision, biographyOriginal: profile.blocks[0]!.values.biographyOriginal ?? '', biographyZh: profile.blocks[0]!.values.biographyZh ?? '' });
     if (url.pathname.endsWith('/candidates')) return send({ items: [candidate] });
     if (url.pathname.endsWith('/archives')) return send({ items: [] });
     if (method === 'PATCH') {
@@ -54,8 +55,8 @@ async function mockProfiles(page: Page) {
 
 test('profile conflict retains draft and rebases only explicitly edited fields', async ({ page }) => {
   const state = await mockProfiles(page);
-  await page.goto('/authors/synthetic-author');
-  await page.getByRole('button', { name: '编辑整理简介与备注', exact: true }).click();
+  await page.goto('/authors/synthetic-author/profile');
+  await page.getByRole('button', { name: '编辑基础资料', exact: true }).click();
   await page.getByLabel('整理简介', { exact: true }).fill('本次人工草稿');
   state.conflict = true;
   await page.getByRole('button', { name: '保存资料', exact: true }).click();
@@ -65,36 +66,35 @@ test('profile conflict retains draft and rebases only explicitly edited fields',
   await page.getByRole('button', { name: '已核对，保留本次改动并采用当前版本' }).click();
   await expect(page.getByLabel('私人备注', { exact: true })).toHaveValue('另一个设备更新的备注');
   await page.getByRole('button', { name: '保存资料', exact: true }).click();
-  await expect(page.getByRole('button', { name: '编辑整理简介与备注', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '编辑基础资料', exact: true })).toBeVisible();
   expect(state.writes.at(-1)?.values).toEqual({ summary: '本次人工草稿' });
-  expect(state.profile.blocks[1].values.note).toBe('另一个设备更新的备注');
+  expect(state.profile.blocks[1]!.values.note).toBe('另一个设备更新的备注');
 });
 
 test('candidate fills a reviewable draft and does not save before explicit confirmation', async ({ page }) => {
   const state = await mockProfiles(page);
-  await page.goto('/authors/synthetic-author');
-  await page.getByRole('button', { name: '资料候选与处理记录' }).click();
-  await page.getByRole('button', { name: '填入草稿并核对' }).click();
+  await page.goto('/authors/synthetic-author/profile');
+  await page.getByRole('button', { name: '填入候选草稿，继续核对' }).click();
   await expect(page.getByLabel('整理简介', { exact: true })).toHaveValue('候选提出的简介');
   expect(state.writes).toHaveLength(0);
-  await expect(page.getByRole('button', { name: '保存资料', exact: true })).toBeDisabled();
-  await page.getByLabel('我已对照当前资料与候选，确认保存这份草稿').check();
+  await expect(page.getByRole('button', { name: '保存资料', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '保存资料', exact: true }).click();
-  await expect(page.getByText('已保存为修订 2', { exact: true })).toBeVisible();
-  expect(state.writes[0].candidateId).toBe('synthetic-candidate');
-  expect(state.profile.blocks[1].values.note).toBe('已有备注');
+  await expect(page.getByRole('button', { name: '填入候选草稿，继续核对' })).toHaveCount(0);
+  expect(state.writes[0]!.candidateId).toBe('synthetic-candidate');
+  expect(state.profile.blocks[1]!.values.note).toBe('已有备注');
 });
 
 test('X original and translation remain distinct and changing the original clears unreviewed translation', async ({ page }) => {
   const state = await mockProfiles(page);
   await page.goto('/authors/synthetic-author');
-  await expect(page.locator('.profile-copy').getByText('合成译文', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '查看 X 原文' }).click();
-  await expect(page.locator('.profile-copy').getByText('Synthetic original', { exact: true })).toBeVisible();
-  await page.locator('.profile-block').filter({ hasText: 'X 公开资料' }).locator('summary').first().click();
-  await page.getByRole('button', { name: '编辑X 公开资料' }).click();
+  await expect(page.locator('.creator-profile-bio')).toHaveText('合成译文');
+  await page.getByRole('button', { name: '原文', exact: true }).click();
+  await expect(page.locator('.creator-profile-bio')).toHaveText('Synthetic original');
+  await page.getByRole('link', { name: '详细资料', exact: true }).click();
+  await page.getByRole('button', { name: '编辑X资料' }).click();
   await page.getByLabel('X 简介原文', { exact: true }).fill('Changed original');
   await page.getByRole('button', { name: '保存资料', exact: true }).click();
-  await expect(page.getByRole('button', { name: '查看 X 原文' })).toHaveCount(0);
-  expect(state.profile.blocks[0].values.biographyZh).toBe('');
+  await page.goto('/authors/synthetic-author');
+  await expect(page.getByRole('group', { name: '简介显示语言' })).toHaveCount(0);
+  expect(state.profile.blocks[0]!.values.biographyZh).toBe('');
 });

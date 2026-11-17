@@ -30,7 +30,7 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
         }
     }
 
-    suspend fun connect(forceLogin: Boolean) = mutex.withLock {
+    suspend fun connect(forceLogin: Boolean, password: String = "") = mutex.withLock {
         mutableError.value = null
         val selectedBeforeStart = graph.settings.session.value
         val connection = runtime.start()
@@ -38,7 +38,8 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
         if (current != selectedBeforeStart) return@withLock
         if (forceLogin || current == null || current.baseUrl != connection.baseUrl || current.instanceId != connection.instanceId ||
             graph.settings.certificateFor(current) != connection.certificateDerBase64) {
-            graph.media.login(connection.baseUrl, connection.bootstrapToken, connection.certificateDerBase64, connection.instanceId)
+            if (password.isEmpty()) graph.media.login(connection.baseUrl, connection.bootstrapToken, connection.certificateDerBase64, connection.instanceId)
+            else graph.media.loginWithPassword(connection.baseUrl, password, connection.certificateDerBase64, connection.instanceId, rememberAddress = false)
         }
         runtime.confirmInstance(connection.instanceId)
         graph.uploads.schedule()

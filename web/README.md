@@ -1,6 +1,6 @@
 # Web / PWA
 
-React + TypeScript + Vite，服务端同源托管；TanStack Query 负责缓存、取消与失效，React Router 持有导航。全部代码重新编写，没有导入旧业务实现。当前源码与验证缺口见 [UI 对照](../docs/ui.md)；构建成功不等同于真实库切换或设备验收。
+React + TypeScript + Vite，服务端同源托管；TanStack Query 负责缓存、取消与失效，React Router 持有导航。业务代码重新编写，旧版表现层按用户于2026-11-17的明确授权复用，见 [复用来源](REUSED_UI.md)。当前源码与视觉纠偏/验证缺口见 [UI 对照](../docs/ui.md)；构建成功不等同于界面对齐、真实库切换或设备验收。
 
 ## 数据与状态
 
@@ -49,5 +49,6 @@ Node 24；命令工作目录为 `web`。锁文件来源与 SDK 摘要由根 CI �
 | 协议 | openapi-typescript 7.13.0，openapi-fetch 0.17.0 | [生成器](https://openapi-ts.dev/introduction)、[类型客户端](https://openapi-ts.dev/openapi-fetch/) |
 | 文件核验 | @noble/hashes 2.4.0 | [上游流式 SHA256](https://github.com/paulmillr/noble-hashes) |
 | 自动验证 | Vitest 5.1.0，Playwright 1.65.1 | [Vitest](https://vitest.dev/)、[Playwright](https://playwright.dev/docs/intro) |
+| 旧UI表现层 | Geist 5.3.0、lucide-react 1.59.0、radix-ui 1.6.7、Recharts 3.10.1、react-is 19.3.1 | [复用来源、官方元数据与许可证](REUSED_UI.md) |
 
 直接依赖的精确版本不能代替传递依赖 lock 与安全审计。当前云端实际结果由根 `docs/status.md` 记录。

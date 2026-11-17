@@ -25,17 +25,20 @@ class SecureSettings(context: Context) {
     private val mutableError = MutableStateFlow<String?>(null)
     private val mutableRecentServers = MutableStateFlow<List<String>>(emptyList())
     private val mutableTransportRevision = MutableStateFlow(0L)
+    private val mutableSearchHistory = MutableStateFlow<List<String>>(emptyList())
     val session = mutableSession.asStateFlow()
     val preferences = mutablePreferences.asStateFlow()
     val error = mutableError.asStateFlow()
     val recentServers = mutableRecentServers.asStateFlow()
     val transportRevision = mutableTransportRevision.asStateFlow()
+    val searchHistory = mutableSearchHistory.asStateFlow()
 
     init {
         try {
             storage.getString("session", null)?.let { mutableSession.value = gson.fromJson(it, Session::class.java) }
             storage.getString("preferences", null)?.let { mutablePreferences.value = gson.fromJson(it, Preferences::class.java) }
             storage.getString("recent-servers", null)?.let { mutableRecentServers.value = gson.fromJson(it, Array<String>::class.java).toList() }
+            storage.getString("search-history", null)?.let { mutableSearchHistory.value = gson.fromJson(it, Array<String>::class.java).toList() }
         } catch (_: Exception) {
             mutableError.value = "连接配置无法读取，请重新登录。原有传输记录仍保留。"
         }
@@ -75,6 +78,20 @@ class SecureSettings(context: Context) {
     fun savePreferences(preferences: Preferences) {
         check(storage.edit().putString("preferences", gson.toJson(preferences)).commit()) { "无法保存外观设置" }
         mutablePreferences.value = preferences
+    }
+
+    @Synchronized
+    fun recordSearch(word: String) {
+        val value = word.trim()
+        if (value.isEmpty()) return
+        val next = (listOf(value) + mutableSearchHistory.value).distinct().take(20)
+        check(storage.edit().putString("search-history", gson.toJson(next)).commit()) { "无法保存搜索历史" }
+        mutableSearchHistory.value = next
+    }
+    @Synchronized
+    fun clearSearchHistory() {
+        check(storage.edit().remove("search-history").commit()) { "无法清除搜索历史" }
+        mutableSearchHistory.value = emptyList()
     }
 
     fun uploadLibrary(target: Session): String? = storage.getString("upload-library-${target.instanceId}", null)

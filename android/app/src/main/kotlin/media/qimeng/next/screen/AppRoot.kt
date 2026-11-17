@@ -74,7 +74,7 @@ fun AppRoot(model: LibraryViewModel) {
                 val detailRoute = route.startsWith("asset:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && route != "main" && route != "ai-access") PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && route !in setOf("main", "ai-access", "search")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -97,7 +97,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("collection:") -> MediaBrowser(model, route, collectionId = route.substringAfter(':'))
                                 route.startsWith("tag:") -> MediaBrowser(model, route, initialTag = route.substringAfter(':'))
                                 route.startsWith("ranking:") -> ActivityRankingScreen(model, route.split(':')[1], route.split(':')[2])
-                                route == "search" -> MediaBrowser(model, "search", search = true)
+                                route == "search" -> SearchScreen(model)
                                 route == "favorites" -> MediaBrowser(model, "favorites", favorite = true)
                                 route == "authors" -> AuthorsScreen(model)
                                 route == "history" -> HistoryScreen(model)
@@ -129,32 +129,6 @@ fun AppRoot(model: LibraryViewModel) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun LoginScreen(model: LibraryViewModel) {
-    var address by rememberSaveable { mutableStateOf("") }
-    // Passwords never enter saved instance state.
-    var token by remember { mutableStateOf("") }
-    val busy by model.busy.collectAsStateWithLifecycle()
-    val message by model.message.collectAsStateWithLifecycle()
-    val settingsError by model.settingsError.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding().imePadding()
-        .verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Spacer(Modifier.height(48.dp))
-        Text("绮梦影库", style = MaterialTheme.typography.displaySmall)
-        Text("连接 NAS 或电脑，浏览你的同一座影库。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        ContentCard {
-            Text("服务器", style = MaterialTheme.typography.titleLarge)
-            OutlinedTextField(address, { address = it }, label = { Text("HTTPS 服务器地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(token, { token = it }, label = { Text("登录令牌") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { model.login(address, token) }, enabled = !busy && address.isNotBlank() && token.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("连接影库")
-            }
-            Text("地址与登录由你指定。通过本机隧道连接时，可填写 localhost 地址。", style = MaterialTheme.typography.bodySmall)
-        }
-        (message ?: settingsError)?.let { ErrorNotice(it) }
     }
 }
 

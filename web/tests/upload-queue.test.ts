@@ -68,6 +68,28 @@ async function initialized() {
 }
 
 describe("durable upload behavior", () => {
+  it('does not publish a later collection page while an earlier selection needs recovery', async () => {
+    const next = new File(['second synthetic page'], 'second.jpg', { type: 'image/jpeg', lastModified: 1001 });
+    let completes = 0;
+    mocks.post.mockImplementation((path: string) => {
+      if (path === '/batches') return Promise.resolve({ id: 'batch-fixture' });
+      if (path === '/uploads') return Promise.resolve(upload());
+      completes++;
+      if (completes === 1) return Promise.reject(new Error('first page result unknown'));
+      return Promise.resolve({ upload: { ...upload('ingested', next.size), size: next.size } });
+    });
+    mocks.put.mockImplementation((_path: string, options: { body: Blob }) => Promise.resolve({ ...upload('receiving', options.body.size), size: options.body.size }));
+    const queue = await initialized();
+    await queue.add([file(), next], { ...target, collectionId: 'synthetic-group' }, '合成库');
+    await vi.waitFor(() => expect(queue.getSnapshot().entries[0]?.phase).toBe('failed'));
+    expect(mocks.post.mock.calls.filter(call => call[0] === '/uploads')).toHaveLength(1);
+    expect(queue.getSnapshot().entries[1]?.waitingFor).toBe(file().name);
+    mocks.get.mockResolvedValue(upload('ingested', file().size));
+    queue.retry(queue.getSnapshot().entries[0]!.id);
+    await vi.waitFor(() => expect(queue.getSnapshot().entries[1]?.phase).toBe('ingested'));
+    expect(completes).toBe(2);
+    queue.dispose();
+  });
   it("reconciles a lost completion response without creating or sending the file again", async () => {
     let completionAttempts = 0;
     mocks.post.mockImplementation((path: string) => {

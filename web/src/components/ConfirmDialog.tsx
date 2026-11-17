@@ -1,63 +1,22 @@
-import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode } from 'react';
+import { AlertDialog } from 'radix-ui';
 
-export function ConfirmDialog({
-  title,
-  children,
-  onConfirm,
-  onCancel,
-  busy = false,
-  confirmLabel = "确认",
-  danger = false,
-}: {
-  title: string;
-  children: ReactNode;
-  onConfirm: () => void;
-  onCancel: () => void;
-  busy?: boolean;
-  confirmLabel?: string;
-  danger?: boolean;
+// The existing confirm-* presentation is retained; mutation lifetime belongs to the caller.
+export function ConfirmDialog({ title, children, onConfirm, onCancel, busy = false, confirmLabel = '确认', danger = false }: {
+  title: string; children: ReactNode; onConfirm: () => void; onCancel: () => void;
+  busy?: boolean; confirmLabel?: string; danger?: boolean;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const cancel = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement;
-    dialog.current?.showModal();
-    cancel.current?.focus();
-    return () => {
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
-    };
-  }, []);
-  return (
-    <dialog
-      ref={dialog}
-      className="dialog qm-glass"
-      aria-labelledby="confirm-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        if (!busy) onCancel();
-      }}
-    >
-      <h2 id="confirm-title">{title}</h2>
-      <div className="dialog-content">{children}</div>
-      <div className="actions">
-        <button
-          ref={cancel}
-          className="button"
-          disabled={busy}
-          onClick={onCancel}
-        >
-          取消
-        </button>
-        <button
-          className={`button ${danger ? "button--danger" : "button--primary"}`}
-          disabled={busy}
-          onClick={onConfirm}
-        >
-          {busy ? "正在处理…" : confirmLabel}
-        </button>
-      </div>
-    </dialog>
-  );
+  return <AlertDialog.Root open onOpenChange={open => { if (!open && !busy) onCancel(); }}>
+    <AlertDialog.Portal>
+      <AlertDialog.Overlay className="confirm-overlay" />
+      <AlertDialog.Content className="confirm-panel">
+        <AlertDialog.Title className="confirm-title">{title}</AlertDialog.Title>
+        <AlertDialog.Description asChild><div className="confirm-desc">{children}</div></AlertDialog.Description>
+        <div className="confirm-actions">
+          <AlertDialog.Cancel className="confirm-btn confirm-btn--cancel" disabled={busy}>取消</AlertDialog.Cancel>
+          <AlertDialog.Action className={`confirm-btn ${danger ? 'confirm-btn--danger' : 'confirm-btn--primary'}`} disabled={busy} onClick={event => { event.preventDefault(); onConfirm(); }}>{busy ? '正在处理…' : confirmLabel}</AlertDialog.Action>
+        </div>
+      </AlertDialog.Content>
+    </AlertDialog.Portal>
+  </AlertDialog.Root>;
 }

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useStartScan } from '../data/maintenance';
+import { useStartScan } from "../data/maintenance";
 import {
   useLibraries,
   useCreateLibrary,
@@ -31,8 +31,8 @@ export function LibrariesPage() {
   const create = useCreateLibrary();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"regular" | "cos">("regular");
-  const [storageId, setStorageId] = useState('data');
-  const [rootRelativePath, setRootRelativePath] = useState('');
+  const [storageId, setStorageId] = useState("data");
+  const [rootRelativePath, setRootRelativePath] = useState("");
   const [open, setOpen] = useState(false);
   const attempt = useRef({ body: "", key: newId() });
   return (
@@ -56,7 +56,12 @@ export function LibrariesPage() {
           className="panel form-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            const body = { name, kind, storageId, ...(storageId !== 'data' ? { rootRelativePath } : {}) };
+            const body = {
+              name,
+              kind,
+              storageId,
+              ...(storageId !== "data" ? { rootRelativePath } : {}),
+            };
             const signature = JSON.stringify(body);
             if (signature !== attempt.current.body)
               attempt.current = { body: signature, key: newId() };
@@ -95,18 +100,56 @@ export function LibrariesPage() {
               <option value="cos">COS</option>
             </select>
           </label>
-          <label>存储位置
-            <select value={storageId} disabled={create.isPending || !storages.data} onChange={event => { setStorageId(event.target.value); setRootRelativePath(''); }}>
-              {storages.data?.items.map(storage => <option key={storage.id} value={storage.id} disabled={!storage.available}>{storage.id === 'data' ? '内置受管存储' : storage.id}{storage.available ? '' : '（不可用）'}</option>)}
+          <label>
+            存储位置
+            <select
+              value={storageId}
+              disabled={create.isPending || !storages.data}
+              onChange={(event) => {
+                setStorageId(event.target.value);
+                setRootRelativePath("");
+              }}
+            >
+              {storages.data?.items.map((storage) => (
+                <option
+                  key={storage.id}
+                  value={storage.id}
+                  disabled={!storage.available}
+                >
+                  {storage.id === "data" ? "内置受管存储" : storage.id}
+                  {storage.available ? "" : "（不可用）"}
+                </option>
+              ))}
             </select>
           </label>
-          {storageId !== 'data' && <label>此存储位置中的相对目录<input value={rootRelativePath} onChange={event => setRootRelativePath(event.target.value)} disabled={create.isPending} placeholder="例如 作品/图集；留空使用已配置根目录" /></label>}
-          <p className="muted">已有目录的登记与扫描入库分别记录。登记不会删除原件，也不代表其中的文件已经扫描完成。</p>
-          <ErrorNotice error={storages.error} retry={() => void storages.refetch()} />
+          {storageId !== "data" && (
+            <label>
+              此存储位置中的相对目录
+              <input
+                value={rootRelativePath}
+                onChange={(event) => setRootRelativePath(event.target.value)}
+                disabled={create.isPending}
+                placeholder="例如 作品/图集；留空使用已配置根目录"
+              />
+            </label>
+          )}
+          <p className="muted">
+            已有目录的登记与扫描入库分别记录。登记不会删除原件，也不代表其中的文件已经扫描完成。
+          </p>
+          <ErrorNotice
+            error={storages.error}
+            retry={() => void storages.refetch()}
+          />
           <ErrorNotice error={create.error} />
           <button
             className="button button--primary"
-            disabled={create.isPending || !name.trim() || !storages.data?.items.some(storage => storage.id === storageId && storage.available)}
+            disabled={
+              create.isPending ||
+              !name.trim() ||
+              !storages.data?.items.some(
+                (storage) => storage.id === storageId && storage.available,
+              )
+            }
           >
             创建
           </button>
@@ -229,10 +272,36 @@ function LibraryCard({ library }: { library: Schema<"Library"> }) {
           </button>
         </form>
       )}
-      <div className="actions section-space"><button className="button button--small" disabled={!library.enabled || scan.isPending || editing} onClick={() => {
-        if (scanAttempt.current.revision !== library.revision) scanAttempt.current = { revision: library.revision, key: newId() };
-        scan.mutate({ id: library.id, revision: library.revision, key: scanAttempt.current.key }, { onSuccess: job => navigate(`/manage/scans/${encodeURIComponent(job.id)}`) });
-      }}>{scan.isPending ? '正在提交扫描…' : scan.isError ? '重试提交扫描' : '扫描已有文件'}</button></div>
+      <div className="actions section-space">
+        <button
+          className="button button--small"
+          disabled={!library.enabled || scan.isPending || editing}
+          onClick={() => {
+            if (scanAttempt.current.revision !== library.revision)
+              scanAttempt.current = {
+                revision: library.revision,
+                key: newId(),
+              };
+            scan.mutate(
+              {
+                id: library.id,
+                revision: library.revision,
+                key: scanAttempt.current.key,
+              },
+              {
+                onSuccess: (job) =>
+                  navigate(`/manage/scans/${encodeURIComponent(job.id)}`),
+              },
+            );
+          }}
+        >
+          {scan.isPending
+            ? "正在提交扫描…"
+            : scan.isError
+              ? "重试提交扫描"
+              : "扫描已有文件"}
+        </button>
+      </div>
       <ErrorNotice error={scan.error} />
       <ErrorNotice error={update.error} />
       {confirmation && (

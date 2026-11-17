@@ -10,7 +10,7 @@ export type QueueEntry = {
   id: string; scope: string; request: Schema<'UploadCreate'>; libraryName: string;
   name: string; size: number; modified: number; digest?: string; uploadId?: string;
   phase: UploadPhase; offset: number; hashProgress: number; assetId?: string;
-  error?: string; createdAt: string;
+  error?: string; createdAt: string; order?: number; waitingFor?: string; actualFileName?: string;
 };
 type Snapshot = { entries: readonly QueueEntry[]; initialized: boolean; persistenceError?: string; preparing: boolean };
 const terminal = (phase: UploadPhase) => ['ingested', 'staged', 'cancelled', 'duplicate'].includes(phase);
@@ -29,8 +29,24 @@ export class UploadQueue {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
   private publish(patch: Partial<Snapshot> = {}) {
-    this.snapshot = { ...this.snapshot, ...patch, entries: [...this.entries.values()] };
+    this.snapshot = { ...this.snapshot, ...patch, entries: [...this.entries.values()].map(entry => ({ ...entry, waitingFor: entry.phase === 'queued' ? this.blockingEntry(entry)?.name : undefined })) };
     this.listeners.forEach(listener => listener());
+  }
+  private sortEntries() {
+    this.entries = new Map([...this.entries].sort(([, left], [, right]) => (left.order ?? Date.parse(left.createdAt)) - (right.order ?? Date.parse(right.createdAt))));
+  }
+  private namingSequence(entry: QueueEntry) {
+    if (entry.request.mode !== 'ordinary') return undefined;
+    if (entry.request.collectionId) return `${entry.request.libraryId}:collection:${entry.request.collectionId}`;
+    if (entry.request.family) return JSON.stringify([entry.request.libraryId, entry.request.relativeDirectory, entry.request.family]);
+  }
+  private blockingEntry(entry: QueueEntry) {
+    const sequence = this.namingSequence(entry);
+    if (!sequence) return undefined;
+    for (const before of this.entries.values()) {
+      if (before.id === entry.id) break;
+      if (!terminal(before.phase) && this.namingSequence(before) === sequence) return before;
+    }
   }
   private async restore() {
     try {
@@ -39,6 +55,7 @@ export class UploadQueue {
       for (const item of stored.filter(item => item.scope === this.scope)) {
         if (!this.entries.has(item.id)) this.entries.set(item.id, { ...item, phase: terminal(item.phase) ? item.phase : 'waiting_file' });
       }
+      this.sortEntries();
       this.publish({ initialized: true });
     } catch { this.publish({ initialized: true, persistenceError: '任务恢复不可用。本次上传仅当前页面有效，刷新可能无法恢复；请保留源文件。' }); }
   }
@@ -59,6 +76,7 @@ export class UploadQueue {
     const retry = this.writes.then(async () => {
       const previous = await localReadAll<QueueEntry>('uploads');
       for (const entry of previous) if (entry.scope === this.scope && !this.entries.has(entry.id)) this.entries.set(entry.id, { ...entry, phase: terminal(entry.phase) ? entry.phase : 'waiting_file' });
+      this.sortEntries();
       for (const entry of this.entries.values()) await localWrite('uploads', entry);
       this.publish({ persistenceError: undefined });
     }).catch(() => { this.publish({ persistenceError: '仍无法保存本地任务，请保留源文件并核对任务报告。' }); });
@@ -84,6 +102,7 @@ export class UploadQueue {
       this.preparingBatch = attempt;
       const batch = await read(api.POST('/batches', { params: { header: operationHeaders(attempt.key) }, body: attempt.input }));
       this.preparingBatch = undefined;
+      let order = Math.max(Date.now(), ...[...this.entries.values()].map(entry => entry.order ?? Date.parse(entry.createdAt)));
       for (const file of files) {
         // A relative directory clue is optional on File implementations and file-only pickers.
         const relative = file.webkitRelativePath ?? '';
@@ -91,7 +110,7 @@ export class UploadQueue {
         const entry: QueueEntry = { id: newId(), scope: this.scope,
           request: { ...target, fileName: file.name, originalFileName: file.name, sourceRelativePath: relative || file.name, size: file.size, mimeType: file.type || 'application/octet-stream', sourceMtime: new Date(file.lastModified).toISOString(), batchId: batch.id,
             relativeDirectory: [target.relativeDirectory, directory].filter(Boolean).join('/') || undefined },
-          libraryName, name: file.name, size: file.size, modified: file.lastModified, phase: 'queued', offset: 0, hashProgress: 0, createdAt: new Date().toISOString() };
+          libraryName, name: file.name, size: file.size, modified: file.lastModified, phase: 'queued', offset: 0, hashProgress: 0, createdAt: new Date().toISOString(), order: ++order };
         this.entries.set(entry.id, entry); this.files.set(entry.id, file); this.persist(entry);
       }
       this.publish(); this.pump();
@@ -103,6 +122,9 @@ export class UploadQueue {
       if (this.active.size >= this.concurrency) break;
       const file = this.files.get(entry.id);
       if (entry.phase !== 'queued' || !file || this.active.has(entry.id)) continue;
+      // Completion allocates authoritative work/page numbers. An earlier
+      // failed or paused member must be resolved before a later member starts.
+      if (this.blockingEntry(entry)) continue;
       const controller = new AbortController(); this.active.set(entry.id, controller);
       void this.transfer(entry.id, file, controller.signal).finally(() => { this.active.delete(entry.id); this.pump(); });
     }
@@ -135,6 +157,7 @@ export class UploadQueue {
       this.change(id, { phase: 'completing' });
       const result = await read(api.POST('/uploads/{id}/complete', { params: { path: { id: upload.id }, header: operationHeaders(`${entry.id}-complete`) }, signal }));
       this.finish(id, result.upload);
+      if (result.asset) this.change(id, { actualFileName: result.asset.fileName });
       void invalidateLibrary();
     } catch (error) {
       if (this.disposed || signal.aborted) return;
@@ -171,6 +194,7 @@ export class UploadQueue {
       if (current) await read(api.DELETE('/uploads/{id}', { params: { path: { id: current.id } } }));
       this.change(id, { phase: 'cancelled', error: undefined }); this.files.delete(id);
     } catch (error) { this.change(id, { error: `${error instanceof Error ? error.message : '取消失败'}。请重试取消或继续上传以回读实际状态。` }); }
+    finally { this.pump(); }
   }
   async clearFinished() {
     const finished = [...this.entries.values()].filter(entry => terminal(entry.phase)).map(entry => entry.id);

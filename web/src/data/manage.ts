@@ -3,6 +3,7 @@ import { useRef } from "react";
 import { newId } from "../lib/id";
 import { api, operationHeaders, read } from "./client";
 import type { Schema } from "./client";
+import type { paths } from '../api/generated/schema';
 import { invalidateLibrary } from "./query";
 import { useRemoteKey } from "./session";
 
@@ -15,7 +16,10 @@ export function useLibraries() {
 }
 export function useStorages() {
   const key = useRemoteKey();
-  return useQuery({ queryKey: [...key, 'storages'], queryFn: ({ signal }) => read(api.GET('/storages', { signal })) });
+  return useQuery({
+    queryKey: [...key, "storages"],
+    queryFn: ({ signal }) => read(api.GET("/storages", { signal })),
+  });
 }
 export function useCreateLibrary() {
   return useMutation({
@@ -35,16 +39,17 @@ export function useCreateLibrary() {
     onSuccess: invalidateLibrary,
   });
 }
-export function useAuthors(q = "", following?: boolean, enabled = true) {
+type AuthorQuery = NonNullable<paths['/authors']['get']['parameters']['query']>;
+export function useAuthors(q = "", following?: boolean, enabled = true, filters: Pick<AuthorQuery, 'kind' | 'sort'> = {}) {
   const key = useRemoteKey();
   return useInfiniteQuery({
-    queryKey: [...key, "authors", q, following],
+    queryKey: [...key, "authors", q, following, filters],
     enabled,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       read(
         api.GET("/authors", {
-          params: { query: { q, following, cursor: pageParam, limit: 30 } },
+          params: { query: { ...filters, q, following, cursor: pageParam, limit: 30 } },
           signal,
         }),
       ),

@@ -17,7 +17,7 @@ export function duration(milliseconds: number) {
   const seconds = Math.floor(milliseconds / 1000);
   const minutes = Math.floor(seconds / 60);
   return seconds >= 3600
-    ? `${Math.floor(seconds / 3600)}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+    ? `${Math.floor(seconds / 3600)}:${String(minutes % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
     : `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 export function readableDuration(seconds: number) {

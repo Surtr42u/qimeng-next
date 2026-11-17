@@ -148,6 +148,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         return MutableStateFlow(ListState<Asset>()).also { lists[key] = it }
     }
     fun query(key: String): AssetQuery = queries[key] ?: AssetQuery()
+    fun cancelBrowse(key: String) {
+        listJobs.remove(key)?.cancel()
+        listVersions[key]?.next()
+        lists[key]?.let { state ->
+            if (state.value.loading) state.value = state.value.copy(loading = false, loaded = false)
+        }
+    }
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
@@ -202,14 +209,14 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    fun login(address: String, token: String) = action { repository.login(address, token, rememberAddress = true) }
-    fun loginLocal() = action { connectLocal(forceLogin = true) }
+    fun login(address: String, password: String) = action { repository.loginWithPassword(address, password) }
+    fun loginLocal(password: String = "") = action { connectLocal(forceLogin = true, password = password) }
     fun stopLocal() = action { runtime.stop() }
     fun restoreLocalConnection() {
         if (runtime.available && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
     }
-    private suspend fun connectLocal(forceLogin: Boolean) {
-        localConnection.connect(forceLogin)
+    private suspend fun connectLocal(forceLogin: Boolean, password: String = "") {
+        localConnection.connect(forceLogin, password)
         refreshConnection()
     }
     fun logout() = action { repository.logout(); saved["route"] = "main" }

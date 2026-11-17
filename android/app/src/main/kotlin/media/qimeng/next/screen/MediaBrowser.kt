@@ -125,7 +125,8 @@ fun AlbumsScreen(model: LibraryViewModel) {
 fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, favorite: Boolean? = null,
                  kind: String? = null, author: String? = null, bottomDock: Boolean = false, libraryFilter: Boolean = false,
                  source: String = "assets", seed: Long = 1, period: String = "week", onRefresh: (() -> Unit)? = null, collectionId: String? = null, initialTag: String? = null,
-                 controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true, pinchEnabled: Boolean = true) {
+                 controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true, pinchEnabled: Boolean = true,
+                 textOverride: String? = null, caption: Boolean = search) {
     val state by model.assets(key).collectAsStateWithLifecycle()
     val libraries by model.libraries.collectAsStateWithLifecycle()
     var draft by rememberSaveable(key) { mutableStateOf(model.query(key).text) }
@@ -138,7 +139,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, 
     var showFilters by controls.showFilters
     var tag by controls.tag
     val grid = rememberLazyGridState()
-    val query = AssetQuery(text = submitted, mediaType = type, kind = partition, favorite = favorite, authorId = author,
+    val query = AssetQuery(text = textOverride ?: submitted, mediaType = type, kind = partition, favorite = favorite, authorId = author,
         libraryId = library, tag = tag.takeIf(String::isNotBlank), sort = sort,
         source = if (library != null || tag.isNotBlank() || sort != "added_desc") "assets" else source, seed = seed, period = period, collectionId = collectionId)
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString()) }
@@ -223,7 +224,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, 
                     } while (event.changes.any { it.pressed })
                 }
             }) {
-            items(state.items, key = Asset::id) { asset -> MediaTile(asset, search) { model.openAsset(asset.id, key) } }
+            items(if (model.query(key).text == query.text) state.items else emptyList(), key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
             if (state.cursor != null) item(span = { GridItemSpan(maxLineSpan) }) {
                 TextButton(onClick = { model.browse(key, query, next = true) }, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) { Text("加载更多") }
             }

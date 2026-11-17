@@ -1,11 +1,14 @@
 import { Link, useLocation } from "react-router-dom";
 import { useState } from "react";
 import { Icon } from "./Icon";
+import { useThumbnailURL } from '../data/media';
 
 export type MediaCardModel = {
   id: string;
   title: string;
   caption: string;
+  date?: string;
+  duration?: string;
   type: string;
   src?: string;
   previewHint?: string;
@@ -27,7 +30,7 @@ export function MediaGrid({
           key={item.id}
           to={`/asset/${encodeURIComponent(item.id)}`}
           state={{ returnTo: location.pathname + location.search }}
-          className="media-card"
+          className="card media-card"
           aria-label={`打开 ${item.title}`}
           onKeyDown={(event) => {
             if (event.key === " ") {
@@ -36,43 +39,35 @@ export function MediaGrid({
             }
           }}
         >
-          <div className="media-cover">
+          <div className="card--cover">
             <Preview item={item} />
-            {item.type !== "image" && (
-              <span className="media-type">
-                {item.type === "video" ? "视频" : "动图"}
-              </span>
-            )}
-            {(item.favorite || item.liked) && (
-              <span className="media-reaction">
-                <Icon name={item.favorite ? "star" : "heart"} size={15} />
-              </span>
-            )}
+            {item.duration && <span className="card--duration">{item.duration}</span>}
           </div>
-          <h3 className={search ? "one-line" : ""} title={item.title}>
+          <div className={`card--title${search ? ' one-line' : ''}`} title={item.title}>
             {item.title}
-          </h3>
-          <p>{item.caption}</p>
+          </div>
+          <div className="card--meta"><span className="card--up">{item.caption}</span>{item.date && <span className="card--date">{item.date}</span>}</div>
         </Link>
       ))}
     </div>
   );
 }
-function Preview({ item }: { item: MediaCardModel }) {
+export function Preview({ item }: { item: MediaCardModel }) {
   const [failedUrl, setFailedUrl] = useState<string>();
-  return item.src && failedUrl !== item.src ? (
+  const src = useThumbnailURL(item.src);
+  return src && failedUrl !== src ? (
     <img
-      src={item.src}
+      src={src}
       alt=""
       loading="lazy"
       decoding="async"
-      onError={() => setFailedUrl(item.src)}
+      onError={() => setFailedUrl(src)}
     />
   ) : (
     <span className="media-placeholder">
       <Icon name={item.type === "video" ? "play" : "image"} size={36} />
       <small>
-        {failedUrl === item.src && item.src
+        {failedUrl === src && src
           ? "预览读取失败"
           : (item.previewHint ?? "暂无预览")}
       </small>

@@ -6,10 +6,10 @@ import { EmptyState, ErrorNotice, Loading, PageHeading, StatusBadge } from '../c
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { dateTime } from '../lib/format';
 
-const states: Record<Schema<'AuthorTask'>['state'], string> = { authorized: '已授权，等待处理', completed: '已完成授权步骤', cancelled: '已取消', expired: '已过期' };
+const states: Record<Schema<'AuthorTask'>['state'], string> = { authorized: '授权有效', completed: '已完成授权步骤', cancelled: '已取消', expired: '已过期' };
 const fields: Record<string, string> = { name: '名称', biography: '简介', homepage: '主页', aliases: '别名', x: 'X资料候选', basic: '基础资料候选', accounts: '账号来源候选' };
 export function TaskNavigation() {
-  return <nav className="actions section-space" aria-label="任务类型"><NavLink className="button button--small" to="/manage/tasks" end>入库与整理</NavLink><NavLink className="button button--small" to="/manage/author-tasks" end>作者资料维护</NavLink></nav>;
+  return <nav className="actions section-space" aria-label="任务类型"><NavLink className="button button--small" to="/manage/tasks" end>入库与整理</NavLink><NavLink className="button button--small" to="/manage/author-tasks" end>作者资料维护</NavLink><NavLink className="button button--small" to="/manage/scans" end>目录扫描</NavLink></nav>;
 }
 export function AuthorTasksPage() {
   const [params, setParams] = useSearchParams(); const state = (params.get('state') || undefined) as Schema<'AuthorTask'>['state'] | undefined;

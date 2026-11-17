@@ -1,0 +1,26 @@
+/* The old UI consumed Tailwind's browser reset. Reproduce its applicable base
+   rules without bringing the old application build pipeline into this project. */
+html { line-height: 1.5; -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { line-height: inherit; }
+button, input, select, textarea { font: inherit; letter-spacing: inherit; }
+button { border: 0 solid; border-radius: 0; padding: 0; color: inherit; background: transparent; }
+a { color: inherit; text-decoration: inherit; }
+img, svg, video, canvas { display: block; vertical-align: middle; }
+img, video { max-width: 100%; height: auto; }
+small { font-size: 80%; }
+strong, b { font-weight: bolder; }
+:where(.page, .detail-dialog, .confirm-panel) h1,
+:where(.page, .detail-dialog, .confirm-panel) h2,
+:where(.page, .detail-dialog, .confirm-panel) h3,
+:where(.page, .detail-dialog, .confirm-panel) h4 {
+  font-size: inherit; font-weight: inherit; letter-spacing: normal; line-height: inherit;
+}
+:where(.page, .detail-dialog, .confirm-panel) label {
+  display: revert; flex-direction: row; gap: normal; color: inherit; font-size: inherit;
+}
+:where(.page, .detail-dialog, .confirm-panel) input,
+:where(.page, .detail-dialog, .confirm-panel) textarea,
+:where(.page, .detail-dialog, .confirm-panel) select {
+  min-height: 0; width: auto; padding: 0; border: 0 solid; border-radius: 0;
+  color: inherit; background: transparent;
+}

@@ -62,10 +62,10 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   );
 
   await page.goto("/");
-  await page.getByLabel("访问令牌", { exact: true }).fill(token!);
-  await page.getByRole("button", { name: "连接", exact: true }).click();
+  await page.getByLabel("管理密码", { exact: true }).fill(token!);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "发现你的绮梦" }),
+    page.getByRole("heading", { name: "为你推荐" }),
   ).toBeVisible();
   const suffix = `${testInfo.retry}-${Date.now()}`;
   const libraryName = `CI 合成库 ${suffix}`;
@@ -78,9 +78,9 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     page.getByRole("heading", { name: libraryName, exact: true }),
   ).toBeVisible();
   await page.goto("/authors");
-  await page.getByRole("button", { name: "添加作者" }).click();
+  await page.getByRole("button", { name: "新建作者", exact: true }).click();
   await page.getByLabel("作者名称", { exact: true }).fill(authorName);
-  await page.getByRole("button", { name: "保存作者" }).click();
+  await page.getByRole("button", { name: "保存名称", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: authorName, exact: true }),
   ).toBeVisible();
@@ -150,26 +150,40 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   expect(saved.note).toBe("云端合成闭环，非真实媒体。");
   expect(saved.authorName).toBe(authorName);
   expect(saved.favorite).toBe(true);
-  await page.goto(`/authors/${encodeURIComponent(saved.authorId)}`);
-  await page.getByRole('button', { name: '编辑整理简介与备注', exact: true }).click();
-  await page.getByLabel('整理简介', { exact: true }).fill('云端真实服务确认的合成作者简介');
-  await page.getByRole('button', { name: '保存资料', exact: true }).click();
-  await expect(page.getByRole('button', { name: '编辑整理简介与备注', exact: true })).toBeVisible();
-  await page.locator('.profile-block').filter({ hasText: 'X 公开资料' }).locator('summary').first().click();
-  await page.getByRole('button', { name: '离线头像', exact: true }).click();
-  await page.getByLabel('或选择本地头像').setInputFiles(picture);
-  await page.getByRole('button', { name: '保存本地头像', exact: true }).click();
-  await expect(page.getByRole('button', { name: '离线头像', exact: true })).toBeEnabled();
+  await page.goto(`/authors/${encodeURIComponent(saved.authorId)}/profile`);
+  await page
+    .getByRole("button", { name: "编辑基础资料", exact: true })
+    .click();
+  await page
+    .getByLabel("整理简介", { exact: true })
+    .fill("云端真实服务确认的合成作者简介");
+  await page.getByRole("button", { name: "保存资料", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "编辑基础资料", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "离线头像", exact: true }).click();
+  await page.getByLabel("或选择本地头像").setInputFiles(picture);
+  await page.getByRole("button", { name: "保存本地头像", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "离线头像", exact: true }),
+  ).toBeEnabled();
   await page.reload();
-  await expect(page.locator('.profile-card img')).toBeVisible();
-  const profileResponse = await page.request.get(`/api/v1/authors/${encodeURIComponent(saved.authorId)}/profile`);
+  await expect(page.locator(".creator-profile-avatar img")).toBeVisible();
+  const profileResponse = await page.request.get(
+    `/api/v1/authors/${encodeURIComponent(saved.authorId)}/profile`,
+  );
   expect(profileResponse.ok()).toBe(true);
   const profile = await profileResponse.json();
-  expect(profile.blocks.find((block: { block: string }) => block.block === 'basic').values.summary).toBe('云端真实服务确认的合成作者简介');
-  const offlineAvatar = profile.blocks.find((block: { block: string }) => block.block === 'x').avatar;
+  expect(
+    profile.blocks.find((block: { block: string }) => block.block === "basic")
+      .values.summary,
+  ).toBe("云端真实服务确认的合成作者简介");
+  const offlineAvatar = profile.blocks.find(
+    (block: { block: string }) => block.block === "x",
+  ).avatar;
   const avatarResponse = await page.request.get(offlineAvatar.url);
   expect(avatarResponse.ok()).toBe(true);
-  expect(avatarResponse.headers()['content-type']).toBe('image/png');
+  expect(avatarResponse.headers()["content-type"]).toBe("image/png");
   await page.goto("/");
   await expect(
     page.getByRole("link", { name: "打开 CI 合成图片.png", exact: true }),

@@ -366,6 +366,7 @@ jobs:
           arch: x86_64
           target: google_apis
           avd-name: qimeng_api35
+          disk-size: 2048M
           emulator-port: 5556
           disable-animations: false
           emulator-options: '-no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim'
@@ -410,6 +411,7 @@ jobs:
           arch: x86_64
           target: google_apis
           avd-name: qimeng_api35
+          disk-size: 2048M
           emulator-port: 5556
           disable-animations: false
           emulator-options: '-no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim'

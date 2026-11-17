@@ -40,7 +40,8 @@ export function VideoPlayer({
     return () => {
       if (element && interacted.current) {
         const position = Math.round(element.currentTime * 1000);
-        if (Number.isFinite(position) && position !== lastPosition.current) progressCallback.current(position);
+        if (Number.isFinite(position) && position !== lastPosition.current)
+          progressCallback.current(position);
       }
     };
   }, [src]);
@@ -79,9 +80,14 @@ export function VideoPlayer({
         className="button button--small video-exit"
         onClick={() => {
           setWebFullscreen(false);
-          if (document.fullscreenElement) void document.exitFullscreen().catch(() => setError('未能退出系统全屏，请按 Esc 重试。'));
+          if (document.fullscreenElement)
+            void document
+              .exitFullscreen()
+              .catch(() => setError("未能退出系统全屏，请按 Esc 重试。"));
         }}
-      >退出全屏</button>
+      >
+        退出全屏
+      </button>
       <video
         ref={video}
         src={src}
@@ -89,8 +95,14 @@ export function VideoPlayer({
         playsInline
         preload="metadata"
         aria-label={title}
-        onPlay={() => { interacted.current = true; onPlay(); }}
-        onSeeked={event => { interacted.current = true; report(Math.round(event.currentTarget.currentTime * 1000)); }}
+        onPlay={() => {
+          interacted.current = true;
+          onPlay();
+        }}
+        onSeeked={(event) => {
+          interacted.current = true;
+          report(Math.round(event.currentTarget.currentTime * 1000));
+        }}
         onError={() =>
           setError(
             "此浏览器无法播放该文件或原件不可读取。可打开原件使用系统播放器。",
@@ -177,12 +189,18 @@ export function VideoPlayer({
           className="button button--small"
           onClick={() => {
             if (document.fullscreenElement) {
-              void document.exitFullscreen().catch(() => setError('未能退出系统全屏，请按 Esc 重试。'));
+              void document
+                .exitFullscreen()
+                .catch(() => setError("未能退出系统全屏，请按 Esc 重试。"));
             } else if (stage.current?.requestFullscreen) {
-              void stage.current.requestFullscreen().catch(() => setError("当前浏览器没有允许全屏，请使用网页全屏。"));
+              void stage.current
+                .requestFullscreen()
+                .catch(() =>
+                  setError("当前浏览器没有允许全屏，请使用网页全屏。"),
+                );
             } else {
               setWebFullscreen(true);
-              setError('此浏览器不支持系统全屏，已切换为网页全屏。');
+              setError("此浏览器不支持系统全屏，已切换为网页全屏。");
             }
           }}
         >

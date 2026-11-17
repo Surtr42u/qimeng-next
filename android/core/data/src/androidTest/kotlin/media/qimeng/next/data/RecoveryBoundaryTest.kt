@@ -97,7 +97,7 @@ class RecoveryBoundaryTest {
 
             val replacement = HeldCertificate.Builder().commonName("Synthetic replacement").addSubjectAlternativeName("localhost").build()
             settings.saveSession(session, "synthetic-new-session", Base64.getEncoder().encodeToString(replacement.certificate.encoded))
-            assertThrows(ApiFailure::class.java) { original.newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
+            assertThrows(IOException::class.java) { original.newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
             assertNull(server.takeRequest(100, TimeUnit.MILLISECONDS))
             assertThrows(IOException::class.java) { provider.client(session).newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
             assertNull(server.takeRequest(150, TimeUnit.MILLISECONDS)?.getHeader("Authorization"))

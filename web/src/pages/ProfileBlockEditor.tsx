@@ -4,23 +4,24 @@ import { useUpdateAuthorProfile } from '../data/author-profiles';
 import { ErrorNotice } from '../components/Feedback';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { UnsavedGuard } from '../lib/navigation';
-import { profileBlockTitles, profileFieldLabels, profilePatch, rebaseProfileDraft } from '../lib/profile-draft';
+import { profilePatch, rebaseProfileDraft } from '../lib/profile-draft';
 import type { ProfileValues } from '../lib/profile-draft';
 import { ProfileEvidenceEditor } from './ProfileEvidenceEditor';
-import { ProfileEvidenceList, ProfileValuesView } from './ProfilePresentation';
+import { AuthorAvatar, ProfileEvidenceList, ProfileValuesView } from './ProfilePresentation';
 
 type Block = Schema<'AuthorProfileBlock'>;
 type Candidate = Schema<'AuthorProfileCandidate'>;
 type ProfileRead = () => Promise<{ data?: Schema<'AuthorProfile'>; isSuccess: boolean; error?: unknown }>;
 
-export function ProfileBlockEditor({ block, candidate, reload, close }: {
+export function ProfileBlockEditor({ block, candidate, reload, close, authorName = '作者', avatar, presentation }: {
   block: Block; candidate?: Candidate; reload: ProfileRead; close: () => void;
+  authorName?: string; avatar?: Schema<'AuthorProfileAvatar'>; presentation?: 'subscription';
 }) {
   const [base, setBase] = useState(block);
   const [draft, setDraft] = useState<ProfileValues>({ ...block.values, ...candidate?.values });
   const [evidence, setEvidence] = useState(candidate?.evidence ?? block.evidence);
-  const [translationReviewed, setTranslationReviewed] = useState(false);
-  const [candidateReviewed, setCandidateReviewed] = useState(false);
+  const [editChinese, setEditChinese] = useState(false);
+  const [translationReviewed, setTranslationReviewed] = useState(!!candidate?.values.biographyZh);
   const [discard, setDiscard] = useState(false);
   const [comparison, setComparison] = useState<Block>();
   const [readError, setReadError] = useState<unknown>();
@@ -28,88 +29,68 @@ export function ProfileBlockEditor({ block, candidate, reload, close }: {
   const changes = profilePatch(base.values, draft);
   const evidenceChanged = JSON.stringify(evidence) !== JSON.stringify(base.evidence);
   const dirty = Object.keys(changes).length > 0 || evidenceChanged || !!candidate;
-  const originalChanged = changes.biographyOriginal !== undefined || changes.profileUrl !== undefined;
-  const translationChanged = changes.biographyZh !== undefined && !!draft.biographyZh;
-  const translationNeedsReview = originalChanged && translationChanged && !translationReviewed;
   const validEvidence = evidence.every(item => item.url.trim() && item.fields.length > 0);
+  const title = candidate ? '候选核对' : presentation === 'subscription' ? '作品订阅' : block.block === 'x' ? 'X资料' : block.block === 'basic' ? '基础资料' : '账号来源';
   const update = (patch: ProfileValues) => setDraft(current => ({ ...current, ...patch }));
-
+  const updateAccount = (patch: Partial<Schema<'AuthorProfileAccount'>>) => {
+    const accounts = [...(draft.accounts ?? [])];
+    accounts[0] = { platform: '公开主页', identifier: '', url: '', publishingUrl: '', ...accounts[0], ...patch };
+    update({ accounts });
+  };
+  const closeEditor = () => dirty ? setDiscard(true) : close();
   const save = () => {
     const values = { ...changes };
-    if (originalChanged && translationReviewed) values.biographyZh = draft.biographyZh ?? '';
-    const body: Schema<'AuthorProfileWrite'> = {
-      expectedRevision: base.revision, values,
-      ...(evidenceChanged || candidate ? { evidence } : {}),
-      ...(candidate ? { candidateId: candidate.id } : {}),
-      translationReviewed,
-    };
-    mutation.mutate(body, { onSuccess: close });
+    if ((changes.biographyOriginal !== undefined || changes.profileUrl !== undefined) && translationReviewed) values.biographyZh = draft.biographyZh ?? '';
+    mutation.mutate({ expectedRevision: base.revision, values, ...(evidenceChanged || candidate ? { evidence } : {}), ...(candidate ? { candidateId: candidate.id } : {}), translationReviewed }, { onSuccess: close });
   };
   const loadCurrent = async () => {
     const result = await reload();
     const current = result.data?.blocks.find(item => item.block === block.block);
     if (result.isSuccess && current) { setComparison(current); setReadError(undefined); }
-    else setReadError(result.error ?? new Error('未取得当前资料块，草稿保持不变。'));
+    else setReadError(result.error ?? new Error('未取得当前资料，草稿保持不变。'));
   };
   const rebase = () => {
     if (!comparison) return;
     setDraft(rebaseProfileDraft(base.values, draft, comparison.values));
     if (!evidenceChanged) setEvidence(comparison.evidence);
-    setBase(comparison); setComparison(undefined); setTranslationReviewed(false); setCandidateReviewed(false); mutation.reset();
+    setBase(comparison); setComparison(undefined); setTranslationReviewed(!!candidate?.values.biographyZh); mutation.reset();
   };
-
-  return (
-    <form className="panel form-stack profile-editor" onSubmit={event => { event.preventDefault(); save(); }}>
-      <div className="section-heading"><h3>编辑{profileBlockTitles[block.block]}</h3><span className="muted">修订 {base.revision}</span></div>
-      {candidate && <div className="notice"><strong>候选已填入草稿</strong><p>来源候选基于修订 {candidate.baseRevision}。请核对当前资料、证据和下面的草稿，保存后才会生效。</p>{candidate.baseRevision !== base.revision && <p>候选所依据的版本已变化，请特别核对差异。</p>}</div>}
-      <fieldset className="form-stack profile-editor-fields" disabled={mutation.isPending}>
+  const biography = (editChinese ? draft.biographyZh : draft.biographyOriginal) ?? '';
+  return <section className="creator-editor" aria-label={`编辑${title}`}>
+    <div className="creator-editor-heading"><div className="creator-editor-person"><AuthorAvatar className="creator-profile-avatar" name={authorName} avatar={avatar} /><div><p>{authorName}</p><h3>编辑{title}</h3></div></div><button type="button" className="pill" onClick={closeEditor} disabled={mutation.isPending}>返回概览</button></div>
+    <form onSubmit={event => { event.preventDefault(); save(); }}>
+      <fieldset className="creator-edit-fields" disabled={mutation.isPending}>
+        <legend>{title}</legend>
         {block.block === 'x' ? <>
-          <label>X 账号<input value={draft.handle ?? ''} maxLength={200} onChange={event => update({ handle: event.target.value })} placeholder="@账号" /></label>
-          <label>X 账号主页<input type="url" maxLength={4096} value={draft.profileUrl ?? ''} onChange={event => { update({ profileUrl: event.target.value }); setTranslationReviewed(false); }} /></label>
-          <label>X 显示名称<input value={draft.displayName ?? ''} maxLength={200} onChange={event => update({ displayName: event.target.value })} /></label>
-          <label>X 简介原文<textarea rows={5} maxLength={20000} value={draft.biographyOriginal ?? ''} onChange={event => { update({ biographyOriginal: event.target.value }); setTranslationReviewed(false); }} /></label>
-          <label>X 简介中文译文<textarea rows={5} maxLength={20000} value={draft.biographyZh ?? ''} onChange={event => { update({ biographyZh: event.target.value }); setTranslationReviewed(false); }} /></label>
-          {originalChanged && <div className="notice"><label className="check-label"><input type="checkbox" checked={translationReviewed} onChange={event => setTranslationReviewed(event.target.checked)} />我已核对当前账号、原文与译文的对应关系</label><p>{translationChanged ? '同时修改账号或原文与译文，需要确认对应关系。' : '账号或原文已经变化。若不保留并核对现有译文，保存时会清除旧译文。'}</p></div>}
-          <label>头像来源网址<input type="url" maxLength={4096} value={draft.avatarSourceUrl ?? ''} onChange={event => update({ avatarSourceUrl: event.target.value })} /></label>
-          <p className="muted">更改来源会解除旧头像绑定。保存来源后，可在“离线头像”中明确下载。</p>
+          <label className="settings-field"><span>X 账号主页</span><input type="url" placeholder="https://x.com/账号名" maxLength={4096} value={draft.profileUrl ?? ''} onChange={event => { update({ profileUrl: event.target.value, biographyZh: '' }); setTranslationReviewed(false); }} /></label>
+          <div className="creator-edit-language"><div className="creator-language" role="group" aria-label="简介编辑语言"><button type="button" aria-pressed={!editChinese} onClick={() => setEditChinese(false)}>原文</button><button type="button" aria-pressed={editChinese} onClick={() => setEditChinese(true)}>中文</button></div><span>分别保存原文与译文</span></div>
+          <label className="settings-field"><span>{editChinese ? '中文译文' : 'X 简介原文'}</span><textarea rows={6} aria-label={editChinese ? '中文译文' : 'X 简介原文'} maxLength={editChinese ? 2000 : 1000} placeholder={editChinese ? '填写或校对中文翻译…' : '粘贴作者的X简介原文…'} value={biography} onChange={event => { if (editChinese) { update({ biographyZh: event.target.value }); setTranslationReviewed(true); } else { update({ biographyOriginal: event.target.value, biographyZh: '' }); setTranslationReviewed(false); } }} /><small>{Array.from(biography).length} / {editChinese ? 2000 : 1000}</small></label>
+          <p className="creator-profile-note">修改原文后需重新校对中文译文，旧译文会清空。语言切换保留当前草稿。</p>
         </> : block.block === 'basic' ? <>
-          <label>公开昵称<input maxLength={200} value={draft.publicName ?? ''} onChange={event => update({ publicName: event.target.value })} /></label>
-          <label>整理简介<textarea rows={7} maxLength={20000} value={draft.summary ?? ''} onChange={event => update({ summary: event.target.value })} /></label>
-          <label>特殊情况备注<textarea rows={3} maxLength={500} value={draft.remark ?? ''} onChange={event => update({ remark: event.target.value })} placeholder="例如退圈、官方账号删除、只能从存档核实身份；常规作者留空" /></label>
-          <label>私人备注<textarea rows={5} maxLength={10000} value={draft.note ?? ''} onChange={event => update({ note: event.target.value })} /></label>
-          <p className="muted">备注保存在自己的影库中；具有全库读取权限的 AI 接入也能读取。</p>
-        </> : <AccountFields accounts={draft.accounts ?? []} change={accounts => update({ accounts })} />}
-        <ProfileEvidenceEditor block={block.block} evidence={evidence} change={setEvidence} />
-        {candidate && <label className="check-label"><input type="checkbox" checked={candidateReviewed} onChange={event => setCandidateReviewed(event.target.checked)} />我已对照当前资料与候选，确认保存这份草稿</label>}
-        {Object.entries(changes).some(([field, value]) => value === '' || field === 'accounts' && Array.isArray(value) && value.length === 0) && <p className="notice">本次保存包含明确清空：{Object.entries(changes).filter(([, value]) => value === '' || Array.isArray(value) && !value.length).map(([field]) => profileFieldLabels[field as keyof ProfileValues]).join('、')}。</p>}
-        <div className="actions">
-          <button className="button button--primary" disabled={!dirty || translationNeedsReview || !validEvidence || !!candidate && !candidateReviewed}>{mutation.isPending ? '正在保存…' : '保存资料'}</button>
-          <button type="button" className="button" onClick={() => dirty ? setDiscard(true) : close()}>取消</button>
-        </div>
+          <label className="settings-field"><span>公开昵称</span><input maxLength={200} value={draft.publicName ?? ''} onChange={event => update({ publicName: event.target.value })} /></label>
+          <label className="settings-field"><span>整理简介</span><textarea rows={5} maxLength={20000} value={draft.summary ?? ''} onChange={event => update({ summary: event.target.value })} /></label>
+          <label className="settings-field"><span>特殊情况备注</span><textarea rows={3} maxLength={500} value={draft.remark ?? ''} onChange={event => update({ remark: event.target.value })} placeholder="退圈、账号删除或仅有存档证据等特殊情况；常规作者留空" /></label>
+          <details className="creator-records"><summary>个人整理备注</summary><label className="settings-field"><span>私人备注</span><textarea rows={5} maxLength={10000} value={draft.note ?? ''} onChange={event => update({ note: event.target.value })} /></label><p className="creator-profile-note">备注保存在影库中；具有全库读取权限的 AI 接入也能读取。</p></details>
+        </> : presentation === 'subscription' ? <>
+          <label className="settings-field"><span>作品发布订阅地址（RSS / Atom）</span><input type="url" placeholder="https://…" maxLength={4096} value={draft.accounts?.[0]?.publishingUrl ?? ''} onChange={event => updateAccount({ publishingUrl: event.target.value })} /></label>
+          <label className="settings-switch"><input type="checkbox" checked={false} disabled readOnly />检查作品订阅更新</label><p className="creator-profile-note">保留作品发布来源供主动访问，自动抓取不启用。</p>
+        </> : <>
+          <label className="settings-field"><span>创作者主页</span><input type="url" placeholder="https://…" maxLength={4096} value={draft.accounts?.[0]?.url ?? ''} onChange={event => updateAccount({ url: event.target.value })} /></label>
+          <label className="settings-field"><span>核验链接（每行一个）</span><textarea rows={4} value={evidence.map(item => item.url).join('\n')} onChange={event => setEvidence(event.target.value.split('\n').filter(Boolean).map(url => evidence.find(item => item.url === url) ?? { url, title: '', fields: ['accounts'], status: 'unverified', note: '' }))} /></label>
+          <label className="settings-field"><span>身份状态</span><select value={draft.identityStatus ?? 'empty'} onChange={event => update({ identityStatus: event.target.value as NonNullable<ProfileValues['identityStatus']> })}><option value="empty">待完善</option><option value="candidate">待核实</option><option value="verified">已确认</option></select></label>
+          <label className="settings-switch"><input type="checkbox" checked={false} disabled readOnly />自动检查公开资料</label><p className="creator-profile-note">检查变更会进入待审候选。</p>
+          {(draft.accounts?.length ?? 0) > 1 && <details className="creator-records"><summary>其他公开账号</summary><ProfileValuesView block="accounts" values={draft} /></details>}
+        </>}
+        {candidate && <p className="creator-profile-note">核对候选中的资料与来源后保存。{candidate.baseRevision !== base.revision && '候选所依据的资料已经变化，请对照当前版本。'}</p>}
+        {block.block !== 'accounts' && <ProfileEvidenceEditor block={block.block} evidence={evidence} change={setEvidence} />}
       </fieldset>
+      <div className="creator-editor-footer"><span>{mutation.isPending ? '正在保存…' : dirty ? '有未保存的修改' : '已与当前资料一致'}</span><div className="creator-editor-buttons"><button type="button" className="pill" onClick={closeEditor} disabled={mutation.isPending}>取消</button><button type="submit" className="save-btn" disabled={mutation.isPending || !dirty || !validEvidence}>{mutation.isPending ? '保存中…' : '保存资料'}</button></div></div>
       <ErrorNotice error={mutation.error} />
-      {mutation.isError && <button type="button" className="button" disabled={mutation.isPending} onClick={() => void loadCurrent()}>读取当前资料并对照</button>}
+      {mutation.isError && <button type="button" className="pill" disabled={mutation.isPending} onClick={() => void loadCurrent()}>读取当前资料并对照</button>}
       <ErrorNotice error={readError} />
-      {comparison && <div className="notice"><h4>服务器当前修订 {comparison.revision}</h4><ProfileValuesView block={block.block} values={comparison.values} /><ProfileEvidenceList evidence={comparison.evidence} /><button type="button" className="button" onClick={rebase}>已核对，保留本次改动并采用当前版本</button></div>}
-      <UnsavedGuard dirty={dirty} />
-      {discard && <ConfirmDialog title="放弃未保存的资料？" onCancel={() => setDiscard(false)} onConfirm={close}><p>当前草稿尚未保存，候选记录仍保留在服务器。</p></ConfirmDialog>}
+      {comparison && <div className="notice"><h4>服务器当前修订 {comparison.revision}</h4><ProfileValuesView block={block.block} values={comparison.values} /><ProfileEvidenceList evidence={comparison.evidence} />{block.block === 'accounts' && <p>账号列表作为整组保存，请核对完整列表。</p>}<button type="button" className="pill" disabled={mutation.isPending} onClick={rebase}>已核对，保留本次改动并采用当前版本</button></div>}
     </form>
-  );
-}
-
-function AccountFields({ accounts, change }: {
-  accounts: Schema<'AuthorProfileAccount'>[]; change: (next: Schema<'AuthorProfileAccount'>[]) => void;
-}) {
-  const update = (index: number, patch: Partial<Schema<'AuthorProfileAccount'>>) => change(accounts.map((account, at) => at === index ? { ...account, ...patch } : account));
-  return <>
-    {accounts.map((account, index) => <fieldset className="form-stack profile-account-row" key={index}>
-      <legend>公开账号 {index + 1}</legend>
-      <label>平台<input required maxLength={80} value={account.platform} onChange={event => update(index, { platform: event.target.value })} placeholder="例如 X、Pixiv" /></label>
-      <label>账号标识<input maxLength={200} value={account.identifier} onChange={event => update(index, { identifier: event.target.value })} /></label>
-      <label>账号主页<input type="url" maxLength={4096} value={account.url} onChange={event => update(index, { url: event.target.value })} /></label>
-      <label>作品发布入口<input type="url" maxLength={4096} value={account.publishingUrl} onChange={event => update(index, { publishingUrl: event.target.value })} /></label>
-      <button type="button" className="button button--small" onClick={() => change(accounts.filter((_, at) => at !== index))}>移除此账号</button>
-    </fieldset>)}
-    <button type="button" className="button" disabled={accounts.length >= 32} onClick={() => change([...accounts, { platform: '', identifier: '', url: '', publishingUrl: '' }])}>添加公开账号</button>
-  </>;
+    <UnsavedGuard dirty={dirty} />
+    {discard && <ConfirmDialog title="放弃未保存修改？" confirmLabel="放弃修改" onCancel={() => setDiscard(false)} onConfirm={close}><p>这组资料仍有草稿。</p></ConfirmDialog>}
+  </section>;
 }

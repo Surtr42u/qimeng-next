@@ -37,8 +37,10 @@ class AndroidRealServerTest {
         val context = instrumentation.targetContext
         val graph = DataGraph.get(context)
 
-        compose.onNodeWithText("HTTPS 服务器地址").performTextInput(server)
-        compose.onNodeWithText("登录令牌").performTextInput(token)
+        compose.onNodeWithText("NAS / 电脑").performClick()
+        compose.onNodeWithText("手动填写地址").performClick()
+        compose.onNodeWithTag("login-address").performTextInput(server)
+        compose.onNodeWithTag("login-password").performTextInput(token)
         compose.onNodeWithText("连接影库").performClick()
         await { graph.settings.session.value != null && graph.queue.state.value != null }
         assertTrue("Cloud test requires an empty transfer journal", graph.queue.state.value!!.transfers.isEmpty())

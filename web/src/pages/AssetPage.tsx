@@ -112,7 +112,9 @@ function AssetDetail({ asset }: { asset: Asset }) {
           </div>
         }
       />
-      <div className={`detail-layout ${asset.mediaType === 'video' ? 'detail-layout--video' : ''}`}>
+      <div
+        className={`detail-layout ${asset.mediaType === "video" ? "detail-layout--video" : ""}`}
+      >
         <div className="detail-main">
           {asset.mediaType === "video" ? (
             <VideoPlayer
@@ -130,7 +132,11 @@ function AssetDetail({ asset }: { asset: Asset }) {
               seek={seek}
             />
           ) : (
-            <ImageStage src={src} title={asset.fileName} onOpen={() => setViewer(true)} />
+            <ImageStage
+              src={src}
+              title={asset.fileName}
+              onOpen={() => setViewer(true)}
+            />
           )}
           <div className="detail-actions">
             <button

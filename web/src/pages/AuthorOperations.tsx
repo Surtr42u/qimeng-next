@@ -120,7 +120,13 @@ export function AuthorOperations({
                 revision: author.revision,
                 key: operation.current,
               },
-              { onSuccess: () => navigate(`/authors/${encodeURIComponent(author.id)}/archives`, { replace: true }) },
+              {
+                onSuccess: () =>
+                  navigate(
+                    `/authors/${encodeURIComponent(author.id)}/archives`,
+                    { replace: true },
+                  ),
+              },
             )
           }
         >

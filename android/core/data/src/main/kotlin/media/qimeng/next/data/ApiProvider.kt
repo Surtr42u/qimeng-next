@@ -76,10 +76,10 @@ internal class ApiProvider(private val settings: SecureSettings) {
         return trustedClient(target.baseUrl, certificate).newBuilder().addInterceptor { chain ->
             val url = chain.request().url
             if (!sameOrigin(url, expected)) throw IOException("拒绝向其他服务器发送媒体凭据")
-            val token = try {
-                check(settings.certificateFor(target) == certificate) { "连接证书已更新" }
-                settings.tokenFor(target)
-            }
+            val currentCertificate = try { settings.certificateFor(target) }
+            catch (_: Exception) { throw ApiFailure(401, "连接已变更，请重新登录此任务所属服务器") }
+            if (currentCertificate != certificate) throw IOException("连接证书已更新，请使用新连接重试")
+            val token = try { settings.tokenFor(target) }
             catch (_: Exception) { throw ApiFailure(401, "登录凭据不可用或连接已变更，请重新登录") }
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
         }.build().also { cachedClient = key to it }
