@@ -115,7 +115,7 @@ type Review struct {
 
 func(s *Service)BrowsingReview(ctx context.Context,window string)(Review,error){
  result:=Review{Range:window,Hours:make([]ReviewHour,24),Changes:[]InterestChange{}};for i:=range result.Hours{result.Hours[i].Hour=i}
- now:=time.Now();start,ok:=analytics.WindowStart(now,window);if !ok{return result,Fail(400,"invalid_range","统计窗口无效。")};day:=dayString(start);var total int64
+ now:=time.Now();start,ok:=analytics.WindowStart(now,window);if !ok{return result,Fail(400,"invalid_range","统计窗口无效。")};day:=dayString(start);var total int64;var e error
  today:=bucketStart(now,"day");result.FromDay=day;result.ToDay=dayString(today)
  e=s.DB.DB.QueryRowContext(ctx,`WITH first AS(SELECT asset_id,min(day) AS day FROM asset_daily_stats WHERE views>0 GROUP BY asset_id),activity AS(SELECT d.asset_id,d.day,d.views FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? AND d.views>0)
  SELECT coalesce(sum(views),0),count(DISTINCT asset_id),count(DISTINCT day),(SELECT count(*) FROM first JOIN assets a ON a.id=first.asset_id AND a.trashed=0 WHERE first.day>=?) FROM activity`,day,day).Scan(&total,&result.DistinctAssets,&result.ActiveDays,&result.FirstViews)
