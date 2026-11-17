@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 import type { paths } from "../api/generated/schema";
 import { api, operationHeaders, read } from "./client";
 import type { Schema } from "./client";
@@ -27,9 +28,12 @@ export function deduplicateAssetPages<T extends { items: Asset[] }>(
 }
 export function useAssets(filters: AssetFilters, enabled = true) {
   const key = useRemoteKey();
-  return useInfiniteQuery({
+  return useInfiniteQuery<Schema<'AssetPage'>, Error, InfiniteData<Schema<'AssetPage'>, string | undefined>, QueryKey, string | undefined>({
     queryKey: [...key, "assets", filters],
-    placeholderData: (previous, query) => (query?.queryKey.at(-1) as AssetFilters | undefined)?.q === filters.q ? previous : undefined,
+    placeholderData: (previous, query) => {
+      const before = query?.queryKey.at(-1) as AssetFilters | undefined;
+      return before?.q === filters.q && before?.authorId === filters.authorId && before?.libraryId === filters.libraryId && before?.collectionId === filters.collectionId && before?.directory === filters.directory ? previous : undefined;
+    },
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       read(
