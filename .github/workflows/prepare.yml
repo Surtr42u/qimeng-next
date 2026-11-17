@@ -96,6 +96,8 @@ jobs:
         working-directory: web
         run: |
           npm ci
+          npm exec --yes --package=prettier@3.10.1 -- prettier --write 'src/**/*.{ts,tsx,css}' '../ui/react/**/*.{ts,tsx,css}' 'tests/**/*.ts' 'e2e/**/*.ts' '!src/api/generated/**'
+          git -C .. diff -- web/src web/tests web/e2e ui/react > web-format.patch
           npm run typecheck
           npm run build
           npm test
@@ -110,6 +112,7 @@ jobs:
             web/dist/
             web/test-results/
             web/playwright-report/
+            web/web-format.patch
   ai:
     needs: generate
     runs-on: ubuntu-24.04
@@ -161,3 +164,36 @@ jobs:
           path: |
             android/**/build/reports/
             android/app/build/outputs/apk/debug/*.apk
+  live:
+    needs: [generate, server, web]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: generated-contracts-and-locks, path: .}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: server-first-check, path: '${{ runner.temp }}/server-artifact'}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: web-first-check, path: web}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.13'}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24'}
+      - name: Prepare isolated integrations
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          python -m pip install --require-hashes -r ai/requirements.lock
+          npm --prefix web ci
+          cd web && npx playwright install --with-deps chromium
+      - name: Real Go + stdio MCP + browser
+        run: bash tools/cloud_live.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: live-integration-evidence
+          retention-days: 7
+          path: |
+            web/test-results/
+            web/playwright-report/

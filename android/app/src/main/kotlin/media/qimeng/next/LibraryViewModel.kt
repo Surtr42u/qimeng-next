@@ -97,6 +97,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 lists.values.forEach { it.value = ListState() }
                 mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
                 mutableAssetAuthors.value = emptyList()
+                mutableTags.value = emptyList(); mutableTagCursor.value = null
                 mutableLibraries.value = emptyList(); mutableCapabilities.value = null
                 analyticsJob?.cancel(); reviewJob?.cancel(); directoryJob?.cancel()
                 directoryState.value = ListState()
@@ -215,9 +216,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val current = mutableAsset.value ?: return@action
         publishAsset(repository.reaction(current, favorite, liked))
     }
-    fun saveTags(tags: List<String>, onSaved: () -> Unit) = action {
+    fun saveTags(tags: List<String>, expectedRevision: Long, onSaved: () -> Unit) = action {
         val current = mutableAsset.value ?: return@action
-        publishAsset(repository.tags(current, tags)); onSaved()
+        publishAsset(repository.tags(current.copy(tagsRevision = expectedRevision), tags)); onSaved()
     }
     fun saveNote(note: String, onSaved: () -> Unit) = action {
         val current = mutableAsset.value ?: return@action
@@ -230,13 +231,25 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
         onSaved()
     }
+    fun saveRelations(sources: List<String>, characters: List<String>, onSaved: () -> Unit) = action {
+        mutableAsset.value?.let { publishAsset(repository.updateRelations(it, sources, characters)); onSaved() }
+    }
+    fun saveAcquisitionSources(sources: List<String>, onSaved: () -> Unit) = action {
+        mutableAsset.value?.let { publishAsset(repository.updateAcquisitionSources(it, sources)); onSaved() }
+    }
     fun loadTags(next: Boolean = false) = action {
         val page = repository.tags(if (next) mutableTagCursor.value else null)
         mutableTags.value = if (next) (mutableTags.value + page.items).distinct() else page.items
         mutableTagCursor.value = page.nextCursor
     }
-    fun removeTag(tag: String, onSaved: () -> Unit) = action {
-        mutableAsset.value?.let { publishAsset(repository.removeTag(it, tag)); onSaved() }
+    fun removeTag(tag: String, onSaved: (Asset) -> Unit) = action {
+        mutableAsset.value?.let { val result = repository.removeTag(it, tag); publishAsset(result); onSaved(result) }
+    }
+    fun createTag(name: String, onSaved: (String) -> Unit) = action { onSaved(repository.createTag(name)) }
+    fun refreshTagsState() = action {
+        mutableAsset.value?.let { publishAsset(repository.asset(it.id)) }
+        val page = repository.tags()
+        mutableTags.value = page.items; mutableTagCursor.value = page.nextCursor
     }
     fun viewSessionId(): String = saved.get<String>("viewSession") ?: UUID.randomUUID().toString().also { saved["viewSession"] = it }
     fun recordView(asset: Asset, sessionId: String) = action(blocking = false) { graph.uploads.event(asset, "view", sessionId = sessionId) }
@@ -322,10 +335,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         trashState.value = trashState.value.copy(items = trashState.value.items.filterNot { it.id == asset.id })
         lists.values.forEach { it.value = it.value.copy(loaded = false) }
     }
+    fun purgeAsset(asset: Asset) = action {
+        repository.purge(asset)
+        trashState.value = trashState.value.copy(items = trashState.value.items.filterNot { it.id == asset.id })
+    }
     fun openReport(id: String) {
         navigate("task:$id"); mutableReport.value = null
         action { val result = repository.report(id); if (route.value == "task:$id") mutableReport.value = result }
     }
+    fun cancelReport() = action { mutableReport.value?.let { mutableReport.value = repository.cancelReport(it) } }
     fun loadStatistics() = action { mutableStats.value = repository.statistics() }
     fun loadAnalytics(range: String) {
         analyticsJob?.cancel()

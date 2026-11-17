@@ -9,8 +9,26 @@ import { UnsavedGuard } from '../lib/navigation';
 import { newId } from '../lib/id';
 
 export function VocabularyPage() {
-  const [params, setParams] = useSearchParams(); const tab = params.get('tab') ?? 'tags';
-  return <><PageHeading title="词表与关联" subtitle="标签、作品出处和角色使用独立身份与修订。" /><SegmentedControl label="词表类型" value={tab} options={[{ value: 'tags', label: '标签' }, { value: 'source', label: '作品出处' }, { value: 'character', label: '角色' }]} onChange={value => setParams({ tab: value }, { replace: true }) /><div className="section-space">{tab === 'tags' ? <TagsVocabulary /> : <TermsVocabulary key={tab} kind={tab === 'character' ? 'character' : 'source'} />}</div></>;
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') ?? 'tags';
+  return (
+    <>
+      <PageHeading title="词表与关联" subtitle="标签、作品出处和角色使用独立身份与修订。" />
+      <SegmentedControl
+        label="词表类型"
+        value={tab}
+        options={[
+          { value: 'tags', label: '标签' },
+          { value: 'source', label: '作品出处' },
+          { value: 'character', label: '角色' },
+        ]}
+        onChange={value => setParams({ tab: value }, { replace: true })}
+      />
+      <div className="section-space">
+        {tab === 'tags' ? <TagsVocabulary /> : <TermsVocabulary key={tab} kind={tab === 'character' ? 'character' : 'source'} />}
+      </div>
+    </>
+  );
 }
 function TagsVocabulary() {
   const query = useTagVocabulary(); const edit = useEditTag();

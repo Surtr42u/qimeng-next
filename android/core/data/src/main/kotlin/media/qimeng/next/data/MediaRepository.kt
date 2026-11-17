@@ -14,6 +14,7 @@ import media.qimeng.next.sdk.model.CreateDirectoryRequest
 import media.qimeng.next.sdk.model.AuthorCreate
 import media.qimeng.next.sdk.model.AuthorMergeInput
 import media.qimeng.next.sdk.model.CollectionCreate
+import media.qimeng.next.sdk.model.CreateTagRequest
 import media.qimeng.next.sdk.model.RevisionRequest
 import media.qimeng.next.sdk.model.MoveRequest
 import media.qimeng.next.sdk.api.DefaultApi
@@ -97,7 +98,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         val page = provider.api(target).listAssets(cursor = cursor, limit = 50, libraryId = query.libraryId,
             q = query.text.takeIf { it.isNotBlank() }, mediaType = query.mediaType?.let { type -> DefaultApi.MediaTypeListAssets.entries.first { it.value == type } },
             kind = query.kind?.let { kind -> DefaultApi.KindListAssets.entries.first { it.value == kind } },
-            authorId = query.authorId, tag = query.tag, favorite = query.favorite, liked = query.liked,
+            authorId = query.authorId, collectionId = query.collectionId, tag = query.tag, favorite = query.favorite, liked = query.liked,
             sort = DefaultApi.SortListAssets.entries.first { it.value == query.sort }).bodyOrThrow()
         return Page(page.items.map { it.toModel(target) }, page.nextCursor)
     }
@@ -130,8 +131,20 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
             authorIds = ids, expectedAuthorsRevision = asset.authorsRevision)).bodyOrThrow().toModel(target)
     }
+    suspend fun updateRelations(asset: Asset, sources: List<String>, characters: List<String>): Asset {
+        val target = target()
+        return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
+            sourceIds = sources, characterIds = characters)).bodyOrThrow().toModel(target)
+    }
+    suspend fun updateAcquisitionSources(asset: Asset, sources: List<String>): Asset {
+        val target = target()
+        return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
+            acquisitionSources = sources)).bodyOrThrow().toModel(target)
+    }
 
     suspend fun tags(cursor: String? = null): Page<String> = provider.api(target()).listTags(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items, it.nextCursor) }
+    suspend fun createTag(name: String): String = provider.api(target()).createTag(idempotencyKey = UUID.randomUUID().toString(),
+        createTagRequest = CreateTagRequest(name = name)).bodyOrThrow().name
     suspend fun removeTag(asset: Asset, tag: String): Asset {
         val target = target()
         return provider.api(target).removeAssetTag(id = asset.id, tag = tag, idempotencyKey = UUID.randomUUID().toString(),
@@ -184,6 +197,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         provider.api(target()).restoreAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
             revisionRequest = RevisionRequest(expectedRevision = asset.revision)).bodyOrThrow()
     }
+    suspend fun purge(asset: Asset) {
+        val result = provider.api(target()).purgeAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision)
+        if (!result.isSuccessful) result.bodyOrThrow()
+    }
     suspend fun rename(asset: Asset, relativePath: String): Asset {
         val target = target()
         return provider.api(target).moveAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
@@ -201,6 +218,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             TaskItem(it.upload.id, it.upload.fileName, it.upload.state.value,
                 listOfNotNull(it.upload.errorMessage, if (result.batch.mode.value == "ordinary") "普通上传，无需研究" else researchMessage(it.researchOutcome)).joinToString(" · "), it.upload.assetId)
         })
+    }
+    suspend fun cancelReport(report: TaskReport): TaskReport {
+        provider.api(target()).cancelBatch(id = report.id, revisionRequest = RevisionRequest(expectedRevision = report.revision)).bodyOrThrow()
+        return this.report(report.id)
     }
 
     suspend fun statistics(): InventoryStats {
@@ -221,11 +242,13 @@ private fun ApiAsset.toModel(target: Session): Asset {
         revision = revision, tagsRevision = tagsRevision, bytes = propertySize, width = width, height = height, durationMs = durationMs,
         authorId = authorId.takeIf(String::isNotBlank), authorIds = authorIds, authorsRevision = authorsRevision, authorName = authorName, tags = tags, favorite = favorite, liked = liked,
         likeCount = likeCount, positionMs = positionMs, positionVersion = positionContentVersion, note = note,
+        sourceIds = sourceIds.orEmpty(), characterIds = characterIds.orEmpty(), acquisitionSources = acquisitionSources.orEmpty(),
+        collectionId = collectionId, page = page,
         contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt)
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision)
-private fun ApiBatch.toModel() = TaskReport(id, mode.value, state.value,
+private fun ApiBatch.toModel() = TaskReport(id, revision, mode.value, state.value,
     "${label} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList())
 private fun researchMessage(outcome: String): String? = when (outcome) {
     "", "not_run", "pending" -> "尚未执行研究"

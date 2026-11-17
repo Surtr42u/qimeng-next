@@ -33,7 +33,7 @@ func(s *Service)BatchDetail(ctx context.Context,p model.Principal,id string)(mod
 func(s *Service)refreshBatch(ctx context.Context,q store.Querier,id string)error{
  b,e:=store.Get[model.Batch](ctx,q,"SELECT data FROM batches WHERE id=?",id);if e!=nil{return e};if b.State=="cancelled"{return nil}
  var total,ingested,staged,receiving,problems int
- e=q.QueryRowContext(ctx,"SELECT count(*),COALESCE(sum(state='ingested'),0),COALESCE(sum(state='staged'),0),COALESCE(sum(state='receiving'),0),COALESCE(sum(state IN ('duplicate','failed','cancelled')),0) FROM uploads WHERE batch_id=?",id).Scan(&total,&ingested,&staged,&receiving,&problems);if e!=nil{return e}
+ e=q.QueryRowContext(ctx,"SELECT count(*),COALESCE(sum(state='ingested'),0),COALESCE(sum(state='staged'),0),COALESCE(sum(state='receiving'),0),COALESCE(sum(state IN ('duplicate','failed','cancelled') OR (state='staged' AND COALESCE(json_extract(data,'$.errorCode'),'')!='')),0) FROM uploads WHERE batch_id=?",id).Scan(&total,&ingested,&staged,&receiving,&problems);if e!=nil{return e}
  switch{case total>0&&ingested==total:b.State="completed";case problems>0||ingested>0:b.State="partial";case receiving>0:b.State="receiving";case staged>0:b.State="waiting_executor";default:b.State="receiving"};b.Revision++;b.UpdatedAt=time.Now().UTC();return store.SaveBatch(ctx,q,b)
 }
 func(s *Service)CancelBatch(ctx context.Context,w *Write,id string,revision int64)(model.Batch,error){
@@ -118,7 +118,20 @@ func(s *Service)CommitPlan(ctx context.Context,principal model.Principal,batchID
    u,e:=s.Upload(ctx,principal,item.UploadID);if e!=nil{return nil,0,e};if u.State=="ingested"{a,e:=s.Asset(ctx,u.AssetID);return model.UploadResult{Upload:u,Asset:&a},200,e};if u.State=="duplicate"{return model.UploadResult{Upload:u},200,nil};if u.State!="staged"{return nil,0,Fail(409,"plan_input_conflict","输入状态已改变。")}
    r,e:=s.ingest(ctx,w,u,&item);return r,200,e
   })
-  if e!=nil{return Result{},e}
+  if e!=nil{
+   var application *Error
+   if errors.As(e,&application){switch application.Code{case "namespace_changed","revision_conflict","batch_cancelled","scope_denied","batch_scope_denied","expired","revoked":return Result{},e}}
+   code,message:="file_operation_failed","此项未完成，原件保留；请回读后重试。"
+   if application!=nil{code=application.Code;message=application.Message}
+   _,recordErr:=s.Run(ctx,principal,"planItemFailure:"+planID+":"+item.UploadID,"",nil,func(w *Write)(any,int,error){
+    u,e:=s.Upload(ctx,w.Principal,item.UploadID);if e!=nil{return nil,0,e};u.ErrorCode=code;u.ErrorMessage=message
+    b,e:=s.Batch(ctx,batchID);if e!=nil{return nil,0,e};q,e:=w.Q();if e!=nil{return nil,0,e};if e=store.SaveUpload(ctx,q,u);e!=nil{return nil,0,e}
+    // A diagnostic does not change the planned inputs or namespace revision.
+    // Keeping that revision allows unrelated inputs in this plan to continue.
+    if b.State!="cancelled"&&b.State!="completed"{b.State="partial";b.UpdatedAt=time.Now().UTC();if e=store.SaveBatch(ctx,q,b);e!=nil{return nil,0,e}};return nil,204,nil
+   })
+   if recordErr!=nil{return Result{},recordErr}
+  }
  }
  return s.Run(ctx,principal,"commitPlan:"+planID,key,[]byte(fingerprint),func(w *Write)(any,int,error){
   detail,e:=s.BatchDetail(ctx,principal,batchID);if e!=nil{return nil,0,e};p.State="completed";for _,i:=range detail.Items{if i.Upload.State!="ingested"{p.State="partial";break}};q,e:=w.Q();if e!=nil{return nil,0,e};if e=store.SavePlan(ctx,q,p);e!=nil{return nil,0,e};for i:=range detail.Plans{if detail.Plans[i].ID==p.ID{detail.Plans[i]=p.PlanSummary}};return detail,200,nil

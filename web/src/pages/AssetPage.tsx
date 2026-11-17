@@ -14,6 +14,7 @@ import { bytes, dateTime } from '../lib/format';
 import { UnsavedGuard } from '../lib/navigation';
 import { newId } from '../lib/id';
 import { TimelinePanel } from './TimelinePanel';
+import { useCreateTag } from '../data/catalog';
 
 export function AssetPage() {
   const { id = '' } = useParams();
@@ -40,7 +41,7 @@ function AssetDetail({ asset }: { asset: Asset }) {
   const back = () => { if (location.state?.returnTo) navigate(-1); else navigate('/album'); };
   return <>
     <button className="back-link" onClick={back}><Icon name="back" size={18} />返回浏览</button>
-    <PageHeading title={asset.fileName} action={<a className="button button--small" href={src} target="_blank" rel="noreferrer">打开原件</a>} />
+    <PageHeading title={asset.fileName} action={<div className="actions"><a className="button button--small" href={src} target="_blank" rel="noreferrer">打开原件</a><Link className="button button--small" to={`/asset/${encodeURIComponent(asset.id)}/replace`}>替换原件</Link></div>} />
     <div className="detail-layout"><div className="detail-main">
       {asset.mediaType === 'video' ? <VideoPlayer src={src} title={asset.fileName} initialPosition={asset.positionMs} progressMatches={asset.positionContentVersion === asset.contentVersion} onPlay={event.play} onProgress={event.progress} onPosition={value => { currentPosition.current = value; }} seek={seek} />
         : <button className="image-stage" aria-label="查看原图并缩放" onClick={() => setViewer(true)}><img src={src} alt={asset.fileName} /><span>查看原图</span></button>}
@@ -63,16 +64,26 @@ function TagEditor({ asset, close }: { asset: Asset; close: () => void }) {
   const [selected, setSelected] = useState([...asset.tags]);
   const [created, setCreated] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
+  const createTag = useCreateTag();
+  const newTagAttempt = useRef({ name: '', key: newId() });
   const [discard, setDiscard] = useState(false);
   const attempt = useRef({ content: '', key: newId() });
   const candidate = [...new Set([...(vocabulary.data?.items ?? []), ...base.tags, ...created])].sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }));
   const dirty = selected.length !== base.tags.length || selected.some(tag => !base.tags.includes(tag));
+  const create = () => {
+    const name = newTag.trim(); if (!name || createTag.isPending) return;
+    if (newTagAttempt.current.name !== name) newTagAttempt.current = { name, key: newId() };
+    createTag.mutate({ name, key: newTagAttempt.current.key }, { onSuccess: tag => {
+      setCreated(values => values.includes(tag.name) ? values : [...values, tag.name]);
+      setSelected(values => values.includes(tag.name) ? values : [...values, tag.name]); setNewTag('');
+    } });
+  };
   const save = () => {
     const content = JSON.stringify(selected);
     if (attempt.current.content !== content) attempt.current = { content, key: newId() };
     actions.tags.mutate({ key: attempt.current.key, body: { expectedRevision: base.revision, tags: selected } }, { onSuccess: close });
   };
-  return <section className="panel form-stack"><div className="section-heading"><h2>管理标签</h2><span className="muted">已选 {selected.length} 项</span></div><p className="muted">选择不会改变候选位置；清空后保存也是有效修改。</p><ErrorNotice error={vocabulary.error} retry={() => void vocabulary.refetch()} /><div className="tag-pool tag-pool--scroll">{candidate.map(tag => <button key={tag} className="tag" type="button" disabled={actions.tags.isPending} aria-pressed={selected.includes(tag)} onClick={() => setSelected(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}>{tag}</button>)}</div><form className="inline-form" onSubmit={event => { event.preventDefault(); const tag = newTag.trim(); if (!tag) return; setCreated(values => values.includes(tag) ? values : [...values, tag]); setSelected(values => values.includes(tag) ? values : [...values, tag]); setNewTag(''); }}><input aria-label="新标签名称" maxLength={100} disabled={actions.tags.isPending} value={newTag} onChange={event => setNewTag(event.target.value)} placeholder="新建标签" /><button className="button" disabled={!newTag.trim() || actions.tags.isPending}>加入</button></form><ErrorNotice error={actions.tags.error} /><div className="actions"><button className="button button--primary" disabled={!dirty || actions.tags.isPending || !vocabulary.data} onClick={save}>{actions.tags.isPending ? '正在保存…' : '保存标签'}</button><button className="button" disabled={actions.tags.isPending} onClick={() => setSelected([])}>清空选择</button><button className="button" disabled={actions.tags.isPending} onClick={() => dirty ? setDiscard(true) : close()}>取消</button></div><UnsavedGuard dirty={dirty} />{discard && <ConfirmDialog title="放弃标签修改？" onCancel={() => setDiscard(false)} onConfirm={close}><p>尚未保存的选择会被放弃。</p></ConfirmDialog>}</section>;
+  return <section className="panel form-stack"><div className="section-heading"><h2>管理标签</h2><span className="muted">已选 {selected.length} 项</span></div><p className="muted">选择不会改变候选位置；清空后保存也是有效修改。</p><ErrorNotice error={vocabulary.error} retry={() => void vocabulary.refetch()} /><div className="selected-tags" aria-label="标签草稿">{selected.map(tag => <button key={tag} type="button" className="tag" disabled={actions.tags.isPending} aria-label={`从草稿移除标签 ${tag}`} onClick={() => setSelected(values => values.filter(value => value !== tag))}>{tag} ×</button>)}</div><div className="tag-pool tag-pool--scroll">{candidate.map(tag => <button key={tag} className="tag" type="button" disabled={actions.tags.isPending} aria-pressed={selected.includes(tag)} onClick={() => setSelected(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}>{tag}</button>)}</div>{vocabulary.hasNextPage && <button type="button" className="button button--small" disabled={vocabulary.isFetchingNextPage} onClick={() => void vocabulary.fetchNextPage()}>加载更多标签</button>}<form className="inline-form" onSubmit={event => { event.preventDefault(); create(); }}><input aria-label="新标签名称" maxLength={100} disabled={actions.tags.isPending || createTag.isPending} value={newTag} onChange={event => setNewTag(event.target.value)} placeholder="新建标签" /><button className="button" disabled={!newTag.trim() || actions.tags.isPending || createTag.isPending}>加入</button></form><ErrorNotice error={createTag.error} /><ErrorNotice error={actions.tags.error} /><div className="actions"><button className="button button--primary" disabled={!dirty || actions.tags.isPending || createTag.isPending || !vocabulary.data} onClick={save}>{actions.tags.isPending ? '正在保存…' : '保存标签'}</button><button className="button" disabled={actions.tags.isPending} onClick={() => setSelected([])}>清空选择</button><button className="button" disabled={actions.tags.isPending} onClick={() => dirty ? setDiscard(true) : close()}>取消</button></div><UnsavedGuard dirty={dirty} />{discard && <ConfirmDialog title="放弃标签修改？" onCancel={() => setDiscard(false)} onConfirm={close}><p>尚未保存的选择会被放弃。</p></ConfirmDialog>}</section>;
 }
 
 function RenameEditor({ asset, close }: { asset: Asset; close: () => void }) {

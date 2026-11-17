@@ -29,6 +29,9 @@ export function useEditTag() {
     return read(api.POST('/tags', { params: { header: operationHeaders(key) }, body: { name } }));
   }, onSuccess: invalidateLibrary });
 }
+export function useCreateTag() {
+  return useMutation({ mutationFn: ({ name, key }: { name: string; key: string }) => read(api.POST('/tags', { params: { header: operationHeaders(key) }, body: { name } })), onSuccess: invalidateLibrary });
+}
 export function useTerms(kind: 'source' | 'character', q = '') {
   const key = useRemoteKey();
   return useInfiniteQuery({ queryKey: [...key, kind, q], initialPageParam: undefined as string | undefined,

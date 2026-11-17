@@ -44,6 +44,6 @@ go build -trimpath -o qimeng ./cmd/qimeng
 
 测试使用云端临时根与合成 PNG，不依赖模型、旧仓服务、真实媒体或设备。各能力的实际编译、测试、发布与设备验收证据统一记录于 `docs/status.md`。本文件描述实现与契约，不替代云端通过记录。
 
-依赖版本已锁定：Go 语言最低版本 1.25.0，`modernc.org/sqlite v1.36.3`。确认来源：[Go 1.25 官方说明](https://go.dev/doc/go1.25)、[SQLite driver 发布文档](https://pkg.go.dev/modernc.org/sqlite@v1.36.3)。`go.sum` 与传递依赖版本由云端 tidy 回传。
+当前构建工具链锁定 Go 1.27.4，服务模块锁定 `modernc.org/sqlite v1.36.3` 与生成协议客户端需要的 `github.com/oapi-codegen/runtime v1.9.0`。工具链与模块版本以 `go.mod` 为准，云端 tidy 产生 `go.sum` 及传递依赖锁；不由本地隐式升级。确认来源：[Go 官方发行记录](https://go.dev/dl/)、[SQLite driver 发布文档](https://pkg.go.dev/modernc.org/sqlite@v1.36.3)。
 
 可选媒体工具契约依据 [FFmpeg protocol whitelist](https://ffmpeg.org/ffmpeg-protocols.html)、[ffprobe JSON 输出](https://ffmpeg.org/ffprobe.html)。进程不经 shell，禁止网络协议，超时与输出大小有界；运行时工具版本与真实视频格式覆盖仍须在发布环境验收。

@@ -143,6 +143,8 @@ a.list-row:hover { background: var(--qm-accent-soft); border-radius: 12px; }
 .tag { display: inline-flex; align-items: center; min-height: 32px; padding: 5px 11px; font-size: 12px; color: var(--qm-muted); background: var(--qm-surface); border: 1px solid var(--qm-border); border-radius: 9px; }
 .tag[aria-pressed="true"] { background: var(--qm-accent-soft); color: var(--qm-accent); border-color: var(--qm-accent); }
 .tag-pool--scroll { max-height: 270px; overflow-y: auto; align-content: flex-start; }
+.selected-tags { display: flex; flex-wrap: wrap; gap: 7px; min-height: 34px; max-height: 86px; overflow-y: auto; }
+.directory-browser { border: 1px solid var(--qm-border); border-radius: 12px; padding: 12px; }.directory-list { display: grid; max-height: 220px; overflow-y: auto; margin: 12px 0; }.directory-list button { background: none; border: 0; border-bottom: 1px solid var(--qm-border); color: var(--qm-muted); padding: 10px; text-align: left; }
 .facts { display: grid; gap: 14px; margin: 19px 0; font-size: 12px; }
 .facts > div { display: grid; grid-template-columns: minmax(85px,1fr) minmax(0,2fr); gap: 16px; align-items: baseline; }
 .facts dt { color: var(--qm-faint); }.facts dd { margin: 0; color: var(--qm-text); overflow-wrap: anywhere; }

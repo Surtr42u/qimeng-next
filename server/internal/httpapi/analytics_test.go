@@ -22,7 +22,7 @@ func TestActivityProjectionsRecommendationPaginationAndPreferenceConflict(t *tes
  var review service.Review;decode(t,f.json("GET","/stats/review?range=7d","",nil,200),&review)
  if review.FirstViews!=1||review.ReturnViews!=0||review.TotalSeconds!=12||len(review.Hours)!=24{t.Fatalf("bad review: %+v",review)}
  var recommendation service.RecommendationPage;decode(t,f.json("GET","/recommendations?seed=42&limit=1","",nil,200),&recommendation)
- seen:=map[string]bool{};for{for _,asset:=range recommendation.Items{if seen[asset.ID]{t.Fatal("recommendation page repeated an asset")};seen[asset.ID]=true};if recommendation.NextCursor==""{break};decode(t,f.json("GET","/recommendations?seed=42&limit=1&cursor="+url.QueryEscape(recommendation.NextCursor),"",nil,200),&recommendation)}
+ seen:=map[string]bool{};for{for _,asset:=range recommendation.Items{if seen[asset.ID]{t.Fatal("recommendation page repeated an asset")};seen[asset.ID]=true};if recommendation.NextCursor==""{break};cursor:=recommendation.NextCursor;recommendation=service.RecommendationPage{};decode(t,f.json("GET","/recommendations?seed=42&limit=1&cursor="+url.QueryEscape(cursor),"",nil,200),&recommendation)}
  if len(seen)!=3{t.Fatalf("recommendation omitted input: %d",len(seen))}
  var preference service.RecommendationPreferences;decode(t,f.json("GET","/preferences/recommendation","",nil,200),&preference)
  body:=map[string]any{"expectedRevision":preference.Revision,"weights":preference.Presets["explore"]}

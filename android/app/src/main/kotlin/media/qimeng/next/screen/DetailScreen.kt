@@ -50,6 +50,8 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     var showRename by rememberSaveable(id) { mutableStateOf(false) }
     var showTrash by rememberSaveable(id) { mutableStateOf(false) }
     var showAuthors by rememberSaveable(id) { mutableStateOf(false) }
+    var showRelations by rememberSaveable(id) { mutableStateOf(false) }
+    var showAcquisition by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(id) { if (asset?.id != id) model.openAsset(id) }
     val item = asset?.takeIf { it.id == id }
     if (item == null) {
@@ -61,6 +63,7 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
         if (item.mediaType == "video") VideoStage(item, model) else ImageStage(item, model::adjacentAsset)
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
             Text(item.name, style = MaterialTheme.typography.titleLarge)
+            item.collectionId?.let { collection -> TextButton(onClick = { model.navigate("collection:$collection") }) { Text("同组作品${item.page?.let { " · 第 $it 项" }.orEmpty()}") } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(item.favorite, { model.changeReaction(!item.favorite, item.liked) }, label = { Text("收藏") }, enabled = !busy,
                     leadingIcon = { Icon(Icons.Outlined.Bookmark, null, Modifier.size(18.dp)) })
@@ -78,6 +81,9 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
             Text("备注", style = MaterialTheme.typography.titleSmall)
             Text(item.note.ifBlank { "暂无备注" })
             TextButton(onClick = { showNote = true }) { Text("编辑备注") }
+            TextButton(onClick = { showRelations = true }) { Text("原作 / 角色 · ${item.sourceIds.size} 个出处 / ${item.characterIds.size} 个角色") }
+            if (item.acquisitionSources.isNotEmpty()) Text(item.acquisitionSources.joinToString("\n"), style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { showAcquisition = true }) { Text("编辑获取渠道 / 来源") }
             Row {
                 TextButton(onClick = { showRename = true }) { Text("改名 / 移动") }
                 TextButton(onClick = { showTrash = true }) { Text("移到回收站", color = MaterialTheme.colorScheme.error) }
@@ -91,6 +97,10 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     }
     if (showTags) TagsDialog(item, model) { showTags = false }
     if (showAuthors) AuthorsDialog(item, model) { showAuthors = false }
+    if (showRelations) AssetRelationsDialog(item, model) { showRelations = false }
+    if (showAcquisition) TextEditDialog("获取渠道 / 来源（每行一条）", item.acquisitionSources.joinToString("\n"), busy, { showAcquisition = false }) {
+        model.saveAcquisitionSources(it.lines().filter(String::isNotBlank)) { showAcquisition = false }
+    }
     if (showNote) TextEditDialog("编辑备注", item.note, busy, { showNote = false }) { value -> model.saveNote(value) { showNote = false } }
     if (showRename) TextEditDialog("库内路径与文件名", item.relativePath, busy, { showRename = false }) { value -> model.renameCurrentAsset(value) { showRename = false } }
     if (showTrash) AlertDialog(onDismissRequest = { showTrash = false }, title = { Text("移到回收站？") }, text = { Text(item.name) },
@@ -189,6 +199,7 @@ private fun TagsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Uni
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     var selected by rememberSaveable(asset.id) { mutableStateOf(asset.tags) }
+    var baseRevision by rememberSaveable(asset.id) { mutableLongStateOf(asset.tagsRevision) }
     var extra by rememberSaveable { mutableStateOf("") }
     var added by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val candidates = remember(vocabulary, asset.tags, added) { (vocabulary + asset.tags + added).distinct().sortedWith(::compareTags) }
@@ -197,7 +208,10 @@ private fun TagsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Uni
             FlowRow(Modifier.height(76.dp).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 selected.forEach { tag -> InputChip(selected = true, onClick = { }, label = { Text(tag) }, trailingIcon = {
                     IconButton(onClick = {
-                        if (tag in asset.tags) model.removeTag(tag) { selected = selected - tag } else selected = selected - tag
+                        if (tag in asset.tags) {
+                            val baseWasCurrent = baseRevision == asset.tagsRevision
+                            model.removeTag(tag) { updated -> selected = selected - tag; if (baseWasCurrent) baseRevision = updated.tagsRevision }
+                        } else selected = selected - tag
                     }, enabled = !busy, modifier = Modifier.size(24.dp)) { Icon(Icons.Outlined.Close, if (tag in asset.tags) "立即解除标签 $tag" else "移除草稿标签 $tag", Modifier.size(16.dp)) }
                 }) }
             }
@@ -209,11 +223,17 @@ private fun TagsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Uni
             if (cursor != null) TextButton(onClick = { model.loadTags(true) }, enabled = !busy) { Text("更多标签") }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(extra, { extra = it }, label = { Text("新建标签") }, singleLine = true, modifier = Modifier.weight(1f))
-                TextButton(onClick = { val value = extra.trim(); if (value.isNotEmpty()) { added = added + value; selected = (selected + value).distinct(); extra = "" } }) { Text("添加") }
+                TextButton(onClick = { val value = extra.trim(); if (value.isNotEmpty()) model.createTag(value) { created ->
+                    added = added + created; selected = (selected + created).distinct(); extra = ""
+                } }, enabled = !busy) { Text("添加") }
             }
-            message?.let { ErrorNotice(it) }
+            message?.let { ErrorNotice(it, model::refreshTagsState) }
+            if (baseRevision != asset.tagsRevision) {
+                Text("服务器标签已变化，请载入当前标签后再编辑。")
+                TextButton(onClick = { selected = asset.tags; baseRevision = asset.tagsRevision }) { Text("载入服务器标签") }
+            }
         } },
-        confirmButton = { TextButton(onClick = { model.saveTags(selected, onClose) }, enabled = !busy) { Text("保存") } },
+        confirmButton = { TextButton(onClick = { model.saveTags(selected, baseRevision, onClose) }, enabled = !busy && baseRevision == asset.tagsRevision) { Text("保存") } },
         dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("取消") } })
 }
 

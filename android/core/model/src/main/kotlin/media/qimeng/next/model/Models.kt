@@ -33,6 +33,11 @@ data class Asset(
     val positionMs: Long,
     val positionVersion: Long,
     val note: String,
+    val sourceIds: List<String>,
+    val characterIds: List<String>,
+    val acquisitionSources: List<String>,
+    val collectionId: String?,
+    val page: Int?,
     val contentUrl: String,
     val thumbnailUrl: String,
     val addedAt: String,
@@ -51,11 +56,12 @@ data class AssetQuery(
     val source: String = "assets",
     val seed: Long = 1,
     val period: String = "week",
+    val collectionId: String? = null,
 )
 data class Page<T>(val items: List<T>, val nextCursor: String?)
 data class Author(val id: String, val name: String, val kind: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long)
 data class TaskItem(val id: String, val fileName: String, val state: String, val message: String, val assetId: String?)
-data class TaskReport(val id: String, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>)
+data class TaskReport(val id: String, val revision: Long, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>)
 data class HistoryEntry(val id: String, val assetId: String, val name: String, val kind: String, val positionMs: Long, val createdAt: String)
 data class InventoryStats(val assets: Long, val images: Long, val videos: Long, val bytes: Long, val favorites: Long, val authors: Long, val events: Long, val trash: Long)
 data class ServerCapabilities(val aiConfigured: Boolean, val recommendations: Boolean, val rankings: Boolean)

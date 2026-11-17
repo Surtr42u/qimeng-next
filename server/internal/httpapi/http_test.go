@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
  "bytes"
+ "crypto/sha256"
+ "fmt"
  "encoding/json"
  "image"
  "image/color"
@@ -76,4 +78,16 @@ func TestCookieOriginAndInvalidMedia(t *testing.T){
  f:=setup(t);r:=f.request("POST","/sessions","","",[]byte(`{"token":"`+testSecret+`","label":"Browser"}`),nil);if r.Code!=201{t.Fatal(r.Body.String())};cookies:=r.Result().Cookies();if len(cookies)==0||!cookies[0].HttpOnly||cookies[0].SameSite!=http.SameSiteStrictMode{t.Fatal("session cookie is not protected")}
  req:=httptest.NewRequest("POST","/api/v1/libraries",strings.NewReader(`{"name":"blocked","kind":"regular"}`));req.AddCookie(cookies[0]);req.Header.Set("Origin","https://unrelated.invalid");req.Header.Set("Idempotency-Key","cross-origin-key");rr:=httptest.NewRecorder();f.h.ServeHTTP(rr,req);if rr.Code!=403{t.Fatal("cross-origin cookie write accepted")}
  r=f.json("POST","/uploads","invalid-path-upload",map[string]any{"libraryId":f.library,"fileName":"../escape.png","size":10,"mimeType":"image/png","mode":"ordinary"},400);io.Copy(io.Discard,r.Result().Body)
+}
+
+func TestExpectedSourceHashRejectsMixedOrChangedBytesBeforePublication(t *testing.T){
+ f:=setup(t);body:=pngBytes(t,33);wrong:=sha256.Sum256([]byte("a different source snapshot"))
+ in:=map[string]any{"libraryId":f.library,"fileName":"hash-guard.png","size":len(body),"mimeType":"image/png","mode":"ordinary","expectedHash":fmt.Sprintf("%x",wrong)}
+ r:=f.json("POST","/uploads","source-hash-create",in,201);var upload model.Upload;decode(t,r,&upload)
+ r=f.request("PUT","/uploads/"+upload.ID+"/content","",testSecret,body,map[string]string{"Upload-Offset":"0"});if r.Code!=200{t.Fatal(r.Body.String())}
+ f.json("POST","/uploads/"+upload.ID+"/complete","source-hash-complete",struct{}{},409)
+ r=f.json("GET","/assets","",nil,200);var assets model.Page[model.Asset];decode(t,r,&assets);if len(assets.Items)!=0{t.Fatal("hash-mismatched source was published")}
+ in["expectedHash"]=fmt.Sprintf("%x",sha256.Sum256(body));f.json("POST","/uploads","source-hash-create",in,409)
+ r=f.json("POST","/uploads","source-hash-correct-create",in,201);decode(t,r,&upload)
+ r=f.request("PUT","/uploads/"+upload.ID+"/content","",testSecret,body,map[string]string{"Upload-Offset":"0"});if r.Code!=200{t.Fatal(r.Body.String())};completed:=f.complete(upload);if completed.Asset==nil||completed.Asset.Hash!=in["expectedHash"]{t.Fatal("matching snapshot did not publish exactly")}
 }

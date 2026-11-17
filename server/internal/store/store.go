@@ -66,7 +66,7 @@ func SaveAsset(ctx context.Context,q Querier,a model.Asset)error{
  for _,authorID:=range a.AuthorIDs{if _,err=q.ExecContext(ctx,"INSERT INTO asset_authors(asset_id,author_id) VALUES(?,?)",a.ID,authorID);err!=nil{return err}}
  if _,err=q.ExecContext(ctx,"DELETE FROM asset_tags WHERE asset_id=?",a.ID);err!=nil{return err}
  for _,tag:=range a.Tags{
-  if _,err=q.ExecContext(ctx,"INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO UPDATE SET deleted=0,revision=tags.revision+1,updated_at=excluded.updated_at WHERE tags.deleted=1",tag,a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"),a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"));err!=nil{return err}
+  if _,err=q.ExecContext(ctx,"INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO NOTHING",tag,a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"),a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"));err!=nil{return err}
   if _,err=q.ExecContext(ctx,"INSERT INTO asset_tags(asset_id,tag) VALUES(?,?)",a.ID,tag);err!=nil{return err}
  }
  if _,err=q.ExecContext(ctx,"DELETE FROM asset_sources WHERE asset_id=?",a.ID);err!=nil{return err}

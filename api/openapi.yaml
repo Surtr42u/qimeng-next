@@ -993,6 +993,7 @@ components:
         fileName: {type: string, minLength: 1, maxLength: 240}
         size: {type: integer, format: int64, minimum: 1}
         mimeType: {type: string}
+        expectedHash: {type: string, pattern: '^[0-9a-fA-F]{64}$', description: Optional complete source SHA-256 snapshot. When provided the server must match it before staging or publishing.}
         mode: {type: string, enum: [ordinary, intelligent]}
         batchId: {type: string}
         sourceMtime: {type: string, format: date-time}

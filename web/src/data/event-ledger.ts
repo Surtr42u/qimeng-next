@@ -26,7 +26,7 @@ export class EventLedger {
   async record(assetId: string, body: Schema<'EventCreate'>) {
     await this.ready;
     if (this.disposed) throw new Error('影库连接已改变，未将旧记录发送到新影库。');
-    if (this.pending.size >= 2000) throw new Error('待补发浏览记录达到 2000 条，请先恢复连接并重试补发。');
+    if (this.pending.size >= 2000) { const message = '待补发浏览记录达到 2000 条，请先恢复连接并重试补发。'; this.publish({ error: message }); throw new Error(message); }
     const entry: PendingEvent = { id: `${this.scope}:${body.eventId}`, scope: this.scope, assetId, body, confirmed: false };
     this.pending.set(entry.id, entry);
     try { await localWrite('events', entry); }
@@ -52,7 +52,10 @@ export class EventLedger {
       await queryClient.invalidateQueries({ predicate: query => query.queryKey[0] === 'remote' && ['stats', 'history', 'overview', 'trends', 'review', 'rankings'].includes(String(query.queryKey[3])) });
     } catch (error) {
       if (!this.disposed) this.publish({ error: error instanceof Error ? error.message : '浏览记录尚未补发成功，请重试。' });
-    } finally { this.running = false; }
+    } finally {
+      this.running = false;
+      if (!this.disposed && this.pending.size > 0 && !this.health.error) void this.flush();
+    }
   }
   dispose() { this.disposed = true; this.controller?.abort(); }
 }

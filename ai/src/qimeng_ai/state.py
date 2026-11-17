@@ -20,6 +20,16 @@ def encode(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def observation(value):
+    """临时引用的新随机ID不是任务进展；业务对象ID/修订与数据内容仍参与比较。"""
+    if isinstance(value, dict):
+        return {key: observation(item) for key, item in value.items()
+                if key not in {"fileRef", "resultRef", "artifactRef"}}
+    if isinstance(value, list):
+        return [observation(item) for item in value]
+    return value
+
+
 class State:
     def __init__(self, config: Config, instance_id: str, contract_sha: str):
         self.config = config
@@ -82,7 +92,7 @@ class State:
         return request
 
     def finish(self, request: str, value, key: str | None, *, uncertain: bool = False) -> None:
-        digest = hashlib.sha256(encode(value).encode()).hexdigest()
+        digest = hashlib.sha256(encode(observation(value)).encode()).hexdigest()
         task = self.config.task_id
         with self.transaction() as db:
             previous = db.execute("SELECT digest,repeats FROM requests WHERE task=? AND request=?", (task, request)).fetchone()

@@ -18,7 +18,7 @@ export function HomePage() {
   const seed = Number(params.get('seed') ?? 0);
   const ranked = tab === 'rank';
   const recommendations = useRecommendations(seed, tab === 'cos' ? 'cos' : undefined, type, !ranked && instance.capabilities.recommendations);
-  const rankings = useRankings(period, ranked && instance.capabilities.rankings);
+  const rankings = useRankings(period, ranked && instance.capabilities.rankings, type);
   const query = ranked ? rankings : recommendations;
   const assets = ranked ? rankings.data?.pages.flatMap(page => page.items.map(item => item.asset)) ?? [] : recommendations.data?.pages.flatMap(page => page.items) ?? [];
   const unavailable = ranked ? !instance.capabilities.rankings : !instance.capabilities.recommendations;
@@ -28,6 +28,7 @@ export function HomePage() {
       : <SegmentedControl label="推荐媒体类型" value={type ?? ''} options={[{ value: '', label: '综合' }, { value: 'video', label: '视频' }, { value: 'animated_image', label: '动图' }, { value: 'image', label: '图片' }]} onChange={value => change('mediaType', value)} />}
       <div className="actions"><span className="muted">已加载 {assets.length} 项</span><button className="button button--small" disabled={query.isFetching || unavailable} onClick={() => ranked ? void rankings.refetch() : change('seed', String(crypto.getRandomValues(new Uint32Array(1))[0]))}><Icon name="refresh" size={15} />{query.isFetching && !query.isFetchingNextPage ? '更新中…' : ranked ? '刷新榜单' : '换一批'}</button><Link className="button button--small" to={tab === 'cos' ? '/album?kind=cos' : '/album'}>高级筛选</Link></div>
     </div>
+    {ranked && <div className="browse-toolbar"><SegmentedControl label="排行媒体类型" value={type ?? ''} options={[{ value: '', label: '综合' }, { value: 'video', label: '视频' }, { value: 'animated_image', label: '动图' }, { value: 'image', label: '图片' }]} onChange={value => change('mediaType', value)} /></div>}
     {unavailable ? <EmptyState title={ranked ? '当前服务器尚未开放排行榜' : '当前服务器尚未开放推荐'} action={<Link className="button" to="/album">浏览相册</Link>}>更新服务器后可读取对应结果，不以普通排序替代。</EmptyState> : <><ErrorNotice error={query.error} stale={assets.length > 0} retry={() => void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch())} />{query.isPending ? <Loading text={ranked ? '正在读取榜单…' : '正在准备推荐…'} /> : assets.length ? <MediaGrid items={mediaCards(assets)} /> : !query.isError && <EmptyState title={ranked ? '这个周期还没有排行内容' : '暂无可推荐的内容'} action={<Link to="/manage/upload" className="button button--primary">上传媒体</Link>} />}{query.hasNextPage && <div className="load-more"><button className="button" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>加载更多</button></div>}</>}
   </>;
 }

@@ -50,7 +50,7 @@ func(s *Service)saveIntent(ctx context.Context,j fileIntent)error{raw,e:=store.E
 func(s *Service)prepareFile(ctx context.Context,w *Write,j fileIntent)(fileIntent,error){
  if w.tx!=nil{return j,errors.New("file intent must precede transaction")}
  old,e:=store.Get[fileIntent](ctx,s.DB.DB,"SELECT data FROM file_intents WHERE id=?",j.ID)
- if e==nil{if old.Kind!=j.Kind||old.UploadID!=j.UploadID{return j,Fail(409,"operation_conflict","文件操作身份冲突。")};return old,nil};if !errors.Is(e,sql.ErrNoRows){return j,e}
+ if e==nil{if old.Kind!=j.Kind||old.UploadID!=j.UploadID||old.Operation!=w.operation{return j,Fail(409,"publication_pending","此输入已有不同发布操作，须先回读原操作并恢复，不能用新计划覆盖。")};return old,nil};if !errors.Is(e,sql.ErrNoRows){return j,e}
  j.State="prepared";j.PrincipalID=w.Principal.ID;j.Operation=w.operation;j.Key=w.key;j.InputHash=w.inputHash;return j,s.saveIntent(ctx,j)
 }
 func(s *Service)applyFile(j fileIntent)error{

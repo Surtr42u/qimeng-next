@@ -87,6 +87,7 @@ type UploadInput struct {
  FileName string `json:"fileName"`
  Size int64 `json:"size"`
  MimeType string `json:"mimeType"`
+ ExpectedHash string `json:"expectedHash,omitempty"`
  Mode string `json:"mode"`
  BatchID string `json:"batchId,omitempty"`
  SourceMtime *time.Time `json:"sourceMtime,omitempty"`

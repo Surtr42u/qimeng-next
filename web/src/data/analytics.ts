@@ -14,10 +14,10 @@ export function useRecommendations(seed: number, kind: 'regular' | 'cos' | undef
     getNextPageParam: last => last.nextCursor || undefined, staleTime: 60_000,
   });
 }
-export function useRankings(period: RankingPeriod, enabled: boolean) {
+export function useRankings(period: RankingPeriod, enabled: boolean, mediaType?: Schema<'Asset'>['mediaType']) {
   const key = useRemoteKey();
-  return useInfiniteQuery({ queryKey: [...key, 'rankings', period], initialPageParam: undefined as string | undefined, enabled,
-    queryFn: ({ pageParam, signal }) => read(api.GET('/rankings', { params: { query: { period, cursor: pageParam, limit: 48 } }, signal })),
+  return useInfiniteQuery({ queryKey: [...key, 'rankings', period, mediaType], initialPageParam: undefined as string | undefined, enabled,
+    queryFn: ({ pageParam, signal }) => read(api.GET('/rankings', { params: { query: { period, mediaType, cursor: pageParam, limit: 48 } }, signal })),
     getNextPageParam: last => last.nextCursor || undefined,
   });
 }

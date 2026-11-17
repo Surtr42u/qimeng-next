@@ -62,7 +62,9 @@ func cleanStrings(values []string,maxCount,maxLen int)([]string,error){if values
 func(s *Service)Tags(ctx context.Context,cursor string,limit int)(model.Page[string],error){page,e:=s.TagVocabulary(ctx,cursor,limit);if e!=nil{return model.Page[string]{},e};out:=[]string{};for _,tag:=range page.Items{out=append(out,tag.Name)};return model.Page[string]{Items:out,NextCursor:page.NextCursor},nil}
 func(s *Service)UpdateTags(ctx context.Context,w *Write,id string,revision int64,tags []string)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};if a.TagsRevision!=revision{return a,Conflict(a.TagsRevision)}
- a.Tags,e=cleanStrings(tags,100,100);if e!=nil{return a,e};a.TagsRevision++;a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e};return a,store.SaveAsset(ctx,q,a)
+ a.Tags,e=cleanStrings(tags,100,100);if e!=nil{return a,e}
+ for _,tag:=range a.Tags{var deleted int;e=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE((SELECT deleted FROM tags WHERE name=?),0)",tag).Scan(&deleted);if e!=nil{return a,e};if deleted!=0{return a,Fail(409,"tag_deleted","标签已被删除，请刷新词表；重新创建须使用明确的新建标签操作。")}}
+ a.TagsRevision++;a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e};return a,store.SaveAsset(ctx,q,a)
 }
 func(s *Service)Reaction(ctx context.Context,w *Write,id string,favorite,liked bool)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};a.Favorite=favorite;a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e}

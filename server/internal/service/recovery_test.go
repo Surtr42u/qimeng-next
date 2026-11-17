@@ -31,3 +31,17 @@ func TestExclusiveServiceOwnerAndSymlinkBoundary(t *testing.T){
  config:=Config{DataDir:t.TempDir(),AdminToken:"synthetic-exclusive-secret-00000000000000",ReserveBytes:1};s,e:=New(config);if e!=nil{t.Fatal(e)};defer s.Close();other,e:=New(config);if e==nil{other.Close();t.Fatal("second service acquired same data root")}
  if e=s.safe("../outside");e==nil{t.Fatal("traversal accepted")}
 }
+
+func TestDifferentPlanCannotReplacePersistedPublicationIntent(t *testing.T){
+ ctx:=context.Background();s,e:=New(Config{DataDir:t.TempDir(),AdminToken:"synthetic-intent-secret-00000000000000000",ReserveBytes:1});if e!=nil{t.Fatal(e)};defer s.Close()
+ original:=&Write{s:s,ctx:ctx,Principal:model.Principal{ID:"owner",Scopes:[]string{"admin"}},operation:"commitPlanItem:first:item",key:"plan-fingerprint-key",inputHash:"hash"}
+ intent:=fileIntent{ID:"synthetic-plan-intent",Kind:"ingest",UploadID:"same-input",Target:"libraries/first.png"}
+ if _,e=s.prepareFile(ctx,original,intent);e!=nil{t.Fatal(e)};different:=*original;different.operation="commitPlanItem:different:item";intent.Target="libraries/second.png"
+ if _,e=s.prepareFile(ctx,&different,intent);e==nil{t.Fatal("different plan adopted earlier publication intent")}
+}
+func TestRevokedAuthenticatedPrincipalCannotStartWrite(t *testing.T){
+ ctx:=context.Background();s,e:=New(Config{DataDir:t.TempDir(),AdminToken:"synthetic-revocation-secret-00000000000000",ReserveBytes:1});if e!=nil{t.Fatal(e)};defer s.Close()
+ r:=testMutation(t,s,"device-session",func(w *Write)(any,int,error){p,e:=s.CreateSession(ctx,w,"Synthetic device","",nil);return p,201,e});var issued model.Principal;if e=json.Unmarshal(r.Body,&issued);e!=nil{t.Fatal(e)};authenticated,e:=s.Authenticate(ctx,issued.Token);if e!=nil{t.Fatal(e)}
+ testMutation(t,s,"revoke-device",func(w *Write)(any,int,error){return nil,204,s.Revoke(ctx,w,issued.ID)})
+ if _,e=s.Run(ctx,authenticated,"queued-write","queued-write-key",nil,func(*Write)(any,int,error){t.Fatal("revoked principal reached business mutation");return nil,204,nil});e==nil{t.Fatal("revocation was not rechecked at write boundary")}
+}

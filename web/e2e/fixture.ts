@@ -14,7 +14,7 @@ export async function mockLibrary(page: Page) {
     if (path === '/sessions/current') return respond(route, { id: 'synthetic-session', label: '云端验证浏览器', scopes: ['admin'], expiresAt: '2027-01-01T00:00:00Z' });
     if (path === '/settings') return respond(route, { maxChunkBytes: 8 * 1024 * 1024, maxActiveUploads: 4, maxBatchItems: 100, sourceCleanupEnabled: false });
     if (path === '/libraries') return respond(route, { items: [{ id: 'synthetic-library', name: '合成媒体库', kind: 'regular', enabled: true, revision: 1, createdAt: '2026-01-01T00:00:00Z' }] });
-    if (path === '/tags') return respond(route, { items: ['晨光', '星空', '海岸'] });
+    if (path === '/tags') return respond(route, method === 'POST' ? { name: route.request().postDataJSON().name, revision: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' } : { items: ['晨光', '星空', '海岸'] });
     if (path === '/authors' || path === '/authors/synthetic-author') { const author = { id: 'synthetic-author', name: '合成作者', kind: 'regular', biography: '只用于云端验证的合成档案。', aliases: [], revision: 1, placeholder: false, following: false, fieldStatus: {}, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }; return respond(route, path === '/authors' ? { items: [author] } : author); }
     if (['/collections', '/batches', '/history', '/trash'].includes(path)) return respond(route, { items: [] });
     if (path === '/stats') return respond(route, { assets: state.assets.length, images: state.assets.length, videos: 0, bytes: 73728, favorites: 0, authors: 1, events: 0, trash: 0 });

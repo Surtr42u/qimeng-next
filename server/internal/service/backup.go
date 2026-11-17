@@ -20,7 +20,10 @@ func(s *Service)CreateBackup(ctx context.Context,w *Write)(Backup,error){
  if e:=s.Root.MkdirAll(directory,0700);e!=nil{return b,e};snapshot:=directory+"/snapshot.sqlite"
  // A previous uncommitted attempt may have completed its snapshot. Its manifest
  // must be rebuilt against that same snapshot, never relabelled as a newer one.
- if _,e:=s.Root.Stat(snapshot);errors.Is(e,os.ErrNotExist){if _,e=s.DB.DB.ExecContext(ctx,"VACUUM INTO ?",filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)));e!=nil{return b,e}}else if e!=nil{return b,e}
+ if _,e:=s.Root.Stat(snapshot);errors.Is(e,os.ErrNotExist){
+  var pages,pageSize int64;if e=s.DB.DB.QueryRowContext(ctx,"PRAGMA page_count").Scan(&pages);e!=nil{return b,e};if e=s.DB.DB.QueryRowContext(ctx,"PRAGMA page_size").Scan(&pageSize);e!=nil{return b,e};free,e:=freeBytes(s.Config.DataDir);if e!=nil{return b,e};if free-pages*pageSize-(4<<20)<s.Config.ReserveBytes{return b,Fail(507,"insufficient_storage","空间不足以生成业务快照并保留存储余量。")}
+  if _,e=s.DB.DB.ExecContext(ctx,"VACUUM INTO ?",filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)));e!=nil{return b,e}
+ }else if e!=nil{return b,e}
  snapshotDB,e:=sql.Open("sqlite","file:"+filepath.ToSlash(filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)))+"?mode=ro");if e!=nil{return b,e};defer snapshotDB.Close()
  assets,e:=store.List[model.Asset](ctx,snapshotDB,"SELECT data FROM assets ORDER BY id");if e!=nil{return b,e};entries:=make([]backupEntry,0,len(assets));for _,a:=range assets{entries=append(entries,backupEntry{a.ID,a.ContentVersion,a.Revision,assetPath(a),a.Hash,a.Size})}
  b.SnapshotHash,_,e=s.hashFile(snapshot);if e!=nil{return b,e};manifest,e:=json.Marshal(struct{InstanceID,SnapshotHash string;Entries []backupEntry}{s.InstanceID,b.SnapshotHash,entries});if e!=nil{return b,e};b.ManifestHash=digest(manifest);b.AssetCount=len(entries)

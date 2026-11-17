@@ -1,6 +1,7 @@
 package media.qimeng.next.data
 
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.api.DefaultApi
 import okhttp3.HttpUrl
@@ -17,7 +18,16 @@ class ApiFailure(val status: Int, override val message: String) : IOException(me
 internal fun <T> Response<T>.bodyOrThrow(): T {
     if (!isSuccessful) {
         // Do not surface URLs, response bodies, request headers, or credentials from a proxy.
-        val explanation = when (code()) {
+        val errorCode = errorBody()?.use { body ->
+            try {
+                val chars = CharArray(4096)
+                val count = body.charStream().use { it.read(chars) }
+                if (count <= 0) null else JsonParser.parseString(String(chars, 0, count)).asJsonObject.get("code")?.asString
+            } catch (_: Exception) { null }
+        }
+        val explanation = if (code() == 409 && errorCode == "tag_deleted") {
+            "标签已被删除。请刷新并移除草稿中的旧标签；确需恢复时，使用“添加”明确新建。"
+        } else when (code()) {
             401 -> "登录已失效，请重新登录"
             403 -> "当前连接没有执行此操作的权限"
             404 -> "对象不存在或已被移除"
@@ -27,7 +37,6 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
             in 500..599 -> "服务器暂时无法完成请求"
             else -> "请求失败（HTTP ${code()}）"
         }
-        errorBody()?.close()
         throw ApiFailure(code(), explanation)
     }
     return body() ?: throw IOException("服务器返回了缺失的数据")

@@ -251,6 +251,7 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
 fun TrashScreen(model: LibraryViewModel) {
     val state by model.trash.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
+    var purgeId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { if (!state.loaded) model.loadTrash() }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("已移入回收站的原件可以恢复。") }
@@ -262,9 +263,14 @@ fun TrashScreen(model: LibraryViewModel) {
             Text(asset.name, style = MaterialTheme.typography.titleMedium)
             Text(formatBytes(asset.bytes))
             OutlinedButton(onClick = { model.restoreAsset(asset) }, enabled = !busy) { Text("恢复媒体") }
+            TextButton(onClick = { purgeId = asset.id }, enabled = !busy) { Text("永久删除", color = MaterialTheme.colorScheme.error) }
         } }
         if (state.cursor != null) item { TextButton(onClick = { model.loadTrash(true) }, enabled = !state.loading) { Text("加载更多") } }
     }
+    state.items.find { it.id == purgeId }?.let { asset -> AlertDialog(onDismissRequest = { purgeId = null }, title = { Text("永久删除回收站原件？") },
+        text = { Text("${asset.name}\n此操作会删除回收站原件，不能通过本回收站恢复。") },
+        confirmButton = { TextButton(onClick = { model.purgeAsset(asset); purgeId = null }, enabled = !busy) { Text("永久删除", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { purgeId = null }) { Text("取消") } }) }
 }
 
 @Composable

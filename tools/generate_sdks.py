@@ -39,7 +39,9 @@ def kotlin() -> None:
         "--api-package", "media.qimeng.next.sdk.api",
         "--model-package", "media.qimeng.next.sdk.model",
         "--invoker-package", "media.qimeng.next.sdk.infrastructure",
-        "--type-mappings", "file=okhttp3.RequestBody",
+        "--type-mappings", "file=RequestBody",
+        "--import-mappings", "RequestBody=okhttp3.RequestBody",
+        "--enum-name-mappings", "name=nameValue",
         "--additional-properties", "serializationLibrary=gson,dateLibrary=string,useCoroutines=true,useResponseAsReturnType=true,packageName=media.qimeng.next.sdk,hideGenerationTimestamp=true,enumPropertyNaming=original",
         "--global-property", "apiTests=false,modelTests=false,apiDocs=false,modelDocs=false")
 

@@ -146,7 +146,7 @@ def upload(runtime, arguments: dict) -> dict:
         body = {key: arguments[key] for key in ("libraryId", "batchId", "fileName", "mode", "authorId", "collectionId", "note")
                 if key in arguments}
         body.update(size=before.st_size, mimeType=mimetypes.guess_type(arguments["fileName"])[0] or "application/octet-stream",
-                    sourceMtime=datetime.fromtimestamp(before.st_mtime, timezone.utc).isoformat())
+                    sourceMtime=datetime.fromtimestamp(before.st_mtime, timezone.utc).isoformat(), expectedHash=expected_hash)
         created = runtime.transport.call("createUpload", {"body": body, "Idempotency-Key": operation + ":prepare"})
         upload_id = created["id"]
         current = runtime.transport.call("getUpload", {"id": upload_id})

@@ -3,6 +3,8 @@ package service
 import (
  "bytes"
  "context"
+ "database/sql"
+ "encoding/hex"
  "errors"
  "io"
  "net/http"
@@ -20,12 +22,17 @@ const MaxChunkBytes int64=8<<20
 const MaxActiveUploads=32
 const MaxBatchItems=100
 func uploadPath(id string)string{return "uploads/"+id+".part"}
-func(s *Service)Upload(ctx context.Context,p model.Principal,id string)(model.Upload,error){u,e:=store.Get[model.Upload](ctx,s.DB.DB,"SELECT data FROM uploads WHERE id=?",id);if e!=nil{return u,Normalize(e)};return u,Authorize(p,"read",u.BatchID)}
+func(s *Service)Upload(ctx context.Context,p model.Principal,id string)(model.Upload,error){
+ u,e:=store.Get[model.Upload](ctx,s.DB.DB,"SELECT data FROM uploads WHERE id=?",id);if e!=nil{return u,Normalize(e)};if e=Authorize(p,"read",u.BatchID);e!=nil{return u,e}
+ var state string;e=s.DB.DB.QueryRowContext(ctx,"SELECT state FROM file_intents WHERE id=?",digest([]byte("publish:"+u.ID))[:32]).Scan(&state)
+ if e!=nil&&!errors.Is(e,sql.ErrNoRows){return u,e};if state=="committed"{u.ErrorCode="cleanup_pending";u.ErrorMessage="媒体已入库，旧版或临时文件清理待恢复。"}else if state=="prepared"{u.ErrorCode="publication_pending";u.ErrorMessage="发布已经开始，须沿原操作身份恢复。"};return u,nil
+}
 func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(model.Upload,error){
  if e:=Authorize(w.Principal,"ingest",in.BatchID);e!=nil{return model.Upload{},e}
  library,e:=s.library(ctx,in.LibraryID);if e!=nil{return model.Upload{},e};if !library.Enabled{return model.Upload{},Fail(409,"library_disabled","目标库已停用，不能接收新上传。")}
  if !domain.ValidName(in.FileName)||!domain.ValidRelative(in.RelativeDirectory)||in.Size<1||len(in.Note)>10000||(in.Mode!="ordinary"&&in.Mode!="intelligent"){return model.Upload{},Fail(400,"invalid_upload","上传名称、目标、长度或模式无效。")}
  _,mime,supported:=domain.MediaType(in.FileName);if !supported{return model.Upload{},Fail(415,"unsupported_media","不支持该文件类型；不自动解压文件。")};if in.MimeType!=mime{return model.Upload{},Fail(415,"mime_mismatch","声明的 MIME 与文件扩展名不一致。")}
+ if in.ExpectedHash!=""{if _,e:=hex.DecodeString(in.ExpectedHash);e!=nil||len(in.ExpectedHash)!=64{return model.Upload{},Fail(400,"invalid_hash","源摘要必须是完整 SHA-256。")};in.ExpectedHash=strings.ToLower(in.ExpectedHash)}
  if in.Family!=""&&!domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","自动命名基名无效。")}
  if in.AcquisitionSources==nil{in.AcquisitionSources=[]string{}};in.AcquisitionSources,e=cleanStrings(in.AcquisitionSources,100,2000);if e!=nil{return model.Upload{},e};taxonomy:=model.Asset{};if e=s.resolveTaxonomy(ctx,&taxonomy,in.SourceIDs,in.CharacterIDs);e!=nil{return model.Upload{},e};in.SourceIDs=taxonomy.SourceIDs;in.CharacterIDs=taxonomy.CharacterIDs
  if in.SourceMtime!=nil&&(in.SourceMtime.Year()<1970||in.SourceMtime.After(time.Now().Add(24*time.Hour))){return model.Upload{},Fail(400,"invalid_time","源文件时间无效。")}
@@ -67,7 +74,7 @@ func(s *Service)inspectUpload(u model.Upload)(string,error){
  f,e:=s.Root.Open(uploadPath(u.ID));if e!=nil{return "",e};defer f.Close();head:=make([]byte,512);n,e:=io.ReadFull(f,head);if e!=nil&&!errors.Is(e,io.EOF)&&!errors.Is(e,io.ErrUnexpectedEOF){return "",e};head=head[:n]
  sniff:=http.DetectContentType(head);ext:=strings.ToLower(path.Ext(u.FileName));valid:=sniff==u.MimeType
  switch ext{case ".avif":valid=len(head)>=12&&string(head[4:8])=="ftyp"&&(strings.Contains(string(head[8:]),"avif")||strings.Contains(string(head[8:]),"avis"));case ".mp4",".m4v",".mov":valid=len(head)>=12&&string(head[4:8])=="ftyp";case ".mkv",".webm":valid=len(head)>=4&&bytes.Equal(head[:4],[]byte{0x1a,0x45,0xdf,0xa3});case ".avi":valid=len(head)>=12&&string(head[:4])=="RIFF"&&string(head[8:12])=="AVI ";case ".webp":valid=len(head)>=12&&string(head[:4])=="RIFF"&&string(head[8:12])=="WEBP"}
- if !valid{return "",Fail(415,"mime_mismatch","文件内容与声明格式不匹配。")};hash,size,e:=s.hashFile(uploadPath(u.ID));if e!=nil{return "",e};if size!=u.Size{return "",Fail(409,"length_mismatch","接收长度与声明长度不一致。")};return hash,nil
+ if !valid{return "",Fail(415,"mime_mismatch","文件内容与声明格式不匹配。")};hash,size,e:=s.hashFile(uploadPath(u.ID));if e!=nil{return "",e};if size!=u.Size{return "",Fail(409,"length_mismatch","接收长度与声明长度不一致。")};if u.ExpectedHash!=""&&hash!=u.ExpectedHash{return "",Fail(409,"source_hash_mismatch","接收内容与源文件快照摘要不符，未入库。请保留源文件并以新上传会话重新发送。")};return hash,nil
 }
 func(s *Service)CompleteUpload(ctx context.Context,w *Write,id string)(model.UploadResult,error){
  u,e:=s.Upload(ctx,w.Principal,id);if e!=nil{return model.UploadResult{},e};if e=Authorize(w.Principal,"ingest",u.BatchID);e!=nil{return model.UploadResult{},e}

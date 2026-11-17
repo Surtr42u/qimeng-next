@@ -226,6 +226,8 @@ fun TasksScreen(model: LibraryViewModel) {
 @Composable
 fun TaskDetailScreen(model: LibraryViewModel, id: String) {
     val report by model.report.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
+    var cancelling by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(id) { if (report?.id != id) model.openReport(id) }
     val task = report?.takeIf { it.id == id }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -235,6 +237,7 @@ fun TaskDetailScreen(model: LibraryViewModel, id: String) {
                 Text(stateName(task.state), style = MaterialTheme.typography.headlineSmall)
                 Text(task.summary)
                 Text("来源文件始终保留。传输完成与智能整理完成分别显示。", style = MaterialTheme.typography.bodySmall)
+                if (task.state !in setOf("completed", "cancelled")) TextButton(onClick = { cancelling = true }, enabled = !busy) { Text("取消尚未执行的任务") }
             } }
             items(task.items, key = { it.id }) { item -> ContentCard {
                 Text(item.fileName, style = MaterialTheme.typography.titleMedium)
@@ -244,6 +247,10 @@ fun TaskDetailScreen(model: LibraryViewModel, id: String) {
             } }
         }
     }
+    if (cancelling) AlertDialog(onDismissRequest = { cancelling = false }, title = { Text("停止后续整理？") },
+        text = { Text("尚未执行的任务会停止；已在服务器入库的媒体和结果保留。") },
+        confirmButton = { TextButton(onClick = { model.cancelReport(); cancelling = false }, enabled = !busy) { Text("停止后续任务") } },
+        dismissButton = { TextButton(onClick = { cancelling = false }) { Text("取消") } })
 }
 
 private fun stateName(value: String) = mapOf("receiving" to "接收中", "waiting_executor" to "等待执行器", "ready" to "待处理", "partial" to "部分完成",

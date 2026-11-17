@@ -6,6 +6,7 @@ import { queryClient } from './data/query';
 import { BrowsePage } from './pages/BrowsePage';
 import { HomePage } from './pages/HomePage';
 import { VocabularyPage } from './pages/VocabularyPage';
+import { ReplacePage } from './pages/ReplacePage';
 import { AssetPage } from './pages/AssetPage';
 import { MinePage } from './pages/MinePage';
 import { AuthorsPage, AuthorPage } from './pages/AuthorsPage';
@@ -25,6 +26,7 @@ const router = createBrowserRouter([{ element: <App />, errorElement: <RouteErro
   { path: '/', element: <HomePage /> },
   { path: '/album', element: <BrowsePage /> },
   { path: '/asset/:id', element: <AssetPage /> },
+  { path: '/asset/:id/replace', element: <ReplacePage /> },
   { path: '/mine', element: <MinePage /> },
   { path: '/data', element: <DataPage /> },
   { path: '/data/review', element: <ReviewPage /> },
