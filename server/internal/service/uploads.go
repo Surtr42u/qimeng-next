@@ -39,7 +39,8 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  if in.Family!=""{in.Family=domain.NamingFamily(taxonomy.Source,taxonomy.Characters,in.Family);if !domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","规范出处与角色不能生成合法目标基名。")}}
  if in.SourceMtime!=nil&&(in.SourceMtime.Year()<1970||in.SourceMtime.After(time.Now().Add(24*time.Hour))){return model.Upload{},Fail(400,"invalid_time","源文件时间无效。")}
  if len(in.AuthorIDs)==0&&in.AuthorID!=""{in.AuthorIDs=[]string{in.AuthorID}};authors,e:=s.resolveAuthors(ctx,in.LibraryID,in.AuthorIDs);if e!=nil{return model.Upload{},e};in.AuthorIDs=[]string{};for _,a:=range authors{in.AuthorIDs=append(in.AuthorIDs,a.ID)};in.AuthorID=authors[0].ID
- if in.CollectionID!=""{c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",in.CollectionID);if e!=nil{return model.Upload{},Normalize(e)};if c.LibraryID!=in.LibraryID{return model.Upload{},Fail(409,"collection_library_mismatch","集合属于其他库。")};if c.Kind=="short_drama"{if domain.NumberClass(in.FileName)!="video"{return model.Upload{},Fail(400,"drama_requires_video","短剧集合只接收视频。")};in.Family=c.Name;in.RelativeDirectory=c.Name}}
+ if in.CollectionID!=""{c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",in.CollectionID);if e!=nil{return model.Upload{},Normalize(e)};if c.LibraryID!=in.LibraryID{return model.Upload{},Fail(409,"collection_library_mismatch","集合属于其他库。")};if c.Kind=="short_drama"{if domain.NumberClass(in.FileName)!="video"{return model.Upload{},Fail(400,"drama_requires_video","短剧集合只接收视频。")};in.Family=c.Name;in.RelativeDirectory=c.Name}else{if domain.NumberClass(in.FileName)!="image"{return model.Upload{},Fail(400,"image_group_requires_image","组图集合只接收图片。")};if in.Family==""{in.Family=domain.NamingFamily(taxonomy.Source,taxonomy.Characters,c.Name)}}}
+ if in.Family!=""&&!domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","规范命名基名无效。")};if !domain.ValidMediaPath(in.RelativeDirectory){return model.Upload{},Fail(400,"invalid_path","目标为保留目录。")}
  if in.ReplaceAssetID!=""{
   if !w.Principal.Has("admin"){return model.Upload{},Fail(403,"replacement_requires_owner","AI 新增权限不包含替换既有资产。")}
   if in.Mode!="ordinary"{return model.Upload{},Fail(400,"replacement_mode","明确替换须使用普通上传通道。")};a,e:=s.Asset(ctx,in.ReplaceAssetID);if e!=nil{return model.Upload{},e};if a.LibraryID!=in.LibraryID||a.Trashed||a.ContentVersion!=in.ExpectedContentVersion{return model.Upload{},Fail(409,"replacement_conflict","替换对象或内容版本已变化。")}
@@ -105,12 +106,16 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
   a.FileName=strings.TrimSuffix(old.FileName,path.Ext(old.FileName))+strings.ToLower(path.Ext(u.FileName));a.RelativePath=path.Join(path.Dir(old.RelativePath),a.FileName);a.AcquisitionSources=appendUnique(a.AcquisitionSources,u.AcquisitionSources...);a.OriginalFileName=u.OriginalFileName;a.SourceRelativePath=u.SourceRelativePath;operation="replace"
  }else if item!=nil{
   if item.ExpectedHash!=u.Hash{return model.UploadResult{},Fail(409,"plan_content_changed","计划引用的内容已改变。")};a.FileName=item.FileName;a.RelativePath=item.RelativePath;a.CollectionID=item.CollectionID;a.Page=item.Page;a.MetadataSource="ai";authors,e:=s.resolveAuthors(ctx,a.LibraryID,item.AuthorIDs);if e!=nil{return model.UploadResult{},e};setAuthors(&a,authors);if e=s.resolveTaxonomy(ctx,&a,item.SourceIDs,item.CharacterIDs);e!=nil{return model.UploadResult{},e}
+ }else if u.CollectionID!=""&&kind!="video"{
+  sequence,e:=s.sequence(ctx,u.CollectionID)
+  if e!=nil{var problem *Error;if !errors.As(e,&problem)||problem.Code!="empty_group"{return model.UploadResult{},e};names,e:=s.directoryNames(ctx,u.LibraryID,u.RelativeDirectory);if e!=nil{return model.UploadResult{},e};number,width,separator:=domain.Allocate(u.Family,"image",names);a.Page=1;a.FileName=domain.WorkFilename(u.Family,separator,number,width,1,path.Ext(u.FileName));a.RelativePath=path.Join(u.RelativeDirectory,a.FileName)
+  }else{a.Page=sequence.MaxPage+1;a.FileName=domain.WorkFilename(sequence.Family,sequence.Separator,sequence.Number,sequence.Width,a.Page,path.Ext(u.FileName));a.RelativePath=path.Join(sequence.Directory,a.FileName)}
  }else if u.Family!=""{
   names,e:=s.directoryNames(ctx,u.LibraryID,u.RelativeDirectory);if e!=nil{return model.UploadResult{},e};number,width,sep:=domain.Allocate(u.Family,domain.NumberClass(u.FileName),names)
   if u.CollectionID!=""{number,e=s.nextEpisode(ctx,u.CollectionID);if e!=nil{return model.UploadResult{},e};a.Page=number}
   a.FileName=domain.WorkFilename(u.Family,sep,number,width,0,path.Ext(u.FileName));if u.CollectionID!=""&&u.Note!=""{a.FileName=strings.TrimSuffix(a.FileName,path.Ext(a.FileName))+" "+safeNote(u.Note)+path.Ext(a.FileName)};a.RelativePath=path.Join(u.RelativeDirectory,a.FileName)
  }else{a.RelativePath,e=s.availablePath(ctx,u.LibraryID,a.RelativePath);if e!=nil{return model.UploadResult{},e};a.FileName=path.Base(a.RelativePath)}
- if !domain.ValidName(a.FileName)||!domain.ValidRelative(a.RelativePath){return model.UploadResult{},Fail(400,"invalid_name","目标命名含不合法字符或坏编码；未发布文件。")}
+ if !domain.ValidName(a.FileName)||!domain.ValidMediaPath(a.RelativePath){return model.UploadResult{},Fail(400,"invalid_name","目标命名含不合法字符、保留目录或坏编码；未发布文件。")}
  if e=s.checkPath(ctx,a.LibraryID,a.RelativePath,a.ID);e!=nil{return model.UploadResult{},e};a.ContentURL="/api/v1/assets/"+a.ID+"/content";if e=s.probe(ctx,uploadPath(u.ID),&a);e!=nil{return model.UploadResult{},e}
  if u.SourceMtime!=nil{if e=s.Root.Chtimes(uploadPath(u.ID),*u.SourceMtime,*u.SourceMtime);e!=nil{return model.UploadResult{},e}}
  info,e:=s.Root.Stat(uploadPath(u.ID));if e!=nil{return model.UploadResult{},e};modified:=info.ModTime().UTC();a.ContentMtime=&modified
@@ -130,4 +135,6 @@ func(s *Service)directoryNames(ctx context.Context,library,dir string)([]string,
  return names,nil
 }
 func(s *Service)Settings()map[string]any{return map[string]any{"maxChunkBytes":MaxChunkBytes,"maxActiveUploads":MaxActiveUploads,"maxBatchItems":MaxBatchItems,"sourceCleanupEnabled":false}}
-func(s *Service)nextEpisode(ctx context.Context,collectionID string)(int,error){var n int;e:=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE(MAX(json_extract(data,'$.page')),0)+1 FROM assets WHERE collection_id=? AND trashed=0",collectionID).Scan(&n);return n,e}
+func(s *Service)nextEpisode(ctx context.Context,collectionID string)(int,error){
+ c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",collectionID);if e!=nil{return 0,Normalize(e)};var maximum int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE(MAX(json_extract(data,'$.page')),0) FROM assets WHERE collection_id=?",collectionID).Scan(&maximum);e!=nil{return 0,e};names,e:=s.directoryNames(ctx,c.LibraryID,c.Name);if e!=nil{return 0,e};return domain.NextChapter(c.Name,names,maximum),nil
+}

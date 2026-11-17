@@ -1,0 +1,19 @@
+.avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.profile-block > summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; cursor: pointer; padding-block: .3rem; }
+.profile-block[open] > summary { margin-bottom: 1rem; }
+.profile-fields { display: grid; gap: 1rem; margin-block: 1rem; }
+.profile-fields > div { min-width: 0; }
+.profile-fields dt { color: var(--qm-muted); font-size: .82rem; margin-bottom: .35rem; }
+.profile-fields dd { margin: 0; overflow-wrap: anywhere; }
+.profile-accounts, .profile-evidence { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.profile-evidence { margin-block: 1rem; }
+.profile-evidence li { border-inline-start: 2px solid var(--qm-border); padding-inline-start: 1rem; }
+.profile-evidence .badge { margin-inline-start: .6rem; }
+.profile-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+.profile-comparison > section { min-width: 0; border: 1px solid var(--qm-border); border-radius: 12px; padding: 1rem; }
+.profile-editor-fields { padding: 0; margin: 0; border: 0; min-width: 0; }
+.profile-account-row, .profile-evidence-row { border: 1px solid var(--qm-border); border-radius: 12px; padding: 1rem; margin-block: 1rem; min-width: 0; }
+.profile-account-row legend, .profile-evidence-row legend { padding-inline: .4rem; }
+.profile-evidence-editor > summary { cursor: pointer; margin-block: .6rem; }
+.profile-raw { max-height: 32rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+@media (max-width: 700px) { .profile-comparison { grid-template-columns: 1fr; } }

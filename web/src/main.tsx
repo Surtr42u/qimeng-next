@@ -12,6 +12,7 @@ import { AuthorTasksPage, AuthorTaskPage } from './pages/AuthorTaskPages';
 import { AssetPage } from "./pages/AssetPage";
 import { MinePage } from "./pages/MinePage";
 import { AuthorsPage, AuthorPage } from "./pages/AuthorsPage";
+import { AuthorArchivesPage } from './pages/AuthorArchivePage';
 import { ManagePage } from "./pages/ManagePage";
 import { UploadPage } from "./pages/UploadPage";
 import { TasksPage, TaskPage } from "./pages/TasksPage";
@@ -29,6 +30,7 @@ import "./styles/app.css";
 import "./styles/charts.css";
 import "./styles/preferences.css";
 import "./styles/detail.css";
+import './styles/profiles.css';
 
 const router = createBrowserRouter([
   {
@@ -56,6 +58,8 @@ const router = createBrowserRouter([
       { path: "/manage/backup", element: <BackupPage /> },
       { path: "/authors", element: <AuthorsPage /> },
       { path: "/authors/:id", element: <AuthorPage /> },
+      { path: '/authors/:id/archives', element: <AuthorArchivesPage /> },
+      { path: '/authors/:id/archives/:archiveId', element: <AuthorArchivesPage /> },
       { path: "/maintenance", element: <MaintenancePage /> },
       { path: "/settings", element: <SettingsPage /> },
     ],

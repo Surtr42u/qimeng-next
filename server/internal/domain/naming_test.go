@@ -17,3 +17,4 @@ func TestNamingRejectsTraversalAndBrokenEncoding(t *testing.T){
  if !ValidName("生或死+拳皇  女天狗&不知火舞 1 (2).png"){t.Fatal("confirmed naming separators rejected")}
 }
 func TestCanonicalSourceCharacterNamingSeparators(t *testing.T){if got:=NamingFamily("死或生+拳皇",[]string{"女天狗","不知火舞"},"ignored");got!="生或死+拳皇  女天狗&不知火舞"{t.Fatal(got)};if got:=NamingFamily("",nil,"原始线索");got!="原始线索"{t.Fatal(got)}}
+func TestShortDramaAdvancesPastUnindexedFilesWithoutFillingGaps(t *testing.T){if n:=NextChapter("短剧",[]string{"短剧 8 用户备注.mp4","短剧10继续剧情.mkv","短剧 20.png"},4);n!=11{t.Fatal(n)}}

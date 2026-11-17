@@ -3,10 +3,13 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { AuthorOperations } from './AuthorOperations';
 import { useAuthor, useAuthors, useUpdateAuthor, useCreateAuthor } from '../data/manage';
 import { mediaCards, useAssets } from '../data/media';
+import { useAuthorProfile } from '../data/author-profiles';
 import type { Schema } from '../data/client';
 import { EmptyState, ErrorNotice, Loading, PageHeading, StatusBadge } from '../components/Feedback';
 import { AuthorDetails } from './AuthorDetails';
 import { MediaGrid } from '../components/MediaGrid';
+import { AdvancedAuthorProfile } from './AdvancedAuthorProfile';
+import { AuthorAvatar, ProfileLink } from './ProfilePresentation';
 
 import { newId } from '../lib/id';
 
@@ -38,20 +41,49 @@ export function AuthorPage() {
   const location = useLocation();
   const { id = '' } = useParams();
   const author = useAuthor(id);
+  const profile = useAuthorProfile(id);
   const assets = useAssets({ authorId: id });
   const [editing, setEditing] = useState(false);
+  const [profileEditing, setProfileEditing] = useState(false);
+  const [original, setOriginal] = useState(false);
   const mutation = useUpdateAuthor(id);
   const items = assets.data?.pages.flatMap(page => page.items) ?? [];
   if (!author.data) return <><PageHeading title="作者档案" />{author.isPending ? <Loading /> : <ErrorNotice error={author.error} retry={() => void author.refetch()} />}</>;
   const current = author.data;
-  return <><PageHeading title={current.name} subtitle="作者档案与本地作品" /><ErrorNotice error={author.error} stale retry={() => void author.refetch()} />
-    <section className="profile-card panel"><span className="avatar avatar--large">{current.name.slice(0, 1)}</span><div className="profile-copy"><div className="actions"><h2>{current.name}</h2>{current.kind === 'cos' && <StatusBadge>COS</StatusBadge>}{current.placeholder && <StatusBadge tone="warning">其他搁置 · 未确认</StatusBadge>}</div><p className="preserve-lines">{current.biography || '尚未填写简介'}</p><p className="muted">{current.aliases?.join(' · ')}</p><div className="actions"><button className="button button--small" aria-pressed={current.following} disabled={mutation.isPending} onClick={() => mutation.mutate({ expectedRevision: current.revision, following: !current.following })}>{current.following ? '已关注' : '关注作者'}</button>{current.homepage && <a className="button button--small" href={safeExternal(current.homepage)} target="_blank" rel="noreferrer">作者主页</a>}<button className="button button--small" onClick={() => setEditing(true)}>详细资料</button></div><ErrorNotice error={mutation.error} /></div></section>
-    {editing && <AuthorDetails key={current.id} author={current} close={() => setEditing(false)} reload={() => author.refetch()} />}
-    {location.state?.mergeSummary && <p role="status" className="notice">作者合并已完成，影响 {location.state.mergeSummary.affected} 份媒体，保留 {location.state.mergeSummary.conflicts} 项档案冲突记录。</p>}
-    <AuthorOperations author={current} disabled={editing} />
-    <div className="section-heading"><h2>本地作品</h2><span className="muted">已加载 {items.length} 项</span></div><ErrorNotice error={assets.error} stale={items.length > 0} retry={() => void assets.refetch()} />{assets.isPending ? <Loading /> : items.length ? <MediaGrid items={mediaCards(items)} /> : !assets.isError && <EmptyState title="暂无本地作品" />}{assets.hasNextPage && <div className="load-more"><button className="button" disabled={assets.isFetchingNextPage} onClick={() => void assets.fetchNextPage()}>加载更多作品</button></div>}
-  </>;
-}
-function safeExternal(value: string) {
-  try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
+  const x = profile.data?.blocks.find(block => block.block === 'x');
+  const basic = profile.data?.blocks.find(block => block.block === 'basic');
+  const biography = x?.values.biographyOriginal
+    ? original ? x.values.biographyOriginal : x.values.biographyZh || x.values.biographyOriginal
+    : basic?.values.summary || current.biography;
+  return (
+    <>
+      <PageHeading title={current.name} subtitle="作者档案与本地作品" />
+      <ErrorNotice error={author.error} stale retry={() => void author.refetch()} />
+      <section className="profile-card panel">
+        <AuthorAvatar name={current.name} avatar={x?.avatar} large />
+        <div className="profile-copy">
+          <div className="actions"><h2>{current.name}</h2>{current.kind === 'cos' && <StatusBadge>COS</StatusBadge>}{current.placeholder && <StatusBadge tone="warning">其他搁置 · 未确认</StatusBadge>}</div>
+          <p className="preserve-lines">{biography || '尚未填写简介'}</p>
+          {x?.values.biographyZh && x.values.biographyOriginal && <button className="button button--small" aria-pressed={original} onClick={() => setOriginal(!original)}>{original ? '查看中文译文' : '查看 X 原文'}</button>}
+          <p className="muted">{current.aliases?.join(' · ')}</p>
+          <div className="actions">
+            <button className="button button--small" aria-pressed={current.following} disabled={mutation.isPending} onClick={() => mutation.mutate({ expectedRevision: current.revision, following: !current.following })}>{current.following ? '已关注' : '关注作者'}</button>
+            {current.homepage && <ProfileLink value={current.homepage}>作者主页</ProfileLink>}
+            {x?.values.profileUrl && <ProfileLink value={x.values.profileUrl}>X 账号</ProfileLink>}
+            <button className="button button--small" disabled={editing || profileEditing} onClick={() => setEditing(true)}>身份与简短介绍</button>
+          </div>
+          <ErrorNotice error={mutation.error} />
+        </div>
+      </section>
+      {editing && <AuthorDetails key={current.id} author={current} close={() => setEditing(false)} reload={() => author.refetch()} />}
+      <ErrorNotice error={profile.error} stale={!!profile.data} retry={() => void profile.refetch()} />
+      {profile.isPending ? <Loading text="正在读取公开资料…" /> : profile.data && <AdvancedAuthorProfile key={current.id} author={current} profile={profile.data} reload={() => profile.refetch()} editingChanged={setProfileEditing} />}
+      {location.state?.mergeSummary && <p role="status" className="notice">作者合并已完成，影响 {location.state.mergeSummary.affected} 份媒体，保留 {location.state.mergeSummary.conflicts} 项档案冲突记录。<Link to={`/authors/${encodeURIComponent(id)}/archives`}>查看保留的档案</Link></p>}
+      <AuthorOperations author={current} disabled={editing || profileEditing} />
+      <div className="section-heading"><h2>本地作品</h2><span className="muted">已加载 {items.length} 项</span></div>
+      <ErrorNotice error={assets.error} stale={items.length > 0} retry={() => void assets.refetch()} />
+      {assets.isPending ? <Loading /> : items.length ? <MediaGrid items={mediaCards(items)} /> : !assets.isError && <EmptyState title="暂无本地作品" />}
+      {assets.hasNextPage && <div className="load-more"><button className="button" disabled={assets.isFetchingNextPage} onClick={() => void assets.fetchNextPage()}>加载更多作品</button></div>}
+    </>
+  );
 }

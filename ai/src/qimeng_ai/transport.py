@@ -37,7 +37,7 @@ class Transport:
     def close(self) -> None:
         self.client.close()
 
-    def call(self, operation_id: str, arguments: dict, *, content=None):
+    def _request(self, operation_id: str, arguments: dict, content=None):
         operation = self.contract["operations"][operation_id]
         path = operation["path"]
         params, headers = {}, {}
@@ -58,13 +58,17 @@ class Transport:
         if re.search(r"\{[^}]+\}", path):
             raise ToolError("INVALID_INPUT", "缺少操作路径参数")
         url = self.contract["basePath"].rstrip("/") + path
-        mutation = operation["method"] not in {"GET", "HEAD"}
+        mutation = not operation["readOnly"]
         kwargs = {"params": params, "headers": headers}
         if operation["body"] == "application/json":
             kwargs["json"] = arguments.get("body")
         elif content is not None:
             kwargs["content"] = content
             headers["Content-Type"] = operation["body"] or "application/octet-stream"
+        return operation, url, kwargs, mutation
+
+    def call(self, operation_id: str, arguments: dict, *, content=None):
+        operation, url, kwargs, mutation = self._request(operation_id, arguments, content)
         try:
             with self.client.stream(operation["method"], url, **kwargs) as response:
                 data = bytearray()
@@ -94,3 +98,22 @@ class Transport:
         except httpx.HTTPError:
             raise ToolError("NETWORK_ERROR", "网络中断或超时；保留原操作身份后回读",
                             uncertain=mutation) from None
+
+    def binary(self, operation_id: str, arguments: dict, *, maximum: int):
+        operation, url, kwargs, mutation = self._request(operation_id, arguments)
+        if mutation:
+            raise ToolError("BINARY_READ_ONLY", "二进制读取通道仅支持只读操作")
+        try:
+            with self.client.stream(operation["method"], url, **kwargs) as response:
+                if response.is_redirect:
+                    raise ToolError("REDIRECT_REJECTED", "研究内容拒绝重定向")
+                if response.is_error:
+                    raise ToolError("ARTIFACT_UNAVAILABLE", "研究内容不可读、授权失效或引用已过期", status=response.status_code)
+                result = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(result) + len(chunk) > maximum:
+                        raise ToolError("ARTIFACT_LIMIT", "研究内容超过读取预算")
+                    result.extend(chunk)
+                return bytes(result), response.headers.get("content-type", "").split(";", 1)[0]
+        except httpx.HTTPError:
+            raise ToolError("NETWORK_ERROR", "研究内容读取中断，请按原引用重试") from None

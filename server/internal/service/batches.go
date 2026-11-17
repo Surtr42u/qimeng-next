@@ -83,9 +83,8 @@ func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.Plan
   if collectionID!=""{
    c,e:=store.Get[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE id=?",collectionID);if e!=nil{return p,Normalize(e)};if c.LibraryID!=b.LibraryID{return p,Fail(409,"collection_library_mismatch","集合属于其他库。")}
    if c.Kind=="short_drama"{if class!="video"{return p,Fail(400,"drama_requires_video","短剧须为视频。")};input.Family=c.Name;directory=c.Name;isDrama=true}else{
-    if class!="image"{return p,Fail(400,"mixed_group","组图只能追加图片。")};members,e:=store.List[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE collection_id=? AND trashed=0 ORDER BY relative_path",collectionID);if e!=nil{return p,e};if len(members)==0{return p,Fail(409,"empty_group","空组图尚无作品号，请按新分组提交。")}
-    for index,member:=range members{parsed,ok:=domain.ParseWork(member.FileName);if !ok||parsed.Page<1{return p,Fail(409,"group_name_conflict","已有组图编号需要核实。")};if index==0{existingWork=parsed;directory=path.Dir(member.RelativePath);input.Family=parsed.Family}else if parsed.Number!=existingWork.Number||parsed.Family!=existingWork.Family||path.Dir(member.RelativePath)!=directory{return p,Fail(409,"group_name_conflict","已有组图包含不同作品编号或目录。")};if parsed.Page>lastExistingPage{lastExistingPage=parsed.Page}}
-    appendGroup=true;input.GroupKey="append:"+collectionID
+    if class!="image"{return p,Fail(400,"mixed_group","组图只能追加图片。")};sequence,sequenceErr:=s.sequence(ctx,collectionID)
+    if sequenceErr!=nil{var problem *Error;if !errors.As(sequenceErr,&problem)||problem.Code!="empty_group"||input.GroupKey==""{return p,sequenceErr}}else{existingWork=domain.WorkName{Family:sequence.Family,Separator:sequence.Separator,Number:sequence.Number,Width:sequence.Width};directory=sequence.Directory;input.Family=sequence.Family;lastExistingPage=sequence.MaxPage;appendGroup=true;input.GroupKey="append:"+collectionID}
    }
   }
   names,ok:=inventories[directory];if !ok{names,e=s.directoryNames(ctx,b.LibraryID,directory);if e!=nil{return p,e}}
@@ -93,7 +92,7 @@ func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.Plan
   if !exists{n,width,sep:=domain.Allocate(input.Family,class,names);g=&group{family:input.Family,class:class,dir:directory,collection:collectionID,number:n,width:width,sep:sep}
    if isDrama{next,e:=s.nextEpisode(ctx,collectionID);if e!=nil{return p,e};g.number=next+dramaCounts[collectionID];dramaCounts[collectionID]++}
    if appendGroup{g.number=existingWork.Number;g.width=existingWork.Width;g.sep=existingWork.Separator;g.lastPage=lastExistingPage}else if input.GroupKey!=""{if class!="image"||input.Page!=1{return p,Fail(400,"group_order_required","新组图须按已确认顺序从第 1 页提交；不猜测页序。")};if collectionID==""{g.collection=digest([]byte(p.ID+":"+groupKey))[:32];collections=append(collections,model.Collection{ID:g.collection,LibraryID:b.LibraryID,Name:input.Family,Kind:"image_set",Aliases:[]string{},Revision:1,CreatedAt:time.Now().UTC()})}};groups[groupKey]=g
-  }else if g.family!=input.Family||g.class!=class||g.dir!=directory{return p,Fail(400,"mixed_group","同组不能混合命名族、目录或图片/视频类别。")}
+  }else if g.family!=input.Family||g.class!=class||g.dir!=directory||(collectionID!=""&&g.collection!=collectionID){return p,Fail(400,"mixed_group","同组不能混合目标集合、命名族、目录或图片/视频类别。")}
   pageNumber:=0;if input.GroupKey!=""{if appendGroup&&input.Page==0{input.Page=g.lastPage+1};if input.Page!=g.lastPage+1{return p,Fail(400,"group_order_required","组图页码必须按确认顺序连续提交。")};pageNumber=input.Page;g.lastPage=pageNumber}
   filename:=domain.WorkFilename(input.Family,g.sep,g.number,g.width,pageNumber,path.Ext(u.FileName));if collectionID!=""&&class=="video"&&u.Note!=""{ext:=path.Ext(filename);filename=strings.TrimSuffix(filename,ext)+" "+safeNote(u.Note)+ext}
   if !domain.ValidName(filename){return p,Fail(400,"invalid_name","最终名称无效，未发布文件。")};relative:=path.Join(directory,filename);if e=s.checkPath(ctx,b.LibraryID,relative,"");e!=nil{return p,e};for _,existing:=range names{if existing==filename{return p,Fail(409,"path_occupied","计划内部目标名称重复。")}}

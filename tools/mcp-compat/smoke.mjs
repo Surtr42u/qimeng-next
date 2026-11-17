@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -11,12 +12,13 @@ import { McpClient, StdioTransport, toLlmContent } from '@earendil-works/pi-mcp'
 assert.equal(process.env.CI, 'true', 'Compatibility verification is cloud-only');
 assert.equal(process.env.QIMENG_TEST_BASE, 'http://127.0.0.1:18481');
 const root = await mkdtemp(join(tmpdir(), 'qimeng-mcp-compat-'));
+const repository = fileURLToPath(new URL('../../', import.meta.url));
 try {
   const input = join(root, 'input');
   await mkdir(input);
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=green:s=64x48', '-frames:v', '1', join(input, 'fixture.png')]);
   for (const implementation of ['pi', 'typescript-sdk']) {
-    const env = { ...process.env, PYTHONPATH: resolve('ai/src'),
+    const env = { ...process.env, PYTHONPATH: join(repository, 'ai/src'),
       QIMENG_API_BASE: process.env.QIMENG_TEST_BASE,
       QIMENG_API_TOKEN: process.env.QIMENG_AI_TOKEN,
       QIMENG_AI_STATE_DIR: join(root, implementation), QIMENG_AI_TASK_ID: implementation,
@@ -24,7 +26,7 @@ try {
       QIMENG_AI_OUTPUT_BYTES: '2048', QIMENG_AI_STORAGES: JSON.stringify({ input }),
       QIMENG_AI_ALLOW_MEDIA_TO_MODEL: 'true',
     };
-    const config = { command: 'python', args: ['-m', 'qimeng_ai.cli', 'mcp'], env };
+    const config = { command: 'python', args: ['-m', 'qimeng_ai.cli', 'mcp'], cwd: repository, env, stderr: 'inherit' };
     const client = implementation === 'pi'
       ? new McpClient({ name: 'qimeng-cloud-pi', version: '1.0.0' })
       : new Client({ name: 'qimeng-cloud-ts', version: '1.0.0' });

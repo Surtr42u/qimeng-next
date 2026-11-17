@@ -31,7 +31,7 @@ def tool_definitions():
                          "frames": {"type": "integer", "minimum": 0, "maximum": 3, "default": 3}},
                          "required": ["fileRef"], "additionalProperties": False}},
         {"name": "platform.artifact.read", "description": "读取预览frame的标准MCP image内容；必须有独立媒体外传许可，引用不扩大授权。",
-         "scope": "local.research", "readOnly": True,
+         "scope": "read", "readOnly": True,
          "inputSchema": {"type": "object", "properties": {"artifactRef": {"type": "string"}},
                          "required": ["artifactRef"], "additionalProperties": False}},
     ]
@@ -133,6 +133,17 @@ def probe(runtime, arguments: dict) -> dict:
 def read_artifact(runtime, reference: str) -> ImageResult:
     if not runtime.config.allow_media_to_model:
         raise ToolError("MEDIA_TRANSFER_NOT_AUTHORIZED", "未配置向模型发送媒体的独立授权")
+    if reference.startswith("sa_"):
+        if "research" not in runtime.config.permissions:
+            raise ToolError("PERMISSION_DENIED", "服务器研究材料需要research权限")
+        record = runtime.transport.call("getResearchArtifact", {"id": reference[3:]})
+        data, mime = runtime.transport.binary("getResearchArtifactContent", {"id": reference[3:]}, maximum=MAX_IMAGE_BYTES)
+        if (record.get("artifactRef") != reference or mime != "image/jpeg" or record.get("mimeType") != mime or
+                record.get("size") != len(data) or hashlib.sha256(data).hexdigest() != record.get("sha256")):
+            raise ToolError("ARTIFACT_CORRUPT", "服务器研究材料的来源或内容摘要不一致")
+        return ImageResult(record, data, mime)
+    if "local.research" not in runtime.config.permissions:
+        raise ToolError("PERMISSION_DENIED", "本地研究材料需要local.research权限")
     if not reference.startswith("a_"):
         raise ToolError("ARTIFACT_REF_INVALID", "不是研究图片引用")
     record = runtime.state.read("r_" + reference[2:], kind="image")

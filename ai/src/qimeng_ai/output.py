@@ -6,7 +6,7 @@ import re
 from .errors import ToolError
 from .state import State, encode
 
-SECRET_FIELDS = {"token", "authorization", "password", "secret", "leaseToken"}
+SECRET_FIELDS = {"token", "authorization", "password", "secret", "leaseToken", "credentialSecret"}
 PRIVATE_FIELDS = {"root", "absolutePath", "localPath", "dataDir", "mediaRoot"}
 
 

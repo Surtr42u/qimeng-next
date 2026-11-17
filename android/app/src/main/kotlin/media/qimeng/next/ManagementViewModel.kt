@@ -49,8 +49,9 @@ class ManagementViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
     fun loadSources(next: Boolean = false) {
-        if (mutableSources.value.loading || (next && mutableSources.value.cursor == null)) return
-        val previous = mutableSources.value
+        if (next && (mutableSources.value.loading || mutableSources.value.cursor == null)) return
+        sourceJob?.cancel()
+        val previous = mutableSources.value.copy(loading = false)
         mutableSources.value = previous.copy(loading = true)
         sourceJob = viewModelScope.launch {
             try { val page = repository.vocabulary("sources", if (next) previous.cursor else null)

@@ -65,7 +65,7 @@ fun AppRoot(model: LibraryViewModel) {
                 val backdrop = rememberGlassBackdrop()
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (route != "main") PageHeader(routeTitle(route), model::back)
+                        if (route != "main" && route != "ai-access") PageHeader(routeTitle(route), model::back)
                         if (message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -97,6 +97,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "server" -> ServerScreen(model)
                                 route == "trash" -> TrashScreen(model)
                                 route == "recommendation" -> RecommendationSettings(model)
+                                route == "ai-access" -> AIAccessScreen(model)
                                 else -> when (tab) {
                                     0 -> HomeScreen(model)
                                     1 -> AlbumsScreen(model)
@@ -145,9 +146,9 @@ private fun LoginScreen(model: LibraryViewModel) {
 }
 
 @Composable
-fun PageHeader(title: String, onBack: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
+fun PageHeader(title: String, onBack: (() -> Unit)? = null, backEnabled: Boolean = true, actions: @Composable RowScope.() -> Unit = {}) {
     Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
+        if (onBack != null) IconButton(onClick = onBack, enabled = backEnabled) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
         Text(title, Modifier.weight(1f).padding(horizontal = 8.dp), style = MaterialTheme.typography.titleLarge)
         actions()
     }

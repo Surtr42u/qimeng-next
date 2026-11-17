@@ -59,7 +59,7 @@ class Runtime:
     def tools(self) -> list[dict]:
         result = [{"name": name, "description": value["description"],
                    "inputSchema": value["inputSchema"], "scope": value["scope"],
-                   "readOnly": value["method"] in {"GET", "HEAD"}}
+                   "readOnly": value["readOnly"]}
                   for name, (_, value) in self.operations.items()]
         result.extend([
             {"name": "platform.catalog", "description": "精简工具目录、权限与版本；目录可见不表示有执行许可。",
@@ -140,7 +140,7 @@ class Runtime:
                     "discovery": "full", "permissions": sorted(self.config.permissions),
                     "tools": [{key: tool[key] for key in ("name", "description", "scope", "readOnly")}
                               for tool in self.tools()],
-                    "workflow": ["platform.permissions", "task.start", "task.context", "files.search", "upload.file", "research.submit",
+                    "workflow": ["platform.permissions", "task.start", "task.context", "files.search", "upload.file", "research.materials", "research.submit", "naming.suggest", "naming.preview",
                                  "plan.prepare", "plan.read", "plan.commit", "task.read"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",
                               "计划在Go服务端持久化；用原计划ID和fingerprint提交。",

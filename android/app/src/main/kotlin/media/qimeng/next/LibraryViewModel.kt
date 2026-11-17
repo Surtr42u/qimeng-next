@@ -91,6 +91,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private var detailGeneration = RequestGeneration()
     private var connectionGeneration = 0L
     private val activeOperations = mutableSetOf<Job>()
+    private val pageJobs = mutableMapOf<MutableStateFlow<*>, Job>()
 
     init {
         viewModelScope.launch {
@@ -99,6 +100,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 activeOperations.toList().forEach(Job::cancel)
                 mutableBusy.value = false
                 listJobs.values.forEach(Job::cancel)
+                pageJobs.values.forEach(Job::cancel); pageJobs.clear()
                 detailJob?.cancel()
                 detailGeneration.next()
                 lists.values.forEach { it.value = ListState() }
@@ -424,9 +426,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun setUploadNote(note: String) { saved["uploadNote"] = note }
     fun setUploadSources(sources: String) { saved["uploadSources"] = sources }
     fun loadCollections(next: Boolean = false) {
-        if (collectionState.value.loading || (next && collectionState.value.cursor == null)) return
+        if (next && (collectionState.value.loading || collectionState.value.cursor == null)) return
+        collectionJob?.cancel()
         val library = uploadLibrary.value
-        val previous = collectionState.value
+        val previous = collectionState.value.copy(loading = false)
         val connection = connectionGeneration
         collectionState.value = previous.copy(loading = true, error = null)
         collectionJob = viewModelScope.launch {
@@ -470,11 +473,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun savePreferences(preferences: Preferences) = action { withContext(Dispatchers.IO) { graph.settings.savePreferences(preferences) } }
 
     private fun <T> loadPage(state: MutableStateFlow<ListState<T>>, next: Boolean, loader: suspend (String?) -> Page<T>) {
-        if (state.value.loading || (next && state.value.cursor == null)) return
-        val old = state.value
+        if (next && (state.value.loading || state.value.cursor == null)) return
+        pageJobs.remove(state)?.cancel()
+        val old = state.value.copy(loading = false)
         val generation = connectionGeneration
         state.value = old.copy(loading = true, error = null)
-        viewModelScope.launch {
+        pageJobs[state] = viewModelScope.launch {
             try {
                 val result = loader(if (next) old.cursor else null)
                 if (generation == connectionGeneration) state.value = ListState(if (next) old.items + result.items else result.items, result.nextCursor, loaded = true)

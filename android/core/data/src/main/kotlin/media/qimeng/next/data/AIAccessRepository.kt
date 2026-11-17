@@ -12,9 +12,9 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
 
     /** The one-time secret is only returned to the creation callback, never journaled. */
     suspend fun create(policy: AIAccessPolicy): Pair<AIAccessGrant, String> {
-        val input = AIDelegationPolicy(label = policy.label, libraryIds = policy.libraryIds, authorIds = policy.authorIds,
-            allAuthors = policy.allAuthors, allowedFields = policy.allowedFields.map { field -> AIDelegationPolicy.AllowedFields.entries.first { it.value == field } },
-            candidateBlocks = policy.candidateBlocks.map { block -> AIDelegationPolicy.CandidateBlocks.entries.first { it.value == block } },
+        val input = AIDelegationPolicy(label = policy.label, libraryIds = policy.libraryIds.toSet(), authorIds = policy.authorIds.toSet(),
+            allAuthors = policy.allAuthors, allowedFields = policy.allowedFields.map { field -> AIDelegationPolicy.AllowedFields.entries.first { it.value == field } }.toSet(),
+            candidateBlocks = policy.candidateBlocks.map { block -> AIDelegationPolicy.CandidateBlocks.entries.first { it.value == block } }.toSet(),
             allowClear = policy.allowClear, canIngest = policy.canIngest, canResearch = policy.canResearch, canOrganize = policy.canOrganize,
             maxResearchCalls = policy.maxResearchCalls, maxUpdates = policy.maxUpdates, maxTasksPerDay = policy.maxTasksPerDay,
             validDays = policy.validDays, maxCallsPerTask = policy.maxCallsPerTask, taskSeconds = policy.taskSeconds)
@@ -29,5 +29,5 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
     }
 }
 
-private fun AIDelegation.toModel() = AIAccessGrant(id, label, state.value, expiresAt, libraryIds, authorIds, allAuthors,
+private fun AIDelegation.toModel() = AIAccessGrant(id, label, state.value, expiresAt, libraryIds.toList(), authorIds.toList(), allAuthors,
     allowedFields.map { it.value }, candidateBlocks.map { it.value }, canIngest, canResearch, canOrganize, maxTasksPerDay, maxUpdates, maxResearchCalls)

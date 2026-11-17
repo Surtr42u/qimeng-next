@@ -105,6 +105,14 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
                     uploaded = await call("upload.file", {"fileRef": listing["items"][0]["fileRef"], "operationId": "mcp-live-upload",
                                           "libraryId": library["id"], "batchId": batch["id"], "fileName": "sample.png", "mode": "intelligent"})
                     self.assertEqual(uploaded["status"], "staged")
+                    materials = await call("research.materials", {"id": uploaded["upload"]["id"], "expectedHash": uploaded["sha256"]})
+                    self.assertEqual(materials["businessWrites"], 0)
+                    # A second executor has no first executor's local cache or local-read permission.
+                    with tempfile.TemporaryDirectory() as remote_directory:
+                        async with Client(self.process(Path(remote_directory), credential["token"], "read,research")) as remote:
+                            remote_picture = await remote.call_tool("platform.artifact.read", {"artifactRef": materials["artifacts"][0]["artifactRef"]})
+                            self.assertFalse(remote_picture.is_error, remote_picture.content)
+                            self.assertTrue(any(block.type == "image" and block.mime_type == "image/jpeg" for block in remote_picture.content))
                     context = await call("task.context", {"id": batch["id"]})
                     await call("research.submit", {"id": batch["id"], "Idempotency-Key": "mcp-live-research",
                         "body": {"expectedRevision": context["batch"]["revision"], "uploadId": uploaded["upload"]["id"],

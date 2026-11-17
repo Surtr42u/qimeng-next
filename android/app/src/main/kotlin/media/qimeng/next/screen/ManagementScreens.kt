@@ -51,6 +51,7 @@ fun ProfileScreen(model: LibraryViewModel) {
             Text("使用偏好", style = MaterialTheme.typography.titleSmall)
             SettingsRow("外观", "${themeName(preferences.theme)} · ${if (preferences.glass) "玻璃导航" else "实色导航"}", Icons.Outlined.Palette) { model.navigate("appearance") }
             SettingsRow("推荐偏好", "选择适合你的浏览方式", Icons.Outlined.Tune) { model.navigate("recommendation") }
+            SettingsRow("AI 接入", "只读与写入权限、连接凭据和撤销", Icons.Outlined.Key) { model.navigate("ai-access") }
         }
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
             Text("绮梦 Next · 0.1.0-dev", style = MaterialTheme.typography.titleSmall)

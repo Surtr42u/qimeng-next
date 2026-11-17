@@ -94,6 +94,47 @@ paths:
       responses:
         '201': {description: Directory, content: {application/json: {schema: {$ref: '#/components/schemas/Directory'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /libraries/{id}/naming/context:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getNamingContext
+      description: >-
+        读取后端权威命名范围、下一作品号或补页/短剧章节及命名空间摘要。
+        编号由Go按既有规则计算；AI无需遍历目录找最大编号。返回值不预留编号，发布时重新核验。
+      parameters:
+        - {name: directory, in: query, schema: {type: string}}
+        - {name: family, in: query, schema: {type: string}}
+        - {name: mediaType, in: query, schema: {type: string, enum: [image, animated_image, video], default: image}}
+        - {name: collectionId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Deterministic naming scope; no number reservation, content: {application/json: {schema: {$ref: '#/components/schemas/NamingContext'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /libraries/{id}/naming/suggestions:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: suggestNames
+      description: >-
+        为人工输入和AI提供同源的作品名补全，最多返回八个真实命名范围候选。
+        多候选不能默认选第一项；名称相似或数字后缀本身不证明作品同组。
+      parameters:
+        - {name: directory, in: query, schema: {type: string}}
+        - {name: q, in: query, schema: {type: string, maxLength: 200}}
+        - {name: mediaType, in: query, schema: {type: string, enum: [image, animated_image, video], default: image}}
+      responses:
+        '200': {description: Up to eight suggestions from the authoritative namespace, content: {application/json: {schema: {$ref: '#/components/schemas/NameSuggestionList'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /libraries/{id}/naming/preview:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: previewNames
+      description: >-
+        只读预览新作品、已有组图补页、短剧追加或精确改名。
+        提交出处/角色稳定ID、集合及明确分组意图，由Go生成规范名称和编号。
+        不修改媒体、不预留编号；正式接收或计划仍提交原意图，由同一用例在发布时重验。
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/NamingPreviewInput'}}}}
+      responses:
+        '200': {description: Complete preview; publication rechecks namespace and object revisions, content: {application/json: {schema: {$ref: '#/components/schemas/NamingPreview'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /libraries/{id}/scans:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
@@ -431,15 +472,6 @@ paths:
       operationId: cancelUpload
       responses:
         '204': {description: Incomplete upload cancelled; published assets are unaffected}
-        default: {$ref: '#/components/responses/Error'}
-  /uploads/{id}/content:
-    parameters: [{$ref: '#/components/parameters/Id'}]
-    put:
-      operationId: appendUpload
-      parameters: [{name: Upload-Offset, in: header, required: true, schema: {type: integer, format: int64, minimum: 0}}]
-      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
-      responses:
-        '200': {description: Saved offset; chunks are at most 8 MiB, content: {application/json: {schema: {$ref: '#/components/schemas/Upload'}}}}
         default: {$ref: '#/components/responses/Error'}
   /uploads/{id}/complete:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -843,6 +875,51 @@ paths:
       responses:
         '200': {description: Complete preserved blocks; original candidate records are paged by archiveId, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileArchive'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /uploads/{id}/research-materials:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getUploadResearchMaterials
+      description: >-
+        读取已上传输入的持久研究材料，不要求本地路径或作者名提示。
+        必须传上传回读的expectedHash。图片/视频预览仅供核对，不能自行证明作者；
+        用platform.artifact.read读取sa_引用，外传图片仍需独立许可。缓存过期可以按原输入重建。
+      parameters:
+        - {name: expectedHash, in: query, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+      responses:
+        '200': {description: Persistent bounded previews of the exact upload bytes; no author conclusions or business writes, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchMaterials'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /uploads/{id}/content:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getUploadContent
+      parameters:
+        - {name: expectedHash, in: query, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+      responses:
+        '200': {description: Original verified input bytes under task authorization, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '206': {description: Range of original input}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: appendUpload
+      parameters:
+        - {name: Upload-Offset, in: header, required: true, schema: {type: integer, format: int64, minimum: 0}}
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+      responses:
+        '200': {description: Saved offset; chunks are at most 8 MiB, content: {application/json: {schema: {$ref: '#/components/schemas/Upload'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /research-artifacts/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getResearchArtifact
+      responses:
+        '200': {description: Bounded preview metadata with original upload identity, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchArtifact'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /research-artifacts/{id}/content:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getResearchArtifactContent
+      responses:
+        '200': {description: Authenticated research preview, content: {image/jpeg: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer}
@@ -861,6 +938,32 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    ResearchArtifact:
+      type: object
+      required: [id, artifactRef, uploadId, sourceSha256, sha256, mimeType, size, positionSeconds, expiresAt]
+      properties:
+        id: {type: string}
+        artifactRef: {type: string}
+        uploadId: {type: string}
+        sourceSha256: {type: string}
+        sha256: {type: string}
+        mimeType: {type: string, enum: [image/jpeg]}
+        size: {type: integer, format: int64}
+        positionSeconds: {type: number, format: double}
+        expiresAt: {type: string, format: date-time}
+    ResearchMaterials:
+      type: object
+      required: [uploadId, sourceSha256, width, height, durationMs, probeState, artifacts, businessWrites, limitations]
+      properties:
+        uploadId: {type: string}
+        sourceSha256: {type: string}
+        width: {type: integer}
+        height: {type: integer}
+        durationMs: {type: integer, format: int64}
+        probeState: {type: string}
+        artifacts: {type: array, maxItems: 3, items: {$ref: '#/components/schemas/ResearchArtifact'}}
+        businessWrites: {type: integer, enum: [0]}
+        limitations: {type: array, items: {type: string}}
     DelegatedBudgetUpdate:
       type: object
       required: [maxCalls, expiresInSeconds]
@@ -1198,6 +1301,57 @@ components:
       allOf:
         - {$ref: '#/components/schemas/LibraryCreate'}
         - {type: object, required: [id, enabled, revision, createdAt], properties: {id: {type: string}, enabled: {type: boolean}, revision: {type: integer, format: int64}, createdAt: {type: string, format: date-time}}}
+    NamingContext:
+      type: object
+      required: [policyVersion, libraryId, directory, family, numberClass, nextWorkNumber, width, separator, namespaceFingerprint, reserved]
+      properties:
+        policyVersion: {type: string}
+        libraryId: {type: string}
+        directory: {type: string}
+        family: {type: string}
+        numberClass: {type: string, enum: [image, video]}
+        nextWorkNumber: {type: integer}
+        currentWorkNumber: {type: integer}
+        nextPage: {type: integer}
+        nextChapter: {type: integer}
+        width: {type: integer}
+        separator: {type: string}
+        namespaceFingerprint: {type: string}
+        reserved: {type: boolean}
+    NameSuggestion:
+      type: object
+      required: [family, suggestedName, numberClass, workNumber]
+      properties: {family: {type: string}, suggestedName: {type: string}, numberClass: {type: string}, workNumber: {type: integer}}
+    NameSuggestionList:
+      type: object
+      required: [policyVersion, items, truncated]
+      properties: {policyVersion: {type: string}, items: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/NameSuggestion'}}, truncated: {type: boolean}}
+    NamingInputItem:
+      type: object
+      required: [fileName]
+      properties: {fileName: {type: string}, groupKey: {type: string}, page: {type: integer, minimum: 1}, note: {type: string, maxLength: 10000}}
+    NamingPreviewInput:
+      type: object
+      required: [intent, items]
+      properties:
+        intent: {type: string, enum: [new_work, append_pages, append_drama, rename_exact]}
+        directory: {type: string}
+        family: {type: string}
+        mediaType: {type: string, enum: [image, animated_image, video]}
+        sourceIds: {type: array, maxItems: 20, items: {type: string}}
+        characterIds: {type: array, maxItems: 50, items: {type: string}}
+        collectionId: {type: string}
+        assetId: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        items: {type: array, minItems: 1, maxItems: 100, items: {$ref: '#/components/schemas/NamingInputItem'}}
+    NamingPreviewItem:
+      type: object
+      required: [fileName, relativePath, numberClass]
+      properties: {fileName: {type: string}, relativePath: {type: string}, numberClass: {type: string}, workNumber: {type: integer}, page: {type: integer}}
+    NamingPreview:
+      type: object
+      required: [policyVersion, namespaceFingerprint, reserved, items]
+      properties: {policyVersion: {type: string}, namespaceFingerprint: {type: string}, reserved: {type: boolean}, items: {type: array, items: {$ref: '#/components/schemas/NamingPreviewItem'}}}
     ScanIssue:
       type: object
       required: [relativePath, code]
@@ -1669,14 +1823,17 @@ components:
         publishingUrl: {type: string, maxLength: 4096}
     AuthorProfileValues:
       type: object
-      description: 'Only fields belonging to the named block are accepted. x: handle/displayName/biographyOriginal/biographyZh/avatarSourceUrl; basic: summary/note; accounts: accounts. Empty strings and empty arrays are explicit clearing intents.'
+      description: 'Only fields belonging to the named block are accepted. x: handle/profileUrl/displayName/biographyOriginal/biographyZh/avatarSourceUrl; basic: publicName/summary/remark/note; accounts: accounts. Empty strings and empty arrays are explicit clearing intents.'
       properties:
         handle: {type: string, maxLength: 200}
+        profileUrl: {type: string, maxLength: 4096}
         displayName: {type: string, maxLength: 200}
         biographyOriginal: {type: string, maxLength: 20000}
         biographyZh: {type: string, maxLength: 20000}
         avatarSourceUrl: {type: string, maxLength: 4096}
         summary: {type: string, maxLength: 20000}
+        publicName: {type: string, maxLength: 200}
+        remark: {type: string, maxLength: 500, description: Exceptional identity notes such as retired creator or archived-only evidence}
         note: {type: string, maxLength: 10000}
         accounts: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/AuthorProfileAccount'}}
     AuthorProfileEvidence:
@@ -1695,7 +1852,7 @@ components:
       properties:
         id: {type: string}
         url: {type: string, description: Authenticated same-origin PNG; never a third-party URL}
-        origin: {type: string, enum: [https, upload]}
+        origin: {type: string, enum: [https, upload, import]}
         sourceUrl: {type: string}
         fetchedUrl: {type: string}
         sourceHash: {type: string}

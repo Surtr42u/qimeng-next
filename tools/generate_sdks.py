@@ -17,6 +17,27 @@ OPENAPI_JAR_SHA256 = "db9c4b738727698748746144394cb7ee96512fe50166555baaeeca9311
 OAPI_CODEGEN = "v2.8.2"
 
 
+class UniqueSafeLoader(yaml.SafeLoader):
+    """Duplicate paths/schemas must fail instead of silently replacing a contract."""
+
+
+def unique_mapping(loader, node, deep=False):
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in result:
+            raise ValueError(f"Duplicate OpenAPI key at line {key_node.start_mark.line + 1}: {key}")
+        result[key] = loader.construct_object(value_node, deep=deep)
+    return result
+
+
+UniqueSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, unique_mapping)
+
+
+def read_specification():
+    return yaml.load((ROOT / "api/openapi.yaml").read_bytes(), Loader=UniqueSafeLoader)
+
+
 def run(*args: str, cwd: Path = ROOT) -> None:
     subprocess.run(args, cwd=cwd, check=True)
 
@@ -76,7 +97,7 @@ def resolve(document: dict, value, stack: tuple[str, ...] = ()):
 def python_contract() -> None:
     """生成操作路由、参数和 schema；AI 只调用显式声明的 x-ai-tool 操作。"""
     raw = (ROOT / "api/openapi.yaml").read_bytes()
-    document = yaml.safe_load(raw)
+    document = read_specification()
     tool_map = json.loads((ROOT / "ai/tool-map.json").read_text(encoding="utf-8"))
     operations = {}
     for path, item in document["paths"].items():
@@ -103,6 +124,7 @@ def python_contract() -> None:
                 "description": operation.get("description", operation.get("summary", identifier)),
                 "tool": operation.get("x-ai-tool", tool_map.get(identifier, {}).get("tool")),
                 "scope": operation.get("x-ai-scope", tool_map.get(identifier, {}).get("scope", "read")),
+                "readOnly": operation.get("x-ai-read-only", tool_map.get(identifier, {}).get("readOnly", method in {"get", "head"})),
                 "inputSchema": {"type": "object", "properties": properties,
                                 "required": required, "additionalProperties": False},
             }
@@ -137,6 +159,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", choices=["all", "go", "typescript", "kotlin", "python", "lock"], default="all")
     target = parser.parse_args().target
+    read_specification()
     actions = {"go": go, "typescript": lambda: run("npm", "run", "generate:api", cwd=ROOT / "web"),
                "kotlin": kotlin, "python": python_contract, "lock": source_lock}
     for name, action in actions.items():

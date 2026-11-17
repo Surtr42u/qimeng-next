@@ -12,6 +12,8 @@
 | 模块怎样分工、谁拥有业务真相 | [架构](docs/architecture.md) |
 | 现在实现到哪里、实际验证了什么 | [当前状态](docs/status.md) |
 | 如何开发、构建和验证 | [验证与交付](docs/verification.md) |
+| AI首次配置与日常工作 | [AI工具入口](ai/README.md) |
+| Pi、Hermes及其他MCP宿主 | [兼容指引](docs/mcp-compatibility.md) |
 | AI 接手约束 | [AGENTS.md](AGENTS.md) |
 
 所有编译、代码生成、测试和发布构建都在云端执行。本地仅编辑与 Git 操作。运行与安装说明随可验证产物补齐，不提供尚未验证的安装承诺。

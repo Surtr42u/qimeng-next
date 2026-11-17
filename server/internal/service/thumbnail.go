@@ -23,13 +23,14 @@ var thumbnailSlots=make(chan struct{},2)
 type boundedOutput struct{bytes.Buffer;limit int}
 func(w *boundedOutput)Write(b []byte)(int,error){if len(b)>w.limit-w.Len(){return 0,errors.New("media tool output exceeded limit")};return w.Buffer.Write(b)}
 func builtinImage(mime string)bool{return mime=="image/jpeg"||mime=="image/png"||mime=="image/gif"}
+func mediaDemuxer(mime string)string{switch mime{case "image/png":return "png_pipe";case "image/jpeg":return "mjpeg";case "image/gif":return "gif";case "image/webp":return "webp_pipe";case "image/avif","video/mp4","video/quicktime":return "mov";case "video/webm","video/x-matroska":return "matroska";case "video/x-msvideo":return "avi"};return ""}
 func toolPath(env,name string)string{if configured:=os.Getenv(env);configured!=""{return configured};value,e:=exec.LookPath(name);if e!=nil{return ""};return value}
 func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{
  a.ProbeState="unavailable";a.ThumbnailURL="";a.Width=0;a.Height=0;a.DurationMs=0
  if builtinImage(a.MimeType){f,e:=s.Root.Open(name);if e!=nil{return e};cfg,_,e:=image.DecodeConfig(f);f.Close();if e!=nil{return Fail(415,"invalid_image","文件不是可解码的图片。")};a.Width=cfg.Width;a.Height=cfg.Height;a.ProbeState="ready";a.ThumbnailURL="/api/v1/assets/"+a.ID+"/thumbnail";return nil}
  if ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");ffmpeg!=""{a.ThumbnailURL="/api/v1/assets/"+a.ID+"/thumbnail"}
  ffprobe:=toolPath("QIMENG_FFPROBE","ffprobe");if ffprobe==""{return nil}
- sourcePath,e:=s.Root.AbsolutePath(name);if e!=nil{return e};deadline,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffprobe,"-v","error","-protocol_whitelist","file,pipe","-select_streams","v:0","-show_entries","stream=width,height:format=duration","-of","json",sourcePath)
+ demuxer:=mediaDemuxer(a.MimeType);if demuxer==""{return Fail(415,"media_unsupported","此格式没有受限媒体探测通道。")};sourcePath,e:=s.Root.AbsolutePath(name);if e!=nil{return e};deadline,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffprobe,"-v","error","-protocol_whitelist","file,pipe","-f",demuxer,"-select_streams","v:0","-show_entries","stream=width,height:format=duration","-of","json",sourcePath);configureMediaProcess(cmd)
  output:=&boundedOutput{limit:64<<10};cmd.Stdout=output;cmd.Stderr=io.Discard;if e:=cmd.Run();e!=nil{a.ProbeState="failed";return nil}
  var result struct{Streams []struct{Width,Height int};Format struct{Duration string}}
  if e:=json.Unmarshal(output.Bytes(),&result);e!=nil{return e};if len(result.Streams)==0{a.ProbeState="failed";return nil};a.Width=result.Streams[0].Width;a.Height=result.Streams[0].Height
@@ -55,7 +56,7 @@ func(s *Service)Thumbnail(ctx context.Context,id string,versions ...int64)(*os.F
   var out bytes.Buffer;if e=jpeg.Encode(&out,dst,&jpeg.Options{Quality:82});e!=nil{return nil,a,e};data=out.Bytes()
  }else{
   ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");if ffmpeg==""{return nil,a,Fail(501,"media_tool_unavailable","此格式的缩略图需要配置 FFmpeg。")}
-  sourcePath,e:=s.Root.AbsolutePath(source);if e!=nil{return nil,a,e};deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-max_alloc","67108864","-protocol_whitelist","file,pipe","-i",sourcePath,"-frames:v","1","-vf","scale=480:480:force_original_aspect_ratio=decrease","-f","image2pipe","-vcodec","mjpeg","pipe:1")
+  demuxer:=mediaDemuxer(a.MimeType);if demuxer==""{return nil,a,Fail(415,"media_unsupported","此格式没有受限预览通道。")};sourcePath,e:=s.Root.AbsolutePath(source);if e!=nil{return nil,a,e};deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-max_alloc","67108864","-protocol_whitelist","file,pipe","-f",demuxer,"-i",sourcePath,"-frames:v","1","-vf","scale=480:480:force_original_aspect_ratio=decrease","-f","image2pipe","-vcodec","mjpeg","pipe:1");configureMediaProcess(cmd)
   output:=&boundedOutput{limit:2<<20};cmd.Stdout=output;cmd.Stderr=io.Discard;if e=cmd.Run();e!=nil{return nil,a,Fail(422,"thumbnail_decode_failed","缩略图生成失败，原件保留。")};data=output.Bytes();if _,e=jpeg.DecodeConfig(bytes.NewReader(data));e!=nil{return nil,a,e}
  }
  if e=s.ensureParent(cache);e!=nil{return nil,a,e};tmp:=path.Dir(cache)+"/"+ID()+".tmp";f,e:=s.Root.OpenFile(tmp,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);if e!=nil{return nil,a,e};defer s.Root.Remove(tmp)
