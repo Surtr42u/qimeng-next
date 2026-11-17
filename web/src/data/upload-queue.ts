@@ -56,13 +56,14 @@ export class UploadQueue {
     this.publish();
   }
   async retryStorage() {
-    await this.writes;
-    try {
+    const retry = this.writes.then(async () => {
       const previous = await localReadAll<QueueEntry>('uploads');
       for (const entry of previous) if (entry.scope === this.scope && !this.entries.has(entry.id)) this.entries.set(entry.id, { ...entry, phase: terminal(entry.phase) ? entry.phase : 'waiting_file' });
       for (const entry of this.entries.values()) await localWrite('uploads', entry);
       this.publish({ persistenceError: undefined });
-    } catch { this.publish({ persistenceError: '仍无法保存本地任务，请保留源文件并核对任务报告。' }); }
+    }).catch(() => { this.publish({ persistenceError: '仍无法保存本地任务，请保留源文件并核对任务报告。' }); });
+    this.writes = retry;
+    await retry;
   }
   async add(files: readonly File[], target: Omit<Schema<'UploadCreate'>, 'fileName' | 'size' | 'mimeType'>, libraryName: string) {
     if (!this.snapshot.initialized || this.snapshot.preparing) throw new Error('正在准备上传队列，请稍后再选。');
@@ -84,7 +85,8 @@ export class UploadQueue {
       const batch = await read(api.POST('/batches', { params: { header: operationHeaders(attempt.key) }, body: attempt.input }));
       this.preparingBatch = undefined;
       for (const file of files) {
-        const relative = file.webkitRelativePath;
+        // A relative directory clue is optional on File implementations and file-only pickers.
+        const relative = file.webkitRelativePath ?? '';
         const directory = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '';
         const entry: QueueEntry = { id: newId(), scope: this.scope,
           request: { ...target, fileName: file.name, originalFileName: file.name, sourceRelativePath: relative || file.name, size: file.size, mimeType: file.type || 'application/octet-stream', sourceMtime: new Date(file.lastModified).toISOString(), batchId: batch.id,
@@ -171,13 +173,16 @@ export class UploadQueue {
     } catch (error) { this.change(id, { error: `${error instanceof Error ? error.message : '取消失败'}。请重试取消或继续上传以回读实际状态。` }); }
   }
   async clearFinished() {
-    await this.writes;
-    for (const entry of this.entries.values()) {
-      if (!terminal(entry.phase)) continue;
-      try { await localWrite('uploads', entry.id); this.entries.delete(entry.id); }
-      catch { this.publish({ persistenceError: '清理本地记录失败；记录已保留，媒体不会被删除。' }); }
-    }
-    this.publish();
+    const finished = [...this.entries.values()].filter(entry => terminal(entry.phase)).map(entry => entry.id);
+    const cleanup = this.writes.then(async () => {
+      for (const id of finished) {
+        try { await localWrite('uploads', id); this.entries.delete(id); }
+        catch { this.publish({ persistenceError: '清理本地记录失败；记录已保留，媒体不会被删除。' }); }
+      }
+      this.publish();
+    });
+    this.writes = cleanup;
+    await cleanup;
   }
   dispose() { this.disposed = true; for (const active of this.active.values()) active.abort(); this.files.clear(); }
 }

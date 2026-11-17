@@ -16,6 +16,9 @@ func TestAuthorMaintenanceGrantCannotCrossAuthorFieldsOrClear(t *testing.T){
  var task service.AuthorTask;decode(t,response,&task)
  response=f.json("POST","/credentials","",map[string]any{"label":"Synthetic author worker","authorTaskId":task.ID,"scopes":[]string{"read","author.profile.write"}},201)
  var credential model.Principal;decode(t,response,&credential)
+ var scoped model.Page[service.AuthorTask]
+ response=f.request("GET","/author-tasks","",credential.Token,nil,nil);if response.Code!=200{t.Fatal(response.Body.String())};decode(t,response,&scoped)
+ if len(scoped.Items)!=1||scoped.Items[0].ID!=task.ID{t.Fatal("task list escaped credential boundary")}
  update:=func(key string,body map[string]any,intended int){t.Helper();raw,_:=json.Marshal(body);r:=f.request("PATCH","/authors/"+author.ID,key,credential.Token,raw,nil);if r.Code!=intended{t.Fatalf("author update: %d want %d: %s",r.Code,intended,r.Body.String())}}
  update("wrong-field-synthetic",map[string]any{"expectedRevision":author.Revision,"homepage":"https://example.org"},403)
  update("clear-field-synthetic",map[string]any{"expectedRevision":author.Revision,"biography":""},403)

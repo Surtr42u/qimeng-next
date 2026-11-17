@@ -29,6 +29,25 @@ class BudgetAndReferences(unittest.TestCase):
             self.assertEqual(raised.exception.code, "WRITE_UNRESOLVED")
             second.reserve("query", {"id": "a"}, None)
             self.assertEqual(second.status()["calls"], 2)
+            second.reserve("upload", {"id": "a"}, "operation-a")
+            self.assertEqual(second.status()["calls"], 3)
+
+    def test_contract_upgrade_preserves_budget_and_requires_final_upload_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = State(config(directory), "instance-a", "contract-a")
+            request = first.reserve("upload.file", {"operationId": "original"}, "original")
+            first.finish(request, {"code": "NETWORK_ERROR"}, "original", uncertain=True)
+            reference = first.save({"contractSpecific": True})
+            second = State(config(directory), "instance-a", "contract-b")
+            self.assertEqual(second.status()["calls"], 1)
+            self.assertEqual(second.receipt_key("original"), "original:complete")
+            with self.assertRaises(ToolError):
+                second.read(reference)
+            with self.assertRaises(ToolError):
+                second.reconcile("original", {"state": "committed", "idempotencyKey": "original:prepare"})
+            self.assertEqual(len(second.status()["pending"]), 1)
+            second.reconcile("original", {"state": "committed", "idempotencyKey": "original:complete"})
+            self.assertEqual(second.status()["pending"], [])
 
     def test_result_ref_cannot_cross_instance_or_credential(self):
         with tempfile.TemporaryDirectory() as directory:

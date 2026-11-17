@@ -183,7 +183,8 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, onClick: () -> Unit) {
         Box(Modifier.fillMaxWidth().aspectRatio(0.76f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
             if (asset.thumbnailUrl.isNotEmpty()) {
                 AsyncImage(model = ImageRequest.Builder(context).data(asset.thumbnailUrl)
-                    .memoryCacheKey("${asset.thumbnailUrl}:${asset.version}").build(), imageLoader = LocalMediaImages.current,
+                    .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail")
+                    .diskCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail").build(), imageLoader = LocalMediaImages.current,
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             else Icon(Icons.Outlined.Image, "预览尚未生成", Modifier.align(Alignment.Center).size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

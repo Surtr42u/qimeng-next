@@ -58,6 +58,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val recommendationPreferences = recommendationState.asStateFlow()
     private var analyticsJob: Job? = null
     private var reviewJob: Job? = null
+    private var rankingJob: Job? = null
+    private var rankingQuery: String? = null
+    private val rankingState = MutableStateFlow(ListState<ActivityRank>())
+    val ranking = rankingState.asStateFlow()
     private val mutableTags = MutableStateFlow<List<String>>(emptyList())
     val tagVocabulary = mutableTags.asStateFlow()
     private val mutableTagCursor = MutableStateFlow<String?>(null)
@@ -100,7 +104,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 mutableAssetAuthors.value = emptyList()
                 mutableTags.value = emptyList(); mutableTagCursor.value = null
                 mutableLibraries.value = emptyList(); mutableCapabilities.value = null
-                analyticsJob?.cancel(); reviewJob?.cancel(); directoryJob?.cancel(); collectionJob?.cancel()
+                analyticsJob?.cancel(); reviewJob?.cancel(); directoryJob?.cancel(); collectionJob?.cancel(); rankingJob?.cancel()
+                rankingState.value = ListState(); rankingQuery = null
                 directoryState.value = ListState()
                 collectionState.value = ListState()
                 if (saved.get<String>("uploadInstance") != connection?.instanceId) {
@@ -268,7 +273,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun recordDwell(asset: Asset, sessionId: String, seconds: Double, startedAt: String) {
         if (seconds >= 1.0) graph.recordEvent(asset, "dwell", sessionId, seconds = seconds, occurredAt = startedAt)
     }
-    fun mediaClient() = repository.mediaClient()
+    fun mediaClient(target: Session) = repository.mediaClient(target)
     private fun publishAsset(asset: Asset) {
         if (mutableAsset.value?.id == asset.id) mutableAsset.value = asset
         lists.values.forEach { state -> state.value = state.value.copy(items = state.value.items.map { if (it.id == asset.id) asset else it }) }
@@ -376,6 +381,23 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
     fun loadRecommendationPreferences() = action { recommendationState.value = graph.analytics.preferences() }
+    fun loadRanking(kind: String, range: String, metric: String, next: Boolean = false) {
+        val query = "$kind:$range:$metric"
+        if (next && (rankingState.value.loading || rankingState.value.cursor == null || rankingQuery != query)) return
+        rankingJob?.cancel()
+        val previous = if (rankingQuery == query) rankingState.value else ListState<ActivityRank>()
+        rankingQuery = query
+        rankingState.value = previous.copy(loading = true, error = null)
+        val connection = connectionGeneration
+        rankingJob = viewModelScope.launch {
+            try {
+                val result = graph.analytics.ranking(kind, range, metric, if (next) previous.cursor else null)
+                if (rankingQuery == query && connection == connectionGeneration)
+                    rankingState.value = ListState(if (next) previous.items + result.items else result.items, result.nextCursor, loaded = true)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { if (rankingQuery == query && connection == connectionGeneration) rankingState.value = previous.copy(error = explain(failure)) }
+        }
+    }
     fun chooseRecommendationPreset(preset: RecommendationWeights) = action {
         recommendationState.value?.let { recommendationState.value = graph.analytics.savePreferences(it, preset) }
         lists.filterKeys { it.startsWith("home:") }.values.forEach { it.value = it.value.copy(loaded = false) }

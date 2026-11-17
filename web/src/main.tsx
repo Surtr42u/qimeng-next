@@ -7,6 +7,8 @@ import { BrowsePage } from "./pages/BrowsePage";
 import { HomePage } from "./pages/HomePage";
 import { VocabularyPage } from "./pages/VocabularyPage";
 import { ReplacePage } from "./pages/ReplacePage";
+import { ScanPage } from './pages/ScanPage';
+import { AuthorTasksPage, AuthorTaskPage } from './pages/AuthorTaskPages';
 import { AssetPage } from "./pages/AssetPage";
 import { MinePage } from "./pages/MinePage";
 import { AuthorsPage, AuthorPage } from "./pages/AuthorsPage";
@@ -47,6 +49,9 @@ const router = createBrowserRouter([
       { path: "/manage/collections", element: <CollectionsPage /> },
       { path: "/manage/tasks", element: <TasksPage /> },
       { path: "/manage/tasks/:id", element: <TaskPage /> },
+      { path: '/manage/scans/:id', element: <ScanPage /> },
+      { path: '/manage/author-tasks', element: <AuthorTasksPage /> },
+      { path: '/manage/author-tasks/:id', element: <AuthorTaskPage /> },
       { path: "/manage/trash", element: <TrashPage /> },
       { path: "/manage/backup", element: <BackupPage /> },
       { path: "/authors", element: <AuthorsPage /> },

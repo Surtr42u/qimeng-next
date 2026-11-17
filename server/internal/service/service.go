@@ -13,7 +13,6 @@ import (
  "errors"
  "fmt"
  "os"
- "net/url"
  "path/filepath"
  "strings"
  "sync"
@@ -42,9 +41,9 @@ func New(config Config)(*Service,error){
  for _,d:=range []string{"libraries","uploads","trash","retired","backups"}{if err=root.MkdirAll(d,0700);err!=nil{root.Close();return nil,err}}
  // SQLite's exclusive ownership lock is held by a separate connection for this
  // process, rather than an unsafe stale-PID file. Main storage remains WAL.
- ownerURL:=(&url.URL{Scheme:"file",Path:filepath.ToSlash(filepath.Join(config.DataDir,"authority.sqlite"))}).String()
+ ownerURL:=store.FileURI(filepath.Join(config.DataDir,"authority.sqlite"))
  owner,err:=sql.Open("sqlite",ownerURL+"?_pragma=busy_timeout(0)");if err!=nil{root.Close();return nil,err};owner.SetMaxOpenConns(1)
- if _,err=owner.Exec("CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE");err!=nil{owner.Close();root.Close();return nil,errors.New("another service owns this data directory")}
+ if _,err=owner.Exec("CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE");err!=nil{owner.Close();root.Close();var coded interface{Code()int};if errors.As(err,&coded)&&(coded.Code()&255==5||coded.Code()&255==6){return nil,errors.New("another service owns this data directory")};return nil,fmt.Errorf("initialize ownership database: %w",err)}
  db,err:=store.Open(filepath.Join(config.DataDir,"qimeng.sqlite"));if err!=nil{owner.Close();root.Close();return nil,err}
  s:=&Service{DB:db,Root:root,Config:config,owner:owner}
  s.workCtx,s.stopWork=context.WithCancel(context.Background())
@@ -132,7 +131,7 @@ func(s *Service)CreateSession(ctx context.Context,w *Write,label,batchID string,
   task,err:=s.authorTask(ctx,authorTaskID);if err!=nil{return model.Principal{},err}
   if task.State!="authorized"||!task.ExpiresAt.After(time.Now()){return model.Principal{},Fail(409,"author_task_stale","资料维护授权已失效。")}
   duration=time.Until(task.ExpiresAt)
-  for _,scope:=range scopes{if scope!="read"&&scope!="author.profile.write"{return model.Principal{},Fail(400,"invalid_scope","资料维护凭据只能授予read和author.profile.write。")}}
+  for _,scope:=range scopes{if scope!="read"&&scope!="author.profile.write"&&scope!="research"{return model.Principal{},Fail(400,"invalid_scope","资料维护凭据只能授予read、research和author.profile.write。")}}
  }else if batchID!=""{if _,err:=s.Batch(ctx,batchID);err!=nil{return model.Principal{},err};duration=24*time.Hour;for _,scope:=range scopes{if scope!="read"&&scope!="ingest"&&scope!="research"&&scope!="organize"{return model.Principal{},Fail(400,"invalid_scope","不支持的 AI 权限。")}}}else{scopes=[]string{"admin"}}
  p:=model.Principal{ID:ID(),Label:label,BatchID:batchID,AuthorTaskID:authorTaskID,Scopes:scopes,ExpiresAt:time.Now().UTC().Add(duration)}
  secret:=token();raw,err:=store.Encode(p);if err!=nil{return p,err};q,err:=w.Q();if err!=nil{return p,err}

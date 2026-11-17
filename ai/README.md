@@ -46,4 +46,6 @@
 
 已安装经过云端验证的工具包后，`qai mcp`启动stdio，`qai catalog`查询目录；`qai call <tool>`从stdin读取JSON。`qai admin status`查询持久预算；`admin reconcile <key>`先请求服务端权威回读再核销；`admin renew --calls N --seconds N`只能提高上限，保留调用数、开始时间和未决项。这些管理能力不注册为模型工具。
 
+同一未决写入允许以完全相同的工具、参数与操作键恢复，新写入仍被阻止。分片上传沿原会话offset接续；可信端核销整次上传必须取得`:complete`回执，仅创建了上传会话不能算上传完成。SDK契约升级保留消费记录和未决操作，同时使旧契约的结果展示引用失效。
+
 开发、打包与所有测试只在云端执行，当前结果见[状态](../docs/status.md)。模型token/费用依赖宿主遥测，本模块不宣称控制外部账号全部消费。真实provider、NAS与设备验证按证据单列。

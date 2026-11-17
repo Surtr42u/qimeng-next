@@ -56,7 +56,7 @@ def main() -> None:
                 if operation is None:
                     raise ToolError("CAPABILITY_MISSING", "服务契约未提供操作回读，保留未决状态")
                 key_name = next(p["name"] for p in operation["parameters"] if p["in"] == "path")
-                result = state.reconcile(args.key, runtime.transport.call("getOperation", {key_name: args.key}))
+                result = state.reconcile(args.key, runtime.transport.call("getOperation", {key_name: state.receipt_key(args.key)}))
             else:
                 result = state.status()
         if isinstance(result, ImageResult):

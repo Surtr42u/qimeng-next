@@ -15,12 +15,29 @@ class AnalyticsRepository internal constructor(private val settings: SecureSetti
         val api = api()
         val overview = async { api.getStatsOverview(range = DefaultApi.RangeGetStatsOverview.entries.first { it.value == range }).bodyOrThrow() }
         val trends = async { api.getStatsTrends(range = DefaultApi.RangeGetStatsTrends.entries.first { it.value == range }).bodyOrThrow() }
+        val authors = async { ranking("authors", range, "views", null, 3) }
+        val tags = async { ranking("tags", range, "views", null, 3) }
+        val assets = async { ranking("assets", range, "views", null, 3) }
         val o = overview.await()
         AnalyticsReport(ActivityOverview(o.range, o.inventory.let { InventoryStats(it.assets, it.images, it.videos, it.bytes, it.favorites, it.authors, it.events, it.trash) },
             ActivityTotals(o.totals.views, o.totals.plays, o.totals.seconds), o.activeDays, o.viewedAssets, o.viewedAuthors, o.viewedTags,
             o.averageViewsPerFile, o.mediaTypes.map { ActivityDimension(it.key, it.views, it.plays, it.seconds, it.assets, it.bytes) },
             o.sources.map { ActivityDimension(it.key, it.views, it.plays, it.seconds, it.assets, it.bytes) }),
-            trends.await().items.map { TrendPoint(it.label, it.views, it.plays, it.seconds) })
+            trends.await().items.map { TrendPoint(it.label, it.views, it.plays, it.seconds,
+                it.mediaTypes.map { d -> TrendDimension(d.key, d.views, d.plays, d.seconds) },
+                it.sources.map { d -> TrendDimension(d.key, d.views, d.plays, d.seconds) }) },
+            mapOf("authors" to authors.await().items, "tags" to tags.await().items, "assets" to assets.await().items))
+    }
+    suspend fun ranking(kind: String, range: String, metric: String = "views", cursor: String? = null, limit: Int = 50): Page<ActivityRank> {
+        val api = api()
+        val page = when (kind) {
+            "authors" -> api.getTopAuthors(range = DefaultApi.RangeGetTopAuthors.entries.first { it.value == range }, cursor = cursor, limit = limit).bodyOrThrow()
+            "tags" -> api.getTopTags(range = DefaultApi.RangeGetTopTags.entries.first { it.value == range }, cursor = cursor, limit = limit).bodyOrThrow()
+            "assets" -> api.getMostViewedAssets(range = DefaultApi.RangeGetMostViewedAssets.entries.first { it.value == range }, cursor = cursor, limit = limit,
+                metric = DefaultApi.MetricGetMostViewedAssets.entries.first { it.value == metric }).bodyOrThrow()
+            else -> error("未知统计分类")
+        }
+        return Page(page.items.map { ActivityRank(it.id, it.name, it.views, it.plays, it.seconds, it.assets, it.value, it.asset?.id) }, page.nextCursor)
     }
     suspend fun review(range: String): BrowsingReview {
         val value = api().getBrowsingReview(range = DefaultApi.RangeGetBrowsingReview.entries.first { it.value == range }).bodyOrThrow()

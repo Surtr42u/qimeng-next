@@ -2,7 +2,6 @@ package service
 
 import (
  "context"
- "sort"
  "time"
 
  "qimeng.local/next/server/internal/analytics"
@@ -51,7 +50,8 @@ func(s *Service)activityDimensions(ctx context.Context,day string,source bool)([
  if e=rows.Err();e!=nil{return nil,e};output:=make([]ActivityDimension,0,len(keys));for _,key:=range keys{value:=values[key];value.Key=key;output=append(output,value)};return output,nil
 }
 
-type TrendBucket struct { Start time.Time `json:"start"`;End time.Time `json:"end"`;Label string `json:"label"`;ActivityTotals }
+type TrendDimension struct{Key string `json:"key"`;ActivityTotals}
+type TrendBucket struct { Start time.Time `json:"start"`;End time.Time `json:"end"`;Label string `json:"label"`;ActivityTotals;MediaTypes []TrendDimension `json:"mediaTypes"`;Sources []TrendDimension `json:"sources"` }
 type Trends struct {Range string `json:"range"`;Granularity string `json:"granularity"`;Items []TrendBucket `json:"items"`}
 
 func bucketStart(value time.Time,granularity string)time.Time{
@@ -75,10 +75,19 @@ func(s *Service)StatsTrends(ctx context.Context,window string)(Trends,error){
  indexed:=map[string]int{}
  for current:=first;!current.After(last);current=nextBucket(current,result.Granularity){
   if len(result.Items)>=10000{return result,Fail(422,"history_range_too_large","历史跨度过大，请使用固定窗口。")}
-  key:=current.Format("2006-01-02");indexed[key]=len(result.Items);result.Items=append(result.Items,TrendBucket{Start:current,End:nextBucket(current,result.Granularity),Label:key})
+  key:=current.Format("2006-01-02");indexed[key]=len(result.Items);result.Items=append(result.Items,TrendBucket{Start:current,End:nextBucket(current,result.Granularity),Label:key,
+   MediaTypes:[]TrendDimension{{Key:"image"},{Key:"animated_image"},{Key:"video"}},Sources:[]TrendDimension{{Key:"regular"},{Key:"cos"}}})
  }
  for _,row:=range days{key:=bucketStart(row.day,result.Granularity).Format("2006-01-02");index,ok:=indexed[key];if !ok{continue};result.Items[index].Views+=row.Views;result.Items[index].Plays+=row.Plays;result.Items[index].Seconds+=row.Seconds}
- return result,nil
+ e=s.trendDimensions(ctx,dayString(start),indexed,&result);return result,e
+}
+
+func(s *Service)trendDimensions(ctx context.Context,day string,indexed map[string]int,result *Trends)error{
+ rows,e:=s.DB.DB.QueryContext(ctx,`SELECT d.day,a.media_type,lib.kind AS source,sum(d.views),sum(d.plays),sum(d.seconds) FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 JOIN libraries lib ON lib.id=a.library_id WHERE d.day>=? GROUP BY d.day,a.media_type,source`,day)
+ if e!=nil{return e};defer rows.Close()
+ add:=func(values []TrendDimension,key string,total ActivityTotals){for i:=range values{if values[i].Key==key{values[i].Views+=total.Views;values[i].Plays+=total.Plays;values[i].Seconds+=total.Seconds;return}}}
+ for rows.Next(){var text,media,source string;var total ActivityTotals;if e=rows.Scan(&text,&media,&source,&total.Views,&total.Plays,&total.Seconds);e!=nil{return e};at,err:=time.ParseInLocation("2006-01-02",text,time.Local);if err!=nil{return err};index,ok:=indexed[bucketStart(at,result.Granularity).Format("2006-01-02")];if !ok{continue};add(result.Items[index].MediaTypes,media,total);add(result.Items[index].Sources,source,total)}
+ return rows.Err()
 }
 
 type ReviewHour struct {Hour int `json:"hour"`;Views int64 `json:"views"`;Seconds int64 `json:"seconds"`;ImageSeconds int64 `json:"imageSeconds"`;AnimatedSeconds int64 `json:"animatedSeconds"`;VideoSeconds int64 `json:"videoSeconds"`}
@@ -104,13 +113,12 @@ func(s *Service)BrowsingReview(ctx context.Context,window string)(Review,error){
 }
 
 func(s *Service)interestChanges(ctx context.Context,previous,current string,total,previousTotal int64)([]InterestChange,error){
- rows,e:=s.DB.DB.QueryContext(ctx,`WITH totals AS(SELECT d.asset_id,sum(CASE WHEN d.day>=? THEN d.views ELSE 0 END) AS current,sum(CASE WHEN d.day<? THEN d.views ELSE 0 END) AS previous FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? GROUP BY d.asset_id)
- SELECT 'author',au.id,au.name,sum(t.current),sum(t.previous) FROM totals t JOIN asset_authors aa ON aa.asset_id=t.asset_id JOIN authors au ON au.id=aa.author_id GROUP BY au.id
- UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.current),sum(t.previous) FROM totals t JOIN asset_tags at ON at.asset_id=t.asset_id GROUP BY at.tag`,current,current,previous)
+ rows,e:=s.DB.DB.QueryContext(ctx,`WITH totals AS(SELECT d.asset_id,sum(CASE WHEN d.day>=? THEN d.views ELSE 0 END) AS current,sum(CASE WHEN d.day<? THEN d.views ELSE 0 END) AS previous FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? GROUP BY d.asset_id), interests AS(
+ SELECT 'author' AS kind,au.id,au.name,sum(t.current) AS current,sum(t.previous) AS previous FROM totals t JOIN asset_authors aa ON aa.asset_id=t.asset_id JOIN authors au ON au.id=aa.author_id GROUP BY au.id
+ UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.current),sum(t.previous) FROM totals t JOIN asset_tags at ON at.asset_id=t.asset_id GROUP BY at.tag), scored AS(SELECT *,100.0*current/?-100.0*previous/? AS change FROM interests)
+ SELECT kind,id,name,current,previous FROM scored WHERE change!=0 ORDER BY abs(change) DESC,kind,id LIMIT 6`,current,current,previous,total,previousTotal)
  if e!=nil{return nil,e};defer rows.Close();changes:=[]InterestChange{}
  for rows.Next(){var value InterestChange;if e=rows.Scan(&value.Kind,&value.ID,&value.Name,&value.CurrentViews,&value.PreviousViews);e!=nil{return nil,e};value.CurrentShare=float64(value.CurrentViews)/float64(total)*100;value.PreviousShare=float64(value.PreviousViews)/float64(previousTotal)*100;value.ChangePoints=value.CurrentShare-value.PreviousShare;if value.ChangePoints!=0{changes=append(changes,value)}}
  if e=rows.Err();e!=nil{return nil,e}
- abs:=func(v float64)float64{if v<0{return -v};return v}
- sort.Slice(changes,func(i,j int)bool{left,right:=abs(changes[i].ChangePoints),abs(changes[j].ChangePoints);if left==right{if changes[i].Kind==changes[j].Kind{return changes[i].ID<changes[j].ID};return changes[i].Kind<changes[j].Kind};return left>right})
- return changes[:min(6,len(changes))],nil
+ return changes,nil
 }

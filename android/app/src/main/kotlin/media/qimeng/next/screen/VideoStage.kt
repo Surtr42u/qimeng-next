@@ -54,7 +54,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
     var error by remember { mutableStateOf<String?>(null) }
     var staleContent by remember { mutableStateOf(false) }
     val player = remember(asset.id, asset.version) {
-        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient())))
+        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient(asset.target))))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(asset.contentUrl))
                 if (asset.positionVersion == asset.version) seekTo(asset.positionMs)

@@ -70,6 +70,8 @@ class RecoveryBoundaryTest {
             assertNull(other.takeRequest(150, TimeUnit.MILLISECONDS))
             assertThrows(IOException::class.java) { client.newCall(Request.Builder().url(other.url("/media")).build()).execute().close() }
             assertNull(other.takeRequest(150, TimeUnit.MILLISECONDS))
+            settings.saveSession(session.copy(instanceId = "replacement-instance"), "synthetic-replacement-token")
+            assertThrows(ApiFailure::class.java) { client.newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
             settings.clearSession()
             assertThrows(ApiFailure::class.java) { client.newCall(Request.Builder().url(server.url("/media")).build()).execute().close() }
         } finally { server.shutdown(); other.shutdown() }

@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(libs.core)
     implementation(libs.activity)
+    implementation(libs.work)
     implementation(libs.lifecycle.runtime)
     implementation(libs.lifecycle.viewmodel)
     implementation(libs.coil)

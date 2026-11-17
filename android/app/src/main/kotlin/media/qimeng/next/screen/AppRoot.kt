@@ -45,12 +45,13 @@ fun AppRoot(model: LibraryViewModel) {
     val dark = when (preferences.theme) { ThemeChoice.SYSTEM -> isSystemInDarkTheme(); ThemeChoice.LIGHT -> false; ThemeChoice.DARK -> true }
     val view = LocalView.current
     val context = LocalContext.current
+    val imageTarget = session
     SideEffect {
         (context as? Activity)?.window?.let { WindowCompat.getInsetsController(it, view).isAppearanceLightStatusBars = !dark }
     }
     val imageLoader = remember(session) {
         ImageLoader.Builder(context).components {
-            if (session != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient() }))
+            if (imageTarget != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient(imageTarget) }))
             if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
         }.build()
     }

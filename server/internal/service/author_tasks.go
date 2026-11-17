@@ -13,6 +13,7 @@ type AuthorTaskCreate struct {
  AuthorID string `json:"authorId"`
  ExpectedRevision int64 `json:"expectedRevision"`
  AllowedFields []string `json:"allowedFields"`
+ CandidateBlocks []string `json:"candidateBlocks"`
  AllowClear bool `json:"allowClear"`
  MaxUpdates int `json:"maxUpdates"`
  ExpiresInSeconds int `json:"expiresInSeconds"`
@@ -22,6 +23,7 @@ type AuthorTask struct {
  AuthorID string `json:"authorId"`
  ExpectedRevision int64 `json:"expectedRevision"`
  AllowedFields []string `json:"allowedFields"`
+ CandidateBlocks []string `json:"candidateBlocks"`
  AllowClear bool `json:"allowClear"`
  MaxUpdates int `json:"maxUpdates"`
  UsedUpdates int `json:"usedUpdates"`
@@ -38,12 +40,14 @@ func(s *Service)CreateAuthorTask(ctx context.Context,w *Write,in AuthorTaskCreat
  if e:=Authorize(w.Principal,"admin","");e!=nil{return result,e}
  author,e:=s.Author(ctx,in.AuthorID);if e!=nil{return result,e};if author.Placeholder{return result,Fail(409,"placeholder_protected","占位作者不能用于资料维护。")}
  if author.Revision!=in.ExpectedRevision{return result,Conflict(author.Revision)}
- fields,e:=cleanStrings(in.AllowedFields,4,32);if e!=nil{return result,e};if len(fields)==0{return result,Fail(400,"fields_required","至少授权一个资料字段。")}
+ fields,e:=cleanStrings(in.AllowedFields,4,32);if e!=nil{return result,e}
+ blocks,e:=cleanStrings(in.CandidateBlocks,3,32);if e!=nil{return result,e};if len(fields)+len(blocks)==0{return result,Fail(400,"fields_required","至少授权一个资料字段或候选资料块。")}
+ for _,block:=range blocks{if block!="x"&&block!="basic"&&block!="accounts"{return result,Fail(400,"invalid_blocks","候选资料块无效。")}}
  for _,field:=range fields{switch field{case "name","biography","homepage","aliases":default:return result,Fail(400,"invalid_fields","不支持的资料字段。")}}
  if in.MaxUpdates==0{in.MaxUpdates=1};if in.ExpiresInSeconds==0{in.ExpiresInSeconds=3600}
  if in.MaxUpdates<1||in.MaxUpdates>10||in.ExpiresInSeconds<60||in.ExpiresInSeconds>86400{return result,Fail(400,"invalid_budget","维护次数或有效期超出允许范围。")}
  now:=time.Now().UTC();result=AuthorTask{ID:w.ID("author-task"),AuthorID:author.ID,ExpectedRevision:author.Revision,
-  AllowedFields:fields,AllowClear:in.AllowClear,MaxUpdates:in.MaxUpdates,State:"authorized",CreatedAt:now,ExpiresAt:now.Add(time.Duration(in.ExpiresInSeconds)*time.Second)}
+  AllowedFields:fields,CandidateBlocks:blocks,AllowClear:in.AllowClear,MaxUpdates:in.MaxUpdates,State:"authorized",CreatedAt:now,ExpiresAt:now.Add(time.Duration(in.ExpiresInSeconds)*time.Second)}
  raw,e:=store.Encode(result);if e!=nil{return result,e};q,e:=w.Q();if e!=nil{return result,e}
  _,e=q.ExecContext(ctx,"INSERT INTO author_tasks VALUES(?,?,?,?,?)",result.ID,result.AuthorID,result.State,result.ExpiresAt.Format(time.RFC3339Nano),raw);return result,e
 }
@@ -51,8 +55,8 @@ func(s *Service)CreateAuthorTask(ctx context.Context,w *Write,in AuthorTaskCreat
 func(s *Service)AuthorTaskContext(ctx context.Context,p model.Principal,id string)(map[string]any,error){
  if !p.Has("admin")&&p.AuthorTaskID!=id{return nil,Fail(403,"task_scope_denied","凭据不属于此资料维护任务。")}
  task,e:=s.authorTask(ctx,id);if e!=nil{return nil,e};author,e:=s.Author(ctx,task.AuthorID);if e!=nil{return nil,e}
- actions:=[]string{};if task.State=="authorized"&&task.ExpiresAt.After(time.Now())&&task.ExpectedRevision==author.Revision{actions=append(actions,"author.profile.update")}
- return map[string]any{"task":task,"author":author,"nextActions":actions},nil
+ actions:=[]string{};if task.State=="authorized"&&task.ExpiresAt.After(time.Now())&&task.ExpectedRevision==author.Revision{if len(task.AllowedFields)>0{actions=append(actions,"author.profile.update")};if len(task.CandidateBlocks)>0{actions=append(actions,"author.profile.candidate.submit")}}
+ return map[string]any{"task":effectiveAuthorTask(task,time.Now()),"author":author,"nextActions":actions},nil
 }
 
 func(s *Service)CancelAuthorTask(ctx context.Context,w *Write,id string)error{
@@ -81,4 +85,21 @@ func(s *Service)authorizeAuthorUpdate(ctx context.Context,p model.Principal,id s
 func finishAuthorTask(ctx context.Context,q store.Querier,task *AuthorTask,revision int64)error{
  if task==nil{return nil};task.UsedUpdates++;task.ExpectedRevision=revision;if task.UsedUpdates>=task.MaxUpdates{task.State="completed"}
  raw,e:=store.Encode(task);if e!=nil{return e};_,e=q.ExecContext(ctx,"UPDATE author_tasks SET state=?,data=? WHERE id=?",task.State,raw,task.ID);return e
+}
+
+// AuthorCandidateGrant binds candidate submission to an explicitly delegated
+// author and block. The block's independent revision is checked by its use case.
+func(s *Service)AuthorCandidateGrant(ctx context.Context,p model.Principal,authorID,block string)(*AuthorTask,error){
+ if p.Has("admin"){return nil,nil}
+ if !p.Has("research")||p.AuthorTaskID==""{return nil,Fail(403,"scope_denied","缺少作者候选研究授权。")}
+ task,e:=s.authorTask(ctx,p.AuthorTaskID);if e!=nil{return nil,e}
+ author,e:=s.Author(ctx,authorID);if e!=nil{return nil,e}
+ if task.AuthorID!=authorID||task.ExpectedRevision!=author.Revision||task.State!="authorized"||!task.ExpiresAt.After(time.Now())||task.UsedUpdates>=task.MaxUpdates{return nil,Fail(409,"author_task_stale","作者候选任务已失效。")}
+ for _,allowed:=range task.CandidateBlocks{if allowed==block{return &task,nil}}
+ return nil,Fail(403,"block_scope_denied","任务未授权研究此资料块。")
+}
+
+// ConsumeAuthorCandidate must use the same transaction as candidate persistence.
+func ConsumeAuthorCandidate(ctx context.Context,q store.Querier,task *AuthorTask)error{
+ if task==nil{return nil};return finishAuthorTask(ctx,q,task,task.ExpectedRevision)
 }

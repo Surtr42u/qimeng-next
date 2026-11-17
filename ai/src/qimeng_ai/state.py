@@ -37,7 +37,8 @@ class State:
         if config.state_dir.is_symlink():
             raise ToolError("STATE_INVALID", "执行状态目录不能是符号链接")
         self.namespace = hashlib.sha256(encode([config.origin, instance_id,
-            hashlib.sha256(config.token.encode()).hexdigest(), contract_sha]).encode()).hexdigest()
+            hashlib.sha256(config.token.encode()).hexdigest()]).encode()).hexdigest()
+        self.contract_sha = contract_sha
         self.path = config.state_dir / (self.namespace + ".sqlite3")
         if self.path.is_symlink():
             raise ToolError("STATE_INVALID", "执行状态文件不能是符号链接")
@@ -48,10 +49,18 @@ class State:
               CREATE TABLE IF NOT EXISTS requests (task TEXT NOT NULL, request TEXT NOT NULL,
                 digest TEXT NOT NULL, repeats INTEGER NOT NULL, PRIMARY KEY(task,request));
               CREATE TABLE IF NOT EXISTS pending (task TEXT NOT NULL, key TEXT NOT NULL,
-                tool TEXT NOT NULL, created REAL NOT NULL, PRIMARY KEY(task,key));
+                tool TEXT NOT NULL, created REAL NOT NULL, request TEXT NOT NULL, PRIMARY KEY(task,key));
               CREATE TABLE IF NOT EXISTS results (id TEXT PRIMARY KEY, created REAL NOT NULL,
                 value TEXT NOT NULL, bytes INTEGER NOT NULL, digest TEXT NOT NULL, kind TEXT NOT NULL);
             """)
+            # Local execution metadata is versioned independently of generated API schemas.
+            # An SDK update must not grant a fresh task budget or erase unresolved writes.
+            pending_columns = {row[1] for row in db.execute("PRAGMA table_info(pending)")}
+            if "request" not in pending_columns:
+                db.execute("ALTER TABLE pending ADD COLUMN request TEXT NOT NULL DEFAULT ''")
+            result_columns = {row[1] for row in db.execute("PRAGMA table_info(results)")}
+            if "kind" not in result_columns:
+                db.execute("ALTER TABLE results ADD COLUMN kind TEXT NOT NULL DEFAULT 'result'")
             db.execute("INSERT OR IGNORE INTO tasks VALUES(?,?,0,?,?)",
                        (config.task_id, time.time(), config.max_calls, config.max_seconds))
 
@@ -84,11 +93,12 @@ class State:
             previous = db.execute("SELECT repeats FROM requests WHERE task=? AND request=?", (task, request)).fetchone()
             if previous and previous[0] >= self.config.max_unchanged:
                 raise ToolError("NO_PROGRESS", "相同请求反复没有新结果，停止重复调用")
-            if key and db.execute("SELECT 1 FROM pending WHERE task=? LIMIT 1", (task,)).fetchone():
-                raise ToolError("WRITE_UNRESOLVED", "存在未决写入，先按原操作键回读并由可信端核销")
+            pending = db.execute("SELECT key,tool,request FROM pending WHERE task=? LIMIT 1", (task,)).fetchone() if key else None
+            if pending and (pending["key"] != key or pending["tool"] != tool or pending["request"] != request):
+                raise ToolError("WRITE_UNRESOLVED", "存在未决写入；只允许以完全相同参数和操作键恢复，或由可信端核销")
             db.execute("UPDATE tasks SET calls=calls+1 WHERE id=?", (task,))
-            if key:
-                db.execute("INSERT INTO pending VALUES(?,?,?,?)", (task, key, tool, time.time()))
+            if key and pending is None:
+                db.execute("INSERT INTO pending VALUES(?,?,?,?,?)", (task, key, tool, time.time(), request))
         return request
 
     def finish(self, request: str, value, key: str | None, *, uncertain: bool = False) -> None:
@@ -110,8 +120,15 @@ class State:
                     "seconds": round(time.time() - row["started"]), "maxSeconds": row["max_seconds"],
                     "pending": [dict(item) for item in pending]}
 
+    def receipt_key(self, key: str) -> str:
+        with self.transaction() as db:
+            row = db.execute("SELECT tool FROM pending WHERE task=? AND key=?", (self.config.task_id, key)).fetchone()
+        if row is None:
+            raise ToolError("PENDING_NOT_FOUND", "没有该任务的未决操作")
+        return key + ":complete" if row["tool"] == "upload.file" else key
+
     def reconcile(self, key: str, authoritative: dict) -> dict:
-        if authoritative.get("state") != "committed" or authoritative.get("idempotencyKey") != key:
+        if authoritative.get("state") != "committed" or authoritative.get("idempotencyKey") != self.receipt_key(key):
             raise ToolError("STILL_UNCERTAIN", "服务没有可核验终态，保留未决写入")
         with self.transaction() as db:
             db.execute("DELETE FROM pending WHERE task=? AND key=?", (self.config.task_id, key))
@@ -132,22 +149,26 @@ class State:
         with self.transaction() as db:
             db.execute("DELETE FROM results WHERE created<?", (time.time() - RESULT_TTL,))
             digest = hashlib.sha256(data.encode()).hexdigest()
-            existing = db.execute("SELECT id FROM results WHERE kind=? AND digest=?", (kind, digest)).fetchone()
+            # Presentation results use a contract-specific kind; local immutable file/image
+            # references can survive an SDK refresh, while old API result shapes cannot.
+            stored_kind = kind + ":" + self.contract_sha if kind == "result" else kind
+            existing = db.execute("SELECT id FROM results WHERE kind=? AND digest=?", (stored_kind, digest)).fetchone()
             if existing is not None:
                 return existing[0]
             used = db.execute("SELECT coalesce(sum(bytes),0) FROM results").fetchone()[0]
-            count = db.execute("SELECT count(*) FROM results WHERE kind=?", (kind,)).fetchone()[0]
+            count = db.execute("SELECT count(*) FROM results WHERE kind=?", (stored_kind,)).fetchone()[0]
             if used + size > MAX_CACHE_BYTES or count >= {"file": 10000, "image": 512}.get(kind, 128):
                 raise ToolError("RESULT_CACHE_FULL", "结果缓存已满，保留已有引用；等待过期或由可信端清理")
             reference = "r_" + secrets.token_hex(16)
             db.execute("INSERT INTO results VALUES(?,?,?,?,?,?)", (reference, time.time(), data, size,
-                       digest, kind))
+                       digest, stored_kind))
         return reference
 
     def read(self, reference: str, *, kind: str = "result"):
+        stored_kind = kind + ":" + self.contract_sha if kind == "result" else kind
         with self.transaction() as db:
             row = db.execute("SELECT value,digest FROM results WHERE id=? AND created>=? AND kind=?",
-                             (reference, time.time() - RESULT_TTL, kind)).fetchone()
+                             (reference, time.time() - RESULT_TTL, stored_kind)).fetchone()
         if row is None:
             raise ToolError("RESULT_REF_INVALID", "引用不存在、已过期或不属于当前实例/凭据/契约")
         if hashlib.sha256(row[0].encode()).hexdigest() != row[1]:

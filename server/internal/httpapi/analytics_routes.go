@@ -19,6 +19,9 @@ func(a *API)analyticsRoutes(){
  a.get("/stats/overview",func(r *http.Request)(any,error){return a.s.StatsOverview(r.Context(),statsRange(r))})
  a.get("/stats/trends",func(r *http.Request)(any,error){return a.s.StatsTrends(r.Context(),statsRange(r))})
  a.get("/stats/review",func(r *http.Request)(any,error){return a.s.BrowsingReview(r.Context(),statsRange(r))})
+ for path,kind:=range map[string]string{"/stats/top-authors":"author","/stats/top-tags":"tag","/stats/most-viewed":"asset"}{
+  a.get(path,func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};q:=r.URL.Query();return a.s.ActivityRanking(r.Context(),kind,statsRange(r),q.Get("metric"),q.Get("cursor"),n)})
+ }
 }
 
 func statsRange(r *http.Request)string{value:=r.URL.Query().Get("range");if value==""{return "7d"};return value}

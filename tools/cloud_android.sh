@@ -11,7 +11,17 @@ export QIMENG_ADMIN_TOKEN='synthetic-cloud-only-owner-credential-18481'
 chmod +x "$RUNNER_TEMP/server-artifact/build/qimeng-next"
 "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-android.log" 2>&1 &
 service_pid=$!
-trap 'kill "$service_pid" 2>/dev/null || true; wait "$service_pid" 2>/dev/null || true' EXIT
+finish() {
+  result=$?
+  trap - EXIT
+  mkdir -p android/build/cloud-screenshots
+  adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next.ui.test/files android/build/cloud-screenshots/core-ui > /dev/null 2>&1 || true
+  adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next/files/screenshots android/build/cloud-screenshots/app > /dev/null 2>&1 || true
+  kill "$service_pid" 2>/dev/null || true
+  wait "$service_pid" 2>/dev/null || true
+  exit "$result"
+}
+trap finish EXIT
 ready=false
 for attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:18481/healthz > /dev/null; then ready=true; break; fi
@@ -27,5 +37,3 @@ gradle --no-daemon -p android :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace
-mkdir -p android/build/cloud-screenshots
-adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next/files/screenshots android/build/cloud-screenshots/

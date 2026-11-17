@@ -576,6 +576,16 @@ paths:
         '200': {description: Deterministic personalized page, content: {application/json: {schema: {$ref: '#/components/schemas/RecommendationPage'}}}}
         default: {$ref: '#/components/responses/Error'}
   /author-tasks:
+    get:
+      operationId: listAuthorTasks
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: authorId, in: query, schema: {type: string}}
+        - {name: state, in: query, schema: {type: string, enum: [authorized, completed, cancelled, expired]}}
+      responses:
+        '200': {description: Scoped author maintenance tasks, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorTaskPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createAuthorTask
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
@@ -641,6 +651,31 @@ paths:
       responses:
         '200': {description: Browsing review and previous-window comparison, content: {application/json: {schema: {$ref: '#/components/schemas/BrowsingReview'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /stats/top-authors:
+    get:
+      operationId: getTopAuthors
+      parameters: [{$ref: '#/components/parameters/StatsRange'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Existing-asset author activity ordered by views then stable identity, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityRankingPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /stats/top-tags:
+    get:
+      operationId: getTopTags
+      parameters: [{$ref: '#/components/parameters/StatsRange'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Existing-asset tag activity ordered by views then name, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityRankingPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /stats/most-viewed:
+    get:
+      operationId: getMostViewedAssets
+      parameters:
+        - {$ref: '#/components/parameters/StatsRange'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: metric, in: query, schema: {type: string, enum: [views, seconds], default: views}}
+      responses:
+        '200': {description: Existing-asset browsing or dwell ranking, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityRankingPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer}
@@ -658,13 +693,40 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    ActivityRankingItem:
+      type: object
+      required: [id, name, views, plays, seconds, assets, value]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        views: {type: integer, format: int64}
+        plays: {type: integer, format: int64}
+        seconds: {type: integer, format: int64}
+        assets: {type: integer, format: int64}
+        value: {type: integer, format: int64}
+        asset: {$ref: '#/components/schemas/Asset'}
+    ActivityRankingPage:
+      type: object
+      required: [items, range, metric]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ActivityRankingItem'}}
+        nextCursor: {type: string}
+        range: {type: string}
+        metric: {type: string, enum: [views, seconds]}
+    AuthorTaskPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AuthorTask'}}
+        nextCursor: {type: string}
     AuthorTaskCreate:
       type: object
       required: [authorId, expectedRevision, allowedFields, allowClear]
       properties:
         authorId: {type: string}
         expectedRevision: {type: integer, format: int64}
-        allowedFields: {type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: {type: string, enum: [name, biography, homepage, aliases]}}
+        allowedFields: {type: array, maxItems: 4, uniqueItems: true, items: {type: string, enum: [name, biography, homepage, aliases]}}
+        candidateBlocks: {type: array, maxItems: 3, uniqueItems: true, items: {type: string, enum: [x, basic, accounts]}}
         allowClear: {type: boolean}
         maxUpdates: {type: integer, minimum: 1, maximum: 10, default: 1}
         expiresInSeconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
@@ -676,10 +738,11 @@ components:
         authorId: {type: string}
         expectedRevision: {type: integer, format: int64}
         allowedFields: {type: array, items: {type: string}}
+        candidateBlocks: {type: array, items: {type: string, enum: [x, basic, accounts]}}
         allowClear: {type: boolean}
         maxUpdates: {type: integer}
         usedUpdates: {type: integer}
-        state: {type: string, enum: [authorized, completed, cancelled]}
+        state: {type: string, enum: [authorized, completed, cancelled, expired]}
         expiresAt: {type: string, format: date-time}
         createdAt: {type: string, format: date-time}
     AuthorTaskContext:
@@ -761,11 +824,21 @@ components:
         sources: {type: array, items: {$ref: '#/components/schemas/ActivityDimension'}}
     TrendBucket:
       type: object
-      required: [start, end, label, views, plays, seconds]
+      required: [start, end, label, views, plays, seconds, mediaTypes, sources]
       properties:
         start: {type: string, format: date-time}
         end: {type: string, format: date-time}
         label: {type: string}
+        views: {type: integer, format: int64}
+        plays: {type: integer, format: int64}
+        seconds: {type: integer, format: int64}
+        mediaTypes: {type: array, items: {$ref: '#/components/schemas/TrendDimension'}}
+        sources: {type: array, items: {$ref: '#/components/schemas/TrendDimension'}}
+    TrendDimension:
+      type: object
+      required: [key, views, plays, seconds]
+      properties:
+        key: {type: string}
         views: {type: integer, format: int64}
         plays: {type: integer, format: int64}
         seconds: {type: integer, format: int64}

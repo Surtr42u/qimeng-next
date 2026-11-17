@@ -182,7 +182,7 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
         }, contentAlignment = Alignment.Center) {
         AsyncImage(model = remember(asset.contentUrl, asset.version, retry) {
             ImageRequest.Builder(context).data(asset.contentUrl).size(Size.ORIGINAL)
-                .diskCachePolicy(CachePolicy.DISABLED).memoryCacheKey("${asset.contentUrl}:${asset.version}").build()
+                .diskCachePolicy(CachePolicy.DISABLED).memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:original").build()
         }, imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit,
             onError = { error = true }, onSuccess = { error = false },
             modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y })

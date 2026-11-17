@@ -21,9 +21,11 @@ import (
 var migrations embed.FS
 
 type Store struct { DB *sql.DB }
+// FileURI follows SQLite's Windows drive-letter rule (/C:/...) and escapes
+// literal query/fragment characters before callers append connection options.
+func FileURI(filename string)string{p:=filepath.ToSlash(filename);if len(p)>=2&&p[1]==':'{p="/"+p};return (&url.URL{Scheme:"file",Path:p,OmitHost:true}).String()}
 func Open(path string) (*Store,error) {
- u := &url.URL{Scheme:"file",Path:filepath.ToSlash(path)}
- db,err := sql.Open("sqlite",u.String()+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
+ db,err := sql.Open("sqlite",FileURI(path)+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
  if err != nil { return nil,err }; db.SetMaxOpenConns(1)
  fail:=func(e error)(*Store,error){ db.Close(); return nil,e }
  if err=db.Ping(); err!=nil{return fail(err)}

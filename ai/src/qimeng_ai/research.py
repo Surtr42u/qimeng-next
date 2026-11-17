@@ -82,9 +82,16 @@ def probe(runtime, arguments: dict) -> dict:
             snapshot = Path(temporary) / ("input" + extension)
             digest = hashlib.sha256()
             with snapshot.open("xb") as output:
-                for chunk in iter(lambda: source.read(CHUNK_BYTES), b""):
+                remaining = info.st_size
+                while remaining:
+                    chunk = source.read(min(CHUNK_BYTES, remaining))
+                    if not chunk:
+                        raise ToolError("FILE_REF_STALE", "探测快照期间来源变短")
                     digest.update(chunk)
                     output.write(chunk)
+                    remaining -= len(chunk)
+                if source.read(1):
+                    raise ToolError("FILE_REF_STALE", "探测快照期间来源变长")
             if identity(os.fstat(source.fileno())) != identity(info):
                 raise ToolError("FILE_REF_STALE", "探测快照期间来源变化")
             source_hash = digest.hexdigest()

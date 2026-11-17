@@ -11,6 +11,7 @@ import {
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { dateTime, bytes } from "../lib/format";
 import { Icon } from "../components/Icon";
+import { TaskNavigation } from './AuthorTaskPages';
 
 const batchLabels: Record<string, string> = {
   receiving: "正在接收",
@@ -50,7 +51,8 @@ export function TasksPage() {
           </button>
         }
       />
-      <label className="compact-field">
+      <TaskNavigation />
+      <label className="compact-field section-space">
         筛选已加载任务
         <select
           value={filter}

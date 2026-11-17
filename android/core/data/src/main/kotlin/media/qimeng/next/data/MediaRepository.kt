@@ -229,7 +229,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return InventoryStats(value.assets, value.images, value.videos, value.bytes, value.favorites, value.authors, value.events, value.trash)
     }
 
-    fun mediaClient() = provider.client(target())
+    fun mediaClient(target: Session) = provider.client(target)
 }
 
 private fun ApiAsset.toModel(target: Session): Asset {

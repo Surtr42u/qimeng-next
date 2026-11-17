@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useStartScan } from '../data/maintenance';
 import {
   useLibraries,
   useCreateLibrary,
@@ -130,6 +131,9 @@ export function LibrariesPage() {
 }
 
 function LibraryCard({ library }: { library: Schema<"Library"> }) {
+  const navigate = useNavigate();
+  const scan = useStartScan();
+  const scanAttempt = useRef({ revision: library.revision, key: newId() });
   const update = useUpdateLibrary();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(library.name);
@@ -225,6 +229,11 @@ function LibraryCard({ library }: { library: Schema<"Library"> }) {
           </button>
         </form>
       )}
+      <div className="actions section-space"><button className="button button--small" disabled={!library.enabled || scan.isPending || editing} onClick={() => {
+        if (scanAttempt.current.revision !== library.revision) scanAttempt.current = { revision: library.revision, key: newId() };
+        scan.mutate({ id: library.id, revision: library.revision, key: scanAttempt.current.key }, { onSuccess: job => navigate(`/manage/scans/${encodeURIComponent(job.id)}`) });
+      }}>{scan.isPending ? '正在提交扫描…' : scan.isError ? '重试提交扫描' : '扫描已有文件'}</button></div>
+      <ErrorNotice error={scan.error} />
       <ErrorNotice error={update.error} />
       {confirmation && (
         <ConfirmDialog

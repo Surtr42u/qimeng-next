@@ -138,8 +138,15 @@ def upload(runtime, arguments: dict) -> dict:
     operation = arguments["operationId"]
     with open_reference(runtime, arguments["fileRef"]) as (source, before):
         digest = hashlib.sha256()
-        for chunk in iter(lambda: source.read(CHUNK_BYTES), b""):
+        remaining = before.st_size
+        while remaining:
+            chunk = source.read(min(CHUNK_BYTES, remaining))
+            if not chunk:
+                raise ToolError("FILE_REF_STALE", "哈希过程中来源变短，未上传")
             digest.update(chunk)
+            remaining -= len(chunk)
+        if source.read(1):
+            raise ToolError("FILE_REF_STALE", "哈希过程中来源变长，未上传")
         expected_hash = digest.hexdigest()
         if identity(os.fstat(source.fileno())) != identity(before):
             raise ToolError("FILE_REF_STALE", "哈希过程中来源变化，未上传")
@@ -147,8 +154,20 @@ def upload(runtime, arguments: dict) -> dict:
                 if key in arguments}
         body.update(size=before.st_size, mimeType=mimetypes.guess_type(arguments["fileName"])[0] or "application/octet-stream",
                     sourceMtime=datetime.fromtimestamp(before.st_mtime, timezone.utc).isoformat(), expectedHash=expected_hash)
+        record = runtime.state.read("r_" + arguments["fileRef"][2:], kind="file")
+        body.update(originalFileName=Path(record["relative"]).name, sourceRelativePath=record["relative"])
         created = runtime.transport.call("createUpload", {"body": body, "Idempotency-Key": operation + ":prepare"})
-        upload_id = created["id"]
+        try:
+            return _resume_upload(runtime, arguments, source, before, expected_hash, created["id"])
+        except ToolError as exc:
+            # Even a failed read after create can leave a resumable server-side upload.
+            # Preserve the outer operation until the original transfer is resumed or
+            # its completion receipt is verified; never infer rollback from a GET error.
+            raise ToolError(exc.code, exc.message, status=exc.status, details=exc.details, uncertain=True) from None
+
+
+def _resume_upload(runtime, arguments, source, before, expected_hash, upload_id):
+        operation = arguments["operationId"]
         current = runtime.transport.call("getUpload", {"id": upload_id})
         if current["size"] != before.st_size:
             raise ToolError("UPLOAD_CONFLICT", "原上传大小与当前来源不一致", uncertain=True)
