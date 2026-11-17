@@ -27,6 +27,8 @@ type Asset struct {
  Hash string `json:"hash"`
  Revision int64 `json:"revision"`
  TagsRevision int64 `json:"tagsRevision"`
+ TagSetUpdatedAt *time.Time `json:"tagSetUpdatedAt,omitempty"`
+ TagSetSource string `json:"tagSetSource,omitempty"`
  ContentVersion int64 `json:"contentVersion"`
  AuthorID string `json:"authorId"`
  AuthorIDs []string `json:"authorIds"`
@@ -37,6 +39,7 @@ type Asset struct {
  Page int `json:"page,omitempty"`
  Tags []string `json:"tags"`
  Favorite bool `json:"favorite"`
+ FavoriteUpdatedAt *time.Time `json:"favoriteUpdatedAt,omitempty"`
  Liked bool `json:"liked"`
  LikeCount int64 `json:"likeCount"`
  Note string `json:"note"`
@@ -72,6 +75,7 @@ type Author struct {
  Revision int64 `json:"revision"`
  Placeholder bool `json:"placeholder"`
  Following bool `json:"following"`
+ FollowingUpdatedAt *time.Time `json:"followingUpdatedAt,omitempty"`
  FieldStatus map[string]string `json:"fieldStatus"`
  CreatedAt time.Time `json:"createdAt"`
  UpdatedAt time.Time `json:"updatedAt"`

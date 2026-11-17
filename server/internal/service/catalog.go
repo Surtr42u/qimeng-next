@@ -68,10 +68,10 @@ func(s *Service)UpdateTags(ctx context.Context,w *Write,id string,revision int64
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};if a.TagsRevision!=revision{return a,Conflict(a.TagsRevision)}
  a.Tags,e=cleanStrings(tags,100,100);if e!=nil{return a,e}
  for _,tag:=range a.Tags{var deleted int;e=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE((SELECT deleted FROM tags WHERE name=?),0)",tag).Scan(&deleted);if e!=nil{return a,e};if deleted!=0{return a,Fail(409,"tag_deleted","标签已被删除，请刷新词表；重新创建须使用明确的新建标签操作。")}}
- a.TagsRevision++;a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e};return a,store.SaveAsset(ctx,q,a)
+ a.TagsRevision++;a.Revision++;a.UpdatedAt=time.Now().UTC();a.TagSetUpdatedAt=&a.UpdatedAt;a.TagSetSource="human";q,e:=w.Q();if e!=nil{return a,e};return a,store.SaveAsset(ctx,q,a)
 }
 func(s *Service)Reaction(ctx context.Context,w *Write,id string,favorite,liked bool)(model.Asset,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};a.Favorite=favorite;a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e}
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};now:=time.Now().UTC();if a.Favorite!=favorite{a.FavoriteUpdatedAt=&now};a.Favorite=favorite;a.Revision++;a.UpdatedAt=now;q,e:=w.Q();if e!=nil{return a,e}
  if liked{r,e:=q.ExecContext(ctx,"INSERT OR IGNORE INTO likes(asset_id,day,created_at) VALUES(?,?,?)",a.ID,time.Now().Format("2006-01-02"),time.Now().UTC().Format(time.RFC3339Nano));if e!=nil{return a,e};n,e:=r.RowsAffected();if e!=nil{return a,e};a.LikeCount+=n;a.Liked=true}
  return a,store.SaveAsset(ctx,q,a)
 }
@@ -85,7 +85,7 @@ func(s *Service)CreateAuthor(ctx context.Context,w *Write,in AuthorInput)(model.
  if in.Kind==""{in.Kind="regular"};if in.Kind!="regular"&&in.Kind!="cos"{return model.Author{},Fail(400,"invalid_author_kind","作者分区无效。")}
  in.Name=strings.TrimSpace(in.Name);if in.Name==""||len(in.Name)>200||len(in.Biography)>20000||!validURL(in.Homepage)||len(in.Homepage)>2000{return model.Author{},Fail(400,"invalid_author","作者名称或资料无效。")}
  if in.Aliases==nil{in.Aliases=[]string{}};aliases,e:=cleanStrings(in.Aliases,100,200);if e!=nil{return model.Author{},e}
- var exists int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM authors WHERE name=? AND json_extract(data,'$.kind')=?",in.Name,in.Kind).Scan(&exists);e!=nil{return model.Author{},e};if exists>0{return model.Author{},Fail(409,"ambiguous_author","已存在同名作者，请核对稳定身份后选择，不自动创建或取首条。")}
+ var exists int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM authors WHERE name=? AND (json_extract(data,'$.kind')=? OR id='unknown')",in.Name,in.Kind).Scan(&exists);e!=nil{return model.Author{},e};if exists>0{return model.Author{},Fail(409,"ambiguous_author","已存在同名作者或受保护的未知占位，请选择稳定身份，不自动创建。")}
  if !w.Principal.Has("admin"){
   var available,created int
   if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM uploads WHERE batch_id=? AND state='staged'",in.BatchID).Scan(&available);e!=nil{return model.Author{},e}
@@ -99,10 +99,10 @@ func(s *Service)CreateAuthor(ctx context.Context,w *Write,in AuthorInput)(model.
 type AuthorUpdate struct{ExpectedRevision int64 `json:"expectedRevision"`;Name,Biography,Homepage *string;Aliases *[]string;Following *bool}
 func(s *Service)UpdateAuthor(ctx context.Context,w *Write,id string,in AuthorUpdate)(model.Author,error){
  task,e:=s.authorizeAuthorUpdate(ctx,w.Principal,id,in);if e!=nil{return model.Author{},e};a,e:=s.Author(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)};if a.Placeholder{return a,Fail(409,"placeholder_protected","未知作者占位不能改为真实作者。请修改媒体关联。")}
- if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>200{return a,Fail(400,"invalid_author","作者名称无效。")};a.Name=v}
+ if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>200{return a,Fail(400,"invalid_author","作者名称无效。")};var exists int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM authors WHERE name=? AND id!=? AND (json_extract(data,'$.kind')=? OR id='unknown')",v,a.ID,a.Kind).Scan(&exists);e!=nil{return a,e};if exists>0{return a,Fail(409,"ambiguous_author","名称与现有作者或未知占位冲突，请保留稳定身份。")};a.Name=v}
  if in.Biography!=nil{if len(*in.Biography)>20000{return a,Fail(400,"invalid_author","简介过长。")};a.Biography=*in.Biography;a.FieldStatus["biography"]="confirmed"}
  if in.Homepage!=nil{if !validURL(*in.Homepage)||len(*in.Homepage)>2000{return a,Fail(400,"invalid_author","主页地址无效。")};a.Homepage=*in.Homepage;a.FieldStatus["homepage"]="confirmed"}
- if in.Aliases!=nil{a.Aliases,e=cleanStrings(*in.Aliases,100,200);if e!=nil{return a,e}};if in.Following!=nil{a.Following=*in.Following}
+ if in.Aliases!=nil{a.Aliases,e=cleanStrings(*in.Aliases,100,200);if e!=nil{return a,e}};if in.Following!=nil{now:=time.Now().UTC();a.FollowingUpdatedAt=&now;a.Following=*in.Following}
  if task!=nil{if in.Biography!=nil{a.FieldStatus["biography"]="candidate"};if in.Homepage!=nil{a.FieldStatus["homepage"]="candidate"}}
  a.Revision++;a.UpdatedAt=time.Now().UTC();raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e};if _,e=q.ExecContext(ctx,"UPDATE authors SET name=?,following=?,data=? WHERE id=?",a.Name,a.Following,raw,a.ID);e!=nil{return a,e};return a,finishAuthorTask(ctx,q,task,a.Revision)
 }

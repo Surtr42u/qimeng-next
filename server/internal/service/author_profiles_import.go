@@ -140,7 +140,7 @@ func RestoreImportedAuthorProfile(ctx context.Context,q store.Querier,authorID,n
   block.AuthorID=authorID
   if block.Block=="x" && prepared.avatar!=nil {
    image:=prepared.avatar;id:=digest(image.body);source:=profileString(prepared.profile.AvatarURL)
-   block.Avatar=&ProfileAvatar{ID:id,URL:"/api/v1/profile-avatars/"+id,Origin:"import",SourceURL:source,FetchedURL:source,SourceHash:image.sourceHash,ContentHash:id,Width:image.width,Height:image.height,Bytes:len(image.body),FetchedAt:now}
+   block.Avatar=&ProfileAvatar{ID:id,URL:"/api/v1/profile-avatars/"+id,Origin:"import",SourceURL:source,FetchedURL:"",SourceHash:image.sourceHash,ContentHash:id,Width:image.width,Height:image.height,Bytes:len(image.body),FetchedAt:now}
    if _,err=q.ExecContext(ctx,"INSERT OR IGNORE INTO author_profile_avatars(id,created_at,image) VALUES(?,?,?)",id,dateKey(now),image.body);err!=nil { return result,err }
   }
   archive.Blocks=append(archive.Blocks,block)

@@ -107,9 +107,7 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
  }else if item!=nil{
   if item.ExpectedHash!=u.Hash{return model.UploadResult{},Fail(409,"plan_content_changed","计划引用的内容已改变。")};a.FileName=item.FileName;a.RelativePath=item.RelativePath;a.CollectionID=item.CollectionID;a.Page=item.Page;a.MetadataSource="ai";authors,e:=s.resolveAuthors(ctx,a.LibraryID,item.AuthorIDs);if e!=nil{return model.UploadResult{},e};setAuthors(&a,authors);if e=s.resolveTaxonomy(ctx,&a,item.SourceIDs,item.CharacterIDs);e!=nil{return model.UploadResult{},e}
  }else if u.CollectionID!=""&&kind!="video"{
-  sequence,e:=s.sequence(ctx,u.CollectionID)
-  if e!=nil{var problem *Error;if !errors.As(e,&problem)||problem.Code!="empty_group"{return model.UploadResult{},e};names,e:=s.directoryNames(ctx,u.LibraryID,u.RelativeDirectory);if e!=nil{return model.UploadResult{},e};number,width,separator:=domain.Allocate(u.Family,"image",names);a.Page=1;a.FileName=domain.WorkFilename(u.Family,separator,number,width,1,path.Ext(u.FileName));a.RelativePath=path.Join(u.RelativeDirectory,a.FileName)
-  }else{a.Page=sequence.MaxPage+1;a.FileName=domain.WorkFilename(sequence.Family,sequence.Separator,sequence.Number,sequence.Width,a.Page,path.Ext(u.FileName));a.RelativePath=path.Join(sequence.Directory,a.FileName)}
+  sequence,e:=s.appendSequence(ctx,u.CollectionID,u.RelativeDirectory,u.Family);if e!=nil{return model.UploadResult{},e};a.Page=sequence.MaxPage+1;a.FileName=domain.WorkFilename(sequence.Family,sequence.Separator,sequence.Number,sequence.Width,a.Page,path.Ext(u.FileName));a.RelativePath=path.Join(sequence.Directory,a.FileName)
  }else if u.Family!=""{
   names,e:=s.directoryNames(ctx,u.LibraryID,u.RelativeDirectory);if e!=nil{return model.UploadResult{},e};number,width,sep:=domain.Allocate(u.Family,domain.NumberClass(u.FileName),names)
   if u.CollectionID!=""{number,e=s.nextEpisode(ctx,u.CollectionID);if e!=nil{return model.UploadResult{},e};a.Page=number}

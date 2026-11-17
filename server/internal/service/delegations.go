@@ -64,11 +64,17 @@ func(s *Service)CurrentDelegation(ctx context.Context,p model.Principal)(Delegat
  if !p.Has("delegate")||p.ParentDelegationID==""{return Delegation{},Fail(403,"delegation_required","需要首次配置签发的执行器凭据。")}
  if e:=s.validateDelegation(ctx,p);e!=nil{return Delegation{},e};return s.delegation(ctx,p.ParentDelegationID)
 }
-func(s *Service)Delegations(ctx context.Context,p model.Principal)(model.Page[Delegation],error){
- if e:=Authorize(p,"admin","");e!=nil{return model.Page[Delegation]{},e}
- values,e:=store.List[Delegation](ctx,s.DB.DB,"SELECT data FROM ai_delegations ORDER BY json_extract(data,'$.createdAt') DESC,id LIMIT 200")
- now:=time.Now();for i:=range values{if values[i].State=="active"&&!values[i].ExpiresAt.After(now){values[i].State="expired"}}
- return model.Page[Delegation]{Items:values},e
+func(s *Service)Delegations(ctx context.Context,p model.Principal,state,cursor string,count int)(model.Page[Delegation],error){
+ result:=model.Page[Delegation]{Items:[]Delegation{}}
+ if e:=Authorize(p,"admin","");e!=nil{return result,e}
+ if state==""{state="active"};switch state{case "active","expired","revoked","all":default:return result,Fail(400,"invalid_state","授权状态无效。")}
+ n,e:=limited(count,50);if e!=nil{return result,e};filter:="delegations:"+state;after,e:=readSeek(cursor,filter,"created");if e!=nil{return result,e}
+ now:=time.Now().UTC()
+ values,e:=store.List[Delegation](ctx,s.DB.DB,`SELECT data FROM ai_delegations WHERE (?='all' OR CASE WHEN state='active' AND julianday(expires_at)<=julianday(?) THEN 'expired' ELSE state END=?)
+ AND (?='' OR json_extract(data,'$.createdAt')<? OR (json_extract(data,'$.createdAt')=? AND id>?)) ORDER BY json_extract(data,'$.createdAt') DESC,id LIMIT ?`,state,now.Format(time.RFC3339Nano),state,after.ID,after.Value,after.Value,after.ID,n+1);if e!=nil{return result,e}
+ if len(values)>n{values=values[:n];last:=values[n-1];result.NextCursor=makeSeek(filter,"created",last.CreatedAt.Format(time.RFC3339Nano),last.ID)}
+ for i:=range values{if values[i].State=="active"&&!values[i].ExpiresAt.After(now){values[i].State="expired"}}
+ result.Items=values;return result,nil
 }
 func(s *Service)CreateDelegation(ctx context.Context,w *Write,in DelegationPolicy)(DelegationCreated,error){
  var result DelegationCreated
@@ -85,7 +91,7 @@ func(s *Service)CreateDelegation(ctx context.Context,w *Write,in DelegationPolic
  if !in.AllAuthors&&len(in.AuthorIDs)==0&&(len(in.AllowedFields)>0||len(in.CandidateBlocks)>0){return result,Fail(400,"author_scope_required","资料维护须指定作者或明确选择全部作者。")}
  for _,id:=range in.LibraryIDs{if _,e=s.library(ctx,id);e!=nil{return result,e}}
  for _,id:=range in.AuthorIDs{a,err:=s.Author(ctx,id);if err!=nil{return result,err};if a.Placeholder{return result,Fail(409,"placeholder_protected","占位作者不能授予资料维护权限。")}}
- var count int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM ai_delegations WHERE state='active'").Scan(&count);e!=nil{return result,e};if count>=32{return result,Fail(409,"delegation_limit","有效AI授权已达到32个，请先撤销不用的授权。")}
+ var count int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM ai_delegations WHERE state='active' AND julianday(expires_at)>julianday(?)",time.Now().UTC().Format(time.RFC3339Nano)).Scan(&count);e!=nil{return result,e};if count>=32{return result,Fail(409,"delegation_limit","有效AI授权已达到32个，请先撤销不用的授权。")}
  now:=time.Now().UTC();d:=Delegation{DelegationPolicy:in,ID:ID(),State:"active",CreatedAt:now,ExpiresAt:now.AddDate(0,0,in.ValidDays)}
  p:=model.Principal{ID:d.ID,Label:in.Label,Scopes:[]string{"read","delegate"},ParentDelegationID:d.ID,Generation:1,ExpiresAt:d.ExpiresAt}
  secret:=token();raw,e:=store.Encode(d);if e!=nil{return result,e};q,e:=w.Q();if e!=nil{return result,e}

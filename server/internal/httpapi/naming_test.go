@@ -21,6 +21,8 @@ func TestNamingPreviewUsesPhysicalOccupancyAndSharedWorkAllocator(t *testing.T){
 }
 func TestOrdinaryGroupAppendAndPreviewSkipMissingPages(t *testing.T){
  f:=setup(t);r:=f.json("POST","/collections","create-image-collection",map[string]any{"libraryId":f.library,"name":"Known Group","kind":"image_set"},201);var collection model.Collection;decode(t,r,&collection)
+ r=f.json("GET","/libraries/"+f.library+"/naming/context?collectionId="+collection.ID,"",nil,200);var emptyContext service.NamingContext;decode(t,r,&emptyContext);if emptyContext.NextPage!=1||emptyContext.CurrentWorkNumber!=1{t.Fatal("empty group cannot preview its first work")}
+ r=f.json("POST","/libraries/"+f.library+"/naming/preview","",map[string]any{"intent":"append_pages","collectionId":collection.ID,"items":[]any{map[string]any{"fileName":"first.png"},map[string]any{"fileName":"second.png"}}},200);var firstPreview service.NamingPreview;decode(t,r,&firstPreview);if firstPreview.Items[0].FileName!="Known Group 1 (1).png"||firstPreview.Items[1].Page!=2{t.Fatal("empty group page preview diverged from ordinary upload")}
  assets:=[]model.Asset{};for i:=0;i<3;i++{upload,_:=f.upload("group-input-"+strconv.Itoa(i)+".png",uint8(221+i),map[string]any{"collectionId":collection.ID});assets=append(assets,*f.complete(upload).Asset)}
  if assets[0].FileName!="Known Group 1 (1).png"||assets[2].Page!=3{t.Fatal("ordinary group append did not share work number")}
  f.json("DELETE","/assets/"+assets[1].ID+"?expectedRevision="+strconv.FormatInt(assets[1].Revision,10),"trash-middle-page",struct{}{},200)

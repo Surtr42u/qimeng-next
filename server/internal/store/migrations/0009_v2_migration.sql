@@ -1,0 +1,10 @@
+CREATE TABLE migration_inputs(id TEXT PRIMARY KEY,source_id TEXT NOT NULL,sha256 TEXT NOT NULL,created_at TEXT NOT NULL,data TEXT NOT NULL,original BLOB NOT NULL,UNIQUE(source_id,sha256));
+CREATE INDEX migration_inputs_created ON migration_inputs(created_at DESC,id DESC);
+CREATE TABLE migration_plans(id TEXT PRIMARY KEY,input_id TEXT NOT NULL REFERENCES migration_inputs(id),created_at TEXT NOT NULL,data TEXT NOT NULL);
+CREATE TABLE migration_items(plan_id TEXT NOT NULL REFERENCES migration_plans(id),ordinal INTEGER NOT NULL,record_key TEXT NOT NULL,asset_id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(plan_id,ordinal),UNIQUE(plan_id,record_key));
+CREATE TABLE migration_authors(plan_id TEXT NOT NULL REFERENCES migration_plans(id),ordinal INTEGER NOT NULL,source_author_id TEXT NOT NULL,author_id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(plan_id,ordinal),UNIQUE(plan_id,source_author_id));
+CREATE TABLE migration_media_aliases(source_id TEXT NOT NULL,source_asset_id TEXT NOT NULL,asset_id TEXT NOT NULL,PRIMARY KEY(source_id,source_asset_id));
+CREATE TABLE migration_author_aliases(source_id TEXT NOT NULL,source_author_id TEXT NOT NULL,author_id TEXT NOT NULL,PRIMARY KEY(source_id,source_author_id));
+CREATE TABLE migration_event_origins(event_id TEXT PRIMARY KEY,source_id TEXT NOT NULL,original TEXT NOT NULL);
+CREATE TABLE migration_relation_origins(input_id TEXT NOT NULL,kind TEXT NOT NULL,identity TEXT NOT NULL,original TEXT NOT NULL,PRIMARY KEY(input_id,kind,identity));
+CREATE TABLE author_txt_fragments(id TEXT PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,source_id TEXT NOT NULL,UNIQUE(source_id,name,sha256));

@@ -62,7 +62,7 @@ func(s *Service)scanFile(ctx context.Context,jobID,libraryID,relative string)err
  if e=store.SaveAsset(ctx,tx,a);e!=nil{return e};j.Processed++;if isNew{j.Added++}else if moved{j.Moved++}else{j.Changed++};j.UpdatedAt=now;if e=saveScan(ctx,tx,j);e!=nil{return e};return tx.Commit()
 }
 func(s *Service)scanCOSAuthor(ctx context.Context,q store.Querier,a *model.Asset)error{
- parts:=strings.Split(a.RelativePath,"/");if len(parts)<2{return nil};name:=parts[0];authors,e:=store.List[model.Author](ctx,q,"SELECT data FROM authors WHERE name=? AND json_extract(data,'$.kind')='cos' LIMIT 2",name);if e!=nil{return e};if len(authors)>1{return nil}
+ parts:=strings.Split(a.RelativePath,"/");if len(parts)<2{return nil};name:=parts[0];unknown,e:=store.Get[model.Author](ctx,q,"SELECT data FROM authors WHERE id='unknown'");if e!=nil{return e};if name==unknown.Name{if len(a.AuthorIDs)!=1||a.AuthorIDs[0]!=unknown.ID{setAuthors(a,[]model.Author{unknown});a.AuthorsRevision++};return nil};authors,e:=store.List[model.Author](ctx,q,"SELECT data FROM authors WHERE name=? AND json_extract(data,'$.kind')='cos' LIMIT 2",name);if e!=nil{return e};if len(authors)>1{return nil}
  if len(authors)==0{now:=time.Now().UTC();author:=model.Author{ID:digest([]byte("cos-directory:"+a.LibraryID+":"+name))[:32],Name:name,Kind:"cos",Aliases:[]string{},Revision:1,FieldStatus:map[string]string{"identity":"candidate","biography":"missing","homepage":"missing"},CreatedAt:now,UpdatedAt:now};raw,e:=store.Encode(author);if e!=nil{return e};if _,e=q.ExecContext(ctx,"INSERT INTO authors(id,name,data) VALUES(?,?,?)",author.ID,author.Name,raw);e!=nil{return e};authors=append(authors,author)}
  if len(a.AuthorIDs)!=1||a.AuthorIDs[0]!=authors[0].ID{setAuthors(a,authors);a.AuthorsRevision++};return nil
 }

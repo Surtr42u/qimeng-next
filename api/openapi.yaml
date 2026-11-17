@@ -606,6 +606,81 @@ paths:
       responses:
         '201': {description: Consistent database snapshot and original-version manifest; not proof of independent backup, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /migration/v2/imports:
+    get:
+      operationId: listV2Imports
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Administrator-only staged legacy v2 inputs, content: {application/json: {schema: {$ref: '#/components/schemas/V2ImportPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: stageV2Import
+      description: Administrator-only. Validate and retain the exact v2 document without changing media or metadata. Media originals must first be registered and scanned. sourceId identifies the source installation across repeated exports; appIdentifier is not an installation identity.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {name: sourceId, in: query, required: true, schema: {type: string, minLength: 8, maxLength: 128}}
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary, description: Complete UTF-8 qimeng_backup schemaVersion 2 JSON, at most 64 MiB}}}}
+      responses:
+        '201': {description: Validated immutable input; no business import yet, content: {application/json: {schema: {$ref: '#/components/schemas/V2Import'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/imports/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getV2Import
+      responses:
+        '200': {description: Input counts and digest, content: {application/json: {schema: {$ref: '#/components/schemas/V2Import'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/imports/{id}/document:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: downloadV2Import
+      responses:
+        '200': {description: Original exact source bytes, including fields not applied to Next, content: {application/json: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/imports/{id}/plans:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: prepareV2Migration
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/V2PlanCreate'}}}}
+      responses:
+        '201': {description: Read-only plan; unique media matches are proposals until this fingerprint is committed, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/plans/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getV2MigrationPlan
+      responses:
+        '200': {description: Durable plan and bounded report, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/plans/{id}/items:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listV2MigrationItems
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Every source media record has a decision; stable plan order, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationItemPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/plans/{id}/authors:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listV2MigrationAuthors
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Author identity and profile preservation decisions, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationAuthorPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /migration/v2/plans/{id}/commit:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: commitV2Migration
+      description: Administrator-only reviewed migration. Revalidates revisions and target original hashes, creates a pre-import database checkpoint, then applies metadata atomically. Never changes or deletes original media. Source settings cannot start network work or rewrite storage roots.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [fingerprint, acceptSkipped], properties: {fingerprint: {type: string}, acceptSkipped: {type: boolean, description: Explicitly accept the unmatched or conflict items listed in this plan}}}}}
+      responses:
+        '200': {description: Committed or partial migration with checkpoint and per-record report; repeat returns original plan result, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /recommendations:
     get:
       operationId: getRecommendations
@@ -722,6 +797,10 @@ paths:
   /ai/delegations:
     get:
       operationId: listAIDelegations
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: state, in: query, schema: {type: string, enum: [active, expired, revoked, all], default: active}}
       responses:
         '200': {description: Owner-managed durable AI permissions, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegationPage'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -734,6 +813,7 @@ paths:
   /ai/delegations/current:
     get:
       operationId: getCurrentAIDelegation
+      description: 全库只读查询保留；libraryIds和authorIds约束任务写入范围，不表示分库读取隔离。模型只能在明确授予的动作与预算内创建受限任务。
       responses:
         '200': {description: Effective delegation policy, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegation'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -982,8 +1062,8 @@ components:
       required: [label, libraryIds, authorIds, allAuthors, allowedFields, candidateBlocks, allowClear, canIngest, canResearch, canOrganize, maxResearchCalls, maxUpdates, maxTasksPerDay, validDays]
       properties:
         label: {type: string, minLength: 1, maxLength: 80}
-        libraryIds: {type: array, maxItems: 100, uniqueItems: true, items: {type: string}}
-        authorIds: {type: array, maxItems: 100, uniqueItems: true, items: {type: string}}
+        libraryIds: {type: array, maxItems: 100, uniqueItems: true, description: 'Permitted intake write targets; reads remain global', items: {type: string}}
+        authorIds: {type: array, maxItems: 100, uniqueItems: true, description: 'Permitted author write targets unless allAuthors; reads remain global', items: {type: string}}
         allAuthors: {type: boolean}
         allowedFields: {type: array, maxItems: 4, uniqueItems: true, items: {type: string, enum: [name, biography, homepage, aliases]}}
         candidateBlocks: {type: array, maxItems: 3, uniqueItems: true, items: {type: string, enum: [x, basic, accounts]}}
@@ -1012,6 +1092,7 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/AIDelegation'}}
+        nextCursor: {type: string}
     AIDelegationCreated:
       type: object
       required: [delegation, credential]
@@ -1311,8 +1392,8 @@ components:
         family: {type: string}
         numberClass: {type: string, enum: [image, video]}
         nextWorkNumber: {type: integer}
-        currentWorkNumber: {type: integer}
-        nextPage: {type: integer}
+        currentWorkNumber: {type: integer, description: Existing group work number, or the proposed first work number for an empty image collection; never a reservation}
+        nextPage: {type: integer, description: Maximum existing page plus one; one for an empty image collection}
         nextChapter: {type: integer}
         width: {type: integer}
         separator: {type: string}
@@ -1334,7 +1415,7 @@ components:
       type: object
       required: [intent, items]
       properties:
-        intent: {type: string, enum: [new_work, append_pages, append_drama, rename_exact]}
+        intent: {type: string, enum: [new_work, append_pages, append_drama, rename_exact], description: append_pages also previews the first work of an empty image collection using its name or the supplied family. Items retain request order; preview reserves no numbers. Ordinary uploads into one collection must complete in declared order.}
         directory: {type: string}
         family: {type: string}
         mediaType: {type: string, enum: [image, animated_image, video]}
@@ -1405,6 +1486,9 @@ components:
         hash: {type: string}
         revision: {type: integer, format: int64}
         tagsRevision: {type: integer, format: int64}
+        tagSetUpdatedAt: {type: string, format: date-time, description: Time of an explicit tag-set change; absent means unknown or never explicitly set, not the asset update time}
+        tagSetSource: {type: string, description: Provenance of the authoritative whole tag set}
+        favoriteUpdatedAt: {type: string, format: date-time, description: Last explicit favorite-state change; absent means no known local decision}
         contentVersion: {type: integer, format: int64}
         authorId: {type: string}
         authorName: {type: string}
@@ -1789,6 +1873,81 @@ components:
         snapshotHash: {type: string}
         assetCount: {type: integer}
         manifestHash: {type: string}
+    V2Import:
+      type: object
+      required: [id, sourceId, sha256, bytes, createdAt, mediaCount, authorCount, eventCount, fragmentCount, sourceHashesAvailable]
+      properties:
+        id: {type: string}
+        sourceId: {type: string}
+        sha256: {type: string}
+        bytes: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        mediaCount: {type: integer}
+        authorCount: {type: integer}
+        eventCount: {type: integer}
+        fragmentCount: {type: integer}
+        sourceHashesAvailable: {type: boolean, description: Legacy v2 carries no original SHA-256; target hash validation does not establish equality with unavailable source bytes}
+    V2ImportPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/V2Import'}}, nextCursor: {type: string}}
+    V2PlanCreate:
+      type: object
+      properties:
+        mediaMappings: {type: array, maxItems: 10000, items: {type: object, required: [recordKey, assetId], properties: {recordKey: {type: string}, assetId: {type: string, description: Empty explicitly skips this source record}}}}
+        authorMappings: {type: array, maxItems: 10000, items: {type: object, required: [sourceAuthorId, authorId], properties: {sourceAuthorId: {type: string}, authorId: {type: string, description: Existing target identity, never a display-name guess}}}}
+    V2MigrationPlan:
+      type: object
+      required: [id, importId, fingerprint, state, createdAt, mediaCount, matchedCount, skippedCount, authorCount, issueCount, issues, counts]
+      properties:
+        id: {type: string}
+        importId: {type: string}
+        fingerprint: {type: string}
+        state: {type: string, enum: [prepared, committed, partial]}
+        createdAt: {type: string, format: date-time}
+        checkpointId: {type: string}
+        mediaCount: {type: integer}
+        matchedCount: {type: integer}
+        skippedCount: {type: integer}
+        authorCount: {type: integer}
+        issueCount: {type: integer}
+        issues: {type: array, maxItems: 100, items: {type: string}}
+        counts: {type: object, additionalProperties: {type: integer, format: int64}}
+    V2MigrationItem:
+      type: object
+      required: [ordinal, recordKey, fileName, state, reason, tagAction, issues]
+      properties:
+        ordinal: {type: integer}
+        recordKey: {type: string}
+        fileName: {type: string}
+        assetId: {type: string}
+        state: {type: string, enum: [ready, skipped, conflict, applied]}
+        reason: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        expectedContentVersion: {type: integer, format: int64}
+        targetHash: {type: string}
+        tagAction: {type: string, enum: [none, keep, apply, conflict]}
+        issues: {type: array, items: {type: string}}
+    V2MigrationItemPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/V2MigrationItem'}}, nextCursor: {type: string}}
+    V2MigrationAuthor:
+      type: object
+      required: [ordinal, sourceAuthorId, name, kind, state, reason]
+      properties:
+        ordinal: {type: integer}
+        sourceAuthorId: {type: string}
+        name: {type: string}
+        kind: {type: string}
+        authorId: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        state: {type: string, enum: [existing, create, conflict, applied]}
+        reason: {type: string}
+    V2MigrationAuthorPage:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/V2MigrationAuthor'}}, nextCursor: {type: string}}
     AssetPage:
       type: object
       required: [items]

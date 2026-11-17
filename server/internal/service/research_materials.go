@@ -49,8 +49,9 @@ func(s *Service)UploadResearchMaterials(ctx context.Context,p model.Principal,id
  // A durable hard-link intent protects rename/replacement during probing without
  // copying large original videos. Interrupted snapshots are removed on next use.
  sourceID:=ID();snapshot:="libraries/"+u.LibraryID+"/.qimeng-internal/research-sources/"+sourceID+path.Ext(u.FileName)
- if _,e=cache.ExecContext(ctx,"INSERT INTO work_sources VALUES(?,?,?)",sourceID,researchProcess,snapshot);e!=nil{return result,e}
- defer func(){removeErr:=s.Root.Remove(snapshot);if errors.Is(removeErr,os.ErrNotExist){removeErr=nil};if removeErr==nil{_,removeErr=cache.ExecContext(context.Background(),"DELETE FROM work_sources WHERE id=?",sourceID)};if err==nil&&removeErr!=nil{err=Fail(500,"research_cleanup_pending","研究材料已生成，但临时引用清理待恢复。")}}()
+ activeResearchSources.Store(sourceID,struct{}{})
+ if _,e=cache.ExecContext(ctx,"INSERT INTO work_sources VALUES(?,?,?)",sourceID,researchProcess,snapshot);e!=nil{activeResearchSources.Delete(sourceID);return result,e}
+ defer func(){defer activeResearchSources.Delete(sourceID);removeErr:=s.Root.Remove(snapshot);if errors.Is(removeErr,os.ErrNotExist){removeErr=nil};if removeErr==nil{_,removeErr=cache.ExecContext(context.Background(),"DELETE FROM work_sources WHERE id=?",sourceID)};if err==nil&&removeErr!=nil{err=Fail(500,"research_cleanup_pending","研究材料已生成，但临时引用清理待恢复。")}}()
  s.mu.Lock();u,source,e:=s.researchInput(ctx,p,id,expectedHash);if e==nil{e=s.linkNoReplace(source,snapshot)};s.mu.Unlock();if e!=nil{return result,e}
  if e=s.verify(snapshot,u.Hash,u.Size);e!=nil{return result,e}
  free,e:=freeBytes(s.Config.DataDir);if e!=nil{return result,e};if free-(8<<20)<s.Config.ReserveBytes{return result,Fail(507,"research_space","研究缓存空间不足，原件保持不变。")}

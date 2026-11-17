@@ -105,6 +105,7 @@ func(a *API)routes(){
  a.scanRoutes()
  a.authorProfileRoutes()
  a.namingRoutes()
+ a.migrationRoutes()
 }
 func(a *API)uploadRoutes(){
  write[model.UploadInput](a,"POST","/uploads",true,func(r *http.Request,w *service.Write,in model.UploadInput)(any,int,error){v,e:=a.s.CreateUpload(r.Context(),w,in);return v,201,e})
