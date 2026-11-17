@@ -90,11 +90,17 @@ fun UploadScreen(model: LibraryViewModel) {
                 }
             }
         }
-        if (queue?.events?.isNotEmpty() == true) item { Text("${queue!!.events.size} 条浏览事件等待补传", style = MaterialTheme.typography.bodySmall) }
+        if (queue?.events?.isNotEmpty() == true) item {
+            ContentCard {
+                Text("${queue!!.events.size} 条浏览事件等待补传", style = MaterialTheme.typography.bodySmall)
+                queue!!.events.firstOrNull { it.failure != null }?.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = model::retryEvents) { Text("重试浏览记录补传") }
+            }
+        }
         item { Spacer(Modifier.navigationBarsPadding()) }
     }
     queue?.drafts?.find { it.id == renameId }?.let { draft ->
-        TextEditDialog("上传文件名", draft.name, busy, { renameId = null }) { model.renameDraft(draft.id, it); renameId = null }
+        TextEditDialog("上传文件名", draft.name, busy, { renameId = null }) { model.renameDraft(draft.id, it) { renameId = null } }
     }
 }
 

@@ -480,7 +480,7 @@ components:
       type: object
       required: [expectedRevision, tags]
       properties:
-        expectedRevision: {type: integer, format: int64, description: Compare Asset.tagsRevision, not the overall revision}
+        expectedRevision: {type: integer, format: int64, description: 'Compare Asset.tagsRevision, not the overall revision'}
         tags: {type: array, maxItems: 100, items: {type: string, minLength: 1, maxLength: 100}}
     ReactionUpdate:
       type: object

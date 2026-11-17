@@ -8,6 +8,9 @@ import media.qimeng.next.sdk.model.AuthorUpdate
 import media.qimeng.next.sdk.model.ReactionUpdate
 import media.qimeng.next.sdk.model.SessionCreate
 import media.qimeng.next.sdk.model.TagsUpdate
+import media.qimeng.next.sdk.model.LibraryCreate
+import media.qimeng.next.sdk.model.RevisionRequest
+import media.qimeng.next.sdk.model.MoveRequest
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 import java.util.UUID
@@ -44,6 +47,11 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun libraries(): List<Library> = provider.api(target()).listLibraries().bodyOrThrow().items.map { Library(it.id, it.name) }
+    suspend fun createLibrary(name: String, cos: Boolean): Library {
+        val value = provider.api(target()).createLibrary(idempotencyKey = UUID.randomUUID().toString(),
+            libraryCreate = LibraryCreate(name = name, kind = LibraryCreate.Kind.entries.first { it.value == if (cos) "cos" else "regular" })).bodyOrThrow()
+        return Library(value.id, value.name)
+    }
 
     suspend fun assets(query: AssetQuery, cursor: String? = null): Page<Asset> {
         val target = target()
@@ -66,7 +74,8 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
 
     suspend fun tags(asset: Asset, tags: List<String>): Asset {
         val target = target()
-        return provider.api(target).updateAssetTags(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
+        val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf(target.instanceId, asset.id, asset.tagsRevision, tags)).toByteArray()).toString()
+        return provider.api(target).updateAssetTags(id = asset.id, idempotencyKey = key,
             tagsUpdate = TagsUpdate(expectedRevision = asset.tagsRevision, tags = tags)).bodyOrThrow().toModel(target)
     }
 
@@ -92,6 +101,27 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     suspend fun author(id: String): Author = provider.api(target()).getAuthor(id).bodyOrThrow().toModel()
     suspend fun follow(author: Author): Author = provider.api(target()).updateAuthor(id = author.id,
         authorUpdate = AuthorUpdate(expectedRevision = author.revision, following = !author.followed)).bodyOrThrow().toModel()
+    suspend fun editAuthor(author: Author, name: String, aliases: List<String>, biography: String, homepage: String): Author =
+        provider.api(target()).updateAuthor(id = author.id, authorUpdate = AuthorUpdate(expectedRevision = author.revision,
+            name = name, aliases = aliases, biography = biography, homepage = homepage)).bodyOrThrow().toModel()
+
+    suspend fun trash(asset: Asset) {
+        provider.api(target()).trashAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision).bodyOrThrow()
+    }
+    suspend fun trashPage(cursor: String? = null): Page<Asset> {
+        val target = target()
+        val page = provider.api(target).listTrash(cursor = cursor, limit = 50).bodyOrThrow()
+        return Page(page.items.map { it.toModel(target) }, page.nextCursor)
+    }
+    suspend fun restore(asset: Asset) {
+        provider.api(target()).restoreAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
+            revisionRequest = RevisionRequest(expectedRevision = asset.revision)).bodyOrThrow()
+    }
+    suspend fun rename(asset: Asset, relativePath: String): Asset {
+        val target = target()
+        return provider.api(target).moveAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
+            moveRequest = MoveRequest(expectedRevision = asset.revision, relativePath = relativePath)).bodyOrThrow().toModel(target)
+    }
 
     suspend fun reports(cursor: String? = null): Page<TaskReport> {
         val page = provider.api(target()).listBatches(cursor = cursor, limit = 50).bodyOrThrow()

@@ -54,6 +54,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val history = historyState.asStateFlow()
     private val reportState = MutableStateFlow(ListState<TaskReport>())
     val reports = reportState.asStateFlow()
+    private val trashState = MutableStateFlow(ListState<Asset>())
+    val trash = trashState.asStateFlow()
     private var detailJob: Job? = null
     private var detailGeneration = RequestGeneration()
     private var connectionGeneration = 0L
@@ -72,6 +74,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
                 mutableLibraries.value = emptyList(); mutableCapabilities.value = null
                 authorState.value = ListState(); historyState.value = ListState(); reportState.value = ListState()
+                trashState.value = ListState()
                 if (connection != null) {
                     saved["uploadLibrary"] = graph.settings.uploadLibrary(connection).orEmpty()
                     refreshConnection()
@@ -128,6 +131,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val libraries = repository.libraries()
         mutableCapabilities.value = caps
         mutableLibraries.value = libraries
+        graph.uploads.schedule()
         if (uploadLibrary.value.isEmpty() && libraries.size == 1) setUploadLibrary(libraries.single().id)
         if (saved.get<Boolean>("sharedUpload") == true && queue.value?.drafts?.isNotEmpty() == true && uploadLibrary.value.isNotEmpty()) {
             graph.uploads.enqueue(uploadLibrary.value, uploadDirectory.value, UploadMode.ORDINARY)
@@ -195,6 +199,30 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         action { val result = repository.author(id); if (route.value == "author:$id") mutableAuthor.value = result }
     }
     fun followAuthor() = action { mutableAuthor.value?.let { mutableAuthor.value = repository.follow(it) } }
+    fun editAuthor(name: String, aliases: List<String>, biography: String, homepage: String, onSaved: () -> Unit) = action {
+        mutableAuthor.value?.let { mutableAuthor.value = repository.editAuthor(it, name, aliases, biography, homepage); onSaved() }
+    }
+    fun createLibrary(name: String, cos: Boolean, onSaved: () -> Unit) = action {
+        repository.createLibrary(name, cos)
+        mutableLibraries.value = repository.libraries()
+        onSaved()
+    }
+    fun trashCurrentAsset() = action {
+        mutableAsset.value?.let { current ->
+            repository.trash(current)
+            lists.values.forEach { it.value = it.value.copy(items = it.value.items.filterNot { item -> item.id == current.id }) }
+            back()
+        }
+    }
+    fun renameCurrentAsset(path: String, onSaved: () -> Unit) = action {
+        mutableAsset.value?.let { publishAsset(repository.rename(it, path)); onSaved() }
+    }
+    fun loadTrash(next: Boolean = false) = loadPage(trashState, next) { repository.trashPage(it) }
+    fun restoreAsset(asset: Asset) = action {
+        repository.restore(asset)
+        trashState.value = trashState.value.copy(items = trashState.value.items.filterNot { it.id == asset.id })
+        lists.values.forEach { it.value = it.value.copy(loaded = false) }
+    }
     fun openReport(id: String) {
         navigate("task:$id"); mutableReport.value = null
         action { val result = repository.report(id); if (route.value == "task:$id") mutableReport.value = result }
@@ -220,12 +248,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
     fun startUpload() = action { graph.uploads.enqueue(uploadLibrary.value, uploadDirectory.value, UploadMode.valueOf(uploadMode.value)) }
-    fun renameDraft(id: String, name: String) = action { graph.uploads.renameDraft(id, name) }
+    fun renameDraft(id: String, name: String, onSaved: () -> Unit) = action { graph.uploads.renameDraft(id, name); onSaved() }
     fun removeDraft(id: String) = action { graph.uploads.discardDraft(id) }
     fun retryUpload(id: String) = action { graph.uploads.retry(id) }
     fun cancelUpload(id: String) = action { graph.uploads.cancel(id) }
     fun clearUploads() = action { graph.uploads.clearFinished() }
     fun reloadQueue() = action { graph.queue.load(); graph.uploads.schedule() }
+    fun retryEvents() = action { graph.uploads.retryEvents() }
     fun savePreferences(preferences: Preferences) = action { graph.settings.savePreferences(preferences) }
 
     private fun <T> loadPage(state: MutableStateFlow<ListState<T>>, next: Boolean, loader: suspend (String?) -> Page<T>) {

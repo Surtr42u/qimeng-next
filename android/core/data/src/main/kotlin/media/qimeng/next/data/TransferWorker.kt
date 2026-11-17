@@ -33,11 +33,20 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             val instance = api.getInstance().bodyOrThrow()
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
             var retry = false
-            graph.queue.state.value!!.events.filter { sameTarget(it.target, target) }.forEach { event ->
-                api.recordEvent(id = event.assetId, eventCreate = EventCreate(eventId = event.id,
-                    kind = EventCreate.Kind.entries.first { it.value == event.kind }, contentVersion = event.contentVersion,
-                    positionMs = event.positionMs)).bodyOrThrow()
-                graph.queue.update { it.copy(events = it.events.filterNot { item -> item.id == event.id }) }
+            graph.queue.state.value!!.events.filter { sameTarget(it.target, target) && it.failure == null }.forEach { event ->
+                try {
+                    api.recordEvent(id = event.assetId, eventCreate = EventCreate(eventId = event.id,
+                        kind = EventCreate.Kind.entries.first { it.value == event.kind }, contentVersion = event.contentVersion,
+                        positionMs = event.positionMs)).bodyOrThrow()
+                    graph.queue.update { it.copy(events = it.events.filterNot { item -> item.id == event.id }) }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: ApiFailure) {
+                    if (failure.status == 404 || failure.status == 409) {
+                        graph.queue.update { snapshot -> snapshot.copy(events = snapshot.events.map {
+                            if (it.id == event.id) it.copy(failure = failure.message) else it
+                        }) }
+                    } else throw failure
+                } catch (_: IOException) { retry = true }
             }
             val pending = graph.queue.state.value!!.transfers.filter { it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) }
             if (pending.isNotEmpty()) setForeground(notification())
@@ -59,9 +68,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             if (retry) Result.retry() else Result.success()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
             // Durable records remain unchanged; never clear unsent events on a transport failure.
-            Result.retry()
+            graph.queue.reportProblem(safeFailure(failure))
+            if (failure is ApiFailure && failure.status in setOf(401, 403)) Result.success() else Result.retry()
         }
     }
 

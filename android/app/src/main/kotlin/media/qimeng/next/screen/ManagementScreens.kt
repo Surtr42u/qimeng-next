@@ -41,6 +41,7 @@ fun ProfileScreen(model: LibraryViewModel) {
             Text("影库与连接", style = MaterialTheme.typography.titleSmall)
             SettingsRow("上传新文件", "系统文件、分享与持久传输队列", Icons.Outlined.Upload) { model.navigate("upload") }
             SettingsRow("任务中心", "智能整理、逐项结果与等待原因", Icons.Outlined.Assignment) { model.navigate("reports") }
+            SettingsRow("回收站", "恢复误删的媒体", Icons.Outlined.DeleteOutline) { model.navigate("trash") }
             SettingsRow("服务器", session?.label.orEmpty(), Icons.Outlined.Dns) { model.navigate("server") }
         }
         ContentCard(Modifier.padding(horizontal = 16.dp)) {
@@ -101,6 +102,9 @@ fun AppearanceScreen(model: LibraryViewModel) {
 fun ServerScreen(model: LibraryViewModel) {
     val session by model.session.collectAsStateWithLifecycle()
     var confirm by rememberSaveable { mutableStateOf(false) }
+    var create by rememberSaveable { mutableStateOf(false) }
+    val libraries by model.libraries.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ContentCard {
             Text("当前连接", style = MaterialTheme.typography.titleMedium)
@@ -108,12 +112,28 @@ fun ServerScreen(model: LibraryViewModel) {
             Text("切换服务器前，现有传输始终保留原来的目标。", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = model::refreshConnection) { Text("检查连接") }
         }
+        ContentCard {
+            Text("影库", style = MaterialTheme.typography.titleMedium)
+            libraries.forEach { Text(it.name) }
+            TextButton(onClick = { create = true }) { Text("创建影库") }
+        }
         OutlinedButton(onClick = { confirm = true }) { Text("退出并切换服务器") }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("退出当前登录？") },
         text = { Text("将撤销当前会话。尚未发送的传输保留，重新连接原服务器后可重试。") },
         confirmButton = { TextButton(onClick = { confirm = false; model.logout() }) { Text("退出登录") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("取消") } })
+    if (create) {
+        var name by rememberSaveable { mutableStateOf("") }
+        var cos by rememberSaveable { mutableStateOf(false) }
+        AlertDialog(onDismissRequest = { if (!busy) create = false }, title = { Text("创建影库") }, text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("影库名称") })
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(cos, { cos = it }); Text("COS 影库") }
+            }
+        }, confirmButton = { TextButton(onClick = { model.createLibrary(name.trim(), cos) { create = false } }, enabled = !busy && name.isNotBlank()) { Text("创建") } },
+            dismissButton = { TextButton(onClick = { create = false }, enabled = !busy) { Text("取消") } })
+    }
 }
 
 @Composable
@@ -142,6 +162,7 @@ fun AuthorsScreen(model: LibraryViewModel) {
 fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
     val author by model.author.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
+    var edit by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(id) { if (author?.id != id) model.openAuthor(id) }
     val item = author?.takeIf { it.id == id }
     if (item == null) { TextButton(onClick = { model.openAuthor(id) }, enabled = !busy) { Text("读取作者 · 重试") }; return }
@@ -151,9 +172,49 @@ fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
             if (item.aliases.isNotEmpty()) Text(item.aliases.joinToString(" / "))
             if (item.biography.isNotBlank()) Text(item.biography, Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()))
             item.sources.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-            OutlinedButton(onClick = model::followAuthor, enabled = !busy) { Text(if (item.followed) "取消关注" else "关注作者") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = model::followAuthor, enabled = !busy) { Text(if (item.followed) "取消关注" else "关注作者") }
+                TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑档案") }
+            }
         }
         MediaBrowser(model, "author:$id", author = id)
+    }
+    if (edit) {
+        var name by rememberSaveable { mutableStateOf(item.name) }
+        var aliases by rememberSaveable { mutableStateOf(item.aliases.joinToString("\n")) }
+        var biography by rememberSaveable { mutableStateOf(item.biography) }
+        var homepage by rememberSaveable { mutableStateOf(item.sources.firstOrNull().orEmpty()) }
+        val message by model.message.collectAsStateWithLifecycle()
+        AlertDialog(onDismissRequest = { if (!busy) edit = false }, title = { Text("编辑作者档案") }, text = {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("名称") })
+                OutlinedTextField(aliases, { aliases = it }, label = { Text("别名（每行一个）") })
+                OutlinedTextField(homepage, { homepage = it }, label = { Text("主页 / 来源") })
+                OutlinedTextField(biography, { biography = it }, label = { Text("简介") }, minLines = 3)
+                message?.let { ErrorNotice(it) }
+            }
+        }, confirmButton = { TextButton(onClick = { model.editAuthor(name.trim(), aliases.lines().filter(String::isNotBlank), biography, homepage) { edit = false } }, enabled = !busy && name.isNotBlank()) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { edit = false }, enabled = !busy) { Text("取消") } })
+    }
+}
+
+@Composable
+fun TrashScreen(model: LibraryViewModel) {
+    val state by model.trash.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { if (!state.loaded) model.loadTrash() }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text("已移入回收站的原件可以恢复。") }
+        item { TextButton(onClick = { model.loadTrash() }) { Text("刷新回收站") } }
+        state.error?.let { item { ErrorNotice(it) { model.loadTrash() } } }
+        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.loaded && state.items.isEmpty()) item { Text("回收站为空") }
+        items(state.items, key = { it.id }) { asset -> ContentCard {
+            Text(asset.name, style = MaterialTheme.typography.titleMedium)
+            Text(formatBytes(asset.bytes))
+            OutlinedButton(onClick = { model.restoreAsset(asset) }, enabled = !busy) { Text("恢复媒体") }
+        } }
+        if (state.cursor != null) item { TextButton(onClick = { model.loadTrash(true) }, enabled = !state.loading) { Text("加载更多") } }
     }
 }
 

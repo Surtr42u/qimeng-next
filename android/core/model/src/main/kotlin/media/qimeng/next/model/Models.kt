@@ -70,7 +70,8 @@ data class Transfer(
     val batchId: String? = null,
     val message: String = "等待传输",
 )
-data class PendingEvent(val id: String, val target: Session, val assetId: String, val kind: String, val positionMs: Long, val contentVersion: Long)
+data class PendingEvent(val id: String, val target: Session, val assetId: String, val kind: String, val positionMs: Long, val contentVersion: Long,
+    val failure: String? = null)
 data class UploadDraft(val id: String, val name: String, val mimeType: String, val bytes: Long, val spoolName: String)
 data class QueueSnapshot(val transfers: List<Transfer> = emptyList(), val events: List<PendingEvent> = emptyList(), val drafts: List<UploadDraft> = emptyList())
 

@@ -83,6 +83,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(model)
                                 route == "server" -> ServerScreen(model)
+                                route == "trash" -> TrashScreen(model)
                                 else -> when (tab) {
                                     0 -> HomeScreen(model)
                                     1 -> AlbumsScreen(model)
@@ -144,5 +145,5 @@ private fun routeTitle(route: String) = when {
     route.startsWith("author:") -> "作者档案"
     route.startsWith("task:") -> "任务报告"
     else -> mapOf("search" to "搜索", "favorites" to "收藏", "authors" to "作者", "history" to "浏览历史", "upload" to "上传",
-        "reports" to "任务中心", "appearance" to "外观", "server" to "服务器")[route] ?: "绮梦影库"
+        "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "trash" to "回收站")[route] ?: "绮梦影库"
 }

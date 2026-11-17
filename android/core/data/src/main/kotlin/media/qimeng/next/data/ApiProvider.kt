@@ -44,17 +44,19 @@ fun normalizedServer(input: String): String {
 internal class ApiProvider(private val settings: SecureSettings) {
     private val baseClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build()
+    @Volatile private var cachedClient: Pair<Session, OkHttpClient>? = null
 
     fun anonymous(baseUrl: String): DefaultApi = build(baseUrl, baseClient)
 
     fun client(target: Session): OkHttpClient {
+        cachedClient?.takeIf { it.first == target }?.let { return it.second }
         val expected = target.baseUrl.toHttpUrl()
         return baseClient.newBuilder().addInterceptor { chain ->
             val url = chain.request().url
             if (!sameOrigin(url, expected)) throw IOException("拒绝向其他服务器发送媒体凭据")
             val token = settings.tokenFor(target)
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
-        }.build()
+        }.build().also { cachedClient = target to it }
     }
 
     fun api(target: Session): DefaultApi = build(target.baseUrl, client(target))

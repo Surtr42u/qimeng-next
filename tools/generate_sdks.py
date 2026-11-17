@@ -13,7 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENAPI_GENERATOR = "7.27.0"
-OPENAPI_JAR_SHA1 = "1c5eb64ca278d5b018342b15594353a6569fbc9a"  # Maven Central official checksum, 2026-11-17
+OPENAPI_JAR_SHA256 = "db9c4b738727698748746144394cb7ee96512fe50166555baaeeca9311ee1dba"
 OAPI_CODEGEN = "v2.8.2"
 
 
@@ -29,8 +29,8 @@ def kotlin() -> None:
     jar = cache / name
     with urllib.request.urlopen(url, timeout=120) as response:
         content = response.read(100 * 1024 * 1024)
-    # 上游此版本只发布SHA-1校验文件；固定官方值，不以404跳过完整性检查。
-    if hashlib.sha1(content).hexdigest() != OPENAPI_JAR_SHA1:
+    # 首次云端取得官方Maven校验通过的产物后记录SHA-256，后续固定校验。
+    if hashlib.sha256(content).hexdigest() != OPENAPI_JAR_SHA256:
         raise RuntimeError("OpenAPI generator checksum mismatch")
     print("OpenAPI generator SHA-256:", hashlib.sha256(content).hexdigest())
     jar.write_bytes(content)

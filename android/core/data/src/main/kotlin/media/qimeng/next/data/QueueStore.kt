@@ -22,6 +22,7 @@ class QueueStore(context: Context) {
     private val mutableError = MutableStateFlow<String?>(null)
     val state = mutableState.asStateFlow()
     val error = mutableError.asStateFlow()
+    internal fun reportProblem(message: String) { mutableError.value = message }
 
     suspend fun load() = withContext(Dispatchers.IO) {
         lock.withLock {

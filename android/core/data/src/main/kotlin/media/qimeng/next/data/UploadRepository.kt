@@ -131,6 +131,11 @@ class UploadRepository internal constructor(private val context: Context, val qu
         withContext(Dispatchers.IO) { finished.forEach { File(spool, it.spoolName).delete() } }
     }
 
+    suspend fun retryEvents() {
+        queue.update { it.copy(events = it.events.map { event -> event.copy(failure = null) }) }
+        schedule()
+    }
+
     fun schedule() {
         val request = OneTimeWorkRequestBuilder<TransferWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())

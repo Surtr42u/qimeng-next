@@ -90,6 +90,15 @@ fun VideoStage(asset: Asset, model: LibraryViewModel) {
 private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?, onRetry: () -> Unit, toggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     var feedback by remember { mutableStateOf<String?>(null) }
+    var playing by remember(player) { mutableStateOf(player.isPlaying) }
+    var showControls by remember { mutableStateOf(true) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying; if (!isPlaying) showControls = true }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val window = (context as? Activity)?.window
     DisposableEffect(window) {
@@ -101,11 +110,14 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
             this.player = player; useController = true; controllerAutoShow = true
             setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
             setControllerHideOnTouch(false)
-        } }, update = { it.player = player; it.controllerShowTimeoutMs = if (player.isPlaying) 3000 else 0 },
+        } }, update = {
+            it.player = player; it.controllerShowTimeoutMs = if (playing) 3000 else 0
+            if (showControls || !playing) it.showController() else it.hideController()
+        },
             onRelease = { it.player = null }, modifier = Modifier.fillMaxSize())
         // Keep the bottom native seek/control strip available; the stage owns playback gestures.
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.68f)
-            .pointerInput(player) { detectTapGestures(onDoubleTap = { if (player.isPlaying) player.pause() else player.play() }) }
+            .pointerInput(player) { detectTapGestures(onTap = { showControls = !showControls }, onDoubleTap = { if (player.isPlaying) player.pause() else player.play() }) }
             .pointerInput(player, fullscreen) {
                 var startX = 0f; var dx = 0f; var dy = 0f; var position = 0L; var brightness = 0.5f; var volume = 0
                 var direction = 0

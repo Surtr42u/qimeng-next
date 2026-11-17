@@ -39,6 +39,8 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     var showTags by rememberSaveable(id) { mutableStateOf(false) }
     var showNote by rememberSaveable(id) { mutableStateOf(false) }
     var showInfo by rememberSaveable(id) { mutableStateOf(false) }
+    var showRename by rememberSaveable(id) { mutableStateOf(false) }
+    var showTrash by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(id) { if (asset?.id != id) model.openAsset(id) }
     val item = asset?.takeIf { it.id == id }
     if (item == null) {
@@ -63,6 +65,10 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
             Text("备注", style = MaterialTheme.typography.titleSmall)
             Text(item.note.ifBlank { "暂无备注" })
             TextButton(onClick = { showNote = true }) { Text("编辑备注") }
+            Row {
+                TextButton(onClick = { showRename = true }) { Text("改名 / 移动") }
+                TextButton(onClick = { showTrash = true }) { Text("移到回收站", color = MaterialTheme.colorScheme.error) }
+            }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             OutlinedButton(onClick = { model.adjacentAsset(-1) }) { Text("上一项") }
@@ -72,6 +78,10 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     }
     if (showTags) TagsDialog(item, model) { showTags = false }
     if (showNote) TextEditDialog("编辑备注", item.note, busy, { showNote = false }) { value -> model.saveNote(value) { showNote = false } }
+    if (showRename) TextEditDialog("库内路径与文件名", item.name, busy, { showRename = false }) { value -> model.renameCurrentAsset(value) { showRename = false } }
+    if (showTrash) AlertDialog(onDismissRequest = { showTrash = false }, title = { Text("移到回收站？") }, text = { Text(item.name) },
+        confirmButton = { TextButton(onClick = { showTrash = false; model.trashCurrentAsset() }, enabled = !busy) { Text("移到回收站") } },
+        dismissButton = { TextButton(onClick = { showTrash = false }) { Text("取消") } })
     if (showInfo) {
         val clipboard = LocalClipboardManager.current
         var copied by remember { mutableStateOf(false) }
