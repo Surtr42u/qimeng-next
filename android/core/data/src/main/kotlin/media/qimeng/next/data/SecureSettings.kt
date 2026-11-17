@@ -1,0 +1,83 @@
+package media.qimeng.next.data
+
+import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import com.google.gson.Gson
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import media.qimeng.next.model.Preferences
+import media.qimeng.next.model.Session
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/** Tokens are Keystore-encrypted and excluded from Android backup. Queue records contain no token. */
+class SecureSettings(context: Context) {
+    private val storage = context.getSharedPreferences("connection", Context.MODE_PRIVATE)
+    private val gson = Gson()
+    private val mutableSession = MutableStateFlow<Session?>(null)
+    private val mutablePreferences = MutableStateFlow(Preferences())
+    private val mutableError = MutableStateFlow<String?>(null)
+    val session = mutableSession.asStateFlow()
+    val preferences = mutablePreferences.asStateFlow()
+    val error = mutableError.asStateFlow()
+
+    init {
+        try {
+            storage.getString("session", null)?.let { mutableSession.value = gson.fromJson(it, Session::class.java) }
+            storage.getString("preferences", null)?.let { mutablePreferences.value = gson.fromJson(it, Preferences::class.java) }
+        } catch (_: Exception) {
+            mutableError.value = "连接配置无法读取，请重新登录。原有传输记录仍保留。"
+        }
+    }
+
+    @Synchronized
+    fun tokenFor(target: Session): String {
+        check(target == mutableSession.value) { "连接已变更，请重新登录此任务所属服务器" }
+        val encoded = storage.getString("token", null) ?: error("登录凭据已移除")
+        val bytes = Base64.decode(encoded, Base64.NO_WRAP)
+        require(bytes.size > 12) { "登录凭据损坏，请重新登录" }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
+        return cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
+    }
+
+    @Synchronized
+    fun saveSession(session: Session, token: String) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val encrypted = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray()), Base64.NO_WRAP)
+        check(storage.edit().putString("session", gson.toJson(session)).putString("token", encrypted).commit()) { "无法保存登录凭据" }
+        mutableSession.value = session
+        mutableError.value = null
+    }
+
+    fun savePreferences(preferences: Preferences) {
+        check(storage.edit().putString("preferences", gson.toJson(preferences)).commit()) { "无法保存外观设置" }
+        mutablePreferences.value = preferences
+    }
+
+    fun uploadLibrary(target: Session): String? = storage.getString("upload-library-${target.instanceId}", null)
+    fun saveUploadLibrary(target: Session, id: String) {
+        check(storage.edit().putString("upload-library-${target.instanceId}", id).commit()) { "无法保存上传位置" }
+    }
+
+    @Synchronized
+    fun clearSession() {
+        check(storage.edit().remove("session").remove("token").commit()) { "无法清除登录凭据" }
+        mutableSession.value = null
+    }
+
+    private fun key(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey("qimeng.next.session", null) as? SecretKey)?.let { return it }
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+            init(KeyGenParameterSpec.Builder("qimeng.next.session", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
+        }.generateKey()
+    }
+}

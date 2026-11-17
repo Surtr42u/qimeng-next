@@ -13,6 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENAPI_GENERATOR = "7.27.0"
+OPENAPI_JAR_SHA1 = "1c5eb64ca278d5b018342b15594353a6569fbc9a"  # Maven Central official checksum, 2026-11-17
 OAPI_CODEGEN = "v2.8.2"
 
 
@@ -26,12 +27,12 @@ def kotlin() -> None:
     name = f"openapi-generator-cli-{OPENAPI_GENERATOR}.jar"
     url = f"https://repo.maven.apache.org/maven2/org/openapitools/openapi-generator-cli/{OPENAPI_GENERATOR}/{name}"
     jar = cache / name
-    with urllib.request.urlopen(url + ".sha256", timeout=60) as response:
-        expected = response.read(1024).decode().strip().split()[0]
     with urllib.request.urlopen(url, timeout=120) as response:
         content = response.read(100 * 1024 * 1024)
-    if hashlib.sha256(content).hexdigest() != expected:
-        raise RuntimeError("OpenAPI generator SHA-256 mismatch")
+    # 上游此版本只发布SHA-1校验文件；固定官方值，不以404跳过完整性检查。
+    if hashlib.sha1(content).hexdigest() != OPENAPI_JAR_SHA1:
+        raise RuntimeError("OpenAPI generator checksum mismatch")
+    print("OpenAPI generator SHA-256:", hashlib.sha256(content).hexdigest())
     jar.write_bytes(content)
     run("java", "-jar", str(jar), "generate", "-i", "api/openapi.yaml", "-g", "kotlin",
         "--library", "jvm-retrofit2", "-o", "api/generated/kotlin",

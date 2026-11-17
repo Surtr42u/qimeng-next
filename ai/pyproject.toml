@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qimeng-next-ai"
+version = "0.1.0"
+description = "Qimeng Next trusted MCP and CLI adapter"
+requires-python = ">=3.11"
+dependencies = ["mcp==2.3.0", "httpx==0.28.1", "jsonschema==4.26.0"]
+
+[project.scripts]
+qai = "qimeng_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+qimeng_ai = ["operations.json"]
