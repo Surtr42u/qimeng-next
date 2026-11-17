@@ -1772,7 +1772,7 @@ components:
       required: [expectedRevision, sourceUrl]
       properties:
         expectedRevision: {type: integer, format: int64, minimum: 0}
-        sourceUrl: {type: string, maxLength: 4096, description: Public HTTPS source, port 443 only, no userinfo, bounded redirects and DNS-pinned public addresses}
+        sourceUrl: {type: string, maxLength: 4096, description: 'Public HTTPS source, port 443 only, no userinfo, bounded redirects and DNS-pinned public addresses'}
     AuthorProfileArchiveSummary:
       type: object
       required: [id, authorId, authorName, targetAuthorId, reason, createdAt, blockCount, candidateCount, conflicts]
