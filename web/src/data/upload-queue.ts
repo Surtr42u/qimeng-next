@@ -160,7 +160,7 @@ export class UploadQueue {
       const directory = file.webkitRelativePath?.includes('/') ? file.webkitRelativePath.slice(0, file.webkitRelativePath.lastIndexOf('/')) : '';
       // This immutable list is captured before hashing or any upload request.
       // Complete hashes bind each upload at creation; no partially hashed value is recorded here.
-      plan.inputs.push({ id, originalFileName: file.name, sourceRelativePath: relative, size: file.size });
+      plan.inputs.push({ id, nameState: 'known', originalFileName: file.name, sourceRelativePath: relative, size: file.size });
       const entry: QueueEntry = {
         id, batchPlanId: plan.id, scope: this.scope,
         request: { ...target, batchId: undefined, inputId: id, fileName: file.name, originalFileName: file.name, sourceRelativePath: relative, size: file.size, mimeType: file.type || 'application/octet-stream', sourceMtime: new Date(file.lastModified).toISOString(), relativeDirectory: [target.relativeDirectory, directory].filter(Boolean).join('/') || undefined },

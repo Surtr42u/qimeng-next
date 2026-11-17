@@ -203,7 +203,7 @@ export function mediaCards(assets: readonly Asset[]): MediaCardModel[] {
     liked: asset.liked,
   }));
 }
-function mediaCardDate(value?: string) {
+function mediaCardDate(value?: string | null) {
   if (!value) return undefined;
   const date = new Date(value);
   return `${date.getMonth() + 1}-${date.getDate()}`;
