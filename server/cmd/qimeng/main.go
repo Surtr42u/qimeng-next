@@ -22,8 +22,9 @@ func main(){if e:=run();e!=nil{slog.Error("service stopped","reason","configurat
 func run()error{
  if zone:=os.Getenv("QIMENG_TIMEZONE");zone!=""{location,e:=time.LoadLocation(zone);if e!=nil{return e};time.Local=location}
  var storages map[string]string;if raw:=os.Getenv("QIMENG_STORAGE_ROOTS");raw!=""{if e:=json.Unmarshal([]byte(raw),&storages);e!=nil{return errors.New("QIMENG_STORAGE_ROOTS must be a JSON object of logical names to trusted root paths")}}
+ var backupTargets map[string]service.BackupTarget;if raw:=os.Getenv("QIMENG_BACKUP_TARGETS");raw!=""{if e:=json.Unmarshal([]byte(raw),&backupTargets);e!=nil{return errors.New("QIMENG_BACKUP_TARGETS must contain trusted backup target configuration")}}
  password:=os.Getenv("QIMENG_ADMIN_PASSWORD");if e:=os.Unsetenv("QIMENG_ADMIN_PASSWORD");e!=nil{return e}
- s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AdminPassword:password,AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true"||os.Getenv("QIMENG_EPHEMERAL_TLS")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true"});password="";if e!=nil{return e};defer s.Close()
+ s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AdminPassword:password,AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,BackupTargets:backupTargets,DefaultBackupTarget:os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"),SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true"||os.Getenv("QIMENG_EPHEMERAL_TLS")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true"});password="";if e!=nil{return e};defer s.Close()
  address:=os.Getenv("QIMENG_LISTEN");if address==""{address="127.0.0.1:8421"};api:=httpapi.New(s);var handler http.Handler=api
  if web:=os.Getenv("QIMENG_WEB_DIR");web!=""{
   files:=http.FileServer(http.Dir(web))

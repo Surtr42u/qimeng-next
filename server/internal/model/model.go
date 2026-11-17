@@ -45,6 +45,14 @@ type Asset struct {
  FavoritedAt *time.Time `json:"favoritedAt,omitempty"`
  Liked bool `json:"liked"`
  LikeCount int64 `json:"likeCount"`
+ UnattributedLikeCount int64 `json:"unattributedLikeCount"`
+ ViewCount int64 `json:"viewCount"`
+ PlayCount int64 `json:"playCount"`
+ CosWorkName string `json:"cosWorkName,omitempty"`
+ WorkKeys []string `json:"workKeys,omitempty"`
+ RoleKeys []string `json:"roleKeys,omitempty"`
+ WorkFacets []FacetReference `json:"workFacets,omitempty"`
+ RoleFacets []FacetReference `json:"roleFacets,omitempty"`
  Note string `json:"note"`
  Source string `json:"source"`
  SourceIDs []string `json:"sourceIds"`
@@ -68,6 +76,8 @@ type Asset struct {
  PositionMs int64 `json:"positionMs"`
  PositionContentVersion int64 `json:"positionContentVersion"`
 }
+
+type FacetReference struct{Key string `json:"key"`;Kind string `json:"kind"`;ID string `json:"id"`;Name string `json:"name"`}
 
 func(a Asset)EffectiveFileDate()*time.Time{if a.ContentMtime!=nil{return a.ContentMtime};return a.SourceMtime}
 
@@ -282,4 +292,5 @@ type Page[T any] struct {
  TotalMatched *int64 `json:"totalMatched,omitempty"`
  TotalOptions *int64 `json:"totalOptions,omitempty"`
  DateCounts *[]DateCountBucket `json:"dateCounts,omitempty"`
+ UnknownDateCount *int64 `json:"unknownDateCount,omitempty"`
 }

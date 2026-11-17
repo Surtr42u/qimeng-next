@@ -13,7 +13,7 @@ import java.util.UUID
 
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
-    val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList())
+    val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -159,7 +159,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
-        if (next && (state.value.loading || state.value.cursor == null)) return
+        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query)) return
         if (!next && !force && previous == query && (state.value.loaded || state.value.loading)) return
         queries[key] = query
         listJobs[key]?.cancel()
@@ -167,7 +167,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val ticket = generation.next()
         val connection = connectionGeneration
         val old = state.value
-        val keep = next || (previous?.text == query.text && previous?.libraryId == query.libraryId)
+        val keep = next || previous == query
         state.value = if (keep) old.copy(loading = true, error = null) else ListState(loading = true)
         listJobs[key] = viewModelScope.launch {
             try {
@@ -175,7 +175,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 if (generation.isCurrent(ticket) && connection == connectionGeneration) {
                     state.value = ListState(if (next) (old.items + page.items).distinctBy(Asset::id) else page.items,
                         page.nextCursor, loaded = true, totalMatched = page.totalMatched,
-                        dateCounts = if (next) old.dateCounts else page.dateCounts)
+                        dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {

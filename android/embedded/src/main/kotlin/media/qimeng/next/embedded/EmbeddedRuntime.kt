@@ -14,15 +14,16 @@ import media.qimeng.next.runtime.*
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 import java.io.File
+import java.net.URI
+import java.util.Locale
 
 internal object HostState {
-    const val BASE_URL = "https://127.0.0.1:18431/"
-    const val LISTEN = "127.0.0.1:18431"
     val status = MutableStateFlow(RuntimeStatus(RuntimePhase.STOPPED, "本机服务未运行"))
     val generation = AtomicLong()
     val ownerActive = AtomicBoolean()
     @Volatile var certificateDerBase64: String? = null
     @Volatile var storageRoots: String? = null
+    @Volatile var activeBaseUrl: String? = null
 }
 
 class EmbeddedRuntime(context: Context) : LocalRuntime {
@@ -31,14 +32,17 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     private val mutex = Mutex()
     override val available = true
     override val shouldRestore: Boolean get() = secrets.enabled
-    override val baseUrl: String = HostState.BASE_URL
+    private val endpoint = MutableStateFlow(addressForPort(secrets.port))
+    override val configuredAddress = endpoint.asStateFlow()
+    override val baseUrl: String get() = endpoint.value
     override val status = HostState.status.asStateFlow()
     override val files = EmbeddedFileAccess(app)
 
     override suspend fun start(): LocalConnection = mutex.withLock {
+        repeat(2) {
         files.refreshAccess()
         val desiredRoots = withContext(Dispatchers.IO) { EmbeddedFileAccess.roots(app, File(app.filesDir, "embedded-v1/media")) }
-        if ((status.value.phase == RuntimePhase.READY && HostState.storageRoots != desiredRoots) ||
+        if ((status.value.phase == RuntimePhase.READY && (HostState.storageRoots != desiredRoots || HostState.activeBaseUrl != baseUrl)) ||
             status.value.phase == RuntimePhase.STOPPING ||
             (status.value.phase == RuntimePhase.FAILED && HostState.ownerActive.get())) stopLocked()
         withContext(Dispatchers.IO) { secrets.enabled = true }
@@ -57,9 +61,15 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
             throw IllegalStateException("本机服务启动超时", failure)
         }
         check(ready.phase == RuntimePhase.READY) { ready.message }
+        if (HostState.activeBaseUrl != baseUrl || HostState.storageRoots != desiredRoots) {
+            stopLocked()
+            return@repeat
+        }
         val instance = requireNotNull(ready.instanceId)
         val token = withContext(Dispatchers.IO) { secrets.token(allowCreate = false) }
-        LocalConnection(HostState.BASE_URL, instance, token, requireNotNull(HostState.certificateDerBase64) { "本机TLS启动凭据缺失" })
+        return@withLock LocalConnection(requireNotNull(HostState.activeBaseUrl), instance, token, requireNotNull(HostState.certificateDerBase64) { "本机TLS启动凭据缺失" })
+        }
+        error("本机权限或地址仍在变化，请稍后重新连接")
     }
 
     override suspend fun stop() = mutex.withLock { stopLocked() }
@@ -73,4 +83,15 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     }
 
     override suspend fun confirmInstance(instanceId: String) = withContext(Dispatchers.IO) { secrets.confirm(instanceId) }
+
+    override suspend fun configureAddress(address: String) = mutex.withLock {
+        val uri = try { URI(address.trim()) } catch (_: Exception) { throw IllegalArgumentException("请输入完整的本机回环地址和端口") }
+        require(uri.scheme in setOf("http", "https") && uri.host?.lowercase(Locale.ROOT) in setOf("localhost", "127.0.0.1") &&
+            uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null && uri.path.orEmpty() in setOf("", "/")) { "本机地址必须是回环根地址，不能包含凭据或路径" }
+        withContext(Dispatchers.IO) { secrets.port = uri.port }
+        endpoint.value = addressForPort(uri.port)
+    }
+    override fun ownedEndpoints(instanceId: String): Set<String> = if (secrets.confirmedInstance == instanceId) secrets.confirmedPorts().map(::addressForPort).toSet() else emptySet()
 }
+
+internal fun addressForPort(port: Int) = "https://127.0.0.1:$port/"

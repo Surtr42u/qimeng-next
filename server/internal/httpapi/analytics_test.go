@@ -19,6 +19,7 @@ func TestActivityProjectionsRecommendationPaginationAndPreferenceConflict(t *tes
  }{f.json("POST","/assets/"+first.ID+"/events","",body,200)}
  var overview service.Overview;decode(t,f.json("GET","/stats/overview?range=7d","",nil,200),&overview)
  if overview.Totals.Views!=1||overview.Totals.Seconds!=12||overview.ViewedAssets!=1||overview.AverageViewsPerFile==nil||*overview.AverageViewsPerFile!=1{t.Fatalf("bad activity: %+v",overview)}
+ var detail model.Asset;decode(t,f.json("GET","/assets/"+first.ID,"",nil,200),&detail);if detail.ViewCount!=1||detail.PlayCount!=0{t.Fatal("asset counters differ from server activity")}
  var review service.Review;decode(t,f.json("GET","/stats/review?range=7d","",nil,200),&review)
  if review.FirstViews!=1||review.ReturnViews!=0||review.ViewCount!=1||review.TotalSeconds!=12||review.ImageSeconds!=12||review.VideoSeconds!=0||review.AnimatedSeconds!=0||review.FromDay==""||review.ToDay==""||review.PreviousFromDay==""||review.PreviousToDay==""||len(review.Hours)!=24{t.Fatalf("bad review: %+v",review)}
  var recommendation service.RecommendationPage;decode(t,f.json("GET","/recommendations?seed=42&limit=1","",nil,200),&recommendation)

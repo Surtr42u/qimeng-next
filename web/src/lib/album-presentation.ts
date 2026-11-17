@@ -13,6 +13,7 @@ export function albumGroups(
   counts: Schema<"DateCountBucket">[] | undefined,
   offset: number,
   now = Date.now(),
+  unknownDateCount?: number,
 ) {
   const totals = new Map(counts?.map((value) => [value.date, value.fileCount]));
   const days = new Map<string, Asset[]>();
@@ -40,6 +41,6 @@ export function albumGroups(
             : distance > 1 && distance < 7
               ? `周${"日一二三四五六"[new Date(`${key}T00:00:00Z`).getUTCDay()]}`
               : key;
-      return { key, label, items, total: totals.get(key) };
+      return { key, label, items, total: key ? totals.get(key) : unknownDateCount };
     });
 }

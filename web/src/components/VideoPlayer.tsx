@@ -1,18 +1,18 @@
+import Artplayer from "artplayer";
 import { useEffect, useRef, useState } from "react";
-import { duration } from "../lib/format";
+import { attachFullscreenChrome } from "../lib/player-fullscreen";
+import { attachProgressSeekFix } from "../lib/player-seek";
+import { attachSelectorBehavior, playerControls, playerSettings, PLAYBACK_RATES, updateHighlights, updateVideoTrackControls } from "../lib/player-controls";
+import type { PlayerHighlight } from "../lib/player-controls";
 
 export function VideoPlayer({
-  src,
-  title,
-  initialPosition,
-  progressMatches,
-  onProgress,
-  onPlay,
-  onPosition,
-  seek,
+  src, title, poster, highlights = [], initialPosition, progressMatches,
+  onProgress, onPlay, onPosition, seek,
 }: {
   src: string;
   title: string;
+  poster?: string;
+  highlights?: PlayerHighlight[];
   initialPosition: number;
   progressMatches: boolean;
   onProgress: (positionMs: number) => void;
@@ -20,193 +20,125 @@ export function VideoPlayer({
   onPosition?: (positionMs: number) => void;
   seek?: { id: string; positionMs: number };
 }) {
-  const stage = useRef<HTMLDivElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
-  const [webFullscreen, setWebFullscreen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const player = useRef<Artplayer | undefined>(undefined);
+  const [initial] = useState({ src, title, poster, initialPosition, progressMatches });
   const [error, setError] = useState("");
-  const [resume, setResume] = useState(progressMatches && initialPosition > 0);
-  const lastSent = useRef(0);
-  const interacted = useRef(false);
-  const lastPosition = useRef<number | undefined>(undefined);
-  const progressCallback = useRef(onProgress);
-  progressCallback.current = onProgress;
-  const report = (position: number) => {
-    if (!interacted.current || lastPosition.current === position) return;
-    lastPosition.current = position;
-    progressCallback.current(position);
-  };
+  const [attempt, setAttempt] = useState(0);
+  const callbacks = useRef({ onProgress, onPlay, onPosition });
+  const marks = useRef(highlights);
+  useEffect(() => { callbacks.current = { onProgress, onPlay, onPosition }; });
   useEffect(() => {
-    const element = video.current;
-    return () => {
-      if (element && interacted.current) {
-        const position = Math.round(element.currentTime * 1000);
-        if (Number.isFinite(position) && position !== lastPosition.current)
-          progressCallback.current(position);
+    marks.current = highlights;
+    if (player.current) updateHighlights(player.current, highlights);
+  }, [highlights]);
+  useEffect(() => {
+    if (!container.current) return;
+    const primary = () => getComputedStyle(document.documentElement).getPropertyValue("--qm-primary").trim();
+    Artplayer.PLAYBACK_RATE = [...PLAYBACK_RATES];
+    const art = new Artplayer({
+      container: container.current, url: initial.src, poster: initial.poster,
+      theme: primary(), lang: "zh-cn", volume: 0.7, muted: true,
+      setting: true, settings: playerSettings(), controls: playerControls(),
+      fullscreen: true, fullscreenWeb: true,
+      // Keep labels out of ArtPlayer's HTML interpolation; safe DOM binding follows metadata.
+      highlight: [],
+      moreVideoAttr: { playsInline: true, preload: "metadata" },
+    });
+    player.current = art;
+    art.video.setAttribute("aria-label", initial.title);
+    let interacted = false;
+    let disposed = false;
+    let lastSentAt = 0;
+    let lastPosition: number | undefined;
+    let resumed = false;
+    const report = () => {
+      if (!interacted || disposed) return;
+      const position = Math.round(art.currentTime * 1000);
+      if (Number.isFinite(position) && position !== lastPosition) {
+        lastPosition = position;
+        callbacks.current.onProgress(position);
       }
     };
-  }, [src]);
-  useEffect(() => {
-    if (!seek || !video.current) return;
-    const element = video.current;
-    const apply = () => {
-      element.currentTime = seek.positionMs / 1000;
-      setResume(false);
+    const metadata = () => {
+      updateVideoTrackControls(art);
+      updateHighlights(art, marks.current);
+      if (!resumed && initial.progressMatches && initial.initialPosition > 0) {
+        resumed = true;
+        // A saved position belongs only to this exact content version.
+        const seconds = initial.initialPosition / 1000;
+        if (Number.isFinite(art.duration) && seconds < art.duration) art.seek = seconds;
+      }
     };
-    if (element.readyState > 0) apply();
-    else element.addEventListener("loadedmetadata", apply, { once: true });
-    return () => element.removeEventListener("loadedmetadata", apply);
-  }, [seek]);
-  useEffect(() => {
-    const handle = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setWebFullscreen(false);
+    art.on("video:loadedmetadata", metadata);
+    const tracksChanged = () => updateVideoTrackControls(art);
+    art.video.textTracks.addEventListener("addtrack", tracksChanged);
+    art.video.textTracks.addEventListener("removetrack", tracksChanged);
+    art.on("video:play", () => { interacted = true; callbacks.current.onPlay(); });
+    art.on("video:timeupdate", () => {
+      callbacks.current.onPosition?.(Math.round(art.currentTime * 1000));
+      if (!art.video.paused && Date.now() - lastSentAt >= 10000) { lastSentAt = Date.now(); report(); }
+    });
+    art.on("video:pause", report);
+    art.on("video:ended", report);
+    art.on("video:seeked", report);
+    art.on("video:ratechange", () => {
+      const value = art.template.$player.querySelector(".art-control-playbackRate .art-selector-value");
+      if (value) value.textContent = art.playbackRate === 1 ? "倍速" : `${art.playbackRate}x`;
+    });
+    const failure = () => {
+      if (!disposed) setError("此浏览器无法播放该文件或原件不可读取。");
     };
-    document.addEventListener("keydown", handle);
-    return () => document.removeEventListener("keydown", handle);
-  }, []);
-  useEffect(() => {
-    if (!webFullscreen) return;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    art.on("video:error", failure);
+    art.on("error", failure);
+    art.on("video:canplay", () => { if (!disposed) setError(""); });
+    art.on("fullscreenError", () => { if (!disposed) setError("当前浏览器没有允许系统全屏，请使用网页全屏。"); });
+    const hidden = () => { if (document.visibilityState !== "visible") report(); };
+    document.addEventListener("visibilitychange", hidden);
+    window.addEventListener("pagehide", report);
+    const theme = new MutationObserver(() => { art.theme = primary(); });
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    const detachSeek = attachProgressSeekFix(container.current, art);
+    const detachSelectors = attachSelectorBehavior(art);
+    const detachFullscreen = attachFullscreenChrome(art);
     return () => {
-      document.body.style.overflow = original;
+      report();
+      disposed = true;
+      document.removeEventListener("visibilitychange", hidden);
+      window.removeEventListener("pagehide", report);
+      art.video.textTracks.removeEventListener("addtrack", tracksChanged);
+      art.video.textTracks.removeEventListener("removetrack", tracksChanged);
+      theme.disconnect();
+      detachSeek();
+      detachSelectors();
+      detachFullscreen();
+      if (player.current === art) player.current = undefined;
+      art.destroy();
     };
-  }, [webFullscreen]);
+  }, [initial, attempt]);
+
+  useEffect(() => { player.current?.video.setAttribute("aria-label", title); }, [title]);
+
+  useEffect(() => {
+    const art = player.current;
+    if (!seek || !art) return;
+    const apply = () => { art.seek = seek.positionMs / 1000; };
+    if (art.video.readyState > 0) apply();
+    else art.video.addEventListener("loadedmetadata", apply, { once: true });
+    return () => art.video.removeEventListener("loadedmetadata", apply);
+  }, [seek, attempt]);
+
   return (
-    <div
-      ref={stage}
-      className={`video-stage ${webFullscreen ? "video-stage--fullscreen" : ""}`}
-    >
-      <button
-        className="button button--small video-exit"
-        onClick={() => {
-          setWebFullscreen(false);
-          if (document.fullscreenElement)
-            void document
-              .exitFullscreen()
-              .catch(() => setError("未能退出系统全屏，请按 Esc 重试。"));
-        }}
-      >
-        退出全屏
-      </button>
-      <video
-        ref={video}
-        src={src}
-        controls
-        playsInline
-        preload="metadata"
-        aria-label={title}
-        onPlay={() => {
-          interacted.current = true;
-          onPlay();
-        }}
-        onSeeked={(event) => {
-          interacted.current = true;
-          report(Math.round(event.currentTarget.currentTime * 1000));
-        }}
-        onError={() =>
-          setError(
-            "此浏览器无法播放该文件或原件不可读取。可打开原件使用系统播放器。",
-          )
-        }
-        onPause={(event) =>
-          report(Math.round(event.currentTarget.currentTime * 1000))
-        }
-        onTimeUpdate={(event) => {
-          const position = Math.round(event.currentTarget.currentTime * 1000);
-          onPosition?.(position);
-          if (
-            !event.currentTarget.paused &&
-            Date.now() - lastSent.current >= 10000
-          ) {
-            lastSent.current = Date.now();
-            report(position);
-          }
-        }}
-      />
-      {resume && (
-        <div className="resume-prompt qm-glass">
-          <span>上次播放到 {duration(initialPosition)}</span>
-          <button
-            className="button button--small"
-            onClick={() => {
-              if (video.current) {
-                video.current.currentTime = initialPosition / 1000;
-                void video.current
-                  .play()
-                  .catch(() =>
-                    setError("浏览器未允许自动播放，请点击播放按钮。"),
-                  );
-              }
-              setResume(false);
-            }}
-          >
-            继续播放
-          </button>
-          <button
-            className="button button--small"
-            onClick={() => setResume(false)}
-          >
-            从头开始
-          </button>
+    <div className="video-player-box">
+      <div className="video-player-mount" ref={container} />
+      {error && (
+        <div className="player-failure" role="alert">
+          <p>{error}</p>
+          <button className="pill" onClick={() => { setError(""); setAttempt(value => value + 1); }}>重试播放</button>
+          <a className="pill" href={src} target="_blank" rel="noreferrer">打开原件</a>
         </div>
       )}
-      {!progressMatches && initialPosition > 0 && (
-        <p className="notice">记录来自旧内容版本，未自动套用到当前视频。</p>
-      )}
-      {error && (
-        <p role="alert" className="notice notice--error">
-          {error}{" "}
-          <a href={src} target="_blank" rel="noreferrer">
-            打开原件
-          </a>
-        </p>
-      )}
-      <div className="video-actions">
-        <label>
-          速度
-          <select
-            defaultValue="1"
-            aria-label="播放速度"
-            onChange={(event) => {
-              if (video.current)
-                video.current.playbackRate = Number(event.target.value);
-            }}
-          >
-            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-              <option key={rate} value={rate}>
-                {rate}×
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="button button--small"
-          onClick={() => setWebFullscreen(!webFullscreen)}
-        >
-          {webFullscreen ? "退出网页全屏" : "网页全屏"}
-        </button>
-        <button
-          className="button button--small"
-          onClick={() => {
-            if (document.fullscreenElement) {
-              void document
-                .exitFullscreen()
-                .catch(() => setError("未能退出系统全屏，请按 Esc 重试。"));
-            } else if (stage.current?.requestFullscreen) {
-              void stage.current
-                .requestFullscreen()
-                .catch(() =>
-                  setError("当前浏览器没有允许全屏，请使用网页全屏。"),
-                );
-            } else {
-              setWebFullscreen(true);
-              setError("此浏览器不支持系统全屏，已切换为网页全屏。");
-            }
-          }}
-        >
-          全屏 / 退出
-        </button>
-      </div>
+      {!progressMatches && initialPosition > 0 && <span className="sr-only" role="status">记录来自旧内容版本，未自动套用到当前视频。</span>}
     </div>
   );
 }

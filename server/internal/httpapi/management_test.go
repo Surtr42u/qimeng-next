@@ -28,6 +28,7 @@ func TestStableTaxonomyAndExplicitChannelSeparation(t *testing.T){
  u,_:=f.upload("taxonomy.png",90,map[string]any{"characterIds":[]string{character.ID},"acquisitionSources":[]string{"Synthetic channel"}});a:=*f.complete(u).Asset;if len(a.SourceIDs)!=1||a.SourceIDs[0]!=source.ID||a.Source!="Synthetic Work"||a.AcquisitionSources[0]!="Synthetic channel"{t.Fatal("taxonomy confused identity with acquisition")}
  f.json("PUT","/sources/"+source.ID,"source-rename-1",map[string]any{"name":"Renamed Work","aliases":source.Aliases,"expectedRevision":source.Revision},200)
  r=f.json("GET","/assets/"+a.ID,"",nil,200);decode(t,r,&a);if a.Source!="Renamed Work"||a.CharacterIDs[0]!=character.ID{t.Fatal("stable taxonomy display did not follow rename")}
+ if len(a.WorkKeys)!=1||a.WorkKeys[0]!="source:"+source.ID||len(a.RoleKeys)!=1||a.RoleKeys[0]!="character:"+character.ID||len(a.WorkFacets)!=1||a.WorkFacets[0].Name!="Renamed Work"||len(a.RoleFacets)!=1||a.RoleFacets[0].Name!=character.Name{t.Fatalf("display membership does not follow authoritative facets: %+v",a)}
  r=f.json("PATCH","/libraries/"+f.library,"disable-library-1",map[string]any{"expectedRevision":1,"enabled":false},200);var library model.Library;decode(t,r,&library);if library.Enabled{t.Fatal("library stayed enabled")}
  f.json("POST","/uploads","upload-disabled-library",map[string]any{"libraryId":f.library,"fileName":"blocked.png","size":100,"mimeType":"image/png","mode":"ordinary"},409)
 }

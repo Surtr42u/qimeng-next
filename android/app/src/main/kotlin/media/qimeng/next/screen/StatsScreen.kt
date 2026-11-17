@@ -33,7 +33,7 @@ fun StatisticsScreen(model: LibraryViewModel) {
     val report = state.data?.takeIf { it.overview.range == range }
     LazyColumn(Modifier.fillMaxSize().softDaylightBackground().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 80.dp)) {
+        contentPadding = PaddingValues(bottom = media.qimeng.next.ui.NavigationDimensions.bottomClearance())) {
         item { Text("数据统计", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)) }
         item { RangeSelector(range) { range = it } }
         state.error?.let { item { ErrorNotice(it) { model.loadAnalytics(range) } } }

@@ -126,7 +126,8 @@ fun AppRoot(model: LibraryViewModel) {
                             NavigationItem("stats", "数据", StatsIcon), NavigationItem("me", "我的", ProfileIcon)),
                         selected = tab, backdrop = backdrop, reducedMotion = preferences.reducedMotion, glass = preferences.glass,
                         onSelect = model::selectTab,
-                        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp).widthIn(max = 480.dp).fillMaxWidth())
+                        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+                            .padding(horizontal = NavigationDimensions.horizontalMargin).padding(bottom = NavigationDimensions.bottomMargin).fillMaxWidth())
                 }
             }
         }

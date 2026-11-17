@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -46,7 +47,12 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("login-address").performTextInput(server)
         compose.onNodeWithTag("login-password").performTextInput(token)
         compose.onNodeWithText("连接影库").performClick()
-        await { graph.settings.session.value != null && graph.queue.state.value != null }
+        await("login", graph) {
+            val errors = compose.onAllNodesWithTag("login-error").fetchSemanticsNodes()
+                .flatMap { it.config[SemanticsProperties.Text] }.joinToString { it.text }
+            check(errors.isEmpty()) { "Login UI error: $errors" }
+            graph.settings.session.value != null && graph.queue.state.value != null
+        }
         assertTrue("Cloud test requires an empty transfer journal", graph.queue.state.value!!.transfers.isEmpty())
         val library = runBlocking { graph.media.createLibrary("Android 云端合成影库", false) }
 
@@ -75,7 +81,7 @@ class AndroidRealServerTest {
             assertEquals(1, graph.queue.state.value!!.intakeFailures.size)
             graph.uploads.enqueue(library.id, "android-cloud", UploadMode.ORDINARY)
         }
-        await {
+        await("manifest-and-upload", graph) {
             val transfers = graph.queue.state.value!!.transfers
             assertTrue("A real upload failed: ${transfers.joinToString { it.message }}", transfers.none { it.state == TransferState.FAILED })
             transfers.size == 2 && transfers.all { it.state == TransferState.SUCCEEDED }
@@ -100,7 +106,7 @@ class AndroidRealServerTest {
             transfers = it.transfers + Transfer(cancelledId, cancelledBatch.target, library.id, "cancelled.png", "image/png", picture.bytes,
                 "unused-cancelled-fixture", UploadMode.ORDINARY, null, cancelledBatch.key, cancelledBatch.label, state = TransferState.CANCELLED)) } }
         graph.uploads.schedule()
-        await { graph.queue.state.value!!.transfers.single { it.id == cancelledId }.cancelConfirmed }
+        await("cancel-unstarted-input", graph) { graph.queue.state.value!!.transfers.single { it.id == cancelledId }.cancelConfirmed }
         val stopped = graph.queue.state.value!!.transfers.single { it.id == cancelledId }
         assertNull(stopped.uploadId)
         assertEquals("cancelled", runBlocking { graph.media.report(stopped.batchId!!).items.single().state })
@@ -116,9 +122,9 @@ class AndroidRealServerTest {
         compose.onNodeWithText("添加").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithText("安卓云端标签").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("保存").performClick()
-        await { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }
+        await("save-tags", graph) { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }
         compose.onNodeWithContentDescription("收藏").performClick()
-        await { graph.media.asset(picture.id).favorite }
+        await("favorite", graph) { graph.media.asset(picture.id).favorite }
         screenshot("real-server-detail.png")
 
         compose.onNodeWithContentDescription("返回").performClick()
@@ -126,7 +132,7 @@ class AndroidRealServerTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        await { graph.media.history().items.any { it.assetId == video.id && it.kind == "play" } }
+        await("video-play-event", graph) { graph.media.history().items.any { it.assetId == video.id && it.kind == "play" } }
         compose.onNodeWithContentDescription("进入全屏").performClick()
         compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
         screenshot("real-server-video-fullscreen.png")
@@ -135,13 +141,25 @@ class AndroidRealServerTest {
         assertTrue(recommendation.items.any { it.id == picture.id })
     }
 
-    private fun await(condition: suspend () -> Boolean) = runBlocking {
-        withTimeout(120_000) { while (!condition()) delay(400) }
+    private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {
+        try { withTimeout(120_000) { while (!condition()) delay(400) } }
+        catch (failure: Throwable) {
+            saveScreenshot("failed-$stage.png")
+            val queue = graph.queue.state.value
+            // Synthetic test state only. Never serialize the connection, credentials, URI or journal.
+            throw AssertionError("Stage $stage failed; authenticated=${graph.settings.session.value != null}; " +
+                "queueLoaded=${queue != null}; queueError=${graph.queue.error.value}; " +
+                "transfers=${queue?.transfers?.map { "${it.state}:${it.offset}/${it.bytes}:${it.message}" }}; " +
+                "manifests=${queue?.batches?.map { "created=${it.serverId != null},sealed=${it.manifestFingerprint != null}" }}", failure)
+        }
     }
     private fun screenshot(name: String) {
+        compose.waitForIdle()
+        saveScreenshot(name)
+    }
+    private fun saveScreenshot(name: String) {
         val directory = InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir("screenshots")!!
         directory.mkdirs()
-        compose.waitForIdle()
         val screenshot = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         File(directory, name).outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
         screenshot.recycle()

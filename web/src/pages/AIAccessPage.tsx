@@ -41,6 +41,7 @@ const initialPolicy: Policy = {
   canIngest: false,
   canResearch: false,
   canOrganize: false,
+  canRecycleSources: false,
   maxResearchCalls: 0,
   maxUpdates: 1,
   maxTasksPerDay: 10,
@@ -240,7 +241,11 @@ function DelegationForm({
   );
   const create = useCreateAIDelegation(complete);
   const change = (patch: Partial<Policy>) =>
-    setPolicy((current) => ({ ...current, ...patch }));
+    setPolicy((current) => {
+      const next = { ...current, ...patch };
+      if (!next.canIngest || !next.libraryIds.length) next.canRecycleSources = false;
+      return next;
+    });
   const hasAuthorWrites =
     policy.allowedFields.length > 0 || policy.candidateBlocks.length > 0;
   const rangeReady =
@@ -403,6 +408,16 @@ function DelegationForm({
                     </label>
                   ))
                 )}
+                <label className="check-label">
+                  <input
+                    type="checkbox"
+                    disabled={!policy.canIngest || !policy.libraryIds.length}
+                    checked={policy.canRecycleSources}
+                    onChange={event => change({ canRecycleSources: event.target.checked })}
+                  />
+                  备份核验后允许回收来源
+                </label>
+                <p className="muted">仅限已选媒体库；服务端核验独立备份与本批内容后移入来源回收区，不永久删除。</p>
               </fieldset>
             )}
             {hasAuthorWrites && (
@@ -652,6 +667,7 @@ function PolicySummary({ policy }: { policy: Policy }) {
             ? `接收文件，${policy.libraryIds.length} 个库`
             : "未授权接收"}
           {policy.canOrganize ? " · 允许智能整理" : ""}
+          {policy.canRecycleSources ? " · 备份核验后可回收来源" : ""}
         </dd>
       </div>
       <div>

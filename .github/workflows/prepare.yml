@@ -384,6 +384,7 @@ jobs:
           retention-days: 7
           path: |
             android/**/build/reports/androidTests/
+            android/**/build/outputs/androidTest-results/connected/
             android/**/build/outputs/connected_android_test_additional_output/
             android/build/cloud-screenshots/
   android-local-ui:
@@ -430,4 +431,6 @@ jobs:
           retention-days: 7
           path: |
             android/**/build/reports/androidTests/
+            android/**/build/outputs/androidTest-results/connected/
             android/**/build/outputs/connected_android_test_additional_output/
+            android/build/cloud-screenshots/

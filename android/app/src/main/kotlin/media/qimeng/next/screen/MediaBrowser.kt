@@ -41,6 +41,7 @@ import media.qimeng.next.model.Asset
 import media.qimeng.next.model.AssetQuery
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.NavigationDimensions
 import media.qimeng.next.ui.component.QimengChipRow
 import media.qimeng.next.ui.component.QimengPill
 import media.qimeng.next.ui.glass.GlassSurface
@@ -207,7 +208,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, 
             onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
         LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
-            contentPadding = PaddingValues(start = 11.dp, end = 11.dp, top = 4.dp, bottom = if (bottomDock) 128.dp else 24.dp),
+            contentPadding = PaddingValues(start = 11.dp, end = 11.dp, top = 4.dp, bottom = if (bottomDock) NavigationDimensions.bottomClearance() else 24.dp),
             horizontalArrangement = Arrangement.spacedBy(0.dp), verticalArrangement = Arrangement.spacedBy(0.dp),
             modifier = Modifier.fillMaxSize().pointerInput(key) {
                 awaitEachGesture {
@@ -224,8 +225,8 @@ fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, 
                     } while (event.changes.any { it.pressed })
                 }
             }) {
-            items(if (model.query(key).text == query.text) state.items else emptyList(), key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
-            if (state.cursor != null) item(span = { GridItemSpan(maxLineSpan) }) {
+            items(if (state.loadedQuery == query) state.items else emptyList(), key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
+            if (state.cursor != null && state.loadedQuery == query) item(span = { GridItemSpan(maxLineSpan) }) {
                 TextButton(onClick = { model.browse(key, query, next = true) }, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) { Text("加载更多") }
             }
         }

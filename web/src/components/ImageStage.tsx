@@ -12,10 +12,11 @@ export function ImageStage({
   const [failed, setFailed] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   return (
-    <div>
+    <div className="asset-image-content">
       <button
-        className="image-stage"
+        className="asset-img-open"
         aria-label="查看原图并缩放"
+        title="查看大图"
         disabled={failed === src}
         onClick={onOpen}
       >
@@ -26,10 +27,9 @@ export function ImageStage({
           onError={() => setFailed(src)}
           onLoad={() => setFailed(undefined)}
         />
-        <span>{failed === src ? "原图读取失败" : "查看原图"}</span>
       </button>
       {failed === src && (
-        <div role="alert" className="notice notice--error">
+        <div role="alert" className="player-failure">
           <p>
             未能读取原件。可以重试；如果内容刚被替换，请刷新详情取得当前版本。
           </p>

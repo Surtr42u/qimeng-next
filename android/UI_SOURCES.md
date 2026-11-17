@@ -29,3 +29,5 @@
 统计页与详情页的原布局、尺寸、系列颜色、数字格式来自旧 `feature/stats/StatsScreen.kt`、`StatsDetailScreen.kt`、`StatsFormatters.kt`；新 Repository 消费服务端汇总与 `getTopInterests`，不复制旧榜单混合算法。旧 `QimengTrendLineChart.kt` 的线 / 平涂面积 / 空心点 / 坐标标签形态与 `QimengTrendMarker.kt` 气泡呈现进入独立 `core/ui/chart/`。Vico 锁 **2.2.0**：官方 Maven POM 的 core1.16.0 / Kotlin2.1.21 与本工具链兼容，较新版本的 SDK / Kotlin 要求不在此次顺带升级。为适配该版无 markerController 的公开 API，点击直接取 Vico `CartesianLayer.markerTargets` 的真实布局坐标，再以 persistentMarkers 切换气泡；无自绘折线、无推算点击坐标。多系列放在一个图层模型中，保留原系列色。仪器测试覆盖点选 / 再点隐藏和多系列值，生成合成趋势截图；未运行前不称通过。
 
 依据：[Vico 官方 POM](https://repo.maven.apache.org/maven2/com/patrykandpatrick/vico/compose/2.2.0/compose-2.2.0.pom)、[官方图层与 marker 说明](https://guide.vico.patrykandpatrick.com/android/core/cartesian-charts/cartesianmarker)；确切 2.2.0 API 另对照 Maven 官方 sources。
+
+后续导航纠偏只引用旧 `FloatingTabDock.TabDockDefaults` 的 62dp 高、16dp 左右距、10dp 底距、18dp 槽距、24dp 图标及原文字色 / 字重 / 1.12 图标选中比例；新的采样折射与选择滑块独立实现，不引入旧 renderer 或状态层。列表底部让位恢复旧 80dp 基线加系统 inset；大字号时按实际标签高度增加，默认字号不改变原几何。应用减少动效贯通按压反馈、详情 chrome 和图表；原 34dp 胶囊输入保留默认高度，大字号允许自然增高。

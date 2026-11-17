@@ -93,10 +93,13 @@ class EmbeddedService : Service() {
             if (receipt.exists() && !receipt.delete()) fail("无法清理上次本机启动回执")
             val launchId = UUID.randomUUID().toString()
             val storageRoots = EmbeddedFileAccess.roots(this, media)
+            val port = secrets.port
+            val listen = "127.0.0.1:$port"
+            val baseUrl = addressForPort(port)
             val builder = ProcessBuilder(runner.absolutePath, server.absolutePath).directory(control).redirectErrorStream(true)
             builder.environment().apply {
                 keys.filter { it.startsWith("QIMENG_") }.toList().forEach(::remove)
-                put("QIMENG_LISTEN", HostState.LISTEN)
+                put("QIMENG_LISTEN", listen)
                 put("QIMENG_DATA_DIR", control.absolutePath)
                 put("QIMENG_STORAGE_ROOTS", storageRoots)
                 put("QIMENG_TIMEZONE", TimeZone.getDefault().id)
@@ -109,11 +112,16 @@ class EmbeddedService : Service() {
                 put("LD_LIBRARY_PATH", nativeRoot.absolutePath)
             }
             if (stopping.get()) return
+            HostDiagnostics.begin(listOf(token, filesDir.absolutePath, nativeRoot.absolutePath))
             child = builder.start()
             process.set(child)
-            // Drain, but never log or persist child output: it may contain media names or private paths.
+            // Release drains without retaining output. Debug capture requires explicit synthetic-test
+            // opt-in and stays bounded in memory; neither build logs or persists the raw stream.
             val output = child.inputStream
-            Thread({ try { output.use { stream -> val bytes = ByteArray(4096); while (stream.read(bytes) >= 0) Unit } } catch (_: java.io.IOException) { /* Process/pipe closed. */ } }, "qimeng-local-output").apply { isDaemon = true; start() }
+            val outputThread = Thread({ try { output.use { stream ->
+                val bytes = ByteArray(4096)
+                while (true) { val count = stream.read(bytes); if (count < 0) break; HostDiagnostics.append(bytes, count) }
+            } } catch (_: java.io.IOException) { /* Process/pipe closed. */ } }, "qimeng-local-output").apply { isDaemon = true; start() }
             if (stopping.get()) child.destroy()
             val deadline = SystemClock.elapsedRealtime() + 45_000
             var instanceId: String? = null
@@ -121,15 +129,16 @@ class EmbeddedService : Service() {
                 if (receipt.isFile) {
                     if (receipt.length() !in 1..32_768) fail("本机启动回执无效")
                     val value = JSONObject(receipt.readText())
-                    if (value.getString("launchId") != launchId || value.getString("listenAddress") != HostState.LISTEN) fail("本机启动回执与本次进程不匹配")
+                    if (value.getString("launchId") != launchId || value.getString("listenAddress") != listen) fail("本机启动回执与本次进程不匹配")
                     val declared = value.getString("instanceId")
                     val certificate = value.getString("certificateDerBase64")
                     if (declared.isBlank() || (secrets.confirmedInstance != null && secrets.confirmedInstance != declared)) fail("本机实例身份已改变，请先核对数据恢复结果")
-                    if (httpInstance(certificate) != declared || !child.isAlive) fail("本机服务身份核对未通过")
-                    secrets.confirm(declared)
+                    if (httpInstance(baseUrl, certificate) != declared || !child.isAlive) fail("本机服务身份核对未通过")
+                    secrets.confirm(declared, port)
                     if (HostState.generation.get() == ticket) {
                         HostState.certificateDerBase64 = certificate
                         HostState.storageRoots = storageRoots
+                        HostState.activeBaseUrl = baseUrl
                     }
                     instanceId = declared
                     break
@@ -137,7 +146,10 @@ class EmbeddedService : Service() {
                 Thread.sleep(100)
             }
             if (!stopping.get()) {
-                if (instanceId == null) fail(if (child.isAlive) "本机启动超时，未取得受信回执" else "本机程序启动失败（退出码 ${child.exitValue()}）")
+                if (instanceId == null) {
+                    if (!child.isAlive) outputThread.join(1_000)
+                    fail(if (child.isAlive) "本机启动超时，未取得受信回执" else "本机程序启动失败（退出码 ${child.exitValue()}）")
+                }
                 publish(ticket, RuntimeStatus(RuntimePhase.READY, "本机影库正在运行", instanceId))
             }
             val exitCode = child.waitFor()
@@ -164,8 +176,8 @@ class EmbeddedService : Service() {
         return file
     }
 
-    private fun httpInstance(certificate: String): String {
-        val connection = URL("${HostState.BASE_URL}api/v1/instance").openConnection() as HttpsURLConnection
+    private fun httpInstance(baseUrl: String, certificate: String): String {
+        val connection = URL("${baseUrl}api/v1/instance").openConnection() as HttpsURLConnection
         connection.sslSocketFactory = PinnedTls(certificate).socketFactory
         connection.instanceFollowRedirects = false
         connection.connectTimeout = 1_500; connection.readTimeout = 1_500

@@ -28,13 +28,14 @@ func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
-type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
+type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
 type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; password *passwordLogin; loginLimit loginBudget }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
  if config.DataDir==""{return nil,errors.New("QIMENG_DATA_DIR is required")}
  if config.AIToken!=""&&len(config.AIToken)<32{return nil,errors.New("QIMENG_AI_TOKEN must contain at least 32 characters")}
+ if err:=validateBackupTargets(config.BackupTargets,config.DefaultBackupTarget);err!=nil{return nil,err}
  password,err:=preparePassword(config.AdminPassword);if err!=nil{return nil,err};config.AdminPassword=""
  if config.ReserveBytes<=0{config.ReserveBytes=512<<20}
  if err:=os.MkdirAll(config.DataDir,0700);err!=nil{return nil,err}
@@ -65,6 +66,7 @@ func New(config Config)(*Service,error){
  if err=s.recoverIntents(ctx);err!=nil{s.Close();return nil,fmt.Errorf("file recovery requires attention: %w",err)}
  if _,err=db.DB.ExecContext(ctx,"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted') WHERE json_extract(data,'$.exportState') IN ('queued','running')");err!=nil{s.Close();return nil,err}
+ if _,err=db.DB.ExecContext(ctx,"UPDATE batch_protections SET state='interrupted',data=json_set(data,'$.state','interrupted','$.errorCode','protection_interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  return s,nil
 }
 func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
@@ -137,7 +139,7 @@ func(s *Service)CreateSession(ctx context.Context,w *Write,label,batchID string,
   if task.State!="authorized"||!task.ExpiresAt.After(time.Now()){return model.Principal{},Fail(409,"author_task_stale","资料维护授权已失效。")}
   duration=time.Until(task.ExpiresAt)
   for _,scope:=range scopes{if scope!="read"&&scope!="author.profile.write"&&scope!="research"{return model.Principal{},Fail(400,"invalid_scope","资料维护凭据只能授予read、research和author.profile.write。")}}
- }else if batchID!=""{if _,err:=s.Batch(ctx,batchID);err!=nil{return model.Principal{},err};duration=24*time.Hour;for _,scope:=range scopes{if scope!="read"&&scope!="ingest"&&scope!="research"&&scope!="organize"{return model.Principal{},Fail(400,"invalid_scope","不支持的 AI 权限。")}}}else{scopes=[]string{"admin"}}
+ }else if batchID!=""{if _,err:=s.Batch(ctx,batchID);err!=nil{return model.Principal{},err};duration=24*time.Hour;for _,scope:=range scopes{if scope!="read"&&scope!="ingest"&&scope!="research"&&scope!="organize"&&scope!="source.cleanup"{return model.Principal{},Fail(400,"invalid_scope","不支持的 AI 权限。")}}}else{scopes=[]string{"admin"}}
  p:=model.Principal{ID:ID(),Label:label,BatchID:batchID,AuthorTaskID:authorTaskID,Scopes:scopes,ExpiresAt:time.Now().UTC().Add(duration)}
  secret:=token();raw,err:=store.Encode(p);if err!=nil{return p,err};q,err:=w.Q();if err!=nil{return p,err}
  _,err=q.ExecContext(ctx,"INSERT INTO credentials(id,token_hash,expires_at,data) VALUES(?,?,?,?)",p.ID,digest([]byte(secret)),p.ExpiresAt.Format(time.RFC3339Nano),raw);p.Token=secret;return p,err

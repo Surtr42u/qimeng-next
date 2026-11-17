@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 
 @Stable
 class GlassBackdrop internal constructor(internal val layer: GraphicsLayer) {
@@ -50,7 +52,7 @@ fun glassCapability(apiLevel: Int, hardware: Boolean, enabled: Boolean): GlassCa
 }
 
 @Composable
-internal fun rememberBackdropModifier(backdrop: GlassBackdrop, selectedFraction: () -> Float, count: Int, enabled: Boolean): Modifier {
+internal fun rememberBackdropModifier(backdrop: GlassBackdrop, selectedFraction: () -> Float, count: Int, enabled: Boolean, contentInset: Dp = 0.dp): Modifier {
     val capability = glassCapability(Build.VERSION.SDK_INT, LocalView.current.isHardwareAccelerated, enabled)
     val crop = rememberGraphicsLayer()
     var location by remember { mutableStateOf(Offset.Zero) }
@@ -61,7 +63,7 @@ internal fun rememberBackdropModifier(backdrop: GlassBackdrop, selectedFraction:
                 translate(backdrop.position.x - location.x, backdrop.position.y - location.y) { drawLayer(backdrop.layer) }
             }
             if (Build.VERSION.SDK_INT >= 33 && effect != null) {
-                crop.renderEffect = effect.update(size.width, size.height, selectedFraction(), count).asComposeRenderEffect()
+                crop.renderEffect = effect.update(size.width, size.height, selectedFraction(), count, contentInset.toPx()).asComposeRenderEffect()
             } else if (Build.VERSION.SDK_INT >= 31) {
                 crop.renderEffect = RenderEffect.createBlurEffect(18f, 18f, Shader.TileMode.CLAMP).asComposeRenderEffect()
             }
@@ -79,10 +81,11 @@ private class RefractionEffect {
         uniform float2 resolution;
         uniform float selected;
         uniform float count;
+        uniform float inset;
         half4 main(float2 p) {
             float h = resolution.y;
-            float w = resolution.x / count;
-            float2 c = float2((selected + 0.5) * w, h * 0.5);
+            float w = (resolution.x - inset * 2.0) / count;
+            float2 c = float2(inset + (selected + 0.5) * w, h * 0.5);
             float2 d = p - c;
             float2 q = d - float2(clamp(d.x, -max(w * 0.5 - h * 0.42, 0.0), max(w * 0.5 - h * 0.42, 0.0)), 0.0);
             float r = h * 0.42;
@@ -101,10 +104,11 @@ private class RefractionEffect {
         RenderEffect.createBlurEffect(5f, 5f, Shader.TileMode.CLAMP),
     )
 
-    fun update(width: Float, height: Float, selection: Float, count: Int): RenderEffect {
+    fun update(width: Float, height: Float, selection: Float, count: Int, inset: Float): RenderEffect {
         shader.setFloatUniform("resolution", width, height)
         shader.setFloatUniform("selected", selection)
         shader.setFloatUniform("count", count.toFloat())
+        shader.setFloatUniform("inset", inset)
         return renderEffect
     }
 }

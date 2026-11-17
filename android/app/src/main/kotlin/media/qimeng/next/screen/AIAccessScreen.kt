@@ -69,6 +69,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
                 Text(grant.label, style = MaterialTheme.typography.titleMedium)
                 Text("${mapOf("active" to "有效", "revoked" to "已撤销", "expired" to "已过期")[grant.state] ?: "状态待核对"} · 到期 ${grant.expiresAt}")
                 Text("全库只读 · ${if (grant.canIngest) "可新增媒体" else "不可新增媒体"} · ${if (grant.canResearch) "可研究" else "不可研究"} · ${if (grant.canOrganize) "可整理" else "不可整理"}")
+                Text(if (grant.canRecycleSources) "已单独授权：备份核验后回收来源" else "未授权回收来源", style = MaterialTheme.typography.bodySmall)
                 Text("写入范围：${grant.libraryIds.size} 个影库，${if (grant.allAuthors) "全部可维护作者" else "${grant.authorIds.size} 位作者"}")
                 if (grant.allowedFields.isNotEmpty()) Text("作者字段：${grant.allowedFields.joinToString("、") { fieldName(it) }}")
                 Text("每日 ${grant.maxTasksPerDay} 个任务；每任务最多 ${grant.maxUpdates} 次资料更新、${grant.maxResearchCalls} 次研究", style = MaterialTheme.typography.bodySmall)
@@ -100,6 +101,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     var canIngest by rememberSaveable { mutableStateOf(false) }
     var canResearch by rememberSaveable { mutableStateOf(false) }
     var canOrganize by rememberSaveable { mutableStateOf(false) }
+    var canRecycle by rememberSaveable { mutableStateOf(false) }
     var allowClear by rememberSaveable { mutableStateOf(false) }
     var days by rememberSaveable { mutableStateOf("30") }
     var tasks by rememberSaveable { mutableStateOf("20") }
@@ -114,7 +116,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     val maxResearch = research.toIntOrNull()?.takeIf { it in 0..100 }
     val maxCalls = calls.toIntOrNull()?.takeIf { it in 10..10000 }
     val duration = minutes.toIntOrNull()?.takeIf { it in 1..1440 }
-    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, canOrganize, allowClear, days, tasks, updates, research, calls, minutes) {
+    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, canOrganize, canRecycle, allowClear, days, tasks, updates, research, calls, minutes) {
         model.clearCreationError()
     }
     val writesNeedLibrary = canIngest || canResearch || canOrganize
@@ -125,12 +127,16 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(label, { label = it }, label = { Text("连接名称") }, enabled = !busy)
             Text("只读查询全库始终开放；下面仅增加你选择的写入权限。", style = MaterialTheme.typography.bodySmall)
-            PermissionRow("新增媒体", canIngest, !busy) { canIngest = it }
+            PermissionRow("新增媒体", canIngest, !busy) { canIngest = it; if (!it) canRecycle = false }
             PermissionRow("研究（使用已配置的外部工具）", canResearch, !busy) { canResearch = it }
             PermissionRow("整理 / 命名", canOrganize, !busy) { canOrganize = it }
+            PermissionRow("备份核验后回收来源", canRecycle, !busy && canIngest && libraryIds.isNotEmpty()) { canRecycle = it }
             if (writesNeedLibrary) {
                 Text("允许写入的影库 · ${libraryIds.size}/100", style = MaterialTheme.typography.titleSmall)
-                libraries.forEach { item -> PermissionRow(item.name, item.id in libraryIds, !busy) { selected -> libraryIds = if (selected) libraryIds + item.id else libraryIds - item.id } }
+                libraries.forEach { item -> PermissionRow(item.name, item.id in libraryIds, !busy) { selected ->
+                    libraryIds = if (selected) libraryIds + item.id else libraryIds - item.id
+                    if (libraryIds.isEmpty()) canRecycle = false
+                } }
             }
             Text("作者资料权限", style = MaterialTheme.typography.titleSmall)
             listOf("name", "biography", "homepage", "aliases").forEach { field -> PermissionRow(fieldName(field), field in fields, !busy) {
@@ -158,7 +164,8 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     }, confirmButton = { TextButton(onClick = {
         model.create(AIAccessPolicy(label.trim(), libraryIds, if (allAuthors) emptyList() else authorIds, allAuthors,
             fields, blocks, allowClear && writesNeedAuthor, canIngest, canResearch, canOrganize,
-            if (canResearch) maxResearch!! else 0, maxUpdates!!, dailyTasks!!, validDays!!, maxCalls!!, duration!! * 60), close)
+            if (canResearch) maxResearch!! else 0, maxUpdates!!, dailyTasks!!, validDays!!, maxCalls!!, duration!! * 60,
+            canRecycleSources = canRecycle && canIngest && libraryIds.isNotEmpty()), close)
     }, enabled = valid && !busy && error == null) { Text("创建接入凭据") } },
         dismissButton = { TextButton(onClick = close, enabled = !busy) { Text("取消") } })
 }

@@ -59,10 +59,11 @@ export function useAssets(filters: AssetFilters, enabled = true) {
     select: (data) => ({ ...data, pages: deduplicateAssetPages(data.pages) }),
   });
 }
-export function useAsset(id: string, enabled = true) {
+export function useAsset(id: string, enabled = true, retainPrevious = false) {
   const key = useRemoteKey();
-  return useQuery({
+  return useQuery<Asset>({
     queryKey: [...key, "asset", id],
+    placeholderData: (previous, previousQuery) => retainPrevious && previousQuery?.queryKey[1] === key[1] && previousQuery.queryKey[2] === key[2] ? previous : undefined,
     queryFn: ({ signal }) =>
       read(api.GET("/assets/{id}", { params: { path: { id } }, signal })),
     enabled: !!id && enabled,
@@ -183,7 +184,7 @@ export function useThumbnailURL(source?: string) {
 export function mediaCards(assets: readonly Asset[]): MediaCardModel[] {
   return assets.map((asset) => ({
     id: asset.id,
-    title: asset.fileName,
+    title: asset.cosWorkName || asset.fileName,
     caption: asset.authorName
       ? `${asset.authorName}${asset.authorIds.length > 1 ? ` 等${asset.authorIds.length}` : ""}`
       : asset.authorStatus === "unknown"
@@ -203,12 +204,12 @@ export function mediaCards(assets: readonly Asset[]): MediaCardModel[] {
     liked: asset.liked,
   }));
 }
-function mediaCardDate(value?: string | null) {
+export function mediaCardDate(value?: string | null) {
   if (!value) return undefined;
   const date = new Date(value);
   return `${date.getMonth() + 1}-${date.getDate()}`;
 }
-function safeMediaUrl(value: string, version: number) {
+export function safeMediaUrl(value: string, version: number) {
   const url = new URL(value, window.location.origin);
   if (
     url.origin !== window.location.origin ||

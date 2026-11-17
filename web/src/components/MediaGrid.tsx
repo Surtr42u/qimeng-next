@@ -18,9 +18,11 @@ export type MediaCardModel = {
 export function MediaGrid({
   items,
   search = false,
+  navigationIds = items.map(item => item.id),
 }: {
   items: readonly MediaCardModel[];
   search?: boolean;
+  navigationIds?: string[];
 }) {
   const location = useLocation();
   return (
@@ -29,7 +31,7 @@ export function MediaGrid({
         <Link
           key={item.id}
           to={`/asset/${encodeURIComponent(item.id)}`}
-          state={{ returnTo: location.pathname + location.search }}
+          state={{ returnTo: location.pathname + location.search, ids: navigationIds, index: navigationIds.indexOf(item.id) }}
           className="card media-card"
           aria-label={`打开 ${item.title}`}
           onKeyDown={(event) => {

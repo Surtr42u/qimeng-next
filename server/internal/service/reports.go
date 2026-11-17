@@ -41,7 +41,7 @@ func(s *Service)StatsOverview(ctx context.Context,window string)(Overview,error)
 
 func(s *Service)activityDimensions(ctx context.Context,day string,source bool)([]ActivityDimension,error){
  expression:="a.media_type";keys:=[]string{"image","animated_image","video"}
- if source{expression="lib.kind";keys=[]string{"regular","cos"}}
+ if source{expression=assetPartition;keys=[]string{"regular","cos"}}
  // expression is selected only from these internal literals, never caller input.
  rows,e:=s.DB.DB.QueryContext(ctx,`WITH totals AS(SELECT asset_id,sum(views) AS views,sum(plays) AS plays,sum(seconds) AS seconds FROM asset_daily_stats WHERE day>=? GROUP BY asset_id)
  SELECT `+expression+`,count(*),coalesce(sum(a.size),0),coalesce(sum(t.views),0),coalesce(sum(t.plays),0),coalesce(sum(t.seconds),0) FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN totals t ON t.asset_id=a.id WHERE a.trashed=0 GROUP BY `+expression,day)
@@ -83,7 +83,7 @@ func(s *Service)StatsTrends(ctx context.Context,window string)(Trends,error){
 }
 
 func(s *Service)trendDimensions(ctx context.Context,day string,indexed map[string]int,result *Trends)error{
- rows,e:=s.DB.DB.QueryContext(ctx,`SELECT d.day,a.media_type,lib.kind AS source,sum(d.views),sum(d.plays),sum(d.seconds) FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 JOIN libraries lib ON lib.id=a.library_id WHERE d.day>=? GROUP BY d.day,a.media_type,source`,day)
+ rows,e:=s.DB.DB.QueryContext(ctx,`SELECT d.day,a.media_type,`+assetPartition+` AS source,sum(d.views),sum(d.plays),sum(d.seconds) FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 JOIN libraries lib ON lib.id=a.library_id WHERE d.day>=? GROUP BY d.day,a.media_type,source`,day)
  if e!=nil{return e};defer rows.Close()
  add:=func(values []TrendDimension,key string,total ActivityTotals){for i:=range values{if values[i].Key==key{values[i].Views+=total.Views;values[i].Plays+=total.Plays;values[i].Seconds+=total.Seconds;return}}}
  for rows.Next(){var text,media,source string;var total ActivityTotals;if e=rows.Scan(&text,&media,&source,&total.Views,&total.Plays,&total.Seconds);e!=nil{return e};at,err:=time.ParseInLocation("2006-01-02",text,time.Local);if err!=nil{return err};index,ok:=indexed[bucketStart(at,result.Granularity).Format("2006-01-02")];if !ok{continue};add(result.Items[index].MediaTypes,media,total);add(result.Items[index].Sources,source,total)}

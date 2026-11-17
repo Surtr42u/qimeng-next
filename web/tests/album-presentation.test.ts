@@ -24,5 +24,6 @@ describe("album date presentation", () => {
     const groups = albumGroups([unknown, known], undefined, 0);
     expect(groups.map((group) => group.key)).toEqual(["2026-01-01", ""]);
     expect(groups.every((group) => group.total === undefined)).toBe(true);
+    expect(albumGroups([unknown], [], 0, Date.now(), 42)[0]).toMatchObject({ key: "", label: "", total: 42 });
   });
 });

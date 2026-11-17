@@ -3,6 +3,8 @@ package media.qimeng.next.screen
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
+import media.qimeng.next.ui.LocalReducedMotion
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -152,8 +154,8 @@ internal fun DetailTopChrome(
         // 先瞬时回填、内容再淡入，同旧版逐帧观感
         androidx.compose.animation.AnimatedVisibility(
             visible = contentVisible,
-            enter = fadeIn(animationSpec = CHROME_CONTENT_FADE),
-            exit = fadeOut(animationSpec = CHROME_CONTENT_FADE),
+            enter = fadeIn(animationSpec = if (LocalReducedMotion.current) snap() else CHROME_CONTENT_FADE),
+            exit = fadeOut(animationSpec = if (LocalReducedMotion.current) snap() else CHROME_CONTENT_FADE),
             modifier = Modifier.fillMaxWidth(),
         ) {
             // 内层 Row 承接原内容几何（weight 居中需 RowScope，AnimatedVisibilityScope 不是）
@@ -256,8 +258,8 @@ internal fun DetailBottomChrome(
         // 仅条内内容参与淡入淡出（U6，全限定防误绑 RowScope 扩展，理由同 DetailTopChrome）
         androidx.compose.animation.AnimatedVisibility(
             visible = contentVisible,
-            enter = fadeIn(animationSpec = CHROME_CONTENT_FADE),
-            exit = fadeOut(animationSpec = CHROME_CONTENT_FADE),
+            enter = fadeIn(animationSpec = if (LocalReducedMotion.current) snap() else CHROME_CONTENT_FADE),
+            exit = fadeOut(animationSpec = if (LocalReducedMotion.current) snap() else CHROME_CONTENT_FADE),
             modifier = Modifier.fillMaxWidth(),
         ) {
             // 内层 Row 承接胶囊排布几何（AnimatedVisibilityScope 不是 RowScope）。
@@ -378,7 +380,7 @@ private fun ChromeIconButton(
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (pressed) CHROME_PRESSED_SCALE else 1f,
-        animationSpec = tween(durationMillis = CHROME_PRESS_ANIM_MS),
+        animationSpec = if (LocalReducedMotion.current) snap() else tween(durationMillis = CHROME_PRESS_ANIM_MS),
         label = "chromePressScale",
     )
     IconButton(

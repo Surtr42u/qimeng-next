@@ -51,7 +51,7 @@ func DecodeV2(raw []byte)(V2,error){
  for _,tag:=range input.Data.Tags{if strings.TrimSpace(tag.Name)==""||len(strings.TrimSpace(tag.Name))>100||strings.ContainsRune(tag.Name,'\x00'){return input,bad("data.tags","invalid vocabulary name")}}
  for _,record:=range input.Data.Favorites{if !media[record]{return input,bad("data.favorites","unresolved reference")}}
  for _,id:=range input.Data.FollowedAuthorIDs{if !authors[id]{return input,bad("data.followedAuthorIds","unresolved reference")}}
- for _,like:=range input.Data.Likes{if !media[like.RecordKey]||like.LikeCount<0{return input,bad("data.likes","invalid reference or count")};if like.LastLikeDate!=nil&&*like.LastLikeDate!=""{if _,e:=time.Parse("2006-01-02",*like.LastLikeDate);e!=nil{return input,bad("data.likes","invalid last like date")}}}
+ likeKeys:=map[string]bool{};for _,like:=range input.Data.Likes{if !media[like.RecordKey]||like.LikeCount<0||likeKeys[like.RecordKey]{return input,bad("data.likes","invalid or duplicated reference or count")};likeKeys[like.RecordKey]=true;if like.LastLikeDate!=nil&&*like.LastLikeDate!=""{if _,e:=time.Parse("2006-01-02",*like.LastLikeDate);e!=nil{return input,bad("data.likes","invalid last like date")}}}
  for _,mark:=range input.Data.TimelineTags{if !media[mark.RecordKey]||mark.TimeMillis<0||strings.TrimSpace(mark.Name)==""||len(mark.Name)>200{return input,bad("data.timelineTags","invalid reference or timestamp")}}
  for _,fragment:=range input.Data.TxtFragments{if fragment.Filename==""||len(fragment.Filename)>512||strings.ContainsAny(fragment.Filename,"/\\:\x00")||len(fragment.Content)>8<<20{return input,bad("data.txtFragments","invalid fragment name or size")}}
  return input,nil

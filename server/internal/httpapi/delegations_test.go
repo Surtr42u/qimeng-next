@@ -23,6 +23,7 @@ func TestDelegationScopesLeaseRotationAndDurableBudget(t *testing.T){
  raw:=request("POST","/ai/delegated-tasks","delegation-start-key",grant.Credential.Token,input,201)
  if strings.Contains(string(raw),firstSecret){t.Fatal("task credential secret was reflected to caller")}
  var task service.DelegatedTask;if e:=json.Unmarshal(raw,&task);e!=nil{t.Fatal(e)}
+ if task.Credential.Has("source.cleanup"){t.Fatal("ordinary intake permission silently granted source recycling")}
  replay:=request("POST","/ai/delegated-tasks","delegation-start-key",grant.Credential.Token,input,201);if string(raw)!=string(replay){t.Fatal("task start replay changed identity")}
  request("POST","/libraries","delegate-admin-denied",firstSecret,map[string]string{"name":"Forbidden","kind":"regular"},403)
  oldPrincipal,e:=f.s.Authenticate(context.Background(),firstSecret);if e!=nil{t.Fatal(e)}
@@ -44,4 +45,13 @@ func TestDelegationScopesLeaseRotationAndDurableBudget(t *testing.T){
  f.json("DELETE","/ai/delegations/"+grant.Delegation.ID,"",struct{}{},204)
  request("GET","/batches/"+task.TaskID,"",secondSecret,nil,401)
  request("POST","/ai/delegated-tasks","revoked-delegation-task",grant.Credential.Token,input,401)
+}
+
+func TestSourceRecyclingRequiresSeparateLibraryBoundOptIn(t *testing.T){
+ f:=setup(t);policy:=service.DelegationPolicy{Label:"Synthetic source recycling",LibraryIDs:[]string{f.library},AuthorIDs:[]string{},AllowedFields:[]string{},CandidateBlocks:[]string{},CanRecycleSources:true,MaxUpdates:1,MaxTasksPerDay:1,ValidDays:1}
+ f.json("POST","/ai/delegations","",policy,400);policy.CanIngest=true
+ var grant service.DelegationCreated;decode(t,f.json("POST","/ai/delegations","",policy,201),&grant)
+ secret:=base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("r",32)));body,_:=json.Marshal(service.DelegatedTaskStart{Kind:"intake",Label:"Authorized recycle task",LibraryID:f.library,Mode:"ordinary",CredentialSecret:secret})
+ response:=f.request("POST","/ai/delegated-tasks","explicit-source-recycle",grant.Credential.Token,body,nil);if response.Code!=201{t.Fatal(response.Body.String())};var task service.DelegatedTask;decode(t,response,&task)
+ if !task.Credential.Has("source.cleanup")||task.Credential.BatchID==""||grant.Credential.Has("source.cleanup"){t.Fatal("recycling scope escaped the explicitly authorized child batch")}
 }

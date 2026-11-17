@@ -282,7 +282,7 @@ function Shell() {
         <EventSyncStatus />
         <main
           id="main-content"
-          className="content"
+          className={`content${detail ? " content--detail" : ""}`}
           data-scroll-root
           ref={content}
           onScroll={(event) =>

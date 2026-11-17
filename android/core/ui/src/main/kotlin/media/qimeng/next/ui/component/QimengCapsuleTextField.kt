@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -99,7 +100,8 @@ fun QimengCapsuleTextField(
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = modifier.height(QimengDimens.CapsuleFieldHeight),
+            // Default type keeps the original 34dp; larger accessibility type may grow instead of clipping.
+            modifier = modifier.heightIn(min = QimengDimens.CapsuleFieldHeight),
             enabled = enabled,
             textStyle = MaterialTheme.typography.bodyMedium.copy(
                 color = if (enabled) {

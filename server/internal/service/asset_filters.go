@@ -33,12 +33,35 @@ func normalizeAssetFilter(in AssetFilter)(AssetFilter,error){
  return in,nil
 }
 func queryArray(values []string)string{raw,_:=json.Marshal(values);return string(raw)}
-func sourceSelection(ids []string)(string,[]any){
- selected:=[]string{};other:=false;for _,id:=range ids{if id=="__other__"{other=true}else{selected=append(selected,id)}};parts:=[]string{};args:=[]any{};if len(selected)>0{parts=append(parts,"EXISTS(SELECT 1 FROM asset_sources x WHERE x.asset_id=a.id AND x.source_id IN (SELECT value FROM json_each(?)))");args=append(args,queryArray(selected))};if other{parts=append(parts,"(l.kind='regular' AND NOT EXISTS(SELECT 1 FROM asset_sources x WHERE x.asset_id=a.id))")};return "("+strings.Join(parts," OR ")+")",args
+func sourceSelection(ids []string) (string, []any) {
+ selected := []string{}
+ other := false
+ for _, id := range ids { if id == "__other__" { other = true } else { selected = append(selected, id) } }
+ parts := []string{}
+ args := []any{}
+ if len(selected) > 0 {
+  parts = append(parts, "EXISTS(SELECT 1 FROM asset_sources x WHERE x.asset_id=a.id AND x.source_id IN (SELECT value FROM json_each(?)))")
+  args = append(args, queryArray(selected))
+ }
+ if other { parts = append(parts, "(NOT "+assetIsCOS+" AND NOT EXISTS(SELECT 1 FROM asset_sources x WHERE x.asset_id=a.id))") }
+ return "("+strings.Join(parts," OR ")+")", args
 }
 func mixedSelections(keys []string,row string)(string,[]any,error){
  groups:=map[string][]string{};for _,key:=range keys{kind,id,ok:=strings.Cut(key,":");if !ok||id==""||(row=="works"&&kind!="source"&&kind!="author")||(row=="roles"&&kind!="character"&&kind!="work"){return "",nil,Fail(400,"invalid_facet_key","筛选键不属于指定的相册维度。")};groups[kind]=append(groups[kind],id)}
- parts:=[]string{};args:=[]any{};for _,kind:=range []string{"source","author","character","work"}{ids:=groups[kind];if len(ids)==0{continue};switch kind{case "source":clause,values:=sourceSelection(ids);parts=append(parts,"(l.kind='regular' AND "+clause+")");args=append(args,values...);case "author":parts=append(parts,"(l.kind='cos' AND EXISTS(SELECT 1 FROM asset_authors x WHERE x.asset_id=a.id AND x.author_id IN (SELECT value FROM json_each(?))))");args=append(args,queryArray(ids));case "character":parts=append(parts,"(l.kind='regular' AND EXISTS(SELECT 1 FROM asset_characters x WHERE x.asset_id=a.id AND x.character_id IN (SELECT value FROM json_each(?))))");args=append(args,queryArray(ids));case "work":parts=append(parts,"(l.kind='cos' AND a.cos_work_id IN (SELECT value FROM json_each(?)))");args=append(args,queryArray(ids))}}
+ parts:=[]string{};args:=[]any{}
+ for _,kind:=range []string{"source","author","character","work"}{
+  ids:=groups[kind];if len(ids)==0{continue}
+  switch kind{
+  case "source":
+   clause,values:=sourceSelection(ids);parts=append(parts,"(NOT "+assetIsCOS+" AND "+clause+")");args=append(args,values...)
+  case "author":
+   parts=append(parts,"EXISTS(SELECT 1 FROM asset_authors x JOIN authors selected_author ON selected_author.id=x.author_id WHERE x.asset_id=a.id AND json_extract(selected_author.data,'$.kind')='cos' AND x.author_id IN (SELECT value FROM json_each(?)))");args=append(args,queryArray(ids))
+  case "character":
+   parts=append(parts,"(NOT "+assetIsCOS+" AND EXISTS(SELECT 1 FROM asset_characters x WHERE x.asset_id=a.id AND x.character_id IN (SELECT value FROM json_each(?))))");args=append(args,queryArray(ids))
+  case "work":
+   parts=append(parts,"("+assetIsCOS+" AND a.cos_work_id IN (SELECT value FROM json_each(?)))");args=append(args,queryArray(ids))
+  }
+ }
  return "("+strings.Join(parts," OR ")+")",args,nil
 }
 func fileDateBounds(f AssetFilter)(*time.Time,*time.Time,error){
@@ -49,7 +72,7 @@ func assetPredicate(f AssetFilter)(browsePredicate,error){
  where:=[]string{"a.trashed=?"};args:=[]any{f.Trashed}
  if !f.IncludeDisabled&&!f.Trashed{where=append(where,"COALESCE(json_extract(l.data,'$.enabled'),1)=1")}
  if f.Directory!=nil{directory:=*f.Directory;if directory==""{if !f.Recursive{where=append(where,"instr(a.relative_path,'/')=0")}}else{prefix:=directory+"/";where=append(where,"substr(a.relative_path,1,length(?))=?");args=append(args,prefix,prefix);if !f.Recursive{where=append(where,"instr(substr(a.relative_path,length(?)+1),'/')=0");args=append(args,prefix)}}}
- for _,value:=range []struct{column,value string}{{"a.library_id",f.LibraryID},{"a.media_type",f.MediaType},{"a.collection_id",f.CollectionID},{"l.kind",f.Kind}}{if value.value!=""{where=append(where,value.column+"=?");args=append(args,value.value)}}
+ for _,value:=range []struct{column,value string}{{"a.library_id",f.LibraryID},{"a.media_type",f.MediaType},{"a.collection_id",f.CollectionID},{assetPartition,f.Kind}}{if value.value!=""{where=append(where,value.column+"=?");args=append(args,value.value)}}
  if f.AuthorID!=""{where=append(where,"EXISTS(SELECT 1 FROM asset_authors aa WHERE aa.asset_id=a.id AND aa.author_id=?)");args=append(args,f.AuthorID)}
  for _,dimension:=range []struct{table,column string;values []string}{{"asset_authors","author_id",f.AuthorIDs},{"asset_characters","character_id",f.CharacterIDs}}{if len(dimension.values)>0{where=append(where,"EXISTS(SELECT 1 FROM "+dimension.table+" x WHERE x.asset_id=a.id AND x."+dimension.column+" IN (SELECT value FROM json_each(?)))");args=append(args,queryArray(dimension.values))}}
  if len(f.SourceIDs)>0{clause,values:=sourceSelection(f.SourceIDs);where=append(where,clause);args=append(args,values...)};if len(f.CosWorkIDs)>0{where=append(where,"a.cos_work_id IN (SELECT value FROM json_each(?))");args=append(args,queryArray(f.CosWorkIDs))}
@@ -57,7 +80,7 @@ func assetPredicate(f AssetFilter)(browsePredicate,error){
  for _,token:=range strings.Fields(f.Q){where=append(where,"qimeng_search_token("+assetSearchText+",?)=1");args=append(args,token)}
  if f.Tag!=""{where=append(where,"EXISTS(SELECT 1 FROM asset_tags WHERE asset_id=a.id AND tag=?)");args=append(args,f.Tag)}
  if len(f.Tags)>0{if f.TagMode=="all"{where=append(where,"(SELECT COUNT(DISTINCT tag) FROM asset_tags WHERE asset_id=a.id AND tag IN (SELECT value FROM json_each(?)))=?");args=append(args,queryArray(f.Tags),len(f.Tags))}else{where=append(where,"EXISTS(SELECT 1 FROM asset_tags WHERE asset_id=a.id AND tag IN (SELECT value FROM json_each(?)))");args=append(args,queryArray(f.Tags))}}
- if f.Favorite!=nil{where=append(where,"a.favorite=?");args=append(args,*f.Favorite)};if f.Liked!=nil{where=append(where,"EXISTS(SELECT 1 FROM likes WHERE asset_id=a.id)=?");args=append(args,*f.Liked)};if f.History!=nil{where=append(where,"EXISTS(SELECT 1 FROM events WHERE asset_id=a.id AND json_extract(data,'$.kind')='view')=?");args=append(args,*f.History)}
+ if f.Favorite!=nil{where=append(where,"a.favorite=?");args=append(args,*f.Favorite)};if f.Liked!=nil{where=append(where,"(EXISTS(SELECT 1 FROM likes WHERE asset_id=a.id) OR EXISTS(SELECT 1 FROM like_baselines WHERE asset_id=a.id))=?");args=append(args,*f.Liked)};if f.History!=nil{where=append(where,"EXISTS(SELECT 1 FROM events WHERE asset_id=a.id AND json_extract(data,'$.kind')='view')=?");args=append(args,*f.History)}
  for _,rangeValue:=range []struct{expression string;low,high *int64}{{"COALESCE(st.views,0)",f.MinViews,f.MaxViews},{"COALESCE(st.plays,0)",f.MinPlays,f.MaxPlays},{"a.size",f.MinSize,f.MaxSize}}{if rangeValue.low!=nil{where=append(where,rangeValue.expression+">=?");args=append(args,*rangeValue.low)};if rangeValue.high!=nil{where=append(where,rangeValue.expression+"<=?");args=append(args,*rangeValue.high)}}
  start,end,e:=fileDateBounds(f);if e!=nil{return browsePredicate{},e};if start!=nil{where=append(where,"a.file_date>=? AND a.file_date<?");args=append(args,start.UnixMilli(),end.UnixMilli())}
  keyFilter:=f;keyFilter.Cursor="";keyFilter.Limit=0;keyFilter.DateCounts=false;if start==nil{keyFilter.TZOffsetMinutes=0};key,_:=json.Marshal(keyFilter);boundary:="";if start!=nil{boundary=start.String()+"/"+end.String()};return browsePredicate{Where:strings.Join(where," AND "),Args:args,FilterKey:"file-date-2:"+string(key)+boundary},nil
@@ -74,7 +97,13 @@ func sortSQL(order browseSort,key,id string)string{direction:=" ASC";if order.De
 func(s *Service)Assets(ctx context.Context,filter AssetFilter)(model.Page[model.Asset],error){
  page:=model.Page[model.Asset]{Items:[]model.Asset{}};f,e:=normalizeAssetFilter(filter);if e!=nil{return page,e};n,e:=limited(f.Limit,50);if e!=nil{return page,e};predicate,e:=assetPredicate(f);if e!=nil{return page,e};order:=assetSort(f);cursor,e:=readSeek(f.Cursor,predicate.FilterKey,order.Name);if e!=nil{return page,e};seek,values,e:=seekClause(cursor,order,"a.id");if e!=nil{return page,e}
  tx,e:=s.DB.DB.BeginTx(ctx,&sql.TxOptions{ReadOnly:true});if e!=nil{return page,e};defer tx.Rollback();var count int64
- if f.DateCounts&&f.Cursor==""{buckets:=[]model.DateCountBucket{};args:=append([]any{f.TZOffsetMinutes*60},predicate.Args...);rows,e:=tx.QueryContext(ctx,browseCTE+" SELECT strftime('%Y-%m-%d',a.file_date/1000.0+?,'unixepoch') day,count(*)"+browseFrom+"WHERE "+predicate.Where+" GROUP BY day ORDER BY day DESC",args...);if e!=nil{return page,e};for rows.Next(){var day sql.NullString;var n int64;if e=rows.Scan(&day,&n);e!=nil{rows.Close();return page,e};count+=n;if day.Valid{buckets=append(buckets,model.DateCountBucket{Date:day.String,FileCount:n})}};e=rows.Err();rows.Close();if e!=nil{return page,e};page.DateCounts=&buckets}else{if e=tx.QueryRowContext(ctx,browseCTE+" SELECT COUNT(*)"+browseFrom+"WHERE "+predicate.Where,predicate.Args...).Scan(&count);e!=nil{return page,e}};page.TotalMatched=&count
+ if f.DateCounts&&f.Cursor==""{
+  buckets:=[]model.DateCountBucket{};unknown:=int64(0);args:=append([]any{f.TZOffsetMinutes*60},predicate.Args...)
+  rows,e:=tx.QueryContext(ctx,browseCTE+" SELECT strftime('%Y-%m-%d',a.file_date/1000.0+?,'unixepoch') day,count(*)"+browseFrom+"WHERE "+predicate.Where+" GROUP BY day ORDER BY day DESC",args...);if e!=nil{return page,e}
+  for rows.Next(){var day sql.NullString;var n int64;if e=rows.Scan(&day,&n);e!=nil{rows.Close();return page,e};count+=n;if day.Valid{buckets=append(buckets,model.DateCountBucket{Date:day.String,FileCount:n})}else{unknown+=n}}
+  e=rows.Err();rows.Close();if e!=nil{return page,e};page.DateCounts=&buckets;page.UnknownDateCount=&unknown
+ }else{if e=tx.QueryRowContext(ctx,browseCTE+" SELECT COUNT(*)"+browseFrom+"WHERE "+predicate.Where,predicate.Args...).Scan(&count);e!=nil{return page,e}}
+ page.TotalMatched=&count
  args:=append([]any{},predicate.Args...);args=append(args,values...);args=append(args,n+1,time.Now().Format("2006-01-02"))
  query:=browseCTE+", page AS (SELECT a.id,"+order.Expression+" sort_key"+browseFrom+"WHERE "+predicate.Where+seek+" ORDER BY "+sortSQL(order,order.Expression,"a.id")+" LIMIT ?) SELECT "+assetJSON+",CAST(p.sort_key AS TEXT) FROM page p JOIN assets a ON a.id=p.id JOIN authors au ON au.id=a.author_id ORDER BY "+sortSQL(order,"p.sort_key","p.id")
  rows,e:=tx.QueryContext(ctx,query,args...);if e!=nil{return page,e};defer rows.Close();keys:=[]string{}

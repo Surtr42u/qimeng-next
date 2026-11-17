@@ -6,9 +6,11 @@ React + TypeScript + Vite，服务端同源托管；TanStack Query 负责缓存�
 
 `src/api/generated/schema.d.ts` 只在云端从 `api/openapi.yaml` 生成。`openapi-fetch` 直接消费生成的 paths 类型；请求只在 `src/data`。页面经 hooks 获取数据，纯组件不导入运行时 SDK、不直接请求接口。`npm test` 的 AST 门禁覆盖页面/组件和独立视觉包。
 
-Web 使用同源 HttpOnly 设备会话，用户输入令牌只用于交换，不放入本地存储、URL 或媒体链接。媒体原件与缩略图通过同源 Cookie，视频原生支持 Range。实例 ID 与设备会话 ID 是查询缓存与队列作用域的一部分；实例改变时取消并清除旧查询，切服不复用旧状态。
+Web 使用同源 HttpOnly 设备会话，管理密码只用于交换，不放入本地存储、URL 或媒体链接；响应中的设备令牌不留在Query缓存。媒体原件与缩略图通过同源 Cookie，视频原生支持 Range。实例 ID 与设备会话 ID 是查询缓存与队列作用域的一部分；实例改变时取消并清除旧查询，切服不复用旧状态。
 
 查询失败不当空列表；有缓存时标记上次内容，游标续页失败保留已读项。搜索词与筛选进入 URL。详情标签使用 `tagsRevision`，作者关系使用 `authorsRevision`，冲突保留草稿。多作者不压缩为单作者。点赞消费今日状态与累计次数，不把再次点击解释为减赞。
+
+详情恢复旧双栏、文件名复制、点赞/收藏/编辑/整理/删除及标签弹窗。列表进入时携带顺序快照，图片查看器使用原视觉坐标手势，连续换件保留已显示帧并明确加载态，混合图片/视频保留查看意图；背景inert与退出焦点均独立处理。播放器恢复ArtPlayer原控件，只把当前contentVersion的进度和标记交给播放器；时间轴在原进度条呈现，不额外添加旧Web没有的大面板。外部字幕和标记标签只写安全DOM文本。
 
 上传选入即开始，普通模式默认且独立于 AI。完整选择先以稳定 inputId 原子保存到本地队列与批次准备记录，再在服务端封存原始输入清单；确认前不创建任何上传会话。超过100项在登记前明确拒绝，不截断选择。建批或封存回执丢失沿用原操作键及完整清单，刷新重选一部分不会缩减原始总数；未收到、名称不可读和已取消条目也留在服务器报告。批次、创建与完成各有稳定操作键；重新传输先回读服务端 offset/终态。文件在 Worker 以 4 MiB 有界读块计算完整 SHA-256，创建前以 `expectedHash` 固定到服务端会话；刷新重选核对名称/大小/mtime和完整内容。队列只保存任务元数据，不把整段视频装入内存或复制入 IndexedDB。两个传输并行且不超过服务端限制，暂停中止本地传输，取消先核对服务端已提交事实。存储退化可见，重试存储不重发入库。浏览器关闭不会继续传输，已入库/智能报告保存在服务端。替换原件从详情单独进入，明确目标与内容版本并确认，复用同一传输链。
 
@@ -49,6 +51,6 @@ Node 24；命令工作目录为 `web`。锁文件来源与 SDK 摘要由根 CI �
 | 协议 | openapi-typescript 7.13.0，openapi-fetch 0.17.0 | [生成器](https://openapi-ts.dev/introduction)、[类型客户端](https://openapi-ts.dev/openapi-fetch/) |
 | 文件核验 | @noble/hashes 2.4.0 | [上游流式 SHA256](https://github.com/paulmillr/noble-hashes) |
 | 自动验证 | Vitest 5.1.0，Playwright 1.65.1 | [Vitest](https://vitest.dev/)、[Playwright](https://playwright.dev/docs/intro) |
-| 旧UI表现层 | Geist 5.3.0、lucide-react 1.59.0、radix-ui 1.6.7、Recharts 3.10.1、react-is 19.3.1 | [复用来源、官方元数据与许可证](REUSED_UI.md) |
+| 旧UI表现层 | Geist 5.3.0、lucide-react 1.59.0、radix-ui 1.6.7、Recharts 3.10.1、react-is 19.3.1、ArtPlayer 5.4.0 | [复用来源、官方元数据与许可证](REUSED_UI.md) |
 
 直接依赖的精确版本不能代替传递依赖 lock 与安全审计。当前云端实际结果由根 `docs/status.md` 记录。

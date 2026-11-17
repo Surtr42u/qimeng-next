@@ -813,6 +813,86 @@ paths:
         '200': {description: Complete qnext archive, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         '206': {description: Requested archive byte range, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
+  /backup-targets:
+    get:
+      operationId: listBackupTargets
+      description: Trusted deployment configuration; no host paths are returned. A distinct volume is an additional guard and does not replace the operator's failure-domain assessment.
+      responses:
+        '200': {description: Configured backup destinations, content: {application/json: {schema: {$ref: '#/components/schemas/BackupTargetPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/protections:
+    get:
+      operationId: listBatchProtections
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Persistent per-input protection reports, content: {application/json: {schema: {$ref: '#/components/schemas/BatchProtectionPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: protectBatchInputs
+      description: Requires ingest scope bound to this batch or administrator. Copies a business checkpoint and successful declared input versions to the server-configured independent target. All original inputs remain in the report. This incremental protection is not a complete library archive and never itself recycles source files.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: Protection queued, content: {application/json: {schema: {$ref: '#/components/schemas/BatchProtection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/protections/{protectionId}:
+    get:
+      operationId: getBatchProtection
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: protectionId, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: Bound manifest and per-input outcomes, content: {application/json: {schema: {$ref: '#/components/schemas/BatchProtection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/protections/{protectionId}/retry:
+    post:
+      operationId: retryBatchProtection
+      description: Retry the same captured input versions and checkpoint. It never adopts later media versions.
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: protectionId, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: Original protection queued for recovery, content: {application/json: {schema: {$ref: '#/components/schemas/BatchProtection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/protections/{protectionId}/cleanup-permits:
+    post:
+      operationId: issueSourceCleanupPermit
+      description: Trusted executor only; requires the separate source.cleanup scope. Re-verifies the independent snapshot and exact input bytes before issuing a short-lived recycle permit. This does not delete or recycle anything.
+      parameters: [{$ref: '#/components/parameters/Id'}, {name: protectionId, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inputId, expectedHash, sourceSize]
+              properties:
+                inputId: {type: string}
+                expectedHash: {type: string, pattern: '^[a-f0-9]{64}$'}
+                sourceSize: {type: integer, format: int64, minimum: 1}
+      responses:
+        '201': {description: Exact source recycle permit, content: {application/json: {schema: {$ref: '#/components/schemas/SourceCleanupPermit'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /batches/{id}/cleanup-permits:
+    get:
+      operationId: listSourceCleanupPermits
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}, {name: inputId, in: query, schema: {type: string}}]
+      responses:
+        '200': {description: Caller-owned permits for authoritative recovery, content: {application/json: {schema: {$ref: '#/components/schemas/SourceCleanupPermitPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /cleanup-permits/{id}:
+    get:
+      operationId: getSourceCleanupPermit
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Caller-owned permit and optional durable receipt, content: {application/json: {schema: {$ref: '#/components/schemas/SourceCleanupPermit'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /cleanup-permits/{id}/receipt:
+    post:
+      operationId: recordSourceCleanupReceipt
+      description: Record a trusted executor's actual source outcome. A newer lease generation of the same credential may recover a lost receipt; that does not authorize a new filesystem action. Recycled requires an opaque provider receipt and never an absolute source path.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SourceCleanupReceiptInput'}}}
+      responses:
+        '200': {description: Durable source outcome, content: {application/json: {schema: {$ref: '#/components/schemas/SourceCleanupPermit'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /migration/v2/imports:
     get:
       operationId: listV2Imports
@@ -1314,6 +1394,7 @@ components:
         canIngest: {type: boolean}
         canResearch: {type: boolean}
         canOrganize: {type: boolean}
+        canRecycleSources: {type: boolean, default: false, description: Separate opt-in to source recycling after independently verified backup; never permanent deletion. Requires an intake library scope.}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
         maxUpdates: {type: integer, minimum: 1, maximum: 10}
         maxTasksPerDay: {type: integer, minimum: 1, maximum: 200}
@@ -1628,7 +1709,7 @@ components:
         label: {type: string, maxLength: 80}
         batchId: {type: string}
         authorTaskId: {type: string, description: 'Exactly one of batchId and authorTaskId is required'}
-        scopes: {type: array, items: {type: string, enum: [read, ingest, research, organize, author.profile.write]}}
+        scopes: {type: array, items: {type: string, enum: [read, ingest, research, organize, author.profile.write, source.cleanup]}}
     Session:
       type: object
       required: [id, label, scopes, expiresAt]
@@ -1775,7 +1856,15 @@ components:
         tags: {type: array, items: {type: string}}
         favorite: {type: boolean}
         liked: {type: boolean}
-        likeCount: {type: integer, format: int64, description: Lifetime daily likes; liked means liked today in the configured server timezone}
+        likeCount: {type: integer, format: int64, description: Lifetime likes including preserved legacy aggregate; liked means a known vote today in the configured server timezone}
+        unattributedLikeCount: {type: integer, format: int64, minimum: 0, description: Preserved legacy votes whose individual days are unknown; included in likeCount but excluded from dated windows}
+        viewCount: {type: integer, format: int64, minimum: 0, description: Lifetime views from server daily aggregates}
+        playCount: {type: integer, format: int64, minimum: 0, description: Lifetime plays from server daily aggregates}
+        cosWorkName: {type: string, description: Current registered COS work title; never inferred by the client from a path}
+        workKeys: {type: array, items: {type: string}, description: Current opaque work-dimension membership on list/detail reads}
+        roleKeys: {type: array, items: {type: string}, description: Current opaque role-dimension membership on list/detail reads}
+        workFacets: {type: array, items: {$ref: '#/components/schemas/AssetFacetReference'}}
+        roleFacets: {type: array, items: {$ref: '#/components/schemas/AssetFacetReference'}}
         note: {type: string}
         source: {type: string}
         sourceIds: {type: array, items: {type: string}}
@@ -1985,8 +2074,8 @@ components:
             manifestFingerprint: {type: string}
             expectedInputs: {type: integer, minimum: 0, maximum: 100}
             researchCalls: {type: integer}
-            backupState: {type: string, enum: [not_covered, awaiting_external_backup]}
-            cleanupState: {type: string, enum: [retained]}
+            backupState: {type: string, enum: [not_covered, awaiting_external_backup, partially_covered, covered]}
+            cleanupState: {type: string, enum: [retained, partially_recycled, recycled]}
             createdAt: {type: string, format: date-time}
             updatedAt: {type: string, format: date-time}
     BatchItem:
@@ -2253,6 +2342,97 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Backup'}}
         nextCursor: {type: string}
+    BackupTarget:
+      type: object
+      required: [id, failureDomain, available, distinctVolume]
+      properties:
+        id: {type: string}
+        failureDomain: {type: string}
+        available: {type: boolean}
+        distinctVolume: {type: boolean}
+    BackupTargetPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/BackupTarget'}}
+    ProtectedInput:
+      type: object
+      required: [inputId, ordinal, state, reason]
+      properties:
+        inputId: {type: string}
+        ordinal: {type: integer}
+        state: {type: string, enum: [ready, protected, retained]}
+        reason: {type: string}
+        uploadId: {type: string}
+        assetId: {type: string}
+        contentVersion: {type: integer, format: int64}
+        hash: {type: string}
+        size: {type: integer, format: int64}
+    BatchProtection:
+      type: object
+      required: [id, instanceId, batchId, manifestFingerprint, checkpointId, snapshotHash, snapshotBytes, targetId, failureDomain, state, createdAt, items]
+      properties:
+        id: {type: string}
+        instanceId: {type: string}
+        batchId: {type: string}
+        manifestFingerprint: {type: string}
+        checkpointId: {type: string}
+        snapshotHash: {type: string}
+        snapshotBytes: {type: integer, format: int64}
+        targetId: {type: string}
+        failureDomain: {type: string}
+        state: {type: string, enum: [queued, running, completed, failed, interrupted, historical]}
+        errorCode: {type: string}
+        proofHash: {type: string}
+        createdAt: {type: string, format: date-time}
+        verifiedAt: {type: string, format: date-time}
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/ProtectedInput'}}
+    BatchProtectionPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/BatchProtection'}}
+        nextCursor: {type: string}
+    SourceCleanupReceiptInput:
+      type: object
+      required: [outcome]
+      properties:
+        outcome: {type: string, enum: [recycled, retained, unavailable, source_changed, failed]}
+        code: {type: string, pattern: '^[a-z0-9_]{0,80}$'}
+        providerReceipt: {type: string, maxLength: 256, description: Opaque stable provider result identity; required for recycled}
+    SourceCleanupReceipt:
+      allOf:
+        - {$ref: '#/components/schemas/SourceCleanupReceiptInput'}
+        - type: object
+          required: [recordedAt, generation]
+          properties:
+            recordedAt: {type: string, format: date-time}
+            generation: {type: integer, format: int64}
+    SourceCleanupPermit:
+      type: object
+      required: [id, instanceId, protectionId, batchId, inputId, assetId, contentVersion, hash, size, proofHash, credentialId, generation, expiresAt, state]
+      properties:
+        id: {type: string}
+        instanceId: {type: string}
+        protectionId: {type: string}
+        batchId: {type: string}
+        inputId: {type: string}
+        assetId: {type: string}
+        contentVersion: {type: integer, format: int64}
+        hash: {type: string}
+        size: {type: integer, format: int64}
+        proofHash: {type: string}
+        credentialId: {type: string}
+        generation: {type: integer, format: int64}
+        expiresAt: {type: string, format: date-time}
+        state: {type: string, enum: [issued, expired, recorded, revoked]}
+        receipt: {$ref: '#/components/schemas/SourceCleanupReceipt'}
+    SourceCleanupPermitPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SourceCleanupPermit'}}
+        nextCursor: {type: string}
     V2Import:
       type: object
       required: [id, sourceId, sha256, bytes, createdAt, mediaCount, authorCount, eventCount, fragmentCount, sourceHashesAvailable]
@@ -2307,6 +2487,7 @@ components:
         expectedContentVersion: {type: integer, format: int64}
         targetHash: {type: string}
         tagAction: {type: string, enum: [none, keep, apply, conflict]}
+        likeAction: {type: string, enum: [none, keep, apply, conflict], description: Lifetime baseline restoration is separate from daily identities; unknown overlap remains a conflict}
         issues: {type: array, items: {type: string}}
     V2MigrationItemPage:
       type: object
@@ -2352,10 +2533,18 @@ components:
       type: object
       required: [items]
       properties: {items: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/SearchSuggestion'}}}
+    AssetFacetReference:
+      type: object
+      required: [key, kind, id, name]
+      properties:
+        key: {type: string}
+        kind: {type: string, enum: [source, author, character, work]}
+        id: {type: string}
+        name: {type: string}
     AssetPage:
       type: object
       required: [items, totalMatched]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/Asset'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}, dateCounts: {type: array, items: {$ref: '#/components/schemas/DateCountBucket'}}}
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Asset'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}, dateCounts: {type: array, items: {$ref: '#/components/schemas/DateCountBucket'}}, unknownDateCount: {type: integer, format: int64, minimum: 0, description: Exact count without a known file date; emitted alongside first-page dateCounts}}
     DateCountBucket:
       type: object
       required: [date, fileCount]

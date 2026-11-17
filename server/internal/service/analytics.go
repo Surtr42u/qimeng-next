@@ -73,7 +73,10 @@ func(s *Service)Recommendations(ctx context.Context,f RecommendationFilter)(Reco
  result.SnapshotID=snapshot
  if offset>len(ids){return result,Fail(400,"invalid_cursor","推荐偏移超出顺序范围。")}
  end:=min(offset+n,len(ids))
- for _,id:=range ids[offset:end]{a,e:=s.Asset(ctx,id);if e!=nil{return result,e};if a.Trashed{continue};result.Items=append(result.Items,a)}
+ for _,id:=range ids[offset:end]{
+  a,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id JOIN libraries lib ON lib.id=a.library_id WHERE a.id=? AND a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR "+assetPartition+"=?) AND (?='' OR a.media_type=?)",day,id,f.Kind,f.Kind,f.MediaType,f.MediaType)
+  if errors.Is(e,sql.ErrNoRows){continue};if e!=nil{return result,e};result.Items=append(result.Items,a)
+ }
  tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return result,e};defer tx.Rollback()
  for _,a:=range result.Items{if _,e=tx.ExecContext(ctx,"INSERT INTO recommendation_shown VALUES(?,?,1) ON CONFLICT(day,asset_id) DO UPDATE SET count=count+1",day,a.ID);e!=nil{return result,e}}
  if _,e=tx.ExecContext(ctx,"DELETE FROM recommendation_shown WHERE day<>?",day);e!=nil{return result,e};if e=tx.Commit();e!=nil{return result,e}
@@ -83,9 +86,9 @@ func(s *Service)Recommendations(ctx context.Context,f RecommendationFilter)(Reco
 
 func(s *Service)recommendationInputs(ctx context.Context,f RecommendationFilter,day string)([]analytics.Candidate,error){
  rows,e:=s.DB.DB.QueryContext(ctx,`WITH totals AS (SELECT asset_id,sum(views) AS views,sum(plays) AS plays,sum(seconds) AS seconds FROM asset_daily_stats GROUP BY asset_id), last_views AS (SELECT asset_id,max(created_at) AS last_view FROM events WHERE json_extract(data,'$.kind')='view' GROUP BY asset_id), likes_total AS (SELECT asset_id,count(*) AS likes FROM likes GROUP BY asset_id)
- SELECT a.id,a.media_type,a.created_at,json_extract(a.data,'$.tags'),coalesce(t.views,0),coalesce(t.plays,0),coalesce(t.seconds,0),coalesce(l.likes,0),coalesce(v.last_view,''),coalesce(sh.count,0)
- FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN totals t ON t.asset_id=a.id LEFT JOIN likes_total l ON l.asset_id=a.id LEFT JOIN last_views v ON v.asset_id=a.id LEFT JOIN recommendation_shown sh ON sh.asset_id=a.id AND sh.day=?
- WHERE a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR lib.kind=?) AND (?='' OR a.media_type=?) ORDER BY a.id`,day,f.Kind,f.Kind,f.MediaType,f.MediaType)
+ SELECT a.id,a.media_type,a.created_at,json_extract(a.data,'$.tags'),coalesce(t.views,0),coalesce(t.plays,0),coalesce(t.seconds,0),coalesce(l.likes,0)+coalesce(lb.unattributed_count,0),coalesce(v.last_view,''),coalesce(sh.count,0)
+ FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN totals t ON t.asset_id=a.id LEFT JOIN likes_total l ON l.asset_id=a.id LEFT JOIN like_baselines lb ON lb.asset_id=a.id LEFT JOIN last_views v ON v.asset_id=a.id LEFT JOIN recommendation_shown sh ON sh.asset_id=a.id AND sh.day=?
+ WHERE a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR `+assetPartition+`=?) AND (?='' OR a.media_type=?) ORDER BY a.id`,day,f.Kind,f.Kind,f.MediaType,f.MediaType)
  if e!=nil{return nil,e};defer rows.Close();items:=[]analytics.Candidate{}
  for rows.Next(){var a analytics.Candidate;var added,last,tags string;if e=rows.Scan(&a.ID,&a.MediaType,&added,&tags,&a.Views,&a.Plays,&a.Seconds,&a.Likes,&last,&a.Shown);e!=nil{return nil,e}
   if e=json.Unmarshal([]byte(tags),&a.Tags);e!=nil{return nil,e};if a.Added,e=time.Parse(time.RFC3339Nano,added);e!=nil{return nil,e};if last!=""{if a.LastViewed,e=time.Parse(time.RFC3339Nano,last);e!=nil{return nil,e}};items=append(items,a)
@@ -102,9 +105,9 @@ func(s *Service)Rankings(ctx context.Context,period,kind,cursor string,count int
  cutoff:="";if days>0{cutoff=time.Now().AddDate(0,0,-days).Format("2006-01-02")}
  scope:="rank/"+period+"/"+kind+"/"+cutoff+"/"+mediaType;offset,e:=pageOffset(cursor,scope);if e!=nil{return result,e}
  rows,e:=s.DB.DB.QueryContext(ctx,`WITH activity AS (SELECT asset_id,sum(views+plays) AS score FROM asset_daily_stats WHERE day>=? GROUP BY asset_id),votes AS(SELECT asset_id,count(*) AS score FROM likes WHERE day>=? GROUP BY asset_id)
- SELECT a.id,coalesce(activity.score,0)+coalesce(votes.score,0) AS heat FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN activity ON activity.asset_id=a.id LEFT JOIN votes ON votes.asset_id=a.id
- WHERE a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR lib.kind=?) AND (?='' OR a.media_type=?) AND (?='all' OR coalesce(activity.score,0)+coalesce(votes.score,0)>0)
- ORDER BY heat DESC,coalesce(json_extract(a.data,'$.sourceMtime'),a.created_at) DESC,a.id LIMIT ? OFFSET ?`,cutoff,cutoff,kind,kind,mediaType,mediaType,period,n+1,offset)
+ SELECT a.id,coalesce(activity.score,0)+coalesce(votes.score,0)+CASE WHEN ?='all' THEN coalesce(lb.unattributed_count,0) ELSE 0 END AS heat FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN activity ON activity.asset_id=a.id LEFT JOIN votes ON votes.asset_id=a.id LEFT JOIN like_baselines lb ON lb.asset_id=a.id
+ WHERE a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR `+assetPartition+`=?) AND (?='' OR a.media_type=?) AND (?='all' OR coalesce(activity.score,0)+coalesce(votes.score,0)>0)
+ ORDER BY heat DESC,coalesce(json_extract(a.data,'$.sourceMtime'),a.created_at) DESC,a.id LIMIT ? OFFSET ?`,cutoff,cutoff,period,kind,kind,mediaType,mediaType,period,n+1,offset)
  if e!=nil{return result,e};type row struct{id string;score int64};values:=[]row{}
  for rows.Next(){var item row;if e=rows.Scan(&item.id,&item.score);e!=nil{rows.Close();return result,e};values=append(values,item)}
  e=rows.Err();rows.Close();if e!=nil{return result,e}

@@ -23,6 +23,7 @@ type DelegationPolicy struct {
  CanIngest bool `json:"canIngest"`
  CanResearch bool `json:"canResearch"`
  CanOrganize bool `json:"canOrganize"`
+ CanRecycleSources bool `json:"canRecycleSources"`
  MaxResearchCalls int `json:"maxResearchCalls"`
  MaxUpdates int `json:"maxUpdates"`
  MaxTasksPerDay int `json:"maxTasksPerDay"`
@@ -87,6 +88,7 @@ func(s *Service)CreateDelegation(ctx context.Context,w *Write,in DelegationPolic
  if in.AllowedFields,e=cleanStrings(in.AllowedFields,4,32);e!=nil{return result,e};if in.CandidateBlocks,e=cleanStrings(in.CandidateBlocks,3,32);e!=nil{return result,e}
  if !withinStrings(in.AllowedFields,[]string{"name","biography","homepage","aliases"})||!withinStrings(in.CandidateBlocks,[]string{"x","basic","accounts"}){return result,Fail(400,"invalid_fields","授权资料字段或资料块无效。")}
  if !in.CanResearch&&len(in.CandidateBlocks)>0{return result,Fail(400,"research_required","提交资料候选需要明确研究权限。")}
+ if in.CanRecycleSources&&!in.CanIngest{return result,Fail(400,"intake_scope_required","来源回收须独立授权并绑定允许的接收库。")}
  if len(in.LibraryIDs)==0&&(in.CanIngest||in.CanOrganize){return result,Fail(400,"library_required","入库整理须明确选择允许的库。")}
  if !in.AllAuthors&&len(in.AuthorIDs)==0&&(len(in.AllowedFields)>0||len(in.CandidateBlocks)>0){return result,Fail(400,"author_scope_required","资料维护须指定作者或明确选择全部作者。")}
  for _,id:=range in.LibraryIDs{if _,e=s.library(ctx,id);e!=nil{return result,e}}
@@ -132,6 +134,7 @@ func(s *Service)StartDelegatedTask(ctx context.Context,w *Write,in DelegatedTask
    var exists int;e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM delegated_tasks WHERE task_id=?",b.ID).Scan(&exists);if e!=nil{return result,e};if exists!=0{return result,Fail(409,"task_already_claimed","任务已被认领，请用原任务ID接续。")}
   }else{b,e=s.prepareBatch(ctx,w.ID("batch"),model.Batch{LibraryID:in.LibraryID,Mode:mode,Label:in.Label,MaxResearchCalls:budget});if e!=nil{return result,e};isNewBatch=true}
   result.TaskID=b.ID;result.Batch=&b;p.BatchID=b.ID;p.Scopes=append(p.Scopes,"ingest");if d.CanResearch{p.Scopes=append(p.Scopes,"research")};if d.CanOrganize{p.Scopes=append(p.Scopes,"organize")}
+  if d.CanRecycleSources{p.Scopes=append(p.Scopes,"source.cleanup")}
  case "author":
   if !d.AllAuthors&&!containsString(d.AuthorIDs,in.AuthorID){return result,Fail(403,"author_scope_denied","首次配置未授权此作者。")}
   if !withinStrings(in.AllowedFields,d.AllowedFields)||!withinStrings(in.CandidateBlocks,d.CandidateBlocks)||in.AllowClear&&!d.AllowClear{return result,Fail(403,"field_scope_denied","任务资料范围或清空权限超出长期授权。")}

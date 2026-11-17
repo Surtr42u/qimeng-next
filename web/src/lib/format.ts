@@ -1,7 +1,17 @@
 export function bytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  const power = Math.min(Math.floor(Math.log(value) / Math.log(1024)), 4);
-  return `${(value / 1024 ** power).toLocaleString("zh-CN", { maximumFractionDigits: 1 })} ${["B", "KiB", "MiB", "GiB", "TiB"][power]}`;
+  // Original UI size labels use binary thresholds and the displayed KB/MB/GB suffixes.
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
+  return `${value} B`;
+}
+export function count(value: number | undefined) {
+  if (value === undefined) return "—";
+  if (value >= 10000) {
+    const tenThousands = value / 10000;
+    return `${tenThousands >= 100 ? Math.round(tenThousands) : tenThousands.toFixed(1).replace(/\.0$/, "")}万`;
+  }
+  return value.toLocaleString("zh-CN");
 }
 export function dateTime(value: string | null | undefined) {
   if (!value) return "—";

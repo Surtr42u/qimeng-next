@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import media.qimeng.next.MainActivity
 import media.qimeng.next.QimengApplication
 import media.qimeng.next.runtime.RuntimePhase
+import media.qimeng.next.embedded.EmbeddedDebugDiagnostics
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -21,6 +22,7 @@ class EmbeddedRuntimeTest {
         val runtime = application.runtime
         val graph = application.graph
         assertTrue("This suite requires the embedded APK", runtime.available)
+        EmbeddedDebugDiagnostics.enable()
         try {
             val first = runtime.start()
             assertEquals("https://127.0.0.1:18431/", first.baseUrl)
@@ -41,6 +43,17 @@ class EmbeddedRuntimeTest {
             application.localConnection.connect(forceLogin = false)
             assertEquals(second.certificateDerBase64, graph.settings.certificateFor(graph.settings.session.value!!))
             assertTrue("Server persistence must survive process restart", graph.media.libraries().any { it.id == library.id })
-        } finally { runtime.stop() }
+            runtime.configureAddress("http://127.0.0.1:18432")
+            application.localConnection.connect(forceLogin = true)
+            assertEquals("https://127.0.0.1:18432/", graph.settings.session.value!!.baseUrl)
+            assertEquals(first.instanceId, graph.settings.session.value!!.instanceId)
+            assertTrue("An owned port change preserves the same database", graph.media.libraries().any { it.id == library.id })
+        } catch (failure: Throwable) {
+            throw AssertionError("Synthetic native runtime failure: ${runtime.status.value}; native output:\n${EmbeddedDebugDiagnostics.snapshot()}", failure)
+        } finally {
+            runtime.stop()
+            runtime.configureAddress("https://127.0.0.1:18431/")
+            EmbeddedDebugDiagnostics.disable()
+        }
     }
 }

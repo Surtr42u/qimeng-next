@@ -56,6 +56,7 @@ type V2MigrationItem struct {
  ExpectedContentVersion int64 `json:"expectedContentVersion,omitempty"`
  TargetHash string `json:"targetHash,omitempty"`
  TagAction string `json:"tagAction"`
+ LikeAction string `json:"likeAction"`
  Issues []string `json:"issues"`
 }
 type migrationItemRecord struct {

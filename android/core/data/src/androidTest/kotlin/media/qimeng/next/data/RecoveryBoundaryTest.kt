@@ -20,6 +20,26 @@ import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 class RecoveryBoundaryTest {
+    @Test fun authenticatedEndpointMoveKeepsOperationIdentityAndDoesNotMergeAnotherAddress() = runBlocking {
+        val queue = QueueStore(isolatedContext())
+        queue.load()
+        val old = Session("https://127.0.0.1:18431/", "owned-instance", "Local")
+        val next = old.copy(baseUrl = "https://127.0.0.1:18432/")
+        val unrelated = old.copy(baseUrl = "https://unrelated.example/")
+        val item = Transfer("operation-owned", old, "library", "synthetic.png", "image/png", 12, "spool-owned", UploadMode.ORDINARY,
+            null, "batch-owned", "Synthetic", uploadId = "upload-owned", state = TransferState.WAITING)
+        val event = PendingEvent("event-owned", old, "asset-owned", "view", 0, 1, "session-owned", occurredAt = "2026-01-01T00:00:00Z")
+        queue.update { it.copy(transfers = listOf(item, item.copy(id = "operation-remote", target = unrelated)), events = listOf(event)) }
+        queue.rebindEndpoint(next, setOf(old.baseUrl))
+        val result = queue.state.value!!
+        assertEquals(next, result.transfers[0].target)
+        assertEquals(TransferState.QUEUED, result.transfers[0].state)
+        assertEquals("upload-owned", result.transfers[0].uploadId)
+        assertEquals(unrelated, result.transfers[1].target)
+        assertEquals(TransferState.WAITING, result.transfers[1].state)
+        assertEquals(event.copy(target = next), result.events.single())
+    }
+
     @Test fun originalManifestKeepsUnreadInputsAndCancellationReceiptAfterRestart() = runBlocking {
         val context = isolatedContext()
         val queue = QueueStore(context)

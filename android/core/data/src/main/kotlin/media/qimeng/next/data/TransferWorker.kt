@@ -52,8 +52,8 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                     } else throw failure
                 } catch (_: IOException) { retry = true }
             }
-            val pending = graph.queue.state.value!!.transfers.filter { it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) ||
-                (it.state == TransferState.CANCELLED && !it.cancelConfirmed) }
+            val pending = graph.queue.state.value!!.transfers.filter { ownsTarget(it.target) &&
+                (it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) || (it.state == TransferState.CANCELLED && !it.cancelConfirmed)) }
             if (pending.isNotEmpty()) setForeground(notification())
             pending.forEach { task ->
                 if (task.state == TransferState.CANCELLED) {
@@ -61,6 +61,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                     try { confirmCancellation(task) }
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (failure: Exception) {
+                        if (current(task.id)?.let { !ownsTarget(it.target) } == true) return@forEach
                         graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
                             if (it.id == task.id && it.state == TransferState.CANCELLED) it.copy(message = "本机已停止发送；服务器取消尚未确认，连接后继续核对。${safeFailure(failure)}") else it
                         }) }
@@ -73,12 +74,16 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                     return@forEach
                 }
                 if (!sameTarget(task.target, graph.settings.session.value)) {
-                    update(task.id) { it.copy(state = TransferState.WAITING, message = "请连接任务原来的服务器") }
+                    graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
+                        if (it.id == task.id && !sameTarget(it.target, graph.settings.session.value) && it.state != TransferState.CANCELLED)
+                            it.copy(state = TransferState.WAITING, message = "请连接任务原来的服务器") else it
+                    }) }
                     return@forEach
                 }
                 try { transfer(task) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
+                    if (current(task.id)?.let { !ownsTarget(it.target) } == true) return@forEach
                     if (current(task.id)?.state == TransferState.SUCCEEDED) {
                         graph.queue.reportProblem("服务器结果已保存，本机副本清理未完成；不会重新上传。")
                         return@forEach
@@ -105,9 +110,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         if (current(initial.id)?.state == TransferState.CANCELLED) return
         update(initial.id) { it.copy(state = TransferState.UPLOADING, message = "核对传输进度") }
         var task = current(initial.id) ?: return
+        if (!ownsTarget(task.target)) return
         prepareBatch(task)
         task = current(task.id) ?: return
-        if (isStopped || task.state == TransferState.CANCELLED) return
+        if (isStopped || task.state == TransferState.CANCELLED || !ownsTarget(task.target)) return
         check(task.sourceHash?.length == 64) { "传输快照缺少完整摘要，请重新选择文件" }
         var upload = if (task.uploadId == null) {
             api.createUpload(idempotencyKey = "upload-${task.id}", uploadCreate = UploadCreate(libraryId = task.libraryId,
@@ -129,7 +135,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         check(file.isFile && file.length() == task.bytes) { "本机传输副本缺失或变化，不能继续原任务" }
         RandomAccessFile(file, "r").use { source ->
             while (upload.offset < task.bytes) {
-                if (isStopped || current(task.id)?.state == TransferState.CANCELLED) return
+                if (isStopped || current(task.id)?.let { it.state == TransferState.CANCELLED || !ownsTarget(it.target) } != false) return
                 val chunk = ByteArray(minOf(1024 * 1024L, task.bytes - upload.offset).toInt())
                 source.seek(upload.offset)
                 source.readFully(chunk)
@@ -148,6 +154,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
     private suspend fun prepareBatch(task: Transfer): TransferBatch {
         var batch = graph.queue.state.value!!.batches.find { it.key == task.batchKey }
             ?: error("旧传输记录缺少完整原始清单，请保留来源并重新选择文件")
+        if (!ownsTarget(batch.target)) throw CancellationException("任务已交给新端点连接")
         val api = graph.provider.api(batch.target)
         if (batch.serverId == null) {
             val created = api.createBatch(idempotencyKey = "batch-${batch.key}", batchCreate = BatchCreate(libraryId = batch.libraryId,
@@ -198,10 +205,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
 
     private suspend fun finish(id: String, assetId: String?, state: String) {
         graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
-            if (it.id == id) it.copy(state = TransferState.SUCCEEDED, assetId = assetId, offset = it.bytes,
+            if (it.id == id && ownsTarget(it.target)) it.copy(state = TransferState.SUCCEEDED, assetId = assetId, offset = it.bytes,
                 message = if (state == "staged") "已传输，等待智能整理；来源文件保留" else "已入库；来源文件保留") else it
         }) }
-        current(id)?.let { task ->
+        current(id)?.takeIf { it.state == TransferState.SUCCEEDED && ownsTarget(it.target) }?.let { task ->
             val file = File(applicationContext.filesDir, "upload-spool/${task.spoolName}")
             if (file.exists() && !file.delete() && file.exists()) {
                 update(id) { it.copy(message = "${it.message}；本机传输副本尚未清理，入库结果保留") }
@@ -212,16 +219,18 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
     private fun current(id: String) = graph.queue.state.value?.transfers?.find { it.id == id }
     private suspend fun update(id: String, transform: (Transfer) -> Transfer) {
         graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
-            if (it.id != id) it else {
+            if (it.id != id || !ownsTarget(it.target)) it else {
                 val updated = transform(it)
                 if (it.state == TransferState.CANCELLED) updated.copy(state = it.state, message = it.message) else updated
             }
         }) }
     }
 
+    private fun ownsTarget(target: Session) = inputData.getString("targetKey") == transferTargetKey(target)
+
     private suspend fun stopForTarget(message: String): Result {
         graph.queue.update { it.copy(transfers = it.transfers.map { item ->
-            if (item.state in setOf(TransferState.QUEUED, TransferState.UPLOADING)) item.copy(state = TransferState.WAITING, message = message) else item
+            if (ownsTarget(item.target) && item.state in setOf(TransferState.QUEUED, TransferState.UPLOADING)) item.copy(state = TransferState.WAITING, message = message) else item
         }) }
         return Result.success()
     }

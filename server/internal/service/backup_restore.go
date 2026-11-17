@@ -57,6 +57,8 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
   "UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')",
   "UPDATE backups SET data=json_set(json_remove(data,'$.archiveHash','$.archiveBytes','$.exportedAt'),'$.state','snapshot_not_included','$.exportState','unavailable','$.exportError','backup_snapshot_not_included')",
   "UPDATE batches SET data=json_set(data,'$.backupState','not_covered')",
+  "UPDATE batch_protections SET state='historical',data=json_set(data,'$.state','historical')",
+  "UPDATE source_cleanup_permits SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='issued'",
  }{if _,e=tx.ExecContext(ctx,statement);e!=nil{return result,e}}
  if _,e=tx.ExecContext(ctx,"UPDATE settings SET value=? WHERE key='instance_id'",result.InstanceID);e!=nil{return result,e};if e=tx.Commit();e!=nil{return result,e};if _,e=db.DB.ExecContext(ctx,"PRAGMA wal_checkpoint(TRUNCATE)");e!=nil{return result,e};if e=db.DB.Close();e!=nil{return result,e}
  if e=root.Link("restore.sqlite","qimeng.sqlite");e!=nil{return result,e};if e=root.Remove("restore.sqlite");e!=nil{return result,e};if e=root.Remove("RESTORE_INCOMPLETE");e!=nil{return result,e};parent,e:=root.OpenParent("qimeng.sqlite");if e!=nil{return result,e};e=syncDirectory(parent);parent.Close();if e!=nil{return result,e}

@@ -116,7 +116,7 @@ internal fun LoginContent(selected: String?, address: String, password: String, 
                     keyboardActions = KeyboardActions(onDone = { onSubmit() }), modifier = Modifier.fillMaxWidth().testTag("login-password"))
                 error?.let {
                     Spacer(Modifier.height(12.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("login-error"))
                 }
                 Spacer(Modifier.height(20.dp))
                 Button(onClick = onSubmit, enabled = !submitting && selected != null,

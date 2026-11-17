@@ -43,7 +43,7 @@ fun ProfileScreen(model: LibraryViewModel) {
     var showPreferences by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { model.loadStatistics(); if (recommendation == null) model.loadRecommendationPreferences() }
     // Presentation hierarchy and dimensions retained from the existing SettingsScreen.
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 128.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = media.qimeng.next.ui.NavigationDimensions.bottomClearance()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Column(Modifier.padding(top = 12.dp)) {
             Text("我的", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             QimengPageIntro("你的收藏、浏览足迹与影库偏好")

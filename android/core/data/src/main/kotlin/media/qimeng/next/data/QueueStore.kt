@@ -10,6 +10,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import media.qimeng.next.model.QueueSnapshot
+import media.qimeng.next.model.Session
+import media.qimeng.next.model.TransferState
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
@@ -75,5 +77,20 @@ class QueueStore(context: Context) {
                 throw failure
             }
         }
+    }
+
+    /** Explicit endpoint relocation after the caller has authenticated the same instance; no database merge. */
+    suspend fun rebindEndpoint(target: Session, previousAddresses: Set<String>) {
+        fun relocated(value: Session) = if (value.instanceId == target.instanceId && value.baseUrl in previousAddresses) target else value
+        val current = state.value ?: error("请先恢复传输记录")
+        if (current.transfers.none { relocated(it.target) != it.target } && current.events.none { relocated(it.target) != it.target } &&
+            current.batches.none { relocated(it.target) != it.target }) return
+        update { it.copy(transfers = it.transfers.map { item ->
+            val nextTarget = relocated(item.target)
+            if (nextTarget == item.target) item else item.copy(target = nextTarget,
+                state = if (item.state == TransferState.WAITING) TransferState.QUEUED else item.state,
+                message = if (item.state == TransferState.WAITING) "等待核对服务器进度" else item.message)
+        },
+            events = it.events.map { item -> item.copy(target = relocated(item.target)) }, batches = it.batches.map { item -> item.copy(target = relocated(item.target)) }) }
     }
 }

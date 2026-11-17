@@ -27,7 +27,7 @@ runner 只安装父死亡信号并 exec 同目录 Go：设置 `PR_SET_PDEATHSIG=
 
 ## 启动与私有数据
 
-- 回环地址统一为 `127.0.0.1:18431`，避开旧应用的 18430，不监听局域网。
+- 默认回环地址为 `127.0.0.1:18431`，避开旧应用的 18430，不监听局域网。旧本机地址入口可配置 1024–65535 的端口；实际连接统一使用核验本次证书的 HTTPS。配置变化须停止自己持有的服务再启动，不能复用占用新端口的未知进程。
 - 控制根：`context.filesDir/embedded-v1/control`；独立媒体根：`context.filesDir/embedded-v1/media`，注册为受信逻辑存储 `local`。初始化只创建本应用的新空目录，不触碰旧项目数据。
 - `QIMENG_DATA_DIR=control`，`QIMENG_STORAGE_ROOTS={"local":"<media绝对路径>"}`，`QIMENG_LISTEN=127.0.0.1:18431`，`QIMENG_TIMEZONE=系统IANA时区`。
 - `QIMENG_ADMIN_TOKEN` 是一次生成、Keystore 加密保存的随机 bootstrap 凭据，只交子进程环境和同 API 的会话交换，不放命令行、日志、SavedStateHandle 或备份。
@@ -39,6 +39,10 @@ runner 只安装父死亡信号并 exec 同目录 Go：设置 `PR_SET_PDEATHSIG=
 启动不能只依据端口已开放。同 Go `cmd` 在监听成功后原子写私有回执，环境为 `QIMENG_STARTUP_RECEIPT=<runtime>/ready.json`、`QIMENG_LAUNCH_ID=<本次随机ID>` 和 `QIMENG_EPHEMERAL_TLS=true`；内容为 `launchId`、`instanceId`、`listenAddress`、公开 `certificateDerBase64`，不含私钥或令牌。本机地址为 `https://127.0.0.1:18431/`，证书 SAN 必须包含 IP127.0.0.1。
 
 宿主核验本次 ID、活的子进程、回执与 TLS 实例身份后，再走生成 SDK 的正常会话交换。`core:transport` 仅信任回执中的完整 leaf DER，HTTP 客户端的默认主机名校验保留；远程默认系统信任不变。这样即使 Go 在核验后退出、其他应用重绑端口，也无法收到 bootstrap 凭据。新启动刷新公开证书策略，旧 HTTP 客户端在 pin 改变后拒发 token；队列只保存目标实例、不保存证书副本或凭据。Go 回执实现与云端实证尚待本提交验证，未取得回执不得冒充本机就绪。
+
+已认证本机实例更换端口后，App 在应用级作用域完成会话与队列交接：仅迁移同一实例且地址曾由私有启动回执确认的队列项，保留上传 ID、分片偏移、输入清单与事件 ID。其他地址的记录不因相同实例声明而移动；迟到的旧端点 Worker 不能覆盖新端点记录。此交接不依赖登录页面的生命周期。
+
+原生输出默认直接排空，release 不保留输出。debug 也默认关闭诊断，只有合成仪器用例显式开启后才在内存暂存最多 32 KiB，并在读取时遮盖 bootstrap 凭据和私有路径；测试结束清空。云端首轮 App UID 执行在启动阶段退出码为 2，后续使用此有界证据定位，尚不能标记本机启动验收通过。
 
 ## 生命周期与验证要求
 

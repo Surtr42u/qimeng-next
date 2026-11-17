@@ -3,6 +3,7 @@ package media.qimeng.next.ui.glass
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
@@ -11,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
+import media.qimeng.next.ui.LocalReducedMotion
 
 /** 按压缩放的默认最小值（0.96=「按下去一点」的玻璃微交互；0.92 时代属旧胶囊语言） */
 private const val PRESS_SCALE_MIN = 0.96f
@@ -28,9 +30,10 @@ fun Modifier.pressScale(
     pressedScale: Float = PRESS_SCALE_MIN,
 ): Modifier = composed {
     val pressed by interactionSource.collectIsPressedAsState()
+    val reduced = LocalReducedMotion.current
     val scale by animateFloatAsState(
-        targetValue = if (pressed) pressedScale else 1f,
-        animationSpec = spring(
+        targetValue = if (pressed && !reduced) pressedScale else 1f,
+        animationSpec = if (reduced) snap() else spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMedium,
         ),

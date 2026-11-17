@@ -24,6 +24,8 @@ export function syntheticAsset(index: number): Asset {
     favorite: false,
     liked: false,
     likeCount: 0,
+    viewCount: index + 1,
+    playCount: 0,
     note: "",
     createdAt: "2026-01-01T00:00:00Z",
     sourceMtime: "2026-01-01T00:00:00Z",
@@ -329,7 +331,7 @@ export async function mockLibrary(page: Page) {
       const offset = Number(url.searchParams.get("cursor") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? 48);
       return respond(route, {
-        items: state.assets.slice(offset, offset + limit),
+        items: state.assets.filter(asset => !url.searchParams.get("mediaType") || asset.mediaType === url.searchParams.get("mediaType")).slice(offset, offset + limit),
         snapshotId: "synthetic-snapshot",
         ...(offset + limit < state.assets.length
           ? { nextCursor: String(offset + limit) }
@@ -529,6 +531,7 @@ export async function mockLibrary(page: Page) {
           createdAt: "2026-01-01T00:00:00Z",
         });
       }
+      if (match[2] === "timeline" && method === "GET") return respond(route, { items: [] });
       if (match[2] === "tags") {
         const body = route.request().postDataJSON();
         state.tagBodies.push(body);

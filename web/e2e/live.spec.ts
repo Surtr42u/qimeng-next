@@ -111,24 +111,19 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   );
   await page.getByRole("button", { name: "管理标签", exact: true }).click();
   await page.getByLabel("新标签名称").fill("CI 合成标签");
-  await page.getByRole("button", { name: "加入", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("button", { name: "保存标签", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "保存标签", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "编辑资料", exact: true }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   await page.getByLabel("查找作者", { exact: true }).fill(authorName);
   await page
-    .getByRole("group", { name: "作者", exact: true })
-    .getByRole("button", { name: authorName, exact: true })
+    .getByRole("group", { name: "作者联想", exact: true })
+    .getByText(authorName, { exact: true })
     .click();
-  await page
-    .getByLabel("个人备注", { exact: true })
-    .fill("云端合成闭环，非真实媒体。");
-  await page.getByRole("button", { name: "保存资料", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "保存资料", exact: true }),
-  ).toHaveCount(0);
+  await page.locator("#page-asset-edit").getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator("#page-asset-edit")).toHaveCount(0);
   await page.getByRole("button", { name: "收藏", exact: true }).click();
   await page.getByRole("button", { name: "点赞 · 0", exact: true }).click();
   await expect(
@@ -139,7 +134,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     page.getByRole("button", { name: "已收藏", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "CI 合成标签", exact: true }),
+    page.locator(".detail-tags").getByText("CI 合成标签", { exact: true }),
   ).toBeVisible();
   const response = await page.request.get(
     `/api/v1/assets/${encodeURIComponent(assetId)}`,
@@ -147,7 +142,6 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   expect(response.ok()).toBe(true);
   const saved = await response.json();
   expect(saved.tags).toContain("CI 合成标签");
-  expect(saved.note).toBe("云端合成闭环，非真实媒体。");
   expect(saved.authorName).toBe(authorName);
   expect(saved.favorite).toBe(true);
   await page.goto(`/authors/${encodeURIComponent(saved.authorId)}/profile`);
@@ -229,12 +223,24 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   await page
     .locator("video")
     .evaluate((element) => (element as HTMLVideoElement).pause());
-  await page.getByRole("button", { name: "标记当前时间" }).click();
-  await page.getByLabel("标记文字").fill("CI 时间轴标记");
-  await page.getByRole("button", { name: "保存标记", exact: true }).click();
-  await expect(page.getByText("CI 时间轴标记", { exact: true })).toBeVisible();
+  const videoId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!);
+  const videoData = await (await page.request.get(`/api/v1/assets/${encodeURIComponent(videoId)}`)).json();
+  // The original Web presents timeline marks on the player. Authoring uses the real
+  // service here; do not add a new detail-page panel just to drive a test.
+  const markLabel = 'CI 时间轴 <img src="synthetic-missing" onerror="window.syntheticUnsafe=true">';
+  const markResponse = await page.request.post(`/api/v1/assets/${encodeURIComponent(videoId)}/timeline`, {
+    headers: { "Idempotency-Key": `ci-timeline-${suffix}`, Origin: new URL(page.url()).origin },
+    data: { label: markLabel, positionMs: 500, color: "#a855f7", contentVersion: videoData.contentVersion },
+  });
+  expect(markResponse.ok()).toBe(true);
   await page.reload();
-  await expect(page.getByText("CI 时间轴标记", { exact: true })).toBeVisible();
+  const marker = page.locator('.art-progress-highlight span');
+  await expect(marker).toHaveCount(1);
+  await expect(marker).toHaveAttribute("data-text", markLabel);
+  await expect(page.locator(".art-progress-highlight img")).toHaveCount(0);
+  await page.locator(".art-progress").hover();
+  await marker.click();
+  await expect.poll(() => page.locator("video").evaluate(element => (element as HTMLVideoElement).currentTime)).toBeGreaterThan(0.4);
   await page.screenshot({
     path: testInfo.outputPath("live-synthetic-video.png"),
     fullPage: false,

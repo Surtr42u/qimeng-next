@@ -33,10 +33,10 @@ test("tag conflicts preserve the draft; a deliberate empty set is submitted", as
   fixture.tagConflict = true;
   await page.goto("/asset/synthetic-0");
   await page.getByRole("button", { name: "管理标签", exact: true }).click();
-  await page.getByRole("button", { name: "清空选择" }).click();
+  await page.getByRole("group", { name: "标签候选" }).getByRole("button", { name: "晨光", exact: true }).click();
   await page.getByRole("button", { name: "保存标签" }).click();
   await expect(page.getByRole("alert")).toContainText("内容已发生变化");
-  await expect(page.getByText("已选 0 项", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "标签候选" }).getByRole("button", { name: "晨光", exact: true })).toHaveAttribute("aria-pressed", "false");
   expect(fixture.tagBodies[0]).toEqual({ expectedRevision: 1, tags: [] });
   fixture.tagConflict = false;
   await page.getByRole("button", { name: "保存标签" }).click();
@@ -87,7 +87,7 @@ test("return restores browsing position and image viewer restores focus", async 
   await expect(
     page.getByRole("button", { name: "查看原图并缩放" }),
   ).toBeFocused();
-  await page.getByRole("button", { name: "返回浏览" }).click();
+  await page.getByRole("button", { name: "返回", exact: true }).click();
   await expect
     .poll(() =>
       page

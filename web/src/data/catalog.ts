@@ -201,10 +201,11 @@ export function useEditTerm(kind: "source" | "character") {
     onSuccess: invalidateLibrary,
   });
 }
-export function useTimeline(id: string) {
+export function useTimeline(id: string, enabled = true) {
   const key = useRemoteKey();
   return useInfiniteQuery({
     queryKey: [...key, "timeline", id],
+    enabled,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       read(

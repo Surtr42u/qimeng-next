@@ -33,11 +33,27 @@
 .layout .sidebar { position: relative; inset: auto; z-index: auto; }
 .layout .sidebar--pages { display: flex; gap: var(--qm-space-1); }
 .layout .sidebar--settings { margin-bottom: 0; }
+/* The old settings icons were li elements; semantic buttons must keep their faint color
+   despite the original .layout button reset having higher specificity. */
+.layout button.settings-item { color: var(--qm-text-faint); }
+.layout button.settings-item:hover { color: var(--qm-text-soft); }
 .layout .nav-item { text-decoration: none; }
 .layout .sidebar--pages > .qm-selection-lens { border-radius: var(--qm-radius); }
 .layout .sidebar--pages .nav-item.active { background: transparent; box-shadow: none; }
 .layout .main { overflow: hidden; }
 .layout .content { min-height: 0; }
+.layout .content--detail { background: var(--qm-bg); }
+/* The single live route occupies the same canvas as the old fixed detail overlay.
+   Keep scrolling in the shell so returning to a cached list restores its position. */
+.layout .content--detail .asset-overlay { position: static; inset: auto; overflow: visible; padding: 0; background: transparent; }
+.video-player-box { position: relative; }
+.video-player-mount { width: 100%; height: 100%; }
+.asset-image-content { position: relative; width: 100%; }
+.detail-layout .detail-actions { flex-wrap: nowrap; }
+.player-failure { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 85%; padding: 16px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius); background: var(--qm-surface-strong); color: var(--qm-text); z-index: 20; }
+.player-failure .pill { margin-top: 8px; margin-right: 8px; }
+.asset-edit-thumb { width: 96px; height: 96px; flex: none; border-radius: 8px; overflow: hidden; }
+.asset-edit-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .qm-route-surface { min-height: 100%; }
 .layout .header .qm-segment { height: 42px; padding: 4px; gap: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-full); background: var(--qm-surface-soft); }
 .layout .header .qm-segment button { min-width: 60px; height: 32px; padding: 0 16px; border-radius: var(--qm-radius-full); font-size: 14px; font-weight: 500; white-space: nowrap; color: var(--qm-text-muted); }
@@ -46,7 +62,7 @@
 .layout .shell-search-submit { position: absolute; inset: 0 0 0 auto; width: 44px; }
 .layout .shell-search-submit .search-icon { top: 50%; transform: translateY(-50%); }
 .layout .pop-suggest-item[aria-selected=true] { background: var(--qm-hover); }
-.layout .win-btn { display: flex; align-items: center; justify-content: center; }
+.layout .win-btn { display: flex; align-items: center; justify-content: center; color: inherit; }
 .page-heading { margin: 0 0 16px; }
 .page-heading h1 { font-size: 19px; font-weight: 650; letter-spacing: .01em; }
 .page-heading p { font-size: 12px; margin-top: 4px; color: var(--qm-text-muted); }

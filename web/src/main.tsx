@@ -11,6 +11,7 @@ import { ReplacePage } from "./pages/ReplacePage";
 import { ScanPage, ScansPage } from "./pages/ScanPage";
 import { AuthorTasksPage, AuthorTaskPage } from "./pages/AuthorTaskPages";
 import { AssetPage } from "./pages/AssetPage";
+import { AssetEditPage } from "./pages/AssetEditPage";
 import { MinePage } from "./pages/MinePage";
 import { AuthorsPage } from "./pages/AuthorsPage";
 import { AuthorPage, AuthorProfilePage } from "./pages/AuthorPage";
@@ -50,6 +51,7 @@ const router = createBrowserRouter([
       { path: "/album", element: <BrowsePage /> },
       { path: "/search", element: <BrowsePage /> },
       { path: "/asset/:id", element: <AssetPage /> },
+      { path: "/asset/:id/edit", element: <AssetEditPage /> },
       { path: "/asset/:id/replace", element: <ReplacePage /> },
       { path: "/mine", element: <MinePage /> },
       { path: "/data", element: <DataPage /> },

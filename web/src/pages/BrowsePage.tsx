@@ -88,7 +88,7 @@ function AlbumsView() {
   const [panelOpen, setPanelOpen] = useState(false);
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
   const first = query.data?.pages[0];
-  const groups = albumGroups(items, first?.dateCounts, filters.tzOffsetMinutes);
+  const groups = albumGroups(items, first?.dateCounts, filters.tzOffsetMinutes, Date.now(), first?.unknownDateCount);
   const active =
     !!filters.kind ||
     !!filters.mediaType ||
@@ -167,7 +167,7 @@ function AlbumsView() {
                 </span>
               </h3>
             )}
-            <MediaGrid items={mediaCards(group.items)} />
+            <MediaGrid items={mediaCards(group.items)} navigationIds={items.map(item => item.id)} />
           </section>
         ))
       )}

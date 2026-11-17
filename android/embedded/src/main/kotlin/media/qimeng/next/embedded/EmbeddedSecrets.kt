@@ -19,6 +19,14 @@ internal class EmbeddedSecrets(context: Context) {
     var enabled: Boolean
         get() = prefs.getBoolean("enabled", false)
         set(value) { check(prefs.edit().putBoolean("enabled", value).commit()) { "无法保存本机运行设置" } }
+    var port: Int
+        get() = prefs.getInt("port", 18431)
+        set(value) {
+            require(value in 1024..65535) { "本机端口需要在 1024–65535 之间" }
+            check(prefs.edit().putInt("port", value).commit()) { "无法保存本机端口设置" }
+        }
+    fun confirmedPorts(): Set<Int> = prefs.getStringSet("confirmed-ports", if (confirmedInstance != null) setOf("18431") else emptySet())
+        .orEmpty().mapNotNull { it.toIntOrNull() }.toSet()
 
     @Synchronized
     fun token(allowCreate: Boolean): String {
@@ -45,9 +53,11 @@ internal class EmbeddedSecrets(context: Context) {
         return token
     }
 
-    fun confirm(instanceId: String) {
+    fun confirm(instanceId: String, activePort: Int? = null) {
         val old = confirmedInstance
         check(old == null || old == instanceId) { "本机实例身份已改变，请先核对数据恢复结果" }
-        check(prefs.edit().putString("instance", instanceId).commit()) { "无法保存本机实例身份" }
+        val editor = prefs.edit().putString("instance", instanceId)
+        activePort?.let { editor.putStringSet("confirmed-ports", (confirmedPorts() + it).map(Int::toString).toSet()) }
+        check(editor.commit()) { "无法保存本机实例身份" }
     }
 }
