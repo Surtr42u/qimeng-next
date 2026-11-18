@@ -221,10 +221,20 @@ type BatchItem struct {
 	Candidates       []ResearchCandidate `json:"candidates"`
 }
 type BatchDetail struct {
-	Batch  Batch         `json:"batch"`
-	Inputs []BatchInput  `json:"inputs"`
-	Items  []BatchItem   `json:"items"`
-	Plans  []PlanSummary `json:"plans"`
+	Batch          Batch                `json:"batch"`
+	Inputs         []BatchInput         `json:"inputs"`
+	Items          []BatchItem          `json:"items"`
+	Plans          []PlanSummary        `json:"plans"`
+	ExecutorStatus *BatchExecutorStatus `json:"executorStatus,omitempty"`
+}
+type BatchExecutorStatus struct {
+	State         string     `json:"state"`
+	Source        string     `json:"source"`
+	Revision      int64      `json:"revision"`
+	BatchRevision int64      `json:"batchRevision"`
+	Generation    int64      `json:"generation,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
+	ReportedAt    *time.Time `json:"reportedAt,omitempty"`
 }
 type IntakeInput struct {
 	ID                 string `json:"id"`

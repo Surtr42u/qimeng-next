@@ -41,6 +41,10 @@ func (a *API) GetCurrentAIDelegation(w http.ResponseWriter, r *http.Request) {
 	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.CurrentDelegation(r.Context(), principal(r)) })
 }
 
+func (a *API) ListReadyIntakeBatches(w http.ResponseWriter, r *http.Request) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.ReadyIntakeBatches(r.Context(), principal(r)) })
+}
+
 func (a *API) CreateAIDelegation(w http.ResponseWriter, r *http.Request) {
 	issueSecret[service.DelegationPolicy](a, w, r, func(r *http.Request, w *service.Write, in service.DelegationPolicy) (any, int, error) {
 		v, e := a.s.CreateDelegation(r.Context(), w, in)

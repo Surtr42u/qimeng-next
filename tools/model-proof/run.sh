@@ -22,4 +22,8 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 curl --silent --fail http://127.0.0.1:18580/health >/dev/null
-node tools/mcp-compat/model-proof.mjs
+if [[ "$MODEL_PROFILE" == intake ]]; then
+  node tools/model-proof/intake.mjs
+else
+  node tools/mcp-compat/model-proof.mjs
+fi

@@ -221,10 +221,14 @@ func TestImageLookupUsesOnlyOneAuthorizedDerivedFrameAndReceipt(t *testing.T) {
 	if sends.Load() != 4 || detail.Batch.ResearchCalls != 4 {
 		t.Fatal("denied calls or replays consumed a request or research budget")
 	}
+	var possible model.Author
+	f.request("POST", "/authors", researchTestOwner, "image-unverified-name", map[string]string{"name": "Unverified name"}).expect(t, 201, &possible)
 	evidence := model.Research{ExpectedRevision: detail.Batch.Revision, UploadID: u.ID, ExpectedHash: u.Hash, Outcome: "candidates", CallsUsed: 0, ProviderQueryIDs: []string{record.ID},
-		Candidates: []model.ResearchCandidate{{Name: "Unverified name", Evidence: "Candidate source only", SourceURL: record.Items[0].URL}}}
+		Candidates: []model.ResearchCandidate{{AuthorID: possible.ID, Name: possible.Name, Evidence: "Candidate source only", SourceURL: record.Items[0].URL}}}
 	f.request("POST", batch+"/research", token, "store-frame-lead", evidence).expect(t, 200, nil)
 	f.request("GET", batch, token, "", nil).expect(t, 200, &detail)
+	f.request("POST", batch+"/plans", token, "image-cannot-confirm-author", model.PlanCreate{ExpectedRevision: detail.Batch.Revision,
+		Items: []model.PlanInput{{UploadID: u.ID, Family: "Candidate", AuthorIDs: []string{possible.ID}}}}).expect(t, 409, nil)
 	for _, item := range detail.Items {
 		if item.Upload.ID == u.ID && (item.Upload.AuthorID != "unknown" || item.ResearchOutcome != "candidates") {
 			t.Fatal("image leads changed confirmed attribution")

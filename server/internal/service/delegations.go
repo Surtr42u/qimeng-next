@@ -47,24 +47,25 @@ type DelegationCreated struct {
 	Credential model.Principal `json:"credential"`
 }
 type DelegatedTaskStart struct {
-	Kind                   string   `json:"kind"`
-	Label                  string   `json:"label"`
-	LibraryID              string   `json:"libraryId"`
-	BatchID                string   `json:"batchId"`
-	Mode                   string   `json:"mode"`
-	MaxResearchCalls       *int     `json:"maxResearchCalls"`
-	ResearchProviders      []string `json:"researchProviders,omitzero"`
-	AllowImageLookup       bool     `json:"allowImageLookup,omitempty"`
-	AuthorID               string   `json:"authorId"`
-	AssetID                string   `json:"assetId"`
-	ExpectedContentVersion int64    `json:"expectedContentVersion"`
-	AssetFields            []string `json:"assetFields"`
-	ExpectedRevision       int64    `json:"expectedRevision"`
-	AllowedFields          []string `json:"allowedFields"`
-	CandidateBlocks        []string `json:"candidateBlocks"`
-	AllowClear             bool     `json:"allowClear"`
-	MaxUpdates             int      `json:"maxUpdates"`
-	CredentialSecret       string   `json:"credentialSecret"`
+	Kind                     string   `json:"kind"`
+	Label                    string   `json:"label"`
+	LibraryID                string   `json:"libraryId"`
+	BatchID                  string   `json:"batchId"`
+	ReadyManifestFingerprint *string  `json:"readyManifestFingerprint,omitempty"`
+	Mode                     string   `json:"mode"`
+	MaxResearchCalls         *int     `json:"maxResearchCalls"`
+	ResearchProviders        []string `json:"researchProviders,omitzero"`
+	AllowImageLookup         bool     `json:"allowImageLookup,omitempty"`
+	AuthorID                 string   `json:"authorId"`
+	AssetID                  string   `json:"assetId"`
+	ExpectedContentVersion   int64    `json:"expectedContentVersion"`
+	AssetFields              []string `json:"assetFields"`
+	ExpectedRevision         int64    `json:"expectedRevision"`
+	AllowedFields            []string `json:"allowedFields"`
+	CandidateBlocks          []string `json:"candidateBlocks"`
+	AllowClear               bool     `json:"allowClear"`
+	MaxUpdates               int      `json:"maxUpdates"`
+	CredentialSecret         string   `json:"credentialSecret"`
 }
 type DelegatedTask struct {
 	TaskID     string                `json:"taskId"`
@@ -312,12 +313,14 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 		return result, Fail(400, "invalid_executor", "执行器凭据或任务名称无效。")
 	}
 	today := time.Now().Format("2006-01-02")
-	var todayCount int
-	if e = s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM delegated_tasks WHERE delegation_id=? AND created_day=?", d.ID, today).Scan(&todayCount); e != nil {
+	if e = s.checkDailyTaskLimit(ctx, d, today); e != nil {
 		return result, e
 	}
-	if todayCount >= d.MaxTasksPerDay {
-		return result, Fail(429, "delegation_daily_limit", "已达到首次配置的每日任务上限。")
+	if in.ReadyManifestFingerprint != nil {
+		hash := *in.ReadyManifestFingerprint
+		if in.Kind != "intake" || in.BatchID == "" || in.Mode != "intelligent" || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
+			return result, Fail(400, "invalid_queue_claim", "自动认领须明确指定已提交的智能批次与清单摘要。")
+		}
 	}
 	result.Kind = in.Kind
 	providers := d.ResearchProviders
@@ -361,17 +364,6 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 			if b.LibraryID != in.LibraryID || b.Mode != mode || b.MaxResearchCalls > budget {
 				return result, Fail(409, "batch_not_claimable", "批次范围、预算或状态不符合本授权。")
 			}
-			claimable := b.State == "waiting_executor" || b.State == "receiving"
-			if b.State == "partial" {
-				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id
- WHERE i.batch_id=? AND i.cancelled=0 AND i.rejection_code='' AND (i.upload_id IS NULL OR u.state IN ('receiving','staged')))`, b.ID).Scan(&claimable)
-				if e != nil {
-					return result, e
-				}
-			}
-			if !claimable {
-				return result, Fail(409, "batch_not_claimable", "批次没有可接手的待处理输入。")
-			}
 			var exists int
 			e = s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM delegated_tasks WHERE task_id=?", b.ID).Scan(&exists)
 			if e != nil {
@@ -379,6 +371,19 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 			}
 			if exists != 0 {
 				return result, Fail(409, "task_already_claimed", "任务已被认领，请用原任务ID接续。")
+			}
+			claimable := b.State == "waiting_executor" || b.State == "receiving"
+			if in.ReadyManifestFingerprint != nil {
+				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ready_intake_batches WHERE batch_id=? AND manifest_fingerprint=?)`, b.ID, *in.ReadyManifestFingerprint).Scan(&claimable)
+			} else if b.State == "partial" {
+				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id
+ WHERE i.batch_id=? AND i.cancelled=0 AND i.rejection_code='' AND (i.upload_id IS NULL OR u.state IN ('receiving','staged')))`, b.ID).Scan(&claimable)
+			}
+			if e != nil {
+				return result, e
+			}
+			if !claimable {
+				return result, Fail(409, "batch_not_claimable", "批次没有可接手的待处理输入，或所选清单已变化。")
 			}
 		} else {
 			b, e = s.prepareBatch(ctx, w.ID("batch"), model.Batch{LibraryID: in.LibraryID, Mode: mode, Label: in.Label, MaxResearchCalls: budget})
@@ -457,7 +462,7 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 	if e != nil {
 		return result, e
 	}
-	if result.Kind == "intake" && !isNewBatch {
+	if result.Kind == "intake" && !isNewBatch && in.ReadyManifestFingerprint == nil {
 		if _, e = q.ExecContext(ctx, "DELETE FROM credentials WHERE json_extract(data,'$.batchId')=?", result.TaskID); e != nil {
 			return result, e
 		}

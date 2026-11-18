@@ -485,14 +485,22 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                             self.assertFalse(remote_picture.is_error, remote_picture.content)
                             self.assertTrue(any(block.type == "image" and block.mime_type == "image/jpeg" for block in remote_picture.content))
                     context = await call("task.context", {"id": batch["id"]})
-                    await call("research.submit", {"id": batch["id"], "Idempotency-Key": "mcp-live-research",
+                    discovered = {name: await call("platform.tool.describe", {"tool": name}) for name in context["nextActions"]}
+                    self.assertEqual(set(discovered), {"research.submit", "plan.prepare"})
+                    self.assertTrue(all(tool["name"] == name for name, tool in discovered.items()))
+                    await call(discovered["research.submit"]["name"], {"id": batch["id"], "Idempotency-Key": "mcp-live-research",
                         "body": {"expectedRevision": context["batch"]["revision"], "uploadId": uploaded["upload"]["id"],
                                  "expectedHash": uploaded["sha256"], "outcome": "unknown", "candidates": [], "callsUsed": 1}})
                     context = await call("task.context", {"id": batch["id"]})
-                    plan = await call("plan.prepare", {"id": batch["id"], "Idempotency-Key": "mcp-live-plan",
+                    self.assertIn("plan.prepare", context["nextActions"])
+                    plan = await call(discovered["plan.prepare"]["name"], {"id": batch["id"], "Idempotency-Key": "mcp-live-plan",
                         "body": {"expectedRevision": context["batch"]["revision"], "items": [{"uploadId": uploaded["upload"]["id"], "family": "Synthetic  Figure"}]}})
                     arguments = {"id": batch["id"], "planId": plan["id"], "Idempotency-Key": "mcp-live-commit", "body": {"fingerprint": plan["fingerprint"]}}
-                    await call("plan.commit", arguments)
+                    planned = await call("task.context", {"id": batch["id"]})
+                    described = {name: await call("platform.tool.describe", {"tool": name}) for name in planned["nextActions"]}
+                    actual = await call(described["plan.read"]["name"], {"id": batch["id"], "planId": plan["id"]})
+                    self.assertEqual(actual["fingerprint"], plan["fingerprint"])
+                    await call(described["plan.commit"]["name"], arguments)
                     await call("plan.commit", arguments)
                     assets = await call("asset.query", {"libraryId": library["id"]})
                     self.assertEqual(len(assets["items"]), 1)
@@ -526,3 +534,33 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(denied.is_error)
             finally:
                 self.request("DELETE", "/credentials/" + credential["id"])
+
+    async def test_batch_hints_distinguish_missing_permission_and_the_original_upload_client(self):
+        self.assertEqual(os.environ.get("CI"), "true")
+        library = self.request("POST", "/libraries", {"name": "Client transfer actions", "kind": "regular"}, key="action-hint-library")
+        batch = self.request("POST", "/batches", {"libraryId": library["id"], "mode": "intelligent", "label": "Sender still transferring"}, key="action-hint-batch")
+        input_id = "sender-only-input"
+        self.request("PUT", "/batches/" + batch["id"] + "/inputs", {"expectedManifestRevision": 1,
+            "inputs": [{"id": input_id, "originalFileName": "chosen.png", "size": 40}]}, key="action-hint-manifest")
+        credential = self.request("POST", "/credentials", {"label": "Read-only observer", "batchId": batch["id"], "scopes": ["read"]})
+        self.addCleanup(self.request, "DELETE", "/credentials/" + credential["id"])
+        with tempfile.TemporaryDirectory() as temp:
+            async with Client(self.process(Path(temp), credential["token"], "read,ingest,local.read")) as observer:
+                async def call(name, args):
+                    reply = await observer.call_tool(name, args)
+                    self.assertFalse(reply.is_error, reply.content)
+                    return reply.structured_content
+
+                pending = await call("task.context", {"id": batch["id"]})
+                self.assertEqual(pending["nextActions"], [])
+                self.assertEqual(pending["actionWaits"], [{"reason": "permission_required", "tool": "upload.file",
+                    "missingLocalScopes": [], "missingServerScopes": ["ingest"], "requiresBatchBinding": False}])
+                upload = self.request("POST", "/uploads", {"libraryId": library["id"], "mode": "intelligent",
+                    "batchId": batch["id"], "inputId": input_id, "fileName": "chosen.png", "size": 40, "mimeType": "image/png"},
+                    key="action-hint-open-upload")
+                transmitting = await call("task.context", {"id": batch["id"]})
+                self.assertEqual(transmitting["nextActions"], ["upload.status"])
+                self.assertEqual(transmitting["actionWaits"], [{"reason": "original_sender_transfer", "inputIds": [input_id]}])
+                tool = await call("platform.tool.describe", {"tool": transmitting["nextActions"][0]})
+                status = await call(tool["name"], {"id": transmitting["inputs"][0]["uploadId"]})
+                self.assertEqual((status["id"], status["state"], status["offset"]), (upload["id"], "receiving", 0))
