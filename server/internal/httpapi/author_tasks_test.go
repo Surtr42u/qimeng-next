@@ -13,6 +13,9 @@ func TestAuthorMaintenanceGrantCannotCrossAuthorFieldsOrClear(t *testing.T) {
 	response := f.json("POST", "/authors", "author-create-synthetic", map[string]any{"name": "Synthetic", "kind": "regular", "biography": "Original"}, 201)
 	var author model.Author
 	decode(t, response, &author)
+	if author.FieldStatus["identity"] != "confirmed" || author.FieldStatus["biography"] != "confirmed" || author.FieldStatus["homepage"] != "missing" {
+		t.Fatalf("author fields did not carry their individual statuses: %+v", author.FieldStatus)
+	}
 	response = f.json("POST", "/author-tasks", "author-task-synthetic", map[string]any{"authorId": author.ID, "expectedRevision": author.Revision, "allowedFields": []string{"biography"}, "allowClear": false}, 201)
 	var task service.AuthorTask
 	decode(t, response, &task)

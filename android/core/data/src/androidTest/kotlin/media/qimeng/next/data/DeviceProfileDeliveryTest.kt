@@ -24,6 +24,9 @@ class DeviceProfileDeliveryTest {
         media.login(address, requireNotNull(args.getString("qimengToken")))
         val api = provider.api(requireNotNull(settings.session.value))
         val author = media.createAuthor("云端设备资料样本")
+        val fieldStatus = api.getAuthor(author.id).bodyOrThrow().fieldStatus
+        assertEquals("confirmed", fieldStatus["identity"]?.value)
+        assertEquals("missing", fieldStatus["biography"]?.value)
         val file = File.createTempFile("synthetic-device-v2-", ".json", context.cacheDir)
         try {
             suspend fun apply(nickname: String, key: String, replace: Boolean): ReceivedSegment {

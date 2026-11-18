@@ -46,8 +46,10 @@ class LegacyBackupRepository internal constructor(private val context: Context, 
         } finally { snapshot.delete() }
     }
     suspend fun prepare(target: Session, doc: LegacyDocument, media: Map<String, String> = emptyMap(), authors: Map<String, String> = emptyMap(), key: String): MigrationPreview {
-        val input = V2PlanCreate(media.map { V2PlanCreateMediaMappingsInner(it.key, it.value.trim()) },
-            authors.filterValues(String::isNotBlank).map { V2PlanCreateAuthorMappingsInner(it.key, it.value.trim()) })
+        // Manual imports use the original keep contract, including on servers predating the device override.
+        val input = V2PlanCreate(mediaMappings = media.map { V2PlanCreateMediaMappingsInner(it.key, it.value.trim()) },
+            authorMappings = authors.filterValues(String::isNotBlank).map { V2PlanCreateAuthorMappingsInner(it.key, it.value.trim()) },
+            authorProfileConflict = null)
         return provider.api(target).prepareV2Migration(doc.id, key, input).bodyOrThrow().preview()
     }
     suspend fun rows(target: Session, plan: MigrationPreview, authors: Boolean, cursor: String? = null): Page<MigrationRow> {

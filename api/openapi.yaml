@@ -2757,6 +2757,9 @@ components:
         homepage: {type: string, maxLength: 2000}
         acquisitionSources: {type: array, nullable: true, maxItems: 100, items: {type: string, maxLength: 2000}, description: 'User acquisition channels; distinct from original works and public profile links'}
         batchId: {type: string}
+    AuthorFieldStatus:
+      type: string
+      enum: [missing, candidate, confirmed]
     Author:
       allOf:
         - {$ref: '#/components/schemas/AuthorCreate'}
@@ -2771,7 +2774,7 @@ components:
             fileCount: {type: integer, format: int64}
             viewCount: {type: integer, format: int64}
             txtOrder: {type: integer, format: int64, minimum: 1, description: First occurrence among active numbered lists}
-            fieldStatus: {type: object, additionalProperties: {type: string, enum: [missing, candidate, confirmed]}}
+            fieldStatus: {type: object, additionalProperties: {$ref: '#/components/schemas/AuthorFieldStatus'}}
             createdAt: {type: string, format: date-time}
             updatedAt: {type: string, format: date-time}
     AuthorUpdate:
