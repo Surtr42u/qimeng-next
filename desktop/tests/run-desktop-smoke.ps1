@@ -42,7 +42,7 @@ if (-not $isElevated) {
 $nonce = [guid]::NewGuid().ToString('N')
 $taskName = 'QimengWindow-' + $nonce
 $accountName = 'qmtest' + $nonce.Substring(0, 12)
-$stageParent = (Get-Item -LiteralPath $env:ProgramData).FullName
+$stageParent = (Get-Item -LiteralPath $env:ProgramData -Force).FullName
 $stage = Join-Path $stageParent $taskName
 $desktop = Join-Path $stage 'desktop'
 $tests = Join-Path $desktop 'tests'
@@ -106,7 +106,7 @@ try {
     }
     if ($account) { Remove-LocalUser -SID $account.SID }
     if (Test-Path -LiteralPath $stage) {
-        $directory = Get-Item -LiteralPath $stage
+        $directory = Get-Item -LiteralPath $stage -Force
         if ($directory.Parent.FullName -ne $stageParent -or $directory.Name -ne $taskName -or
             ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unexpected smoke staging path.' }
         Remove-Item -LiteralPath $directory.FullName -Recurse -Force
