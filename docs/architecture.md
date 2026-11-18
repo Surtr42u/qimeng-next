@@ -18,6 +18,7 @@ SQLite 位于服务本地磁盘。单服务排他锁、SQLite WAL、外键、FUL
 | Go 命令入口 | `cmd/qimeng` 装配配置、实例和服务。独立的 `cmd/qimeng-backup` 负责离线备份工具 |
 | HTTP 与业务用例 | `internal/httpapi.API` 实现由 OpenAPI 生成的 Go `ServerInterface`。服务使用生成的标准库路由挂载业务端点。认证、结构校验和协议编码位于该层；业务权限、幂等回执与事务提交由 `service` 负责。健康检查和静态 Web 由宿主挂载 |
 | 收藏与当日点赞 | `internal/engagement` 只接收已获授权的事务、当前资产与服务时间，更新该意图负责的字段或当天记录。它只引用 `model` 和 `store`。Web 和 Android 提交用户点击的那一个开关，状态、累计数与历史均从 Go 回读 |
+| 上传内容核验 | `internal/mediafile` 从传入的文件流检验媒体容器、长度与 SHA-256，支持调用者取消读取。该包不依赖其他业务包。授权、内容版本、命名与目标占用复核、持久化发布意图及最终事务都由 `service` 负责 |
 | 规则与业务记录 | `domain`、`analytics`、`authorlist`、`sourcerules`、`migration`、`model` 接收已经提供的数据。当前时间、文件内容、数据库查询和网络响应由调用方或适配器提供 |
 | 存储与外部环境 | `store` 持有 SQLite 迁移和持久化原语。`storage`、`backup` 和 `sysmon` 分别处理主机文件、备份与系统读数。服务组合这些能力并决定一次业务写入的边界 |
 | Web、桌面与 Android | Web 页面通过数据层读写，桌面壳负责窗口与服务器连接。Android 页面使用 ViewModel、Repository 和 SDK。本机宿主经运行接口启动同一 Go 服务 |

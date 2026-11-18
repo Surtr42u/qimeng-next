@@ -3,10 +3,19 @@ import tempfile
 import unittest
 
 from check_docs import link_errors
+from check_doc_impact import evaluate
 from check_migration_history import changes
 
 
 class EngineeringChecksTest(unittest.TestCase):
+    def test_document_impact_uses_the_changed_domain(self):
+        paths = {"api/openapi.yaml", "server/internal/architecture/boundaries_test.go",
+                 "server/internal/store/migrations/0042_example.sql", "docs/api.md"}
+        _, missing = evaluate(paths, "文档无需更新[模块边界] 本次只调整测试的错误信息。")
+        self.assertEqual(missing, ["数据迁移"])
+        self.assertEqual(evaluate(paths | {"docs/migration.md", "docs/architecture.md"}, "")[1], [])
+        self.assertEqual(evaluate({"server/internal/service/migration_profile_test.go"}, ""), ([], []))
+
     def test_document_references(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
