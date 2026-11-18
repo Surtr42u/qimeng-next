@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -68,6 +69,64 @@ def inspect_sources(facts):
     return counts, errors
 
 
+def presentation_edges(module, directories):
+    blocked = re.compile(r"^(?:media\.qimeng\.next\.(?:data|sdk|transport)\.|android\.database\.|android\.content\.SharedPreferences\b|androidx\.(?:room|sqlite|datastore)\.|java\.sql\.|retrofit2\.|okhttp3\.Request\b|java\.net\.HttpURLConnection\b)")
+    # jdeps reads class-file signatures/instructions. Unresolved Android runtime classes still have named targets.
+    result = subprocess.run(["jdeps", "-verbose:class", "-filter:none", "--ignore-missing-deps", *directories],
+                            check=True, text=True, stdout=subprocess.PIPE)
+    composables = set()
+    questionable = set()
+    for line in result.stdout.splitlines():
+        edge = re.match(r"\s+(media\.qimeng\.next\.\S+)\s+->\s+(\S+)", line)
+        if edge is None:
+            continue
+        owner, target = edge.groups()
+        if target == "androidx.compose.runtime.Composer":
+            composables.add(owner)
+        if blocked.search(target):
+            questionable.add((owner, target))
+    violations = {(owner, target) for owner, target in questionable
+                  if module == ":core:ui" or owner.startswith("media.qimeng.next.screen.") or owner in composables}
+    return composables, violations
+
+
+def verify_return_type_example():
+    # Neither presentation imports SQL. Only consuming the leaked return type creates a storage dependency.
+    with tempfile.TemporaryDirectory() as temp:
+        folder = Path(temp)
+        port = folder / "Port.java"
+        port.write_text("package media.qimeng.next.fixture; public interface Port { String title(); java.sql.Connection db(); }")
+        examples = folder / "Screens.java"
+        examples.write_text("""package media.qimeng.next.screen;
+            import media.qimeng.next.fixture.Port;
+            class ReadTitle { String title(Port port) { return port.title(); } }
+            class ReadStorage { boolean status(Port port) throws Exception { return port.db().isClosed(); } }
+        """)
+        subprocess.run(["javac", "--release", "17", "-d", folder, port, examples], check=True)
+        _, violations = presentation_edges(":app", [folder])
+        if violations != {("media.qimeng.next.screen.ReadStorage", "java.sql.Connection")}:
+            raise SystemExit(f"Presentation return-type regression: {violations}")
+
+
+def inspect_bytecode(facts):
+    errors = []
+    for module in (":app", ":core:ui"):
+        directories = []
+        for relative in facts["compiled"].get(module, []):
+            folder = REPOSITORY / relative
+            if folder.is_dir() and next(folder.rglob("*.class"), None) is not None:
+                directories.append(folder)
+        if not directories:
+            errors.append(f"No compiled production classes for {module}")
+            continue
+        composables, violations = presentation_edges(module, directories)
+        if not composables:
+            errors.append(f"No Compose classes in the actual {module} compiler outputs")
+        for owner, target in violations:
+            errors.append(f"{module} compiled presentation {owner} -> {target}")
+    return errors
+
+
 def main(inventory):
     facts = json.loads(inventory.read_text(encoding="utf-8"))
     errors = []
@@ -84,8 +143,10 @@ def main(inventory):
                 errors.append(f"{name} includes forbidden project edge {parent} -> {child}")
     counts, source_errors = inspect_sources(facts)
     errors.extend(source_errors)
+    errors.extend(inspect_bytecode(facts))
     if errors:
         raise SystemExit("\n".join(sorted(set(errors))))
+    verify_return_type_example()
     apk = REPOSITORY / "android/app/build/outputs/apk/client/debug/app-client-debug.apk"
     subprocess.run([sys.executable, REPOSITORY / "tools/check_android_apk.py", "client", apk], check=True)
     print(f"Checked {len(classpaths)} production classpaths and {sum(counts.values())} Java/Kotlin inputs across {len(counts)} modules.")

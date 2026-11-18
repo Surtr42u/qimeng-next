@@ -72,7 +72,19 @@ gradle.beforeProject { root ->
                     graph[name] = edges.toList().sort { it.join(' ') }
                 }
             }
-            def inventory = [projects: root.subprojects*.path.sort(), classpaths: graph, sources: roots.unique()]
+            def compiled = [:]
+            variants.findAll { row ->
+                (row.module.path == ':app' && row.variant.name == 'clientDebug') ||
+                    (row.module.path == ':core:ui' && row.variant.name == 'debug')
+            }.each { row ->
+                def prefix = 'compile' + row.variant.name.capitalize()
+                def outputs = [] as Set
+                ['Kotlin', 'JavaWithJavac'].each { compiler ->
+                    row.module.tasks.getByName(prefix + compiler).outputs.files.files.findAll { it.exists() }.each { outputs << relative(it) }
+                }
+                compiled[row.module.path] = outputs.toList().sort()
+            }
+            def inventory = [projects: root.subprojects*.path.sort(), classpaths: graph, sources: roots.unique(), compiled: compiled]
             def file = report.get().asFile
             file.parentFile.mkdirs()
             file.setText(JsonOutput.prettyPrint(JsonOutput.toJson(inventory)) + '\n', 'UTF-8')

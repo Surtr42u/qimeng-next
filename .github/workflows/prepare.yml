@@ -196,7 +196,7 @@ jobs:
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - name: Compile and verify Android
         run: |
-          gradle --no-daemon -p android -Pqimeng.embedded=false -I android/architecture/verify.gradle verifyClientArchitecture :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug --stacktrace
+          gradle --no-daemon -p android -Pqimeng.embedded=false -I "$GITHUB_WORKSPACE/android/architecture/verify.gradle" verifyClientArchitecture :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug --stacktrace
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -10,13 +10,22 @@ $isElevated = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if ($AsDesktopUser) {
-    if ($isElevated -or $SourceCommit -notmatch '^[0-9a-f]{40}$') {
-        throw 'The isolated desktop window check requires an ordinary user session and a commit.'
+    $workerResult = 1
+    try {
+        if ($isElevated -or $SourceCommit -notmatch '^[0-9a-f]{40}$') {
+            throw 'An ordinary user session and a commit are required.'
+        }
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_SHA = $SourceCommit
+        & $NodeExecutable tests/cloud-webview.mjs *> $WorkerLog
+        $workerResult = $LASTEXITCODE
+    } catch {
+        Add-Content -LiteralPath $WorkerLog -Value $_.Exception.Message
+    } finally {
+        [IO.File]::WriteAllText("$WorkerLog.exit.tmp", [string]$workerResult)
+        [IO.File]::Move("$WorkerLog.exit.tmp", "$WorkerLog.exit")
     }
-    $env:GITHUB_ACTIONS = 'true'
-    $env:GITHUB_SHA = $SourceCommit
-    & $NodeExecutable tests/cloud-webview.mjs *> $WorkerLog
-    exit $LASTEXITCODE
+    exit $workerResult
 }
 
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
@@ -41,14 +50,17 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal
 try {
     Start-ScheduledTask -TaskName $taskName
     $deadline = [datetime]::UtcNow.AddMinutes(9)
-    do {
+    $receipt = "$logPath.exit"
+    while (-not (Test-Path -LiteralPath $receipt) -and [datetime]::UtcNow -lt $deadline) {
         Start-Sleep -Seconds 1
-        $info = Get-ScheduledTaskInfo -TaskName $taskName
-        $state = (Get-ScheduledTask -TaskName $taskName).State
-    } until (($info.LastRunTime.Year -gt 2000 -and $state -eq 'Ready') -or [datetime]::UtcNow -ge $deadline)
+    }
     if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 35 }
-    if ($state -ne 'Ready' -or $info.LastRunTime.Year -le 2000 -or $info.LastTaskResult -ne 0) {
-        throw "Standard-user desktop smoke failed (task state $state, result $($info.LastTaskResult))."
+    if (-not (Test-Path -LiteralPath $receipt)) {
+        $info = Get-ScheduledTaskInfo -TaskName $taskName
+        throw "Standard-user desktop smoke timed out (scheduler result $($info.LastTaskResult))."
+    }
+    if ([IO.File]::ReadAllText($receipt) -ne '0') {
+        throw 'The standard-user smoke check reported an error.'
     }
 } finally {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
