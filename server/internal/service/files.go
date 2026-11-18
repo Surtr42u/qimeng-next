@@ -95,7 +95,11 @@ func (s *Service) hashFileContext(ctx context.Context, name string) (string, int
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 func (s *Service) verify(name, hash string, size int64) error {
-	actual, n, e := s.hashFile(name)
+	return s.verifyContext(context.Background(), name, hash, size)
+}
+
+func (s *Service) verifyContext(ctx context.Context, name, hash string, size int64) error {
+	actual, n, e := s.hashFileContext(ctx, name)
 	if e != nil {
 		return e
 	}
@@ -252,8 +256,18 @@ func (s *Service) prepareFile(ctx context.Context, w *Write, j fileIntent) (file
 	return j, s.saveIntent(ctx, j)
 }
 func (s *Service) applyFile(ctx context.Context, intent *fileIntent) error {
+	return s.applyFileWithCheck(ctx, intent, nil)
+}
+
+func (s *Service) applyFileWithCheck(ctx context.Context, intent *fileIntent, checkedTarget func() error) error {
 	if intent.CopyPublication || runtime.GOOS == "android" && intent.Kind != "purge" {
-		return s.applyCopiedFile(ctx, intent)
+		if err := s.applyCopiedFile(ctx, intent); err != nil {
+			return err
+		}
+		if checkedTarget != nil {
+			return checkedTarget()
+		}
+		return nil
 	}
 	j := *intent
 	if j.SpellingOnly {
@@ -265,7 +279,7 @@ func (s *Service) applyFile(ctx context.Context, intent *fileIntent) error {
 	if e := s.verifyFileIdentity(j.Source, j.SourceObject); e != nil {
 		return e
 	}
-	if e := s.verify(j.Source, j.After.Hash, j.After.Size); e != nil {
+	if e := s.verifyContext(ctx, j.Source, j.After.Hash, j.After.Size); e != nil {
 		return e
 	}
 	if j.Kind == "replace" && j.Before != nil {
@@ -311,8 +325,14 @@ func (s *Service) applyFile(ctx context.Context, intent *fileIntent) error {
 			return e
 		}
 	}
+	if e := ctx.Err(); e != nil {
+		return e
+	}
 	if e := s.linkNoReplace(j.Source, j.Target); e != nil {
 		return e
+	}
+	if checkedTarget != nil {
+		return checkedTarget()
 	}
 	return s.verify(j.Target, j.After.Hash, j.After.Size)
 }
@@ -526,7 +546,13 @@ func (s *Service) runFile(ctx context.Context, w *Write, j fileIntent) (model.As
 	if e = s.validatePublicationBase(ctx, s.DB.DB, j); e != nil {
 		return j.After, e
 	}
-	if e = s.applyFile(ctx, &j); e != nil {
+	reservedUpload := w.preparedUpload != "" && w.preparedUpload == j.UploadID
+	if reservedUpload && j.Kind == "ingest" {
+		e = s.applyReservedUpload(ctx, w, &j)
+	} else {
+		e = s.applyFile(ctx, &j)
+	}
+	if e != nil {
 		return j.After, publicationError("install_file", e)
 	}
 	q, e := w.Q()
@@ -536,7 +562,13 @@ func (s *Service) runFile(ctx context.Context, w *Write, j fileIntent) (model.As
 	if e = s.commitFile(ctx, q, &j); e != nil {
 		return j.After, publicationError("catalog_commit", Normalize(e))
 	}
-	w.after = append(w.after, func() error { return s.finishFile(context.Background(), j) })
+	w.after = append(w.after, func() error {
+		finish := func() error { return s.finishFile(context.Background(), j) }
+		if reservedUpload {
+			return w.reservedUploadIO(finish)
+		}
+		return finish()
+	})
 	return j.After, nil
 }
 func (s *Service) recoverIntents(ctx context.Context) error {

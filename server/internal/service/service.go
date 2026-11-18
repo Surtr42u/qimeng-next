@@ -77,6 +77,7 @@ type Service struct {
 	stopWork        context.CancelFunc
 	workers         sync.WaitGroup
 	activeScans     int
+	uploadVerify    chan struct{}
 	scanWorkers     map[string]scanWorker
 	scanWake        chan struct{}
 	mirrorWake      chan struct{}
@@ -151,7 +152,7 @@ func New(config Config) (*Service, error) {
 		root.Close()
 		return nil, err
 	}
-	s := &Service{DB: db, Root: root, Config: config, owner: owner, scanWake: make(chan struct{}), password: password, loginLimit: loginBudget{slots: make(chan struct{}, 2)}}
+	s := &Service{DB: db, Root: root, Config: config, owner: owner, scanWake: make(chan struct{}), uploadVerify: make(chan struct{}, 1), password: password, loginLimit: loginBudget{slots: make(chan struct{}, 2)}}
 	s.workCtx, s.stopWork = context.WithCancel(context.Background())
 	s.localSync = localSync
 	s.monitor = newLibraryMonitor(config.Scanner)
@@ -371,6 +372,7 @@ type Write struct {
 	after                     []func() error
 	rollback                  []func()
 	operation, key, inputHash string
+	preparedUpload            string
 }
 
 func (w *Write) Q() (store.Querier, error) {
@@ -400,26 +402,9 @@ type Result struct {
 func (s *Service) Run(ctx context.Context, p model.Principal, operation, key string, input []byte, fn func(*Write) (any, int, error)) (result Result, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Authentication can precede a queued write. Recheck the revocable credential
-	// at the mutation boundary so revocation also rejects work not yet started.
-	if p.ID != "owner" && p.ID != "ai-reader" {
-		current, e := store.Get[model.Principal](ctx, s.DB.DB, "SELECT data FROM credentials WHERE id=?", p.ID)
-		if errors.Is(e, sql.ErrNoRows) {
-			return result, Fail(401, "revoked", "凭据已撤销，尚未开始的写入已拒绝。")
-		}
-		if e != nil {
-			return result, e
-		}
-		if !current.ExpiresAt.After(time.Now()) {
-			return result, Fail(401, "expired", "凭据已过期。")
-		}
-		if current.Generation != p.Generation {
-			return result, Fail(401, "lease_changed", "任务已由新执行器接续，旧执行器不能继续写入。")
-		}
-		p = current
-	}
-	if e := s.validateDelegation(ctx, p); e != nil {
-		return result, e
+	p, err = s.currentWritePrincipal(ctx, p)
+	if err != nil {
+		return result, err
 	}
 	if key != "" && (len(key) < 8 || len(key) > 128) {
 		return result, Fail(400, "invalid_idempotency_key", "幂等键长度应为 8–128。")
@@ -484,6 +469,31 @@ func (s *Service) Run(ctx context.Context, p model.Principal, operation, key str
 		}
 	}
 	return Result{body, status}, nil
+}
+
+func (s *Service) currentWritePrincipal(ctx context.Context, p model.Principal) (model.Principal, error) {
+	// Authentication can precede a queued write. Recheck the revocable credential
+	// at the mutation boundary so revocation also rejects work not yet started.
+	if p.ID != "owner" && p.ID != "ai-reader" {
+		current, e := store.Get[model.Principal](ctx, s.DB.DB, "SELECT data FROM credentials WHERE id=?", p.ID)
+		if errors.Is(e, sql.ErrNoRows) {
+			return model.Principal{}, Fail(401, "revoked", "凭据已撤销，尚未开始的写入已拒绝。")
+		}
+		if e != nil {
+			return model.Principal{}, e
+		}
+		if !current.ExpiresAt.After(time.Now()) {
+			return model.Principal{}, Fail(401, "expired", "凭据已过期。")
+		}
+		if current.Generation != p.Generation {
+			return model.Principal{}, Fail(401, "lease_changed", "任务已由新执行器接续，旧执行器不能继续写入。")
+		}
+		p = current
+	}
+	if e := s.validateDelegation(ctx, p); e != nil {
+		return model.Principal{}, e
+	}
+	return p, nil
 }
 
 func (s *Service) CreateSession(ctx context.Context, w *Write, label, batchID string, scopes []string, authorTaskIDs ...string) (model.Principal, error) {
