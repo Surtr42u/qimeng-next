@@ -59,6 +59,8 @@ class State:
               CREATE TABLE IF NOT EXISTS executor_secrets (operation TEXT PRIMARY KEY, secret TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS task_credentials (task TEXT PRIMARY KEY, secret TEXT NOT NULL,
                 generation INTEGER NOT NULL, metadata TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS author_write_baselines (task TEXT NOT NULL, key TEXT NOT NULL,
+                revision INTEGER NOT NULL, PRIMARY KEY(task,key));
               CREATE TABLE IF NOT EXISTS cleanup_journal (
                 permit TEXT PRIMARY KEY, operation TEXT UNIQUE NOT NULL, binding TEXT NOT NULL,
                 stage TEXT NOT NULL, outcome TEXT, created REAL NOT NULL);
@@ -92,8 +94,7 @@ class State:
         finally:
             db.close()
 
-    def reserve(self, tool: str, arguments: dict, key: str | None) -> str:
-        request = hashlib.sha256(encode([tool, arguments]).encode()).hexdigest()
+    def reserve(self, tool: str, arguments: dict, key: str | None, *, author_task=None, inferred_revision=False) -> str:
         task = self.config.task_id
         with self.transaction() as db:
             state = db.execute("SELECT * FROM tasks WHERE id=?", (task,)).fetchone()
@@ -102,6 +103,14 @@ class State:
                 raise ToolError("TASK_BUDGET_EXHAUSTED", "任务预算已耗尽，由可信端保留进度并决定续期",
                                 details={"calls": state["calls"], "seconds": round(elapsed),
                                          "maxCalls": state["max_calls"], "maxSeconds": state["max_seconds"]})
+            if author_task is not None:
+                db.execute("INSERT OR IGNORE INTO author_write_baselines VALUES(?,?,?)",
+                           (author_task, key, arguments["body"]["expectedRevision"]))
+                if inferred_revision:
+                    row = db.execute("SELECT revision FROM author_write_baselines WHERE task=? AND key=?",
+                                     (author_task, key)).fetchone()
+                    arguments["body"]["expectedRevision"] = row[0]
+            request = hashlib.sha256(encode([tool, arguments]).encode()).hexdigest()
             previous = db.execute("SELECT repeats FROM requests WHERE task=? AND request=?", (task, request)).fetchone()
             if previous and previous[0] >= self.config.max_unchanged:
                 raise ToolError("NO_PROGRESS", "相同请求反复没有新结果，停止重复调用")
@@ -171,6 +180,12 @@ class State:
         if row is None:
             raise ToolError("TASK_NOT_BOUND", "本执行器未持有该任务凭据，请使用task.resume接续原任务")
         return row[0]
+
+    def author_write_baseline(self, task: str, key: str):
+        # A successful update advances the Go task's baseline. Replaying its original request still needs the old one.
+        with self.transaction() as db:
+            row = db.execute("SELECT revision FROM author_write_baselines WHERE task=? AND key=?", (task, key)).fetchone()
+            return row[0] if row else None
 
     def receipt_target(self, key: str) -> tuple[str, str | None]:
         with self.transaction() as db:

@@ -9,6 +9,7 @@ from datetime import date
 from jsonschema import Draft202012Validator, FormatChecker
 
 from . import __version__, output
+from .bound_task import BoundTask
 from .config import Config
 from .content import ImageResult
 from .errors import ToolError
@@ -37,6 +38,8 @@ class Runtime:
         self.state: State | None = None
         self.base_state: State | None = None
         self.instance_id: str | None = None
+        self.bound_task = None
+        self.session_checked = False
         self.lock = threading.RLock()
 
     def close(self) -> None:
@@ -56,7 +59,29 @@ class Runtime:
             self.state = self.base_state
         return self.base_state
 
-    def tools(self) -> list[dict]:
+    def task_binding(self):
+        if not self.session_checked:
+            self.transport.active_token = None
+            self.connect()
+            binding = BoundTask.from_session(self.transport.call("getCurrentSession", {}))
+            if binding and binding.kind == "author":
+                binding.author_task(self.transport)
+            self.bound_task = binding
+            self.session_checked = True
+        return self.bound_task
+
+    def tools(self, *, discovery=True) -> list[dict]:
+        with self.lock:
+            binding = None
+            if discovery:
+                try:
+                    binding = self.task_binding()
+                except ToolError:
+                    # Discovery also works offline. Execution independently checks the live instance and credential.
+                    pass
+            return self._tools(binding)
+
+    def _tools(self, binding) -> list[dict]:
         result = [{"name": name, "description": value["description"],
                    "inputSchema": value["inputSchema"], "scope": value["scope"],
                    "readOnly": value["readOnly"]}
@@ -86,11 +111,20 @@ class Runtime:
             if tool["name"] not in {"task.start", "task.resume"}:
                 tool["inputSchema"].setdefault("properties", {})["taskId"] = {"type": "string", "minLength": 8, "maxLength": 128,
                     "description": "task.start/resume返回的任务ID；可信执行器据此选择该任务的受限凭据与预算"}
+            if binding:
+                binding.present(tool)
         return result
 
     def task_state(self, task_id: str | None) -> State:
+        binding = self.task_binding()
         state = self.connect()
-        self.transport.active_token = state.task_credential(task_id) if task_id else None
+        if binding:
+            if task_id is not None and task_id != binding.id:
+                raise ToolError("TASK_NOT_BOUND", "本凭据不能切换到另一个任务")
+            task_id = binding.id if binding.delegated else None
+            self.transport.active_token = None
+        else:
+            self.transport.active_token = state.task_credential(task_id) if task_id else None
         if task_id:
             state = State(replace(self.config, task_id=task_id, max_seconds=self.task_max_seconds), self.instance_id, self.contract["openapiSha256"])
         self.state = state
@@ -99,17 +133,27 @@ class Runtime:
     def call(self, name: str, arguments: dict):
         # 一个执行器内部串行写与引用状态。多进程预算另外由SQLite事务保护。
         with self.lock:
-            definition = next((tool for tool in self.tools() if tool["name"] == name), None)
+            definition = next((tool for tool in self.tools(discovery=False) if tool["name"] == name), None)
             if definition is None:
                 raise ToolError("TOOL_UNKNOWN", "工具未注册，不允许任意 HTTP 或脚本调用")
             if definition["scope"] not in self.config.permissions:
                 raise ToolError("PERMISSION_DENIED", "可信端未授予此工具权限", details={"required": definition["scope"]})
+            if not isinstance(arguments, dict):
+                raise ToolError("INVALID_INPUT", "工具参数应为对象")
+            arguments = dict(arguments)
+            binding = self.task_binding()
+            author_write = binding is not None and binding.kind == "author" and name == "author.profile.update"
+            inferred_revision = author_write and isinstance(arguments.get("body"), dict) and "expectedRevision" not in arguments["body"]
+            verify_author_write = author_write and (inferred_revision or "id" not in arguments)
+            if binding:
+                binding.bind(self, name, arguments)
             validator = Draft202012Validator(definition["inputSchema"], format_checker=FormatChecker())
             if next(validator.iter_errors(arguments), None) is not None:
                 # 不把ValidationError.message回显，避免包含完整用户输入/本机路径。
                 raise ToolError("INVALID_INPUT", "参数不符合工具契约，请按describe返回的schema修正")
-            arguments = dict(arguments)
             task_id = arguments.pop("taskId", None)
+            if binding and binding.delegated:
+                task_id = binding.id
             state = self.task_state(task_id)
             if name == "platform.budget":
                 return {"local": state.status(), "server": self.transport.call("getDelegatedBudget", {"id": task_id})} if task_id else state.status()
@@ -118,7 +162,8 @@ class Runtime:
                 key = arguments.get("Idempotency-Key") or arguments.get("operationId")
                 if not key:
                     raise ToolError("OPERATION_ID_REQUIRED", "写入必须提供稳定操作身份，重试沿用原值")
-            request = state.reserve(name, arguments, key)
+            request = state.reserve(name, arguments, key, author_task=binding.id if author_write else None,
+                                    inferred_revision=inferred_revision)
             try:
                 # Go reserves the task and research budgets together with the query key.
                 if task_id and name not in RESEARCH_QUERY_OPERATIONS:
@@ -133,6 +178,8 @@ class Runtime:
             visible = value.metadata if isinstance(value, ImageResult) else value
             pending_query = name in RESEARCH_QUERY_OPERATIONS and isinstance(visible, dict) and visible.get("state") == "pending"
             state.finish(request, visible, key, uncertain=pending_query)
+            if verify_author_write:
+                visible = binding.readback(self.transport, key, arguments["body"], visible)
             try:
                 presented = output.present(visible, state, self.config.output_bytes, self.config.token)
                 return ImageResult(presented, value.data, value.mime_type) if isinstance(value, ImageResult) else presented
@@ -151,6 +198,7 @@ class Runtime:
                     "existingAssetWorkflow": ["asset.query", "asset.read", "task.start", "asset.task.context",
                                               "asset.research.materials", "platform.artifact.read", "asset.metadata.apply",
                                               "naming.suggest", "naming.preview", "asset.rename.apply"],
+                    "authorTaskWorkflow": ["platform.session", "author.task.context", "author.profile.update", "author.read"],
                     "publicResearchWorkflow": ["research.context", "research.provider.query", "research.provider.result"],
                     "imageResearchWorkflow": ["research.context", "research.image.search", "research.provider.result"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",

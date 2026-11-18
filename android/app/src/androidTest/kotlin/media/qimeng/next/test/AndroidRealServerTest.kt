@@ -104,7 +104,7 @@ class AndroidRealServerTest {
         assertEquals(batch.key, graph.queue.state.value!!.intakeFailures.single().batchKey)
         screenshot("real-server-shared-upload.png")
         compose.onNodeWithTag("upload-list").performScrollToNode(hasText("锁定"))
-        compose.onNodeWithTag("draft-name:$manualDraft").performTextReplacement("手选保留")
+        editVisibleField("draft-name:$manualDraft", "手选保留")
         await("independent-edited-stem", graph) { graph.queue.state.value?.drafts?.singleOrNull()?.name == "手选保留.png" }
         assertEquals("android-synthetic.png", graph.queue.state.value!!.drafts.single().originalName)
         screenshot("real-server-upload-locked-extension.png")
@@ -144,9 +144,17 @@ class AndroidRealServerTest {
         compose.onNodeWithContentDescription(picture.name).performClick()
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("标签").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("标签").performClick()
-        compose.onNodeWithTag("detail-new-tag").performTextInput("安卓云端标签")
-        compose.onNodeWithText("添加").performClick()
-        compose.waitUntil(20_000) { compose.onAllNodesWithText("已选 1 个").fetchSemanticsNodes().isNotEmpty() }
+        editVisibleField("detail-new-tag", "安卓云端标签")
+        val addTag = hasText("添加") and hasClickAction() and isEnabled()
+        compose.waitUntil(20_000) { !model.busy.value && compose.onAllNodes(addTag).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(addTag).assertIsDisplayed().performClick()
+        try {
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("已选 1 个").fetchSemanticsNodes().isNotEmpty() }
+        } catch (failure: Throwable) {
+            saveScreenshot("unverified-real-server-tag-create.png")
+            val created = runBlocking { "安卓云端标签" in graph.media.tags().items }
+            throw AssertionError("Tag after Add: storedInVocabulary=$created busy=${model.busy.value} errorPresent=${model.message.value != null}", failure)
+        }
         compose.onNodeWithText("取消").performClick()
         // The installed baseline opens a fresh sheet and selects an existing vocabulary entry, with the IME closed.
         compose.onNodeWithContentDescription("标签").performClick()
@@ -303,6 +311,15 @@ class AndroidRealServerTest {
     @Test(timeout = 240_000)
     fun readOnlyArchivePreservesOriginalAfterIndependentBackup() = runBlocking {
         archiveRoundTrip(isolatedServerGraph())
+    }
+
+    private fun editVisibleField(tag: String, text: String) {
+        val field = hasTestTag(tag)
+        compose.waitUntil(30_000) { compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(field).assertIsDisplayed().performClick()
+        compose.waitUntil(30_000) { compose.onAllNodes(field and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(field).performTextReplacement(text)
+        compose.onNode(field).assertTextEquals(text)
     }
 
     private suspend fun isolatedServerGraph(): DataGraph {
