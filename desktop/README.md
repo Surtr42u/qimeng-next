@@ -10,7 +10,7 @@
 
 主窗及原件子窗逐次核对导航协议、主机与端口。外部 Web 链接由系统浏览器打开，关闭子窗只影响该子窗，切换服务器会关闭旧主窗及其原件子窗。设置窗口复用旧 `desktop/ui/setup.html` 的 420×340 布局、颜色及 `desktop/ui/app-icon.png` 品牌图；地址、保存与权限判断由 Next 实现。
 
-主窗打开原件时，壳先核对请求的地址，将同一浏览器环境中新建的空白子窗交给 WebView2，再由 WebView2 导航至原件。这样原件请求沿用登录会话。子窗随后继续检查所选服务器的完整 origin。[WebView2 新窗口约定](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2newwindowrequestedeventargs#put_newwindow)
+主窗打开原件时，壳先核对目标地址，结束浏览器回调后在现有 WebView2 资料目录下打开独立原件窗。打开期间若用户已切换服务器，旧子窗会关闭。云测从原件服务器实际收到的 Cookie 核对会话是否保留。[WebView2 线程与回调](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model)
 
 ## 云端准备与验证
 

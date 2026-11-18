@@ -29,20 +29,22 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 
 ### 手动扫描的同机对照
 
-同一台 Ubuntu 24.04、4 vCPU 运行器按轮换顺序启动三个版本，每版三轮。每轮从新进程、空媒体索引开始，使用 16 个目录中的 2,048 张不同的 32×32 PNG，共 6,496,256 字节。每阶段先读热原件，再从手动 POST 发出计时到首次观察到成功终态，测试客户端以 10 毫秒间隔轮询。原样复扫后，原位改写 16 张、移动 8 张、新增 4 张，再次扫描。三个版本均核对全部路径、大小、修改时间与已有身份，最终各有 2,052 项。两版 Next 还逐项核对 SHA-256。[最新三版同机原始数据与报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44323980865)
+同一台 Ubuntu 24.04、4 vCPU 运行器按轮换顺序启动三个版本，每版三轮。每轮从新进程、空媒体索引开始，使用 16 个目录中的 2,048 张不同的 32×32 PNG，共 6,496,256 字节。每阶段先读热原件，再从手动 POST 发出计时到首次观察到成功终态，测试客户端以 10 毫秒间隔轮询。原样复扫后，原位改写 16 张、移动 8 张、新增 4 张，再次扫描。三个版本均核对全部路径、大小、修改时间与已有身份，最终各有 2,052 项。两版 Next 还逐项核对 SHA-256。[最新三版同机原始数据与报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44326987188)
 
-| 三轮中位数 | 已安装版源码 7459740 | Next 小批提交 efa6234 | Next 小批提交及目录核对 fd38a66 |
+| 三轮中位数 | 已安装版源码 7459740 | Next 目录核对 fd38a66 | Next 目录内签名核对 5b558c7 |
 |---|---:|---:|---:|
-| 首次入库 | 1,262.49 ms | 828.53 ms | 785.61 ms |
-| 原样复扫 | 37.08 ms | 115.84 ms | 93.79 ms |
-| 少量外部改动后复扫 | 61.25 ms | 173.99 ms | 142.11 ms |
-| 首扫期间进程写入 | 135.11 MiB | 58.22 MiB | 58.18 MiB |
+| 首次入库 | 1,286.11 ms | 800.66 ms | 794.34 ms |
+| 原样复扫 | 37.25 ms | 94.51 ms | 79.96 ms |
+| 少量外部改动后复扫 | 61.42 ms | 152.53 ms | 127.97 ms |
+| 首扫期间进程写入 | 135.13 MiB | 58.09 MiB | 58.18 MiB |
 
-这批小 PNG 上，fd38a66 首扫比安装版缩短 37.8%，原样复扫和少量变动分别仍需安装版的 2.53、2.32 倍时间。相对同场 efa6234，fd38a66 使原样复扫缩短 19.0%，少量改动缩短 18.3%。缺件阶段按索引父目录分页核对，对目录列表未确认的条目查原件，报告前再复核现存资产与路径。五项小批写入回归和三项缺件回归均在此次云作业运行。[目录核对](https://github.com/Surtr42u/qimeng-next/blob/fd38a66cbc929392e8e7b3c6d5d36126608af939/server/internal/service/scan_missing.go#L152) · [缺件确认](https://github.com/Surtr42u/qimeng-next/blob/fd38a66cbc929392e8e7b3c6d5d36126608af939/server/internal/service/scan_missing.go#L217) · [运行记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44323980865)
+这批小 PNG 上，5b558c7 首扫比安装版缩短 38.2%，原样复扫和少量变动分别仍需安装版的 2.15、2.08 倍时间。相对同场 fd38a66，按列读取签名与受控目录内核对使原样复扫缩短 15.4%，少量改动缩短 16.1%。手动普通库只对已登记的普通文件尝试这条路径，开始和结束都检查原目录的身份和修改时间，发生目录交换时回到实际注册路径核验。自动写通知、COS、新文件和内容变化仍按各自的复核流程处理。[三版实测与目录交换回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44326987188) · [目录内签名核对](https://github.com/Surtr42u/qimeng-next/blob/5b558c7783a2193654d77767efcee220b6794149/server/internal/service/scan_known.go#L26)
+
+在上一场独立对照中，fd38a66 按索引父目录分页核对缺件，对目录列表未确认的条目查原件，报告前再复核存续资产与路径。相对该场 efa6234，原样复扫从 115.84 降至 93.79 毫秒，少量改动从 173.99 降至 142.11 毫秒。五项小批写入与三项缺件回归在同一云作业执行。[缺件优化同机实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44323980865) · [目录核对](https://github.com/Surtr42u/qimeng-next/blob/fd38a66cbc929392e8e7b3c6d5d36126608af939/server/internal/service/scan_missing.go#L152) · [缺件确认](https://github.com/Surtr42u/qimeng-next/blob/fd38a66cbc929392e8e7b3c6d5d36126608af939/server/internal/service/scan_missing.go#L217)
 
 此前两场各自轮换三个版本，分别定位两类开销。在第一场，b3847e3 消除重复路径、资产和作者查询后，首扫、原样复扫及少量改动相比 8e225bc 分别缩短 15.7%、27.0%、21.6%。在第二场，从每个资产独立提交改为有界的小批事务后，首扫从 5,296.18 降至 1,146.53 毫秒，写入从 350.84 降至 58.12 MiB，分别减少 78.4% 和 83.4%。第二场原样复扫接近持平，少量改动慢 5.0%。各比例均使用同一场测量。[逐项写入优化](https://github.com/Surtr42u/qimeng-next/actions/runs/44316230983) · [小批事务单独比较](https://github.com/Surtr42u/qimeng-next/actions/runs/44322029440)
 
-最新一场截至首扫完成的进程峰值 RSS 中位数按表中顺序为 120.6、29.1、28.3 MiB，包含启动和鉴权。安装版在扫描前设置密码时执行了 64 MiB 的 Argon2id 派生。Next 使用配置令牌。两种鉴权方式影响进程高水位。[安装版口令派生参数](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/auth/password.go)
+最新一场截至首扫完成的进程峰值 RSS 中位数按表中顺序为 120.7、28.1、28.2 MiB，包含启动和鉴权。安装版在扫描前设置密码时执行了 64 MiB 的 Argon2id 派生。Next 使用配置令牌。两种鉴权方式影响进程高水位。[安装版口令派生参数](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/auth/password.go)
 
 三版均关闭文件监听、设 24 小时轮询，Next 的注册对账在投放原件前完成。三轮均在 30 秒缩略图静默期内结束，缓存无产物。运行器缺少 ffmpeg/ffprobe，安装版启动时的工具检查在计时前。Next 扫描 PNG 时会读取图片头并计算内容哈希。冷磁盘、大图、视频、有历史数据的库、NAS 与手机性能尚待对应环境测量。性能工作流可手动填写较早 Next 提交的完整 SHA，在同一台运行器上重做三方比对。[复跑工作流](../.github/workflows/scan-comparison.yml) · [优化前 CPU 样本](https://github.com/Surtr42u/qimeng-next/actions/runs/44312664840)
 
@@ -59,6 +61,21 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 | 自动处理 | 已有路径的写通知可局部处理，大小和 mtime 都相同直接结束。未知路径、删除、改名、目录变化或局部处理失败会请求整库对账，另有独立轮询。[局部更新](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/watch_update.go#L17) · [轮询](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/background.go#L118) | 已有文件写通知也可按路径处理，大小与 mtime 相同时仍读内容核对哈希。新增、改名、删除和目录变化合并整库对账，缩略图另由后台补齐。对照试验关闭监听，手动复扫不承担监控事件的实测含义。[通知分类](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/library_watch.go#L248) · [写通知哈希](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scans.go#L403) · [缩略图主管](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/preview_maintenance.go#L19) |
 
 按上述条件和固定样本推算，Next 首扫送入 SHA-256 的字节数为 6,496,256，原样手动复扫为 0，小批变动的 28 个路径合计 88,816 字节。此处按文件长度计算哈希输入量，操作系统页缓存会影响物理磁盘读取。试验采集了进程写入字节，没有逐次追踪 fsync，也未将端到端差额拆成哈希、目录系统调用和 SQL 各自的耗时。旧版可借鉴的做法包括按窄字段批量读取、用目录差集筛小缺件候选、将耗时探测放在写锁外，以及在提交时复核原件和当前记录。[合成数据与计时脚本](../tools/scan-comparison/compare.py)
+
+### 上传完成期间的独立编辑
+
+同一台 Ubuntu 运行器以 FFmpeg 生成 132,718,466 字节、1280×720、4 秒的 AVI。每版三轮，两台独立设备会话通过真实 HTTP 操作。第一台分片上传视频并提交完成，第二台在服务进程读数增长 8 MiB 后修改另一张图片的标签，又在目标视频出现在媒体目录时取消该图片的收藏。空闲时对同一张图作对照，上传端同时重放完成请求。每轮均核对视频完整 SHA-256、ffprobe 返回的尺寸与时长、最终标签修订与收藏、两项资产以及一致的原回执。[两时点同机实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44332887189)
+
+| 三轮中位数或完成次数 | 原全局写锁 2a890af | 核验、发布分阶段 05d3847 |
+|---|---:|---:|
+| 空闲时改标签 | 3.26 ms | 2.97 ms |
+| 视频哈希过程中改标签 | 597.17 ms | 2.92 ms |
+| 空闲时改收藏 | 2.60 ms | 2.05 ms |
+| 视频目标出现后改收藏 | 224.97 ms | 3.15 ms |
+| 视频完成请求 | 604.22 ms | 497.29 ms |
+| 标签、收藏分别先于视频完成 | 0/3、0/3 | 3/3、3/3 |
+
+每个实例同时核验一个 HTTP 上传完成请求，其他完成请求可取消地等待。服务用打开的文件检查容器、哈希和原生变化标记，Linux/Android 的 ffprobe 接收同一文件描述符。提交阶段重新检查当前凭据、上传与批次、来源、目标和占用。新增资产有持久化文件意图保护，服务可放开业务写锁做发布 I/O，最后在锁内提交索引。替换仍将旧文件名切换与新内容版本的提交放在同一写入区间。取消、保留 mtime 的等长改写、重试，以及安装文件后、提交索引前中断的两种恢复布局均有回归。表中时延来自 Linux 普通新增上传。Windows 沿用受保护路径调用外部探测器，Android 内嵌、不同编解码器以及线上磁盘延迟尚待对应环境测量。[核验与恢复回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44332887189) · [复跑工作流](../.github/workflows/upload-contention.yml)
 
 <a id="change-evidence"></a>
 ## 按改动选择云端证据

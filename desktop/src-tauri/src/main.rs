@@ -49,22 +49,30 @@ fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> 
         .title("绮梦影库").inner_size(1200.0, 800.0).min_inner_size(900.0, 600.0)
         .visible(false).decorations(false).disable_drag_drop_handler().initialization_script(script)
         .on_navigation(move |url| connection::same_origin(&allowed, url))
-        .on_new_window(move |url, features| {
+        .on_new_window(move |url, _features| {
             if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation { return NewWindowResponse::Deny; }
             if connection::same_origin(&popup_origin, &url) {
                 let allowed = popup_origin.clone();
                 let label = format!("media-{generation}-{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
-                // WebView2 supplies the requested URL after it adopts the new view.
-                let blank = tauri::Url::parse("about:blank").expect("valid blank page URL");
-                match WebviewWindowBuilder::new(&handle, label, WebviewUrl::External(blank)).window_features(features)
-                    .title("绮梦原件").on_navigation(move |target| {
-                        ACTIVE_LIBRARY.load(Ordering::Acquire) == generation &&
-                            (target.as_str() == "about:blank" || connection::same_origin(&allowed, target))
-                    })
-                    .on_new_window(|_, _| NewWindowResponse::Deny).build() {
-                    Ok(window) => NewWindowResponse::Create { window },
-                    Err(_) => { eprintln!("Unable to open original media window"); NewWindowResponse::Deny },
-                }
+                let media_app = handle.clone();
+                // Finish the browser callback before creating another native view.
+                // The media links are independent windows in the app's existing profile.
+                tauri::async_runtime::spawn_blocking(move || {
+                    if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation { return; }
+                    let result = WebviewWindowBuilder::new(&media_app, label, WebviewUrl::External(url))
+                        .title("绮梦原件")
+                        .on_navigation(move |target| ACTIVE_LIBRARY.load(Ordering::Acquire) == generation && connection::same_origin(&allowed, target))
+                        .on_new_window(|_, _| NewWindowResponse::Deny)
+                        .build();
+                    match result {
+                        Ok(window) if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation => {
+                            if window.destroy().is_err() { eprintln!("Unable to close a superseded media window"); }
+                        }
+                        Err(_) => eprintln!("Unable to open original media window"),
+                        _ => {}
+                    }
+                });
+                NewWindowResponse::Deny
             } else {
                 if connection::external_web_url(&url) && handle.opener().open_url(url.as_str(), None::<&str>).is_err() { eprintln!("Unable to open external browser"); }
                 NewWindowResponse::Deny
