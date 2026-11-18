@@ -517,7 +517,7 @@ jobs:
           disk-size: 2048M
           emulator-port: 5556
           disable-animations: false
-          emulator-options: '-no-window -gpu swiftshader_indirect -feature -HardwareDecoder -no-snapshot -noaudio -no-boot-anim'
+          emulator-options: '-no-window -gpu lavapipe -feature -HardwareDecoder -no-snapshot -noaudio -no-boot-anim'
           script: bash tools/cloud_android.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

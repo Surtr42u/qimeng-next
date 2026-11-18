@@ -127,7 +127,7 @@ class AndroidRealServerTest {
         assertEquals("cancelled", runBlocking { graph.media.report(stopped.batchId!!).items.single().state })
 
         compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithTag("navigation:home").performClick()
+        compose.onNodeWithTag("navigation:home").assertIsSelected()
         val model = androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java]
         try {
             compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
@@ -227,6 +227,8 @@ class AndroidRealServerTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("进入全屏").performClick()
         compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+        compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+        captureDecoderSurface(compose.activity)
         screenshotWithMedia("real-server-video-fullscreen.png", landscape = true)
         await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
         assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
@@ -304,6 +306,7 @@ class AndroidRealServerTest {
         assertEquals(TabBarMaterial.LIQUID, original.material)
         try {
             compose.onNodeWithTag("navigation:me").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("profile-settings-list").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("外观"))
             compose.onNodeWithText("外观").performClick()
             compose.onNodeWithText("经典").performScrollTo().performClick()
@@ -329,13 +332,9 @@ class AndroidRealServerTest {
                 // Both the PNG and H.264 fixtures contain saturated colors; the surrounding UI and shutter are neutral.
                 val readable = if (bitmap.config == Bitmap.Config.HARDWARE) requireNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false)) else bitmap
                 try {
-                    var colored = 0
-                    for (y in readable.height / 8 until readable.height * 7 / 8 step 8) for (x in 8 until readable.width - 8 step 8) {
-                        val pixel = readable.getPixel(x, y)
-                        val r = Color.red(pixel); val g = Color.green(pixel); val b = Color.blue(pixel)
-                        if (maxOf(r, g, b) - minOf(r, g, b) > 75) colored++
-                    }
+                    val colored = saturatedSamples(readable)
                     observed += " saturatedSamples=$colored"
+                    if (landscape && colored >= 30) android.util.Log.i("QimengFrameEvidence", "compositedWindow $observed")
                     colored >= 30
                 } finally {
                     if (readable !== bitmap) readable.recycle()

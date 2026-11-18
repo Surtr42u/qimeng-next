@@ -207,10 +207,26 @@ class EmbeddedRuntimeTest {
     }
 
     private fun assertCopied(label: String, expected: String) {
+        var focused = false
+        compose.waitUntil(15_000) {
+            compose.activityRule.scenario.onActivity { focused = it.hasWindowFocus() }
+            focused
+        }
         compose.onNodeWithContentDescription("复制$label").performScrollTo().performClick()
-        compose.activityRule.scenario.onActivity { activity ->
-            val clip = activity.getSystemService(android.content.ClipboardManager::class.java)?.primaryClip
-            assertEquals(label, expected, clip?.getItemAt(0)?.text?.toString())
+        var observed: String? = null
+        try {
+            compose.waitUntil(15_000) {
+                compose.activityRule.scenario.onActivity { activity ->
+                    focused = activity.hasWindowFocus()
+                    if (focused) {
+                        val clipboard = requireNotNull(activity.getSystemService(android.content.ClipboardManager::class.java))
+                        observed = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                    }
+                }
+                focused && observed == expected
+            }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("$label 剪贴板读取超时，窗口焦点=$focused，系统已提供文本=${observed != null}", failure)
         }
     }
 
