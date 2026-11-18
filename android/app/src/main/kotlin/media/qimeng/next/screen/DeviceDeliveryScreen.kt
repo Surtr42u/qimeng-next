@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -32,6 +33,7 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
     var device by rememberSaveable(settings.deviceId) { mutableStateOf(settings.deviceId) }
     var address by rememberSaveable(settings.address) { mutableStateOf(settings.address) }
     var secret by remember(session, settings.configured) { mutableStateOf("") }
+    var background by rememberSaveable(session?.instanceId, settings.configured, settings.background) { mutableStateOf(settings.background) }
     var replaceProfiles by rememberSaveable(session?.instanceId, settings.replaceAuthorProfiles) { mutableStateOf(settings.replaceAuthorProfiles) }
     val local = model.local(session)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -50,7 +52,8 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
             if (settings.configured) OutlinedButton(onClick = model::clear,enabled = !busy,shape = RoundedCornerShape(12.dp),modifier = Modifier.fillMaxWidth()) { Text("清除设备令牌") }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f)) { Text("后台领取",style = MaterialTheme.typography.titleSmall); Text("每 15 分钟尝试一次，系统省电可能延迟。",style = MaterialTheme.typography.bodySmall) }
-                Switch(settings.background,model::toggle,enabled = !busy && (settings.background || local && settings.configured))
+                Switch(background, { background = it }, modifier = Modifier.testTag("device-background"),
+                    enabled = !busy && (background || local && (settings.configured || secret.isNotBlank())))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -58,13 +61,13 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
                     Text("开启后按 v2 预检替换作者资料。人工编辑的资料保留，修订冲突可在领取记录中查看。默认保留本机资料。",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(checked = replaceProfiles, onCheckedChange = { replaceProfiles = it }, enabled = !busy)
+                Switch(checked = replaceProfiles, onCheckedChange = { replaceProfiles = it }, enabled = !busy, modifier = Modifier.testTag("device-replace-author-profiles"))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { model.save(address, device, secret, replaceProfiles, applyNow = true) { secret = "" } },
+                Button(onClick = { model.save(address, device, secret, background, replaceProfiles, applyNow = true) { secret = "" } },
                     enabled = !busy && (settings.configured || secret.isNotBlank()) && device.isNotBlank() && local,
                     shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) { Text("立即应用") }
-                OutlinedButton(onClick = { model.save(address, device, secret, replaceProfiles, applyNow = false) { secret = "" } },
+                OutlinedButton(onClick = { model.save(address, device, secret, background, replaceProfiles, applyNow = false) { secret = "" } },
                     enabled = !busy && device.isNotBlank(), shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) { Text("保存设置") }
             }
             error?.let { ErrorNotice(it) }

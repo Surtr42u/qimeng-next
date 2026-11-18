@@ -6,8 +6,13 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -125,6 +130,28 @@ class EmbeddedRuntimeTest {
             compose.onAllNodesWithText("删除").let { it[it.fetchSemanticsNodes().lastIndex].performClick() }
             withTimeout(20_000) { while (graph.media.libraryPage().items.any { it.id == library.id }) delay(200) }
             assertTrue("Unregister keeps the original on disk", java.io.File(root, asset.relativePath).isFile)
+
+            compose.activityRule.scenario.onActivity {
+                androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].navigate("maintenance")
+            }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasText("设备领取") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("设备领取").performClick()
+            compose.onNodeWithText("生成本机设备令牌").performScrollTo().performClick()
+            compose.waitUntil(20_000) { graph.deviceDelivery.view().configured &&
+                compose.onAllNodes(hasTestTag("device-background") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            val initial = graph.deviceDelivery.view()
+            assertFalse(initial.background)
+            assertFalse(initial.replaceAuthorProfiles)
+            compose.onNodeWithTag("device-background").performScrollTo().performClick()
+            compose.onNodeWithTag("device-replace-author-profiles").performScrollTo().performClick()
+            val draft = graph.deviceDelivery.view()
+            assertFalse("Editing the form must not enable the worker", draft.background)
+            assertFalse("The unfinished form must preserve the saved policy", draft.replaceAuthorProfiles)
+            compose.onNodeWithText("保存设置").performScrollTo().performClick()
+            compose.waitUntil(20_000) { graph.deviceDelivery.view().let { it.background && it.replaceAuthorProfiles && it.destination == target.instanceId } }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasText("清除设备令牌") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("清除设备令牌").performScrollTo().performClick()
+            compose.waitUntil(20_000) { graph.deviceDelivery.view().let { !it.configured && !it.background } }
         } catch (failure: Throwable) {
             throw AssertionError("Synthetic native runtime failure: ${runtime.status.value}; native output:\n${EmbeddedDebugDiagnostics.snapshot()}", failure)
         } finally {

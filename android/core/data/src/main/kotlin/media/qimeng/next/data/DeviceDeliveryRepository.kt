@@ -72,20 +72,28 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
         }
         return api
     }
-    suspend fun saveSettings(target: Session, address: String, id: String, secret: String, replaceAuthorProfiles: Boolean) = withContext(Dispatchers.IO) { lock.withLock {
+    suspend fun saveSettings(target: Session, address: String, id: String, secret: String, background: Boolean, replaceAuthorProfiles: Boolean) = withContext(Dispatchers.IO) { lock.withLock {
         val device = id.trim()
         require(device.isNotEmpty()) { "请填写设备标签" }
         val url = normalizedServer(address.ifBlank { target.baseUrl })
         val editor = prefs.edit().putString("device", device).putString("address", address.trim()).putBoolean("replaceAuthorProfiles", replaceAuthorProfiles)
-        if (secret.isNotBlank()) {
-            val validated = validateCredential(url, device, secret.trim())
-            editor.putString("auth", gson.toJson(validated))
+        val authorization = if (secret.isNotBlank()) {
+            validateCredential(url, device, secret.trim()).also { editor.putString("auth", gson.toJson(it)) }
         } else {
             val saved = auth()
             check(saved == null || (saved.address == url && saved.device == device)) { "更换领取服务端或设备标签时，请填写相应的专用令牌" }
+            saved
         }
         check(sameTarget(target, settings.session.value)) { "配置过程中连接已改变" }
-        check(editor.putString("notice", "已保存设备领取设置").commit()) { "设备领取设置未能保存" }
+        val previousDestination = prefs.getString("destination", null)
+        val destination = if (background) {
+            check(authorization?.credentialId != null) { "请先配置设备领取授权" }
+            if (local(target)) target.instanceId else checkNotNull(previousDestination) { "请连接本机影库后开启后台领取" }
+        } else null
+        check(editor.putBoolean("background", background).putString("destination", destination)
+            .putString("notice", "已保存设备领取设置").commit()) { "设备领取设置未能保存" }
+        // The worker reads the two choices together when it claims a package.
+        updatePolling(background)
         changed.update { it + 1 }
     } }
 
@@ -135,16 +143,13 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
         WorkManager.getInstance(context).cancelUniqueWork("device-delivery-poll")
         notice("已清除本机设备令牌")
     } }
-    suspend fun background(target: Session, enabled: Boolean) = withContext(Dispatchers.IO) { lock.withLock {
-        if (enabled) check(local(target) && auth()?.credentialId != null) { "请连接本机影库并配置设备领取授权" }
-        check(prefs.edit().putBoolean("background", enabled).putString("destination", target.instanceId.takeIf { enabled }).commit())
+    private fun updatePolling(enabled: Boolean) {
         val manager = WorkManager.getInstance(context)
         if (enabled) {
             val work = PeriodicWorkRequestBuilder<DeviceDeliveryWorker>(15, TimeUnit.MINUTES).build()
             manager.enqueueUniquePeriodicWork("device-delivery-poll", ExistingPeriodicWorkPolicy.UPDATE, work)
         } else manager.cancelUniqueWork("device-delivery-poll")
-        changed.update { it + 1 }
-    } }
+    }
     fun schedule(target: Session, replaceAuthorProfiles: Boolean) {
         check(local(target)) { "请先连接本机影库，结果包将应用到此实例" }
         val source = requireNotNull(auth()?.takeIf { it.credentialId != null }) { "请先配置设备领取授权" }

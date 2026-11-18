@@ -33,8 +33,8 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
         }
     } }
     fun local(target: Session?) = target != null && app.isSelectedLocalInstance(target)
-    fun save(address: String, device: String, secret: String, replaceAuthorProfiles: Boolean, applyNow: Boolean, complete: () -> Unit) = act { target ->
-        repo.saveSettings(target, address, device, secret, replaceAuthorProfiles)
+    fun save(address: String, device: String, secret: String, background: Boolean, replaceAuthorProfiles: Boolean, applyNow: Boolean, complete: () -> Unit) = act { target ->
+        repo.saveSettings(target, address, device, secret, background, replaceAuthorProfiles)
         if (session.value == target) {
             complete()
             if (applyNow) repo.schedule(target, replaceAuthorProfiles)
@@ -46,7 +46,6 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
     }
     fun issue(device: String) = act { repo.generate(it, device, device); results.value = repo.recent() }
     fun clear() = act { repo.clear(); results.value = null }
-    fun toggle(on: Boolean) = act { repo.background(it, on) }
     fun refresh() = act { target -> val page = repo.recent(); if (session.value == target) results.value = page }
     private fun act(block: suspend (Session) -> Unit) {
         val target = session.value ?: return
