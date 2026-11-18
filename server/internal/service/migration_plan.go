@@ -411,7 +411,7 @@ func (s *Service) PrepareV2Migration(ctx context.Context, w *Write, inputID stri
 	}
 	raw, e := json.Marshal(struct {
 		SourceID, SHA256 string
-		ProfileConflict string
+		ProfileConflict  string
 		Items            []migrationItemRecord
 		Authors          []V2MigrationAuthor
 	}{metadata.SourceID, metadata.SHA256, plan.AuthorProfileConflict, items, authors})

@@ -36,26 +36,26 @@ type V2AuthorMapping struct {
 	AuthorID       string `json:"authorId"`
 }
 type V2PlanCreate struct {
-	MediaMappings  []V2MediaMapping  `json:"mediaMappings"`
-	AuthorMappings []V2AuthorMapping `json:"authorMappings"`
-	AuthorProfileConflict string `json:"authorProfileConflict,omitempty"`
+	MediaMappings         []V2MediaMapping  `json:"mediaMappings"`
+	AuthorMappings        []V2AuthorMapping `json:"authorMappings"`
+	AuthorProfileConflict string            `json:"authorProfileConflict,omitempty"`
 }
 type V2MigrationPlan struct {
-	ID           string           `json:"id"`
-	ImportID     string           `json:"importId"`
-	Fingerprint  string           `json:"fingerprint"`
-	State        string           `json:"state"`
-	CreatedAt    time.Time        `json:"createdAt"`
-	CheckpointID string           `json:"checkpointId,omitempty"`
-	MediaCount   int              `json:"mediaCount"`
-	MatchedCount int              `json:"matchedCount"`
-	SkippedCount int              `json:"skippedCount"`
-	AuthorCount  int              `json:"authorCount"`
-	IssueCount   int              `json:"issueCount"`
-	Issues       []string         `json:"issues"`
-	Counts       map[string]int64 `json:"counts"`
-	AuthorProfileConflict string `json:"authorProfileConflict,omitempty"`
-	RequiresReview *bool `json:"requiresReview,omitempty"`
+	ID                    string           `json:"id"`
+	ImportID              string           `json:"importId"`
+	Fingerprint           string           `json:"fingerprint"`
+	State                 string           `json:"state"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	CheckpointID          string           `json:"checkpointId,omitempty"`
+	MediaCount            int              `json:"mediaCount"`
+	MatchedCount          int              `json:"matchedCount"`
+	SkippedCount          int              `json:"skippedCount"`
+	AuthorCount           int              `json:"authorCount"`
+	IssueCount            int              `json:"issueCount"`
+	Issues                []string         `json:"issues"`
+	Counts                map[string]int64 `json:"counts"`
+	AuthorProfileConflict string           `json:"authorProfileConflict,omitempty"`
+	RequiresReview        *bool            `json:"requiresReview,omitempty"`
 }
 type V2MigrationItem struct {
 	Ordinal                int      `json:"ordinal"`
@@ -78,15 +78,15 @@ type migrationItemRecord struct {
 	AuthorIDs     []string           `json:"authorIds"`
 }
 type V2MigrationAuthor struct {
-	Ordinal          int    `json:"ordinal"`
-	SourceAuthorID   string `json:"sourceAuthorId"`
-	Name             string `json:"name"`
-	Kind             string `json:"kind"`
-	AuthorID         string `json:"authorId,omitempty"`
-	ExpectedRevision int64  `json:"expectedRevision,omitempty"`
-	State            string `json:"state"`
-	Reason           string `json:"reason"`
-	ProfileBlocks []V2ProfileBlockPlan `json:"profileBlocks,omitempty"`
+	Ordinal          int                  `json:"ordinal"`
+	SourceAuthorID   string               `json:"sourceAuthorId"`
+	Name             string               `json:"name"`
+	Kind             string               `json:"kind"`
+	AuthorID         string               `json:"authorId,omitempty"`
+	ExpectedRevision int64                `json:"expectedRevision,omitempty"`
+	State            string               `json:"state"`
+	Reason           string               `json:"reason"`
+	ProfileBlocks    []V2ProfileBlockPlan `json:"profileBlocks,omitempty"`
 }
 
 var migrationSourceID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,128}$`)
