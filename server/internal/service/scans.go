@@ -206,6 +206,9 @@ func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
 		run.library, e = s.library(ctx, j.LibraryID)
 		if e == nil && len(paths) == 0 {
 			e = s.walkLibrary(ctx, run, "", 0)
+			if len(run.prepared) > 0 && ctx.Err() == nil {
+				e = errors.Join(e, s.flushPreparedScans(ctx, run))
+			}
 			if e == nil {
 				e = s.scanMissing(ctx, id, j.LibraryID)
 			}
@@ -364,6 +367,11 @@ func (s *Service) walkLibrary(ctx context.Context, run *scanRun, relative string
 }
 func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, writeNotice bool, previous scanSignature) error {
 	jobID, libraryID := run.id, run.library.ID
+	if len(run.prepared) > 0 && time.Since(run.preparedAt) >= scanGatherWindow {
+		if err := s.flushPreparedScans(ctx, run); err != nil {
+			return err
+		}
+	}
 	kind, mime, ok := domain.MediaType(relative)
 	if !ok {
 		return s.skipScannedEntry(ctx, run)
@@ -395,6 +403,13 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 	if unchanged && !writeNotice {
 		return s.skipScannedEntry(ctx, run)
 	}
+	batchable := !writeNotice && previous.RelativePath == "" && run.library.Kind == "regular" &&
+		builtinImage(mime) && initial.Size() <= scanBatchFileBytes
+	if !batchable && len(run.prepared) > 0 {
+		if e = s.flushPreparedScans(ctx, run); e != nil {
+			return e
+		}
+	}
 	hash, size, e := s.hashFileContext(ctx, full)
 	if e != nil {
 		if ctx.Err() != nil {
@@ -409,41 +424,43 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 	if e = s.probe(ctx, full, &probe); e != nil {
 		return s.scanProgress(ctx, jobID, relative, "invalid_media", true)
 	}
+	file := scannedFile{relative: relative, full: full, kind: kind, hash: hash, size: size, initial: initial, probe: probe}
+	if !batchable {
+		return s.commitScannedFile(ctx, run, file)
+	}
+	if len(run.prepared) == 0 {
+		run.preparedAt = time.Now()
+	}
+	run.prepared = append(run.prepared, file)
+	if len(run.prepared) == scanBatchFiles {
+		return s.flushPreparedScans(ctx, run)
+	}
+	return nil
+}
+
+func (s *Service) commitScannedFile(ctx context.Context, run *scanRun, file scannedFile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	j, e := s.Scan(ctx, jobID)
+	j, library, e := s.activeScanLibrary(ctx, run)
 	if e != nil {
 		return e
 	}
-	if j.State == "cancelled" {
-		return context.Canceled
-	}
-	library, e := s.library(ctx, libraryID)
+	libraryID, relative := library.ID, file.relative
+	stable, e := s.scanOriginalStable(file)
 	if e != nil {
 		return e
 	}
-	if !library.Enabled {
-		return Fail(409, "library_disabled", "库已停用。")
-	}
-	nowInfo, e := s.Root.Stat(full)
-	if e != nil {
-		return e
-	}
-	if !os.SameFile(initial, nowInfo) || initial.Size() != size || nowInfo.Size() != size || !initial.ModTime().Equal(nowInfo.ModTime()) {
-		j.Processed++
-		j.Skipped++
-		scanIssue(&j, relative, "source_changed")
+	if !stable {
+		skipScanIssue(&j, relative, "source_changed")
 		return saveScan(ctx, s.DB.DB, j)
 	}
 	var pending bool
 	if e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM file_intents WHERE state IN ('prepared','committed') AND
-  (? IN (json_extract(data,'$.Target'),json_extract(data,'$.Source')) OR (json_extract(data,'$.Before.libraryId')=? AND json_extract(data,'$.Before.relativePath')=?)))`, full, libraryID, relative).Scan(&pending); e != nil {
+  (? IN (json_extract(data,'$.Target'),json_extract(data,'$.Source')) OR (json_extract(data,'$.Before.libraryId')=? AND json_extract(data,'$.Before.relativePath')=?)))`, file.full, libraryID, relative).Scan(&pending); e != nil {
 		return e
 	}
 	if pending {
-		j.Processed++
-		j.Skipped++
-		scanIssue(&j, relative, "publication_pending")
+		skipScanIssue(&j, relative, "publication_pending")
 		return saveScan(ctx, s.DB.DB, j)
 	}
 	a, e := store.Get[model.Asset](ctx, s.DB.DB, "SELECT data FROM assets WHERE library_id=? AND relative_path=? AND trashed=0", libraryID, relative)
@@ -453,7 +470,7 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 	}
 	moved := false
 	if isNew {
-		candidates, e := store.List[model.Asset](ctx, s.DB.DB, "SELECT data FROM assets WHERE library_id=? AND hash=? AND size=? AND trashed=0 ORDER BY id LIMIT 101", libraryID, hash, size)
+		candidates, e := store.List[model.Asset](ctx, s.DB.DB, "SELECT data FROM assets WHERE library_id=? AND hash=? AND size=? AND trashed=0 ORDER BY id LIMIT 101", libraryID, file.hash, file.size)
 		if e != nil {
 			return e
 		}
@@ -472,46 +489,59 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 			isNew = false
 			moved = true
 		} else if len(missing) > 1 || len(candidates) > 100 {
-			j.Processed++
-			j.Skipped++
-			scanIssue(&j, relative, "ambiguous_move")
+			skipScanIssue(&j, relative, "ambiguous_move")
 			return saveScan(ctx, s.DB.DB, j)
 		}
-	}
-	now := time.Now().UTC()
-	if isNew {
-		a = model.Asset{ID: ID(), LibraryID: libraryID, OriginalFileName: path.Base(relative), AuthorID: "unknown", AuthorIDs: []string{"unknown"}, AuthorsRevision: 1, AuthorStatus: "unknown", TagsRevision: 1, Revision: 1, ContentVersion: 1, Tags: []string{}, SourceIDs: []string{}, CharacterIDs: []string{}, Characters: []string{}, AcquisitionSources: []string{}, MetadataSource: "scanner", CreatedAt: now}
-	}
-	previousName := a.FileName
-	if !isNew {
-		a.Revision++
-		if a.Hash != hash {
-			a.ContentVersion++
-		}
-	}
-	a.RelativePath = relative
-	a.FileName = path.Base(relative)
-	a.Size = size
-	a.Hash = hash
-	a.MediaType = kind
-	a.MimeType = mime
-	a.UpdatedAt = now
-	modified := nowInfo.ModTime().UTC()
-	a.ContentMtime = &modified
-	a.Width = probe.Width
-	a.Height = probe.Height
-	a.DurationMs = probe.DurationMs
-	a.ProbeState = probe.ProbeState
-	a.ContentURL = "/api/v1/assets/" + a.ID + "/content"
-	a.ThumbnailURL = ""
-	if probe.ThumbnailURL != "" {
-		a.ThumbnailURL = "/api/v1/assets/" + a.ID + "/thumbnail"
 	}
 	tx, e := s.DB.DB.BeginTx(ctx, nil)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
+	if e = s.saveScannedFile(ctx, tx, library, file, a, isNew, moved, &j); e != nil {
+		return e
+	}
+	if e = saveScan(ctx, tx, j); e != nil {
+		return e
+	}
+	if e = tx.Commit(); e != nil {
+		return e
+	}
+	s.wakeAuthorMirror()
+	return nil
+}
+
+func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model.Library, file scannedFile, a model.Asset, isNew, moved bool, j *ScanJob) error {
+	relative, now := file.relative, time.Now().UTC()
+	if isNew {
+		a = model.Asset{ID: ID(), LibraryID: library.ID, OriginalFileName: path.Base(relative), AuthorID: "unknown", AuthorIDs: []string{"unknown"}, AuthorsRevision: 1, AuthorStatus: "unknown", TagsRevision: 1, Revision: 1, ContentVersion: 1, Tags: []string{}, SourceIDs: []string{}, CharacterIDs: []string{}, Characters: []string{}, AcquisitionSources: []string{}, MetadataSource: "scanner", CreatedAt: now}
+	}
+	previousName := a.FileName
+	if !isNew {
+		a.Revision++
+		if a.Hash != file.hash {
+			a.ContentVersion++
+		}
+	}
+	a.RelativePath = relative
+	a.FileName = path.Base(relative)
+	a.Size = file.size
+	a.Hash = file.hash
+	a.MediaType = file.kind
+	a.MimeType = file.probe.MimeType
+	a.UpdatedAt = now
+	modified := file.initial.ModTime().UTC()
+	a.ContentMtime = &modified
+	a.Width = file.probe.Width
+	a.Height = file.probe.Height
+	a.DurationMs = file.probe.DurationMs
+	a.ProbeState = file.probe.ProbeState
+	a.ContentURL = "/api/v1/assets/" + a.ID + "/content"
+	a.ThumbnailURL = ""
+	if file.probe.ThumbnailURL != "" {
+		a.ThumbnailURL = "/api/v1/assets/" + a.ID + "/thumbnail"
+	}
+	var e error
 	if library.Kind == "cos" {
 		if e = s.scanCOSAuthor(ctx, tx, &a); e != nil {
 			return e
@@ -547,13 +577,6 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 		j.Changed++
 	}
 	j.UpdatedAt = now
-	if e = saveScan(ctx, tx, j); e != nil {
-		return e
-	}
-	if e = tx.Commit(); e != nil {
-		return e
-	}
-	s.wakeAuthorMirror()
 	return nil
 }
 func (s *Service) scanCOSAuthor(ctx context.Context, q store.Querier, a *model.Asset) error {

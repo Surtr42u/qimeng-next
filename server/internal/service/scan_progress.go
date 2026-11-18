@@ -56,10 +56,12 @@ func (r scanReader) Read(buffer []byte) (int, error) {
 // One scan owns these counters. Asset mutations still read the current asset
 // and commit their own result together with the catalog row.
 type scanRun struct {
-	id        string
-	library   model.Library
-	skipped   int
-	lastFlush time.Time
+	id         string
+	library    model.Library
+	skipped    int
+	lastFlush  time.Time
+	prepared   []scannedFile
+	preparedAt time.Time
 }
 
 func (s *Service) skipScannedEntry(ctx context.Context, run *scanRun) error {
