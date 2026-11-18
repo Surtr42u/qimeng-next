@@ -31,7 +31,7 @@ def present(value, state: State, limit: int, token: str):
     summary = {"truncated": True, "resultRef": reference, "totalBytes": len(encoded.encode()),
                "readWith": "platform.result.read", "omitted": "完整结果保存在受控引用；按 JSON Pointer 和 offset 续读"}
     if isinstance(value, dict):
-        for key in ("id", "batchId", "state", "status", "revision", "fingerprint", "nextCursor"):
+        for key in ("id", "batchId", "state", "status", "revision", "fingerprint", "nextCursor", "operationKey"):
             if key in value and isinstance(value[key], (str, int, bool, type(None))):
                 summary[key] = value[key]
         summary["fields"] = list(value)[:80]

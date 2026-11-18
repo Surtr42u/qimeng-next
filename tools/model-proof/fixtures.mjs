@@ -87,14 +87,24 @@ export async function grade(fixture, scenario, answer, observed) {
   const current = await fixture.owner(`/authors/${fixture.author.id}`);
   const checked = (await fixture.owner(`/author-tasks/${fixture.task.id}`)).task;
   const changed = observed.events.findIndex(event => event.name === 'author.profile.update' && event.success);
+  const modelIssuedRead = changed >= 0 && observed.events.slice(changed + 1).some(event =>
+    event.readOnly && event.success && event.forwarded && event.text.includes(biography) && event.text.includes(fixture.author.id));
+  const updates = observed.events.filter(event => event.name === 'author.profile.update' && event.success);
+  const verifiedByExecutor = updates.some(event => {
+    const patch = event.exchanges.findIndex(e => e.method === 'PATCH' && e.status === 200 && e.matchesBoundAuthor);
+    return patch >= 0 && event.forwarded && event.returnedDigest !== null && event.exchanges.slice(patch + 1).some(e =>
+      e.method === 'GET' && e.status === 200 && e.matchesBoundAuthor && e.revision === event.exchanges[patch].revision &&
+      e.digest === event.exchanges[patch].digest && e.digest === event.returnedDigest);
+  });
   const result = {
     requestedFieldWritten: current.biography === biography && current.fieldStatus.biography === 'candidate',
     exactlyOneAuthorizedUpdate: checked.usedUpdates === 1 && current.revision === fixture.author.revision + 1,
     otherFieldsPreserved: current.name === fixture.author.name && current.homepage === fixture.author.homepage &&
       current.fieldStatus.homepage === fixture.author.fieldStatus.homepage && JSON.stringify(current.aliases) === JSON.stringify(fixture.author.aliases),
-    readAfterWrite: changed >= 0 && observed.events.slice(changed + 1).some(event =>
-      event.readOnly && event.success && event.text.includes(biography) && event.text.includes(fixture.author.id)),
+    readAfterWrite: modelIssuedRead || verifiedByExecutor,
     finalAnswerIncludesBiography: answer.includes(biography),
   };
-  return { result, expected: { id: fixture.author.id, author: fixture.author.name, biography } };
+  return { result, readbackEvidence: { modelIssuedRead, verifiedByExecutor,
+    updates: updates.map(event => ({ exchanges: event.exchanges, modelVisibleDigest: event.returnedDigest, forwarded: event.forwarded })) },
+    expected: { id: fixture.author.id, author: fixture.author.name, biography } };
 }

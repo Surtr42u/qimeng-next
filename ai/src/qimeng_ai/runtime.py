@@ -116,8 +116,15 @@ class Runtime:
         return result
 
     def task_state(self, task_id: str | None) -> State:
+        binding = self.task_binding()
         state = self.connect()
-        self.transport.active_token = state.task_credential(task_id) if task_id else None
+        if binding:
+            if task_id is not None and task_id != binding.id:
+                raise ToolError("TASK_NOT_BOUND", "本凭据不能切换到另一个任务")
+            task_id = binding.id if binding.delegated else None
+            self.transport.active_token = None
+        else:
+            self.transport.active_token = state.task_credential(task_id) if task_id else None
         if task_id:
             state = State(replace(self.config, task_id=task_id, max_seconds=self.task_max_seconds), self.instance_id, self.contract["openapiSha256"])
         self.state = state
@@ -137,6 +144,7 @@ class Runtime:
             binding = self.task_binding()
             author_write = binding is not None and binding.kind == "author" and name == "author.profile.update"
             inferred_revision = author_write and isinstance(arguments.get("body"), dict) and "expectedRevision" not in arguments["body"]
+            verify_author_write = author_write and (inferred_revision or "id" not in arguments)
             if binding:
                 binding.bind(self, name, arguments)
             validator = Draft202012Validator(definition["inputSchema"], format_checker=FormatChecker())
@@ -144,6 +152,8 @@ class Runtime:
                 # 不把ValidationError.message回显，避免包含完整用户输入/本机路径。
                 raise ToolError("INVALID_INPUT", "参数不符合工具契约，请按describe返回的schema修正")
             task_id = arguments.pop("taskId", None)
+            if binding and binding.delegated:
+                task_id = binding.id
             state = self.task_state(task_id)
             if name == "platform.budget":
                 return {"local": state.status(), "server": self.transport.call("getDelegatedBudget", {"id": task_id})} if task_id else state.status()
@@ -168,6 +178,8 @@ class Runtime:
             visible = value.metadata if isinstance(value, ImageResult) else value
             pending_query = name in RESEARCH_QUERY_OPERATIONS and isinstance(visible, dict) and visible.get("state") == "pending"
             state.finish(request, visible, key, uncertain=pending_query)
+            if verify_author_write:
+                visible = binding.readback(self.transport, key, arguments["body"], visible)
             try:
                 presented = output.present(visible, state, self.config.output_bytes, self.config.token)
                 return ImageResult(presented, value.data, value.mime_type) if isinstance(value, ImageResult) else presented

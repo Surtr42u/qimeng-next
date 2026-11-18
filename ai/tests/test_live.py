@@ -14,6 +14,45 @@ from live_fixture import CloudGoFixture
 
 @unittest.skipUnless(os.environ.get("QIMENG_TEST_BASE") == "http://127.0.0.1:18481", "requires cloud isolated Go service")
 class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
+    async def test_direct_delegated_secret_reads_and_spends_its_actual_server_budget(self):
+        import secrets
+        import urllib.request
+
+        library = self.request("POST", "/libraries", {"name": "Direct child budget", "kind": "regular"},
+                               key="direct-child-library")
+        grant = self.request("POST", "/ai/delegations", {"label": "Direct child", "libraryIds": [library["id"]],
+                             "authorIds": [], "allAuthors": False, "allowedFields": [], "candidateBlocks": [],
+                             "allowClear": False, "canIngest": True, "canResearch": False, "canOrganize": False,
+                             "maxResearchCalls": 0, "maxUpdates": 1, "maxTasksPerDay": 1, "validDays": 1,
+                             "maxCallsPerTask": 10})
+        self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
+        child = secrets.token_urlsafe(32)
+        request = urllib.request.Request(os.environ["QIMENG_TEST_BASE"] + "/api/v1/ai/delegated-tasks",
+                                         data=json.dumps({"kind": "intake", "mode": "ordinary", "label": "Direct task",
+                                                          "libraryId": library["id"], "credentialSecret": child}).encode(),
+                                         headers={"Content-Type": "application/json", "Idempotency-Key": "direct-child-start",
+                                                  "Authorization": "Bearer " + grant["credential"]["token"]})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            task = json.load(response)["taskId"]
+        with tempfile.TemporaryDirectory() as directory:
+            async with Client(self.process(Path(directory), child, "read")) as client:
+                async def budget():
+                    result = await client.call_tool("platform.budget", {})
+                    self.assertFalse(result.is_error, result.content)
+                    self.assertEqual(result.structured_content["local"]["taskId"], task)
+                    return result.structured_content["server"]
+
+                self.assertEqual((await budget())["calls"], 0)
+                for n in range(1, 11):
+                    read = await client.call_tool("library.query", {"limit": n})
+                    self.assertFalse(read.is_error, read.content)
+                    if n == 1:
+                        self.assertEqual((await budget())["calls"], 1)
+                denied = await client.call_tool("library.query", {"limit": 11})
+                self.assertTrue(denied.is_error)
+                self.assertEqual(denied.structured_content["code"], "task_budget_exhausted")
+                self.assertEqual((await budget())["calls"], 10)
+
     async def test_direct_author_session_resolves_the_granted_target_and_replays_its_original_baseline(self):
         author = self.request("POST", "/authors", {"kind": "regular", "name": "Single target", "biography": "Before"},
                               key="bound-author-target")
@@ -59,11 +98,13 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(clear.is_error)
                 self.assertEqual(clear.structured_content["code"], "clear_not_authorized")
                 changed = await get(first, "author.profile.update", args)
+                self.assertEqual(changed["readback"], {"state": "verified", "author": {
+                    "id": author["id"], "revision": changed["writeReceipt"]["revision"], "biography": "Reviewed text"}})
             async with Client(process) as restarted:
                 self.assertEqual(await get(restarted, "author.profile.update", args), changed)
                 legacy = {"taskId": task["id"], "id": author["id"], "Idempotency-Key": args["Idempotency-Key"],
                           "body": {"expectedRevision": author["revision"], "biography": "Reviewed text"}}
-                self.assertEqual(await get(restarted, "author.profile.update", legacy), changed)
+                self.assertEqual(await get(restarted, "author.profile.update", legacy), changed["writeReceipt"])
                 altered = await restarted.call_tool("author.profile.update", {**args, "body": {"biography": "Other text"}})
                 self.assertTrue(altered.is_error)
                 self.assertEqual(altered.structured_content["code"], "idempotency_conflict")
@@ -71,8 +112,8 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         actual = self.request("GET", "/author-tasks/" + task["id"])
         self.assertEqual((actual["task"]["usedUpdates"], actual["author"]["revision"]), (1, author["revision"] + 1))
 
-        stale, token = grant("bound-author-second", changed["revision"])
-        human = self.request("PATCH", "/authors/" + author["id"], {"expectedRevision": changed["revision"],
+        stale, token = grant("bound-author-second", changed["writeReceipt"]["revision"])
+        human = self.request("PATCH", "/authors/" + author["id"], {"expectedRevision": changed["writeReceipt"]["revision"],
                              "biography": "Human edit"}, key="bound-author-human")
         with tempfile.TemporaryDirectory() as directory:
             async with Client(self.process(Path(directory), token, "read,author.profile.write")) as client:
@@ -83,6 +124,54 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((after["task"]["usedUpdates"], after["task"]["expectedRevision"]), (0, stale["expectedRevision"]))
                 self.assertEqual((after["author"]["biography"], after["author"]["revision"]), ("Human edit", human["revision"]))
         self.assertEqual(self.request("GET", "/authors/" + other["id"])["biography"], "Unrelated")
+
+    async def test_committed_author_write_distinguishes_a_lost_read_and_a_later_human_edit(self):
+        from qimeng_ai.config import Config
+        from qimeng_ai.errors import ToolError
+        from qimeng_ai.runtime import Runtime
+        from qimeng_ai.transport import Transport, load_contract
+
+        author = self.request("POST", "/authors", {"kind": "regular", "name": "Readback check"}, key="readback-author")
+        task = self.request("POST", "/author-tasks", {"authorId": author["id"], "expectedRevision": author["revision"],
+                            "allowedFields": ["biography"], "allowClear": False, "maxUpdates": 1}, key="readback-task")
+        issued = self.request("POST", "/credentials", {"label": "Readback check", "authorTaskId": task["id"],
+                              "scopes": ["read", "author.profile.write"]})
+        self.addCleanup(self.request, "DELETE", "/credentials/" + issued["id"])
+        results = []
+        owner_request = self.request
+
+        class InterleaveRead(Transport):
+            def call(self, operation_id, arguments, **kwargs):
+                if operation_id == "getAuthor" and len(results) == 1:
+                    owner_request("PATCH", "/authors/" + author["id"], {"expectedRevision": author["revision"] + 1,
+                                  "biography": "Updated by the owner"}, key="readback-owner-edit")
+                actual = super().call(operation_id, arguments, **kwargs)
+                if operation_id == "getAuthor":
+                    results.append(actual)
+                    if len(results) == 1:
+                        raise ToolError("NETWORK_ERROR", "Read response was lost")
+                return actual
+
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = Config.load({"QIMENG_API_BASE": os.environ["QIMENG_TEST_BASE"], "QIMENG_API_TOKEN": issued["token"],
+                               "QIMENG_AI_STATE_DIR": directory, "QIMENG_AI_PERMISSIONS": "read,author.profile.write"})
+            contract = load_contract()
+            runtime = Runtime(cfg, contract=contract, transport=InterleaveRead(cfg, contract))
+            self.addCleanup(runtime.close)
+            args = {"Idempotency-Key": "readback-original-key", "body": {"biography": "Saved by the task"}}
+            lost = runtime.call("author.profile.update", args)
+            self.assertEqual((lost["state"], lost["operationKey"], lost["writeReceipt"]["biography"]),
+                             ("committed", args["Idempotency-Key"], "Saved by the task"))
+            self.assertEqual(lost["readback"], {"state": "unavailable", "code": "NETWORK_ERROR",
+                                                "nextAction": {"tool": "author.read", "arguments": {}}})
+            self.assertEqual(runtime.state.status()["pending"], [])
+            later = runtime.call("author.profile.update", args)
+            self.assertEqual(later["writeReceipt"], lost["writeReceipt"])
+            self.assertEqual((later["readback"]["state"], later["readback"]["author"]["biography"]),
+                             ("changed", "Updated by the owner"))
+            self.assertEqual(later["readback"]["author"]["revision"], results[1]["revision"])
+        final = self.request("GET", "/author-tasks/" + task["id"])
+        self.assertEqual((final["task"]["usedUpdates"], final["author"]["revision"]), (1, author["revision"] + 2))
 
     async def test_read_only_alias_lookup_preserves_each_candidate_identity(self):
         self.assertEqual(os.environ.get("CI"), "true")
