@@ -4,7 +4,9 @@ import android.content.ContentValues
 import android.graphics.Bitmap
 import android.provider.MediaStore
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -35,7 +37,17 @@ class ArchiveMediaTrashTest {
             metadata.clear(); metadata.put(MediaStore.MediaColumns.DISPLAY_NAME, "$name-renamed.png")
             assertEquals(1, resolver.update(media, metadata, null, null))
             assertFalse(port.matches(original, bytes.size.toLong(), hash))
-            val binding = requireNotNull(port.identifyMedia(media))
+            // MediaProvider may still advance the row generation while scanning the renamed file.
+            val binding = withTimeout(5_000) {
+                var previous = port.identifyMedia(media)
+                while (true) {
+                    delay(100)
+                    val current = port.identifyMedia(media)
+                    if (current != null && current == previous) break
+                    previous = current
+                }
+                requireNotNull(previous)
+            }
             assertTrue(port.matches(binding, bytes.size.toLong(), hash))
             assertTrue(port.move(binding, bytes.size.toLong()))
             val observed = port.observe(binding, bytes.size.toLong(), hash, "synthetic-permit")

@@ -43,27 +43,65 @@ finish() {
   exit "$result"
 }
 trap finish EXIT
+mkdir -p android/build/cloud-screenshots
+transport_log=android/build/cloud-screenshots/transport-health.txt
+transport_status() {
+  echo "$*" | tee -a "$transport_log"
+}
+prepare_transport() {
+  local phase=$1 port pid status prior exit_code
+  if ! timeout 30 adb -s emulator-5556 wait-for-device ||
+     [[ $(adb -s emulator-5556 emu avd name | tr -d '\r' | head -1) != qimeng_api35 ]]; then
+    transport_status "$phase: designated AVD unavailable"
+    return 1
+  fi
+  local mappings
+  mappings=$(adb -s emulator-5556 reverse --list)
+  for port in 18481 18482; do
+    if [[ $port == 18481 ]]; then pid=$service_pid; else pid=$source_pid; fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      exit_code=0
+      wait "$pid" || exit_code=$?
+      transport_status "$phase: port=$port host process exited with status $exit_code"
+      return 1
+    fi
+    status=$(curl --silent --output /dev/null --max-time 4 --write-out '%{http_code}' "http://127.0.0.1:$port/healthz") || status=000
+    prior=absent
+    if awk -v p="tcp:$port" '$2 == p && $3 == p { found=1 } END { exit !found }' <<< "$mappings"; then prior=present; fi
+    transport_status "$phase: port=$port host process alive, host HTTP=$status, preceding reverse=$prior"
+    [[ $status == 200 ]] || return 1
+    adb -s emulator-5556 reverse "tcp:$port" "tcp:$port" >/dev/null
+    if ! printf 'GET /healthz HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' |
+        timeout 10 adb -s emulator-5556 shell -T toybox nc -w 4 -W 4 127.0.0.1 "$port" |
+        awk 'NR == 1 && $2 == 200 { ok=1 } END { exit !ok }'; then
+      transport_status "$phase: port=$port device HTTP failed after reverse"
+      return 1
+    fi
+    transport_status "$phase: port=$port device HTTP=200"
+  done
+}
 ready=false
 for attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:18481/healthz > /dev/null &&
      curl --fail --silent http://127.0.0.1:18482/healthz > /dev/null; then ready=true; break; fi
-  if ! kill -0 "$service_pid" 2>/dev/null; then cat "$RUNNER_TEMP/qimeng-next-android.log"; exit 1; fi
-  if ! kill -0 "$source_pid" 2>/dev/null; then cat "$RUNNER_TEMP/qimeng-next-source.log"; exit 1; fi
+  if ! kill -0 "$service_pid" 2>/dev/null; then transport_status 'startup: target host process exited'; exit 1; fi
+  if ! kill -0 "$source_pid" 2>/dev/null; then transport_status 'startup: source host process exited'; exit 1; fi
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'Isolated Android server did not become ready'; exit 1; fi
 ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
-adb -s emulator-5556 reverse tcp:18481 tcp:18481
-adb -s emulator-5556 reverse tcp:18482 tcp:18482
+prepare_transport core
 adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test.mp4" /data/local/tmp/qimeng-next-test.mp4
 checks=0
-gradle --no-daemon -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest \
+gradle --no-daemon --continue -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceUrl=http://127.0.0.1:18482/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceToken="$source_token" \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
+prepare_transport app
 gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
+if (( checks != 0 )); then prepare_transport after-failure || true; fi
 exit "$checks"

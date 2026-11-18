@@ -28,6 +28,7 @@ import com.patrykandpatrick.vico.compose.common.shape.rounded
 import com.patrykandpatrick.vico.core.cartesian.CartesianChart
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModelProducer
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
@@ -45,15 +46,10 @@ data class QimengTrendSeries(val values: List<Number>, val name: String = "")
 fun QimengTrendLineChart(series: List<QimengTrendSeries>, seriesColors: List<Color>, xLabels: List<String>, modifier: Modifier = Modifier) {
     require(seriesColors.size >= series.size)
     if (series.isEmpty() || xLabels.isEmpty()) return
-    val modelProducer = remember { CartesianChartModelProducer() }
     var selected by rememberSaveable(xLabels) { mutableStateOf<Double?>(null) }
-    LaunchedEffect(series) {
-        modelProducer.runTransaction {
-            if (series.isNotEmpty() && series.all { it.values.isNotEmpty() }) {
-                // Each chart layer has one model; all its colored lines belong to that model.
-                add(LineCartesianLayerModel.partial { series.forEach { line -> series(line.values) } })
-            }
-        }
+    val lines = remember(series) {
+        if (series.any { it.values.isEmpty() }) null
+        else LineCartesianLayerModel.partial { series.forEach { line -> series(line.values) } }
     }
     val pointInnerColor = MaterialTheme.colorScheme.surfaceVariant
     val marker = rememberTrendValueMarker(seriesColors.zip(series.map { it.name }).toMap())
@@ -66,8 +62,9 @@ fun QimengTrendLineChart(series: List<QimengTrendSeries>, seriesColors: List<Col
                     component = shapeComponent(fill = fill(pointInnerColor), shape = CorneredShape.rounded(50),
                         strokeFill = fill(color), strokeThickness = 2.dp), size = 8.dp)))
         }))
-    val persistent: CartesianChart.PersistentMarkerScope.(ExtraStore) -> Unit = remember(marker, selected) {
-        { selected?.let { marker at it } }
+    val selectedX = selected
+    val persistent: (CartesianChart.PersistentMarkerScope.(ExtraStore) -> Unit)? = remember(marker, selectedX) {
+        if (selectedX == null) null else { _ -> marker at selectedX }
     }
     val chart = rememberCartesianChart(layer,
         startAxis = VerticalAxis.rememberStart(line = null, tick = null, label = null, guideline = null),
@@ -80,7 +77,7 @@ fun QimengTrendLineChart(series: List<QimengTrendSeries>, seriesColors: List<Col
         xLabels.getOrNull(index)?.let { date -> "$date · " + series.joinToString(" · ") { line -> "${line.name} ${line.values.getOrNull(index) ?: "—"}次" } }
     } ?: "未选择数据点"
     val reduceMotion = LocalReducedMotion.current
-    CartesianChartHost(chart, modelProducer, modifier = modifier
+    val chartModifier = modifier
         .pointerInput(xLabels) {
             detectTapGestures { tap ->
                 // Public library targets already include layout, scrolling and zoom; no coordinate guess.
@@ -95,5 +92,14 @@ fun QimengTrendLineChart(series: List<QimengTrendSeries>, seriesColors: List<Col
                     if (xLabels.isEmpty()) false else { selected = (((selected?.roundToInt() ?: -1) + 1) % xLabels.size).toDouble(); true }
                 },
                 CustomAccessibilityAction("隐藏数值") { selected = null; true })
-        }, animationSpec = if (reduceMotion) null else tween(500), animateIn = !reduceMotion)
+        }
+    if (reduceMotion && lines != null) {
+        val model = remember(lines) { CartesianChartModel(lines.complete(ExtraStore.Empty)) }
+        CartesianChartHost(chart, model, modifier = chartModifier)
+    } else {
+        val producer = remember { CartesianChartModelProducer() }
+        LaunchedEffect(producer, lines) { producer.runTransaction { lines?.let { add(it) } } }
+        CartesianChartHost(chart, producer, modifier = chartModifier,
+            animationSpec = if (reduceMotion) null else tween(500), animateIn = !reduceMotion)
+    }
 }

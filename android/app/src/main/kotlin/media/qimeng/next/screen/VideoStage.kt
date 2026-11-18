@@ -74,10 +74,17 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
     LaunchedEffect(activated) { onPlayerActiveChanged(activated) }
     val activity = context.activity()
     val canRotate = asset.width?.let { w -> asset.height?.let { h -> w > h && h > 0 } } == true
+    var orientationBeforeFullscreen by rememberSaveable(asset.id) { mutableStateOf<Int?>(null) }
     DisposableEffect(activity, fullscreen) {
-        val previous = activity?.requestedOrientation
-        if (fullscreen) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        onDispose { if (fullscreen && activity != null && previous != null) activity.requestedOrientation = previous }
+        if (activity != null && fullscreen) {
+            val previous = orientationBeforeFullscreen ?: activity.requestedOrientation
+            orientationBeforeFullscreen = previous
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            onDispose { activity.requestedOrientation = previous }
+        } else {
+            orientationBeforeFullscreen = null
+            onDispose { }
+        }
     }
     BackHandler(activated && !timeline) {
         if (fullscreen) fullscreen = false else { playAfterAttach = false; player.pause(); activated = false }
