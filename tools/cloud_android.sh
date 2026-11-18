@@ -10,6 +10,7 @@ if [[ $(adb -s emulator-5556 emu avd name | tr -d '\r' | head -1) != qimeng_api3
 fi
 adb -s emulator-5556 shell wm size 320x640
 adb -s emulator-5556 shell wm density 160
+adb -s emulator-5556 shell wm user-rotation lock 0
 adb -s emulator-5556 shell settings put system font_scale 1.0
 adb -s emulator-5556 shell settings put secure immersive_mode_confirmations confirmed
 adb -s emulator-5556 shell cmd uimode night no

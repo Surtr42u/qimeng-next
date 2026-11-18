@@ -221,6 +221,7 @@ class AndroidRealServerTest {
                 graph.media.asset(requireNotNull(graph.queue.state.value!!.transfers.single { it.id == input }.assetId))
             }
         }
+        val originalOrientation = playbackOrientation()
         var resumePosition = 0L
         repeat(2) { index ->
             val suffix = if (index == 0) "" else "-resumed"
@@ -244,14 +245,21 @@ class AndroidRealServerTest {
             compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("进入全屏").performClick()
             compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
-            compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+            compose.waitUntil(10_000) { playbackOrientation().let {
+                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE &&
+                    it.configuration == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            } }
             captureDecoderSurface(compose.activity, suffix)
             screenshotWithMedia("real-server-video-fullscreen$suffix.png", landscape = true)
             await("video-play-event$suffix", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (before.playCount ?: 0L) }
             assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
             compose.onNodeWithContentDescription("退出全屏").performClick()
+            try {
+                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
+            } catch (failure: ComposeTimeoutException) {
+                throw AssertionError("Leaving fullscreen should restore $originalOrientation, observed ${playbackOrientation()}", failure)
+            }
             if (index == 0) {
-                compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
                 compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
                 compose.waitUntil(10_000) { compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithContentDescription("返回").performClick()
@@ -261,6 +269,17 @@ class AndroidRealServerTest {
                 } }
             }
         }
+    }
+
+    private data class PlaybackOrientation(val request: Int, val configuration: Int, val rotation: Int)
+
+    private fun playbackOrientation(): PlaybackOrientation {
+        lateinit var snapshot: PlaybackOrientation
+        compose.activityRule.scenario.onActivity { activity ->
+            snapshot = PlaybackOrientation(activity.requestedOrientation, activity.resources.configuration.orientation,
+                requireNotNull(activity.window.decorView.display).rotation)
+        }
+        return snapshot
     }
 
     @Test(timeout = 240_000)
