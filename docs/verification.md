@@ -8,7 +8,9 @@
 
 [Engineering checks](../.github/workflows/engineering.yml) 自动检查 `main`、`codex/**` 的推送和所有 PR。[Cloud verification](../.github/workflows/prepare.yml) 在 `main` 推送或 PR 包含 Markdown 以外的变更时自动运行。维护者也可在 Actions 里选分支手动启动完整工作流，随后核对运行的 SHA。合成界面的[Web 新旧对照](../.github/workflows/ui-reference.yml)和[Android 参考图采集](../.github/workflows/android-reference.yml)可单独调度，也会在主分支上各自列出的路径发生变化时运行。
 
-OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随完整检查提供。仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
+手动运行时，`suite` 默认选择 `all`。只更新协议锁可选 `contracts`；排查单端可选 `backend`、`web`、`android` 或 `windows`。`backend` 包含独立 MCP 客户端。主分支和 PR 继续运行完整流程。
+
+OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随各组检查提供。仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
 
 Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming`。归档下载、作者总表、片段与可读作者资料均按字节流交付。云端会核对这些方法的实际签名，避免手机在收到大备份时先把整个响应放进内存。
 
