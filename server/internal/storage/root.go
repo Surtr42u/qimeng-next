@@ -15,13 +15,13 @@ import (
 )
 
 var ErrUnavailable=errors.New("logical storage is unavailable")
-type location struct{root *os.Root;absolute string}
+type location struct{root *os.Root;absolute,configured string}
 type library struct{storageID,relative string}
 type Info struct{ID string `json:"id"`;Available bool `json:"available"`}
 type Root struct{mu sync.RWMutex;local *os.Root;locations map[string]location;libraries map[string]library;uploads map[string]string}
 func Open(dataDir string,configured map[string]string)(*Root,error){
- absolute,e:=filepath.EvalSymlinks(dataDir);if e!=nil{return nil,e};absolute,e=filepath.Abs(absolute);if e!=nil{return nil,e};local,e:=os.OpenRoot(absolute);if e!=nil{return nil,e};r:=&Root{local:local,locations:map[string]location{"data":{local,absolute}},libraries:map[string]library{},uploads:map[string]string{}}
- for id,value:=range configured{if id=="data"||id==""||strings.ContainsAny(id,"/\\:\x00")||len(id)>64||!filepath.IsAbs(value){r.Close();return nil,errors.New("invalid logical storage configuration")};root,e:=os.OpenRoot(value);if e!=nil{r.Close();return nil,ErrUnavailable};resolved,e:=filepath.EvalSymlinks(value);if e!=nil{root.Close();r.Close();return nil,e};r.locations[id]=location{root:root,absolute:resolved}}
+ absolute,e:=filepath.EvalSymlinks(dataDir);if e!=nil{return nil,e};absolute,e=filepath.Abs(absolute);if e!=nil{return nil,e};local,e:=os.OpenRoot(absolute);if e!=nil{return nil,e};r:=&Root{local:local,locations:map[string]location{"data":{root:local,absolute:absolute,configured:filepath.Clean(dataDir)}},libraries:map[string]library{},uploads:map[string]string{}}
+ for id,value:=range configured{if id=="data"||id==""||strings.ContainsAny(id,"/\\:\x00")||len(id)>64||!filepath.IsAbs(value){r.Close();return nil,errors.New("invalid logical storage configuration")};root,e:=os.OpenRoot(value);if e!=nil{r.Close();return nil,ErrUnavailable};resolved,e:=filepath.EvalSymlinks(value);if e!=nil{root.Close();r.Close();return nil,e};r.locations[id]=location{root:root,absolute:resolved,configured:filepath.Clean(value)}}
  return r,nil
 }
 func(r *Root)Close()error{r.mu.Lock();defer r.mu.Unlock();var first error;for _,l:=range r.locations{if e:=l.root.Close();e!=nil&&first==nil{first=e}};return first}

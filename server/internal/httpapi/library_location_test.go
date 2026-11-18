@@ -49,3 +49,15 @@ func TestRootResolutionRejectsLinksWithinTheTrustedRoot(t *testing.T) {
  f:=&fixture{t:t,s:s,h:httpapi.New(s)}
  f.json("POST","/storages/resolve-library-root","",map[string]any{"rootPath":filepath.Join(linked,"child")},400)
 }
+
+func TestOwnerMayUseOperatorConfiguredRootSpelling(t *testing.T) {
+ actual,aliasDir:=t.TempDir(),t.TempDir()
+ alias:=filepath.Join(aliasDir,"trusted-alias")
+ if e:=os.Symlink(actual,alias);e!=nil {t.Skip("platform does not permit a synthetic root alias")}
+ s,e:=service.New(service.Config{DataDir:t.TempDir(),AdminToken:testSecret,StorageRoots:map[string]string{"media":alias},ReserveBytes:1})
+ if e!=nil {t.Fatal(e)};defer s.Close()
+ f:=&fixture{t:t,s:s,h:httpapi.New(s)}
+ var location service.LibraryLocation
+ decode(t,f.json("POST","/storages/resolve-library-root","",map[string]any{"rootPath":filepath.Join(alias,"new")},200),&location)
+ if location.StorageID!="media"||location.RootRelativePath!="new" {t.Fatal("configured root spelling did not map to the opened storage")}
+}

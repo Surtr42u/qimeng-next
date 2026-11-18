@@ -39,6 +39,8 @@ func TestDateCountsUseRequestedLocalDayAndExcludeCursorFromWholeCounts(t *testin
  first:=assetsAt(t,f,"?dateCounts=true&tzOffsetMinutes=480&limit=1");if len(first.Items)!=1||*first.TotalMatched!=2||first.DateCounts==nil||len(*first.DateCounts)!=2{t.Fatal("local day counts were based on loaded items or UTC days")};if (*first.DateCounts)[0].Date!="2025-01-02"||(*first.DateCounts)[0].FileCount!=1||(*first.DateCounts)[1].Date!="2025-01-01"{t.Fatal("east-of-UTC offset used the wrong sign")}
  next:=assetsAt(t,f,"?dateCounts=true&tzOffsetMinutes=480&limit=1&cursor="+first.NextCursor);if next.DateCounts!=nil||len(next.Items)!=1{t.Fatal("continuation recalculated day buckets or broke the stable cursor")}
  utc:=assetsAt(t,f,"?dateCounts=true");if utc.DateCounts==nil||len(*utc.DateCounts)!=1||(*utc.DateCounts)[0].FileCount!=2{t.Fatal("default date-count offset was not UTC")}
+ reversed:=assetsAt(t,f,"?timeRange=year_range&fromYear=2026&toYear=2024")
+ if *reversed.TotalMatched!=2 {t.Fatal("reverse year picker endpoints did not select the same calendar interval")}
  r:=f.json("GET","/assets/facets?row=partitions","",nil,200);var facets model.Page[service.AssetFacet];decode(t,r,&facets);if len(facets.Items)!=3||facets.Items[0].ID!="all"||facets.Items[1].ID!="regular"||facets.Items[2].ID!="cos"{t.Fatal("fixed partition order changed with counts")}
 }
 

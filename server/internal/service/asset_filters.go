@@ -21,6 +21,7 @@ type browsePredicate struct{Where string;Args []any;FilterKey string}
 type browseSort struct{Expression,Name string;Descending,Numeric,Nullable bool}
 
 func normalizeAssetFilter(in AssetFilter)(AssetFilter,error){
+ if in.TimeRange=="year_range" && in.FromYear>in.ToYear {in.FromYear,in.ToYear=in.ToYear,in.FromYear}
  if in.TZOffsetMinutes < -840||in.TZOffsetMinutes>840{return in,Fail(400,"invalid_timezone_offset","客户端时区偏移必须在 UTC−14 至 UTC+14 之间。")}
  in.Q=strings.Join(strings.Fields(in.Q)," ");if utf8.RuneCountInString(in.Q)>200{return in,Fail(400,"query_too_long","搜索词最多 200 字。")};if in.Kind!=""&&in.Kind!="regular"&&in.Kind!="cos"{return in,Fail(400,"invalid_filter","来源分区无效。")};switch in.MediaType{case "","image","animated_image","video":default:return in,Fail(400,"invalid_filter","媒体类型无效。")}
  for _,field:=range []*[]string{&in.AuthorIDs,&in.SourceIDs,&in.CharacterIDs,&in.CosWorkIDs,&in.WorkKeys,&in.RoleKeys,&in.Tags}{max:=50;if field==&in.Tags{max=100};var e error;*field,e=cleanStrings(append([]string{},(*field)...),max,512);if e!=nil{return in,e};sort.Strings(*field)}

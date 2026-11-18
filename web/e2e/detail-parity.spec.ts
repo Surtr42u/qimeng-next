@@ -14,6 +14,11 @@ test("detail keeps the original two-column frame and image navigation semantics"
   await expect(page.getByRole("button", { name: "返回浏览" })).toHaveCount(0);
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 800 });
+    await expect.poll(async () => {
+      const stage = await page.locator(".asset-stage").boundingBox();
+      const content = await page.locator("[data-scroll-root]").boundingBox();
+      return stage && content ? stage.x + stage.width <= content.x + content.width + 1 : false;
+    }).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`parity-detail-${width}.png`), fullPage: false });
   }
   await page.getByRole("button", { name: "查看原图并缩放" }).click();

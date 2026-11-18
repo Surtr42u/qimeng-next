@@ -53,7 +53,7 @@ func ValidRelative(p string)bool{
  for _,part:=range strings.Split(p,"/"){if !ValidName(part){return false}}
  return len(p)<=500
 }
-func ValidMediaPath(p string)bool{if !ValidRelative(p){return false};for _,part:=range strings.Split(p,"/"){if part==".qimeng-internal"{return false}};return true}
+func ValidMediaPath(p string)bool{if !ValidRelative(p){return false};for _,part:=range strings.Split(p,"/"){if strings.EqualFold(part,".qimeng-internal"){return false}};return true}
 
 // Allocate returns the minimum free work number in one directory/family/media
 // class and retains established width/separator. Different extensions share a class.

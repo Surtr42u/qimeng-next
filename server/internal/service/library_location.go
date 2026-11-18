@@ -26,6 +26,6 @@ func (s *Service) LibraryLocation(ctx context.Context,p model.Principal,id strin
  result:=LibraryLocation{}
  if e:=Authorize(p,"admin","");e!=nil {return result,e}
  library,e:=s.library(ctx,id);if e!=nil {return result,e}
- location,e:=s.Root.LibraryPath(id);if e!=nil {return result,e}
+ location,e:=s.Root.DisplayLibraryPath(id);if e!=nil {return result,e}
  return LibraryLocation{StorageID:library.StorageID,RootRelativePath:library.RootRelativePath,RootPath:location},nil
 }

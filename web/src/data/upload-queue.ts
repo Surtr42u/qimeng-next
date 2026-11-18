@@ -13,6 +13,7 @@ export type QueueEntry = {
   error?: string; createdAt: string; order?: number; waitingFor?: string; actualFileName?: string;
   batchPlanId?: string;
   preparationFailed?: boolean;
+  authorName?: string;
 };
 export type UploadBatchPreparation = {
   id: string; scope: string; input: Schema<'BatchCreate'>; inputs: Schema<'IntakeInput'>[];
@@ -39,6 +40,8 @@ export class UploadQueue {
   private batches = new Map<string, UploadBatchPreparation>();
   private preparing = new Map<string, Promise<void>>();
   private batchControllers = new Map<string, AbortController>();
+  private cancellingAll?: Promise<void>;
+  private cancellationControllers = new Set<AbortController>();
   constructor(readonly scope: string, private maxChunkBytes: number, private maxItems: number, private concurrency = 2) { void this.restore(); }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
@@ -87,6 +90,7 @@ export class UploadQueue {
     });
   }
   private prepareBatch(id: string): Promise<void> {
+    if (this.disposed) return Promise.reject(new DOMException('设备会话已离开，未开始新的上传操作。', 'AbortError'));
     const pending = this.preparing.get(id);
     if (pending) return pending;
     const batch = this.batches.get(id);
@@ -142,7 +146,8 @@ export class UploadQueue {
     this.writes = retry;
     await retry;
   }
-  async add(files: readonly File[], target: Omit<Schema<'UploadCreate'>, 'fileName' | 'size' | 'mimeType'>, libraryName: string) {
+  async add(files: readonly File[], target: Omit<Schema<'UploadCreate'>, 'fileName' | 'size' | 'mimeType'>, libraryName: string, authorName?: string) {
+    if (this.disposed) throw new DOMException('设备会话已离开，未开始新的上传操作。', 'AbortError');
     if (!this.snapshot.initialized || this.snapshot.preparing) throw new Error('正在准备上传队列，请稍后再选。');
     if (!files.length) return;
     const limit = Math.min(100, this.maxItems);
@@ -164,7 +169,7 @@ export class UploadQueue {
       const entry: QueueEntry = {
         id, batchPlanId: plan.id, scope: this.scope,
         request: { ...target, batchId: undefined, inputId: id, fileName: file.name, originalFileName: file.name, sourceRelativePath: relative, size: file.size, mimeType: file.type || 'application/octet-stream', sourceMtime: new Date(file.lastModified).toISOString(), relativeDirectory: [target.relativeDirectory, directory].filter(Boolean).join('/') || undefined },
-        libraryName, name: file.name, size: file.size, modified: file.lastModified, phase: 'queued', offset: 0, hashProgress: 0, createdAt: new Date().toISOString(), order: ++order,
+        libraryName, authorName, name: file.name, size: file.size, modified: file.lastModified, phase: 'queued', offset: 0, hashProgress: 0, createdAt: new Date().toISOString(), order: ++order,
       };
       return entry;
     });
@@ -244,6 +249,7 @@ export class UploadQueue {
     if (terminal(phase)) this.files.delete(id);
   }
   retry(id: string, file?: File) {
+    if (this.disposed) return;
     const entry = this.entries.get(id);
     if (!entry || terminal(entry.phase) || this.active.has(id)) return;
     if (file) {
@@ -258,31 +264,36 @@ export class UploadQueue {
   pause(id: string) { this.active.get(id)?.abort(); this.change(id, { phase: 'paused' }); }
   async cancel(id: string) {
     const entry = this.entries.get(id);
-    if (!entry || terminal(entry.phase)) return;
+    if (this.disposed || !entry || terminal(entry.phase)) return;
+    const controller = new AbortController();
+    this.cancellationControllers.add(controller);
     this.pause(id);
     try {
       if (entry.batchPlanId && entry.request.inputId) {
         await this.prepareBatch(entry.batchPlanId);
+        controller.signal.throwIfAborted();
         const batch = this.batches.get(entry.batchPlanId);
         if (!batch?.batchId || !batch.fingerprint) throw new Error('原始输入清单身份尚未确认，未把本项标为已取消。');
-        await read(api.POST('/batches/{id}/inputs/{inputId}/cancel', { params: { path: { id: batch.batchId, inputId: entry.request.inputId }, header: operationHeaders(`${entry.id}-cancel-input`) }, body: { manifestFingerprint: batch.fingerprint } }));
+        await read(api.POST('/batches/{id}/inputs/{inputId}/cancel', { params: { path: { id: batch.batchId, inputId: entry.request.inputId }, header: operationHeaders(`${entry.id}-cancel-input`) }, body: { manifestFingerprint: batch.fingerprint }, signal: controller.signal }));
         this.change(id, { phase: 'cancelled', error: undefined });
         this.files.delete(id);
         void invalidateLibrary();
         return;
       }
       const current = entry.uploadId
-        ? await read(api.GET('/uploads/{id}', { params: { path: { id: entry.uploadId } } }))
-        : entry.digest ? await read(api.POST('/uploads', { params: { header: operationHeaders(entry.id) }, body: entry.request })) : undefined;
+        ? await read(api.GET('/uploads/{id}', { params: { path: { id: entry.uploadId } }, signal: controller.signal }))
+        : entry.digest ? await read(api.POST('/uploads', { params: { header: operationHeaders(entry.id) }, body: entry.request, signal: controller.signal })) : undefined;
+      controller.signal.throwIfAborted();
       if (current && ['ingested', 'staged', 'duplicate'].includes(current.state)) { this.finish(id, current); return; }
-      if (current) await read(api.DELETE('/uploads/{id}', { params: { path: { id: current.id } } }));
+      if (current) await read(api.DELETE('/uploads/{id}', { params: { path: { id: current.id } }, signal: controller.signal }));
       this.change(id, { phase: 'cancelled', error: undefined }); this.files.delete(id);
     } catch (error) {
+      if (this.disposed) return;
       const latest = this.entries.get(id);
       let reconciliationError: unknown;
       if (latest?.request.batchId && latest.request.inputId) {
         try {
-          const report = await read(api.GET('/batches/{id}', { params: { path: { id: latest.request.batchId } } }));
+          const report = await read(api.GET('/batches/{id}', { params: { path: { id: latest.request.batchId } }, signal: controller.signal }));
           const input = report.inputs.find(input => input.id === latest.request.inputId);
           if (input?.state === 'ingested' && input.assetId) { this.change(id, { phase: 'ingested', assetId: input.assetId, offset: latest.size, error: undefined }); this.files.delete(id); return; }
           if (input?.state === 'cancelled') { this.change(id, { phase: 'cancelled', error: undefined }); this.files.delete(id); return; }
@@ -290,7 +301,17 @@ export class UploadQueue {
       }
       this.change(id, { error: `${error instanceof Error ? error.message : '取消失败'}。${reconciliationError ? '回读服务器状态也未成功。' : ''}请重试取消或继续上传以回读实际状态。` });
     }
-    finally { this.pump(); }
+    finally { this.cancellationControllers.delete(controller); this.pump(); }
+  }
+  cancelAll() {
+    if (this.cancellingAll) return this.cancellingAll;
+    const ids = [...this.entries.values()].filter(entry => !terminal(entry.phase)).map(entry => entry.id);
+    this.cancellingAll = (async () => {
+      // Pause every transfer first so later rows cannot publish while cancellation is serialised.
+      for (const id of ids) this.pause(id);
+      for (const id of ids) { if (this.disposed) break; await this.cancel(id); }
+    })().finally(() => { this.cancellingAll = undefined; });
+    return this.cancellingAll;
   }
   async clearFinished() {
     const finished = [...this.entries.values()].filter(entry => terminal(entry.phase)).map(entry => entry.id);
@@ -309,5 +330,5 @@ export class UploadQueue {
     this.writes = cleanup;
     await cleanup;
   }
-  dispose() { this.disposed = true; for (const active of this.active.values()) active.abort(); for (const controller of this.batchControllers.values()) controller.abort(); this.files.clear(); }
+  dispose() { this.disposed = true; for (const active of this.active.values()) active.abort(); for (const controller of this.batchControllers.values()) controller.abort(); for (const controller of this.cancellationControllers) controller.abort(); this.files.clear(); }
 }

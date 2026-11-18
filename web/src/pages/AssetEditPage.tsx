@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Popover } from "radix-ui";
+import { AuthorSuggestField } from "../components/AuthorSuggestField";
 import { useAsset, mediaCards } from "../data/media";
 import type { Asset } from "../data/media";
 import type { Schema } from "../data/client";
-import { useAuthors } from "../data/manage";
 import { useAssetAuthorRecords, useSaveAssetAuthors } from "../data/asset-edit";
 import type { AuthorSourceChange } from "../data/asset-edit";
 import { AcquisitionSourceField } from "../components/AcquisitionSourceField";
@@ -78,7 +77,7 @@ function AssetAuthorDraft({ asset, authors }: { asset: Asset; authors: Schema<"A
       <div className="settings-card">
         <h3>关联作者</h3>
         <p>在下方输入框联想选择已有作者；COS 作者不在此列（由 COS 目录语义决定）。</p>
-        <AssetAuthorSuggest disabled={save.isPending} selected={selectedIds} choose={author => setSelected(values => values.some(value => value.id === author.id) ? values : [...values, author])} />
+        <AuthorSuggestField label="查找作者" disabled={save.isPending} selectedIds={selectedIds} onChoose={author => { if (author) setSelected(values => values.some(value => value.id === author.id) ? values : [...values, author]); }} />
         {!selected.length ? <p className="grid-empty">暂无关联作者——联想选择添加，或保存空集解除全部常规作者</p> : selected.map(author => (
           <div key={author.id} style={{ marginTop: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -98,38 +97,5 @@ function AssetAuthorDraft({ asset, authors }: { asset: Asset; authors: Schema<"A
       </div>
       <UnsavedGuard dirty={dirty || save.isPending} />
     </>
-  );
-}
-
-function AssetAuthorSuggest({ selected, disabled, choose }: { selected: string[]; disabled: boolean; choose: (author: Schema<"Author">) => void }) {
-  const [text, setText] = useState("");
-  const [open, setOpen] = useState(false);
-  const query = useAuthors(text, undefined, open, { kind: "regular" });
-  const rows = (query.data?.pages.flatMap(page => page.items) ?? []).filter(author => !author.placeholder);
-  const pick = (author: Schema<"Author">) => { choose(author); setText(""); setOpen(false); };
-  return (
-    <div className="settings-field upload-attach-field">
-      <span>作者</span>
-      <Popover.Root open={open} onOpenChange={value => { if (!disabled) setOpen(value); }}>
-        <Popover.Anchor asChild>
-          <div className="attach-input-box">
-            <input aria-label="查找作者" placeholder="输入作者名联想选择" autoComplete="off" value={text} disabled={disabled} onFocus={() => setOpen(true)} onChange={event => { setText(event.target.value); setOpen(true); }} />
-          </div>
-        </Popover.Anchor>
-        <Popover.Portal>
-          <Popover.Content className="search-pop search-pop--popper" side="bottom" align="start" sideOffset={8} onOpenAutoFocus={event => event.preventDefault()} onInteractOutside={event => { if (event.target instanceof Element && event.target.closest(".attach-input-box")) event.preventDefault(); }}>
-            <ErrorNotice error={query.error} retry={() => void query.refetch()} />
-            {query.isPending ? <p className="pop-suggest-hint">正在获取联想…</p> : (
-              <div className="pop-suggest-list" role="group" aria-label="作者联想">
-                {rows.map(author => <button key={author.id} className="pop-suggest-item" disabled={disabled || selected.includes(author.id)} onClick={() => pick(author)}><span className="pop-suggest-name">{author.name}</span><span className="pop-suggest-badge">{author.fileCount === undefined ? "" : `${author.fileCount} 个文件`}</span></button>)}
-                {!rows.length && !query.isError && <p className="pop-suggest-hint">没有匹配的作者</p>}
-                {query.hasNextPage && <button className="pop-suggest-item" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>更多作者</button>}
-              </div>
-            )}
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
-      <small>输入名字从联想中点选要关联的作者</small>
-    </div>
   );
 }

@@ -70,10 +70,14 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   const suffix = `${testInfo.retry}-${Date.now()}`;
   const libraryName = `CI 合成库 ${suffix}`;
   const authorName = `CI 合成作者 ${suffix}`;
+  const configuredMediaRoot = process.env.QIMENG_E2E_LIBRARY_ROOT;
+  expect(Boolean(configuredMediaRoot), "The cloud fixture media root is required").toBe(true);
+  const libraryPath = resolve(configuredMediaRoot!, `library-${suffix}`);
+  mkdirSync(libraryPath, { recursive: true });
   await page.goto("/manage/libraries");
-  await page.getByRole("button", { name: "新建媒体库" }).click();
-  await page.getByLabel("名称", { exact: true }).fill(libraryName);
-  await page.getByRole("button", { name: "创建", exact: true }).click();
+  await page.getByLabel("库名称", { exact: true }).fill(libraryName);
+  await page.getByLabel("服务器根路径", { exact: true }).fill(libraryPath);
+  await page.getByRole("button", { name: "注册并扫描", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: libraryName, exact: true }),
   ).toBeVisible();

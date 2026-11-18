@@ -7,7 +7,7 @@ import { useUploadQueue } from "../data/upload";
 import { QueuedPreparationError } from '../data/upload-queue';
 import { PageHeading, Loading, ErrorNotice } from "../components/Feedback";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { UploadRow } from "./UploadPage";
+import { UploadRow } from "./UploadQueueList";
 import { bytes } from "../lib/format";
 import { UnsavedGuard } from "../lib/navigation";
 
@@ -117,11 +117,11 @@ export function ReplacePage() {
         </p>
       )}
       {tasks.length > 0 && (
-        <div className="section-space upload-queue">
+        <ul className="section-space upload-task-list">
           {tasks.map((entry) => (
             <UploadRow key={entry.id} entry={entry} />
           ))}
-        </div>
+        </ul>
       )}
       <UnsavedGuard dirty={!!file && !busy} />
       {confirmation && (

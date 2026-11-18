@@ -49,7 +49,7 @@
 .video-player-box { position: relative; }
 .video-player-mount { width: 100%; height: 100%; }
 .asset-image-content { position: relative; width: 100%; }
-.detail-layout .detail-actions { flex-wrap: nowrap; }
+.detail-side .author-card { display: block; }
 .player-failure { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 85%; padding: 16px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius); background: var(--qm-surface-strong); color: var(--qm-text); z-index: 20; }
 .player-failure .pill { margin-top: 8px; margin-right: 8px; }
 .asset-edit-thumb { width: 96px; height: 96px; flex: none; border-radius: 8px; overflow: hidden; }
@@ -96,4 +96,8 @@
   .layout .sidebar--pages { display: flex; }
   .layout .header .qm-segment { width: auto; }
   .layout .media-grid { grid-template-columns: repeat(auto-fill,minmax(min(100%,230px),1fr)); gap: 24px 20px; }
+}
+@media (max-width: 1000px) {
+  .content--detail .detail-main { width: 100%; }
+  .content--detail .detail-actions { flex-wrap: wrap; }
 }

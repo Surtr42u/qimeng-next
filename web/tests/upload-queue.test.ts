@@ -274,3 +274,54 @@ it('a cancellation race reads an already published input without marking it canc
   expect(queue.getSnapshot().entries[0]).toMatchObject({ phase: 'ingested', assetId: 'asset-fixture' });
   queue.dispose();
 });
+
+it('does not register a batch after the session closes while its local snapshot is being saved', async () => {
+  let finishStorage!: () => void;
+  mocks.writeGroup.mockImplementation(() => new Promise<void>(resolve => { finishStorage = resolve; }));
+  const queue = await initialized();
+  const adding = queue.add([file()], target, '合成库');
+  const rejected = expect(adding).rejects.toThrow('设备会话已离开');
+  await vi.waitFor(() => expect(mocks.writeGroup).toHaveBeenCalled());
+  queue.dispose();
+  finishStorage();
+  await rejected;
+  expect(mocks.post).not.toHaveBeenCalled();
+  expect(mocks.digest).not.toHaveBeenCalled();
+});
+
+it('cancels the existing selection serially without publishing queued rows', async () => {
+  mocks.digest.mockImplementation((_file: File, signal: AbortSignal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
+  let active = 0;
+  let maximum = 0;
+  mocks.post.mockImplementation(async (path: string) => {
+    if (path === '/batches') return batch;
+    if (path === '/batches/{id}/inputs/{inputId}/cancel') {
+      maximum = Math.max(maximum, ++active);
+      await Promise.resolve();
+      active--;
+      return { state: 'cancelled' };
+    }
+    throw new Error('No file publication was authorised by this cancellation test');
+  });
+  const queue = await initialized();
+  await queue.add([file(), file(), file()], target, '合成库');
+  const cancelling = queue.cancelAll();
+  expect(queue.cancelAll()).toBe(cancelling);
+  await cancelling;
+  expect(maximum).toBe(1);
+  expect(queue.getSnapshot().entries.map(entry => entry.phase)).toEqual(['cancelled', 'cancelled', 'cancelled']);
+  expect(mocks.post.mock.calls.filter(call => call[0] === '/uploads')).toHaveLength(0);
+  queue.dispose();
+});
+
+it('aborts cancellation with the session and does not reconcile using a later session', async () => {
+  mocks.digest.mockImplementation((_file: File, signal: AbortSignal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
+  const queue = await initialized();
+  await queue.add([file()], target, '合成库');
+  mocks.post.mockImplementation((_path: string, options: { signal: AbortSignal }) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
+  const cancelling = queue.cancel(queue.getSnapshot().entries[0]!.id);
+  await vi.waitFor(() => expect(mocks.post.mock.calls.some(call => call[0] === '/batches/{id}/inputs/{inputId}/cancel')).toBe(true));
+  queue.dispose();
+  await cancelling;
+  expect(mocks.get).not.toHaveBeenCalled();
+});

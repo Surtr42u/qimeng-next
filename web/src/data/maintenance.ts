@@ -22,6 +22,7 @@ export function useStartScan() {
           body: { expectedRevision: revision },
         }),
       ),
+    onSuccess: invalidateLibrary,
   });
 }
 export function useScan(id: string) {

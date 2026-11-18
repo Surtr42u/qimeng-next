@@ -19,13 +19,19 @@ func (r *Root) ResolveLibraryPath(value string) (string, string, error) {
  longest:=-1
  for id,location:=range r.locations {
   if id=="data" {continue}
-  candidate,e:=filepath.Rel(location.absolute,absolute)
-  if e!=nil {continue}
-  candidate=filepath.ToSlash(candidate);if candidate=="." {candidate=""}
-  if !cleanRelative(candidate) {continue}
-  if len(location.absolute)>longest {storageID,relative,longest=id,candidate,len(location.absolute)}
+  // The operator's path can legitimately contain a Windows short name or a
+  // trusted mount alias. All subsequent filesystem access uses the opened root.
+  for _,prefix:=range []string{location.configured,location.absolute} {
+   candidate,e:=filepath.Rel(prefix,absolute)
+   if e!=nil {continue}
+   candidate=filepath.ToSlash(candidate);if candidate=="." {candidate=""}
+   if !cleanRelative(candidate) {continue}
+   if len(prefix)>longest || len(prefix)==longest && id<storageID {storageID,relative,longest=id,candidate,len(prefix)}
+  }
  }
  if storageID=="" {return "","",fs.ErrPermission}
+ canonical:=filepath.Join(r.locations[storageID].absolute,filepath.FromSlash(relative))
+ if overlaps(canonical,r.locations["data"].absolute) {return "","",fs.ErrPermission}
  root:=r.locations[storageID].root
  if relative!="" {
   parts:=strings.Split(relative,"/")
@@ -37,4 +43,12 @@ func (r *Root) ResolveLibraryPath(value string) (string, string, error) {
   }
  }
  return storageID,relative,nil
+}
+
+func (r *Root) DisplayLibraryPath(id string) (string,error) {
+ r.mu.RLock();defer r.mu.RUnlock()
+ library,ok:=r.libraries[id]
+ if !ok {return "",ErrUnavailable}
+ root:=r.locations[library.storageID]
+ return filepath.Join(root.configured,filepath.FromSlash(library.relative)),nil
 }
