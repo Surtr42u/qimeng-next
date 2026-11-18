@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: MCP discovery to present to the model
+        description: Compare MCP discovery or process an App-submitted batch with the worker
         type: choice
-        options: [both, domain, full]
+        options: [both, domain, full, intake]
         default: both
 permissions:
   contents: read
@@ -38,6 +38,12 @@ jobs:
           (cd server && go build -trimpath -o "$RUNNER_TEMP/model-proof/qimeng-next" ./cmd/qimeng)
       - name: Obtain the pinned public model and CPU inference engine
         run: bash tools/model-proof/fetch.sh "$RUNNER_TEMP/model-proof"
+      - name: Provide FFmpeg for the synthetic intake originals
+        if: env.MODEL_PROFILE == 'intake'
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+          fi
       - name: Run real inference with loopback networking only
         run: |
           mkdir "$RUNNER_TEMP/model-proof/home"

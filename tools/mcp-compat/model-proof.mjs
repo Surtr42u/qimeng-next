@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join, resolve } from 'node:path';
 import { McpClient, StdioTransport, toLlmContent } from '@earendil-works/pi-mcp';
-import { openFixture, grade, goOrigin } from '../model-proof/fixtures.mjs';
+import { openFixture, grade, goOrigin, modelInfo } from '../model-proof/fixtures.mjs';
 
 const modelEndpoint = 'http://127.0.0.1:18580/v1/chat/completions';
 const system = '你是绮梦资料库助手。依据用户要求和实际工具结果作答。保留未授权资料，无法完成的事如实说明。用中文回复。';
@@ -157,11 +157,8 @@ async function runCase(fixture, scenario, profile) {
 }
 
 const catalog = JSON.parse(await readFile('api/generated/python/operations.json', 'utf8'));
-const report = { sourceCommit: process.env.SOURCE_COMMIT, openapiSha256: catalog.openapiSha256, model: 'Qwen/Qwen3-4B-GGUF',
-  modelRevision: 'bc640142c66e1fdd12af0bd68f40445458f3869b', modelFile: 'Qwen3-4B-Q4_K_M.gguf',
-  modelSha256: '7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5',
-  inference: 'llama.cpp b12521 / 6f311d7ad63dce97a3ad1deaafb7cc044bb8c26c', host: '@earendil-works/pi-mcp@1.5.2 with test chat loop',
-  standardRunner: 'ubuntu-24.04 x64 CPU', network: 'loopback namespace', seed: 1403, temperature: 0, attempts: [] };
+const report = { sourceCommit: process.env.SOURCE_COMMIT, openapiSha256: catalog.openapiSha256, ...modelInfo,
+  host: '@earendil-works/pi-mcp@1.5.2 with test chat loop', seed: 1403, temperature: 0, attempts: [] };
 const profiles = process.env.MODEL_PROFILE === 'both' ? ['domain', 'full'] : [process.env.MODEL_PROFILE];
 if (!profiles.every(profile => ['domain', 'full'].includes(profile))) throw Error('invalid discovery profile');
 const save = () => writeFile('build/model-proof/results.json', JSON.stringify(report, null, 2) + '\n');

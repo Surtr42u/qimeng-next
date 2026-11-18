@@ -57,6 +57,8 @@ mcp_servers:
 
 `domain` 先呈现资料与词表工具，模型可以通过正式工具说明请求其他工具的 Schema。`full` 首轮呈现完整 MCP 清单。两种配置各用独立合成数据库。`real-cpu-model-evidence/results.json` 记录短指令、模型和推理器版本、逐轮真实输入和输出 token、请求与结果字节数、实际工具调用、重复输入、终止原因及独立业务核对结果。某一任务失败时仍保存其结果与已经完成的其他场次。[工作流](../.github/workflows/model-proof.yml) · [宿主与判定](../tools/mcp-compat/model-proof.mjs)
 
+同一工作流的 `intake` 选项测试 App 主动提交的后台任务。提交方经正式 HTTP 选择一张合成 PNG、一段 H.264 短片和一份不支持的文本附件，只授予本库的新增与整理权限。正式 `qai worker --once` 接入同一份模型权重。独立验证端从 Go 读回三项去向、两件资产与原件字节，逐项核对 SHA-256，再启动一个新执行器检查会不会重复入库。运行制品 `intake.json` 保存实际状态、使用量及通过的断言。[混合入库与原件回读](../tools/model-proof/intake.mjs)
+
 首轮 `27f71b3` 的领域配置呈现 15 个工具（7,920 字节）。一次词表查询返回 387 字节，模型正确给出两组正式名和 ID，两轮合计输入 5,311、输出 124 个 token。作者任务中，模型两次提交相同的写请求，两次均被拒绝，实际资料未变，三轮合计输入 8,130、输出 287 个 token。完整配置呈现 62 个工具（47,559 字节），两个任务都在收到第一条推理应答前达到 240 秒上限，token 用量未测。该轮宿主尚未转交 MCP 初始化说明。后续报告将未收到的用量记为 `null`。[首轮作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44384690363/job/135085894125) · [逐轮报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44384690363/artifacts/14466926397)
 
 云端`mcp-compat`作业使用真实Go服务、Python官方SDK和相互独立的Pi/TypeScript客户端。测试脚本只访问临时服务与合成图片。最新通过的提交和未验证项见[当前状态](status.md)。仅源码或配置示例存在不构成通过证据。

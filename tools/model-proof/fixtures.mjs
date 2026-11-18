@@ -6,11 +6,17 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export const goOrigin = 'http://127.0.0.1:18581';
+export const modelInfo = {
+  model: 'Qwen/Qwen3-4B-GGUF', modelRevision: 'bc640142c66e1fdd12af0bd68f40445458f3869b',
+  modelFile: 'Qwen3-4B-Q4_K_M.gguf', modelSha256: '7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5',
+  inference: 'llama.cpp b12521 / 6f311d7ad63dce97a3ad1deaafb7cc044bb8c26c',
+  standardRunner: 'ubuntu-24.04 x64 CPU', network: 'loopback namespace',
+};
 export const aliasPrompt = '按「晚舟」这个别称查找标签，把所有匹配条目的正式名和稳定 ID 给我。';
 const biography = '在潮汐镇整理木刻年画。';
 export const authorPrompt = `请给作者「林页」补上简介「${biography}」。其他资料照旧，回读后把简介原文给我。`;
 
-export async function openFixture() {
+export async function openInstance() {
   const root = await mkdtemp(join(process.env.MODEL_WORK, 'instance-'));
   const ownerToken = randomBytes(32).toString('hex');
   const child = spawn(join(process.env.MODEL_WORK, 'qimeng-next'), [], { cwd: root, stdio: 'ignore', env: {
@@ -20,12 +26,24 @@ export async function openFixture() {
   const exited = once(child, 'exit');
   async function close() { child.kill('SIGTERM'); await exited; }
   let operation = 0;
-  async function owner(path, method = 'GET', body) {
+  async function request(path, method = 'GET', body) {
     const headers = { Authorization: `Bearer ${ownerToken}` };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (method !== 'GET' && path !== '/credentials') headers['Idempotency-Key'] = `model-fixture-${++operation}`;
-    const response = await fetch(goOrigin + '/api/v1' + path, { method, headers, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+    if (Buffer.isBuffer(body)) {
+      headers['Content-Type'] = 'application/octet-stream';
+      headers['Upload-Offset'] = '0';
+    } else {
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      if (method !== 'GET' && !['/credentials', '/ai/delegations'].includes(path)) {
+        headers['Idempotency-Key'] = `model-fixture-${++operation}`;
+      }
+      body = JSON.stringify(body);
+    }
+    const response = await fetch(goOrigin + '/api/v1' + path, { method, headers, body, signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw Error(`fixture HTTP ${response.status} during ${method} ${path.split('/')[1]}`);
+    return response;
+  }
+  async function owner(path, method, body) {
+    const response = await request(path, method, body);
     return response.status === 204 ? null : response.json();
   }
   try {
@@ -36,6 +54,13 @@ export async function openFixture() {
         await delay(250);
       }
     }
+    return { root, request, owner, close };
+  } catch (error) { await close(); throw error; }
+}
+
+export async function openFixture() {
+  const { root, owner, close } = await openInstance();
+  try {
     const library = await owner('/libraries', 'POST', { name: '合成资料库', kind: 'regular' });
     const batch = await owner('/batches', 'POST', { libraryId: library.id, mode: 'ordinary', label: '词表只读核对' });
     const candidates = [];
