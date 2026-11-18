@@ -17,6 +17,9 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("mcp", help="启动标准 stdio MCP 服务")
     commands.add_parser("catalog", help="查询工具目录")
+    worker = commands.add_parser("worker", help="在可信本机宿主自动领取 App 提交的智能批次")
+    worker.add_argument("--once", action="store_true", help="处理一轮可领取或待恢复的批次")
+    worker.add_argument("--retry-batch", help="明确恢复本执行器已领取并等待处理的单个批次")
     call = commands.add_parser("call", help="执行一个工具；JSON 从stdin读取")
     call.add_argument("tool")
     admin = commands.add_parser("admin", help="可信端预算状态/核销/续期")
@@ -36,7 +39,10 @@ def main() -> None:
             asyncio.run(run())
             return
         runtime = Runtime(Config.load())
-        if args.command == "catalog":
+        if args.command == "worker":
+            from .worker import run_worker
+            result = run_worker(runtime, once=args.once, retry_batch=args.retry_batch)
+        elif args.command == "catalog":
             result = runtime.call("platform.catalog", {})
         elif args.command == "call":
             raw = sys.stdin.buffer.read(1024 * 1024 + 1)

@@ -28,6 +28,25 @@
 
 凭据不通过命令行参数输入、不进入仓库或报告。工具清单默认完整且稳定，兼容不刷新清单的宿主；任务实际上下文、规则和数据仍按需获取。可见工具不等于已获许可，服务端还会执行独立scope和批次限制。
 
+## 自动领取 App 智能整理
+
+希望 App 提交后直接开始整理时，在可持续运行的可信电脑上配置影库长期凭据、本机模型和 `qai worker`。已有的 stdio 聊天宿主仍可随时用 `task.start` 主动认领。关闭的聊天宿主需要另行启动，后台自动处理由运行中的 worker 与它配置的模型承担。
+
+| 配置 | 用途 |
+|---|---|
+| `QIMENG_API_BASE`、`QIMENG_API_TOKEN`、`QIMENG_AI_STATE_DIR` | 影库实例、已授权接收和整理指定媒体库的长期凭据、可跨进程重启保留的私有状态目录 |
+| `QIMENG_AI_PERMISSIONS` | 至少 `read,delegate,organize`。只有需要研究资料时加 `research` |
+| `QIMENG_AI_WORKER_ORIGIN`、`QIMENG_AI_WORKER_MODEL` | 数值回环地址、端口和本机宿主的模型名，例如 `http://127.0.0.1:8080`。宿主须支持 `/v1/chat/completions` 的工具调用 |
+| `QIMENG_AI_WORKER_TOKEN` | 模型宿主要求认证时设置其专用凭据。影库和模型使用独立凭据 |
+| `QIMENG_AI_WORKER_POLL_SECONDS` | 空队列或临时离线后的轮询间隔，默认 30 秒 |
+| `QIMENG_AI_WORKER_IMAGE_LOOKUP` | 默认 false。开启时仅对已授予单帧查证且该批有研究额度的任务申请。模型接收预览仍需 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL=true` |
+
+用户在 App 或 Web 选择智能整理并提交。所有选中项传输或记录失败后，Go 向相应长期授权提供可认领批次。worker 持久化认领键，签出本批的受限凭据，将分项状态和可用工具送给本机宿主。模型提供整理意图，Go 核对版本、权限和媒体资料，生成并提交命名计划。普通上传直接入库。批内的空文件或不支持的输入继续保留其原因，独立的好文件可以完成。
+
+运行 `qai worker` 持续轮询，Ctrl+C 可停止。使用 `qai worker --once` 处理一轮。进程重启后沿原键恢复未确认操作，并从 Go 回读同一计划、待处理项和最终资产。每日新任务额度已满时，已领取的任务仍可继续。并发执行器分别使用私有状态目录，Go 只向获胜方签发任务。私有目录完全丢失或要更换宿主时，由可信端明确选择原任务并用 `task.resume` 接续。
+
+模型结束而仍有待整理输入时，worker 报告 `needs_attention` 并保留原任务。原批次修订有变化时再交给模型。权限拒绝、预算耗尽或重复无进展时，核实授权或在可信端续期后用 `qai worker --retry-batch <批次ID>` 明确恢复。任务报告仍以 `task.read` 或 App 任务中心为准。每轮的 `batches[].modelUsage` 给出模型轮数、工具调用与重复数、耗时，以及宿主实际报告的输入/输出 token。未提供完整计量的字段返回 `null`。
+
 ## 工作流
 
 1. 首次由本人在可信设置中选择允许的库、资料维护范围、动作、预算和有效期，签发长期执行器凭据。配置MCP后，模型用`platform.permissions`读取真实范围，以`task.start`创建任务或认领App已有智能批次；不需要每次切回App。
@@ -70,7 +89,7 @@
 
 第一次在 AI 授权页选择媒体库、是否允许研究已有作品，以及可补全的字段和是否允许改名。需要执行写入的宿主同时在 `QIMENG_AI_PERMISSIONS` 配置 `asset.metadata.write`。向模型发送预览图还需开启 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL`。现有授权升级后按原来的权限继续工作。
 
-例如，你可以在聊天里说「找出这个库里叫 source.png 的作品，查证作者，按这个目录现有格式接下一个编号」。执行器通过 `asset.query` 查找条目，用返回的修订号和内容版本创建 `kind=asset` 任务。扫描得到、从 v2 恢复和手工上传的作品使用同一流程。查询和回读沿用任务 ID，可在另一个宿主用 `task.resume` 接续。
+例如，你可以在聊天里说「找出这个库里叫 source.png 的作品，查证作者，按这个目录现有格式接下一个编号」。执行器通过 `asset.query` 查找条目，用返回的修订号和内容版本创建 `kind=asset` 任务。从原生 `.qnext` 整库恢复、扫描发现和手工上传的作品使用同一流程。查询和回读沿用任务 ID，可在另一个宿主用 `task.resume` 接续。
 
 1. `asset.task.context` 返回这件作品被授权的字段。可以先用 `asset.evidence.query` 回读同一内容版本已经采用的证据。
 2. `asset.research.materials` 准备有界预览；通过 `platform.artifact.read` 将图送给已获授权的模型。无法核实时保留未知状态。
