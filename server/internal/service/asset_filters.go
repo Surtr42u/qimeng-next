@@ -35,6 +35,7 @@ const assetNameMatches = `(qimeng_search_token(` + assetSearchText + `,?)=1 OR a
  UNION ALL
  SELECT cm.asset_id FROM collection_aliases ca JOIN collection_members cm ON cm.collection_id=ca.collection_id
  WHERE qimeng_search_token(ca.alias,?)=1))`
+
 type browseSort struct {
 	Expression, Name              string
 	Descending, Numeric, Nullable bool

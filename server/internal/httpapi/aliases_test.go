@@ -236,7 +236,7 @@ func TestTagWriteReplaysImmutablePreIdentityReceipts(t *testing.T) {
 	decode(t, f.json("PUT", "/tag-vocabulary/"+tag.ID+"/aliases", "alias-update-history-fixture", generated.AliasSetUpdate{ExpectedRevision: renamed.Revision, Aliases: []string{"Lookup"}}, 200), &current)
 	for _, tc := range []struct {
 		method, path, key, canonical, receipt string
-		status                               int
+		status                                int
 	}{
 		{"POST", "/tags", "historical-create-tag", `{"name":"Former"}`, `{"name":"Former","revision":1,"createdAt":"2024-01-02T03:04:05Z","updatedAt":"2024-01-02T03:04:05Z"}`, 201},
 		{"PATCH", "/tags/Former", "historical-rename-tag", `{"name":"Current","expectedRevision":1}`, `{"name":"Current","revision":1,"createdAt":"2024-01-02T04:05:06Z","updatedAt":"2024-01-02T04:05:06Z"}`, 200},

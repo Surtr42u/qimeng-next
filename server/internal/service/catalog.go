@@ -581,6 +581,7 @@ func (s *Service) UpdateAuthor(ctx context.Context, w *Write, id string, in Auth
 	}
 	return a, finishAuthorTask(ctx, q, task, a.Revision)
 }
+
 const collectionAliasMatch = `(c.name LIKE ? ESCAPE '\' OR EXISTS(SELECT 1 FROM collection_aliases a
  WHERE a.collection_id=c.id AND a.alias LIKE ? ESCAPE '\'))`
 
