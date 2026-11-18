@@ -96,7 +96,7 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 |---|---|
 | 纯 Markdown | `Engineering checks` 的文档链接、章节和相关工程检查。操作步骤另与当次启动器、界面或工作流核对 |
 | 协议、迁移、Go 业务、文件恢复 | `generate` 与 `lock-check` 核对协议来源，`server` 核对 Linux／SQLite 行为。文件语义涉及 Windows 时看 `windows`。协议变动也要看直接消费端 |
-| Web、桌面、Android | Web 的 `web` 作业和真实 Go 联调 `live`，Windows 连接壳的 `windows` 作业。Android 依变更看 `android`、`android-ui` 或本机运行链上的 `android-native`、`android-embedded`、`android-local-ui`。新旧画面对照单列 |
+| Web、桌面、Android | `web` 编译并做单元测试，`web-ui` 在桌面与移动视口运行浏览器测试，`live` 使用同一份 Web 构建连接真实 Go。Windows 连接壳看 `windows`。Android 依变更看 `android`、`android-ui` 或本机运行链上的 `android-native`、`android-embedded`、`android-local-ui`。新旧画面对照单列 |
 | AI、MCP 宿主 | `ai` 的执行器用例、`live` 的真实 Go 调用，以及受影响的 `mcp-compat`、`hermes` 客户端结果 |
 | PC/NAS 打包、启动与恢复 | `server-packages` 中对应 CPU 和操作系统的作业、产品 ZIP、SHA-256、登录页与隔离恢复记录。设备安装和 NAS 实机另记 |
 
