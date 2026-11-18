@@ -4,8 +4,12 @@ android {
     compileSdk = 37
     defaultConfig { minSdk = 26; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     buildFeatures { compose = true }
-    sourceSets["androidTest"].kotlin.directories += rootProject.file("test-support").path
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+}
+androidComponents.onVariants { variant ->
+    variant.deviceTests.values.forEach { test ->
+        test.sources.kotlin?.addStaticSourceDirectory(rootProject.file("test-support").absolutePath)
+    }
 }
 dependencies {
     api(project(":core:model"))

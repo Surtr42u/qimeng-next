@@ -11,7 +11,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
-    sourceSets["androidTest"].kotlin.directories += rootProject.file("test-support").path
     flavorDimensions += "runtime"
     productFlavors {
         create("client") { dimension = "runtime" }
@@ -21,6 +20,11 @@ android {
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
         jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libqimeng*.so", "**/libffmpeg_cli.so", "**/libffprobe_cli.so") }
+    }
+}
+androidComponents.onVariants { variant ->
+    variant.deviceTests.values.forEach { test ->
+        test.sources.kotlin?.addStaticSourceDirectory(rootProject.file("test-support").absolutePath)
     }
 }
 dependencies {
