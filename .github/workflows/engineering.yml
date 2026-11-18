@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: engineering-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   standards:
     runs-on: ubuntu-24.04

@@ -2,11 +2,19 @@
 
 更新于 2026-11-18。新仓正在恢复用户已安装旧版的界面。新仓产物用于空目录验收，真实库迁移、用户设备安装与 NAS 实机验收尚未执行。
 
+## 维护与验收
+
+维护者从[开发与维护](../CONTRIBUTING.md)进入。Go 提交格式、模块引用、文档链接及章节、已发布迁移完整性在 `499d656` 的独立工程检查中全部通过。该提交包含已回收的云端格式修正和协议锁。Web 展示层的正反例已在浏览器客户端作业通过。[工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855562) · [Web 检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44284583229/job/134734519002)
+
+数据库启动现先核对已有迁移，再执行待办。云端已证明遇到较新版本或历史校验和变化时，待执行 SQL 和版本记录均未写入。备份用例另发现迁移记录表的原始建表文本需要保留，后续改为与恢复验证共享原定义，并加上旧表兼容用例。最新一批 GitHub Actions 未获得运行器。恢复、研究异常接续、Android 构建边界及 Windows 真实窗口等结果需在可用的云运行器上补验。[数据库回归和原失败记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44285401499/job/134737499815) · [未开始的集成作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44287479395)
+
 ## 当前界面基准
 
 旧版 PC 和 Android 最近一轮有安装记录的构建均出自 `74597408`。它与旧仓 `d0215962` 在 Web 展示源码、Android 与桌面目录的差异为空。已定位 Web 侧栏和顶栏选中效果、详情叠层及 Android 导航材质和换页过渡的实现差异。旧 Android 的四档为液态玻璃、磨砂玻璃、纯色坞、经典，默认液态玻璃。2026-11-18 起暂缓重构方案新增的动效。按已安装版本的展示源码及同场景截图核对，分别记录每个端的进度。[旧版安装记录](https://github.com/Surtr42u/qimeng-media/blob/d0215962/docs/HANDOVER.md) · [Web 与桌面对照](ui.md) · [Android 对照](../android/UI_PARITY.md)
 
-Web 恢复旧侧栏、顶栏和详情叠层后，`f2b884b` 的浏览器检查通过 30 个单测、89 个浏览器用例。旧版与该提交的设置页已对照同主题、同滚动位置的 1440×800 和 390×844 云端截图，保留新增的「AI 接入」按钮。首页和相册已有新端两种视口的截图，旧版同数据截图仍待补齐。Android 已将旧版四档导航、首页间距及标签底部弹层接入新代码，该批的截图与编译另行验收。[Web 验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797/job/134682447928)
+Web 首页、相册及详情已用旧、新两个实际入口，按同一组合成媒体、主题和桌面／窄屏视口对照。六组已测布局误差均在 1 CSS 像素内，打开详情后返回原列表的位置一致。详情、图表和管理代码改为按需载入后，同套合成数据的冷首页实际下行从 3,174,379 降至 2,470,783 字节，相比调整前减少约 22%。这个数值只适用于这次 Web 首屏测量。设置页另保留用户授权所需的「AI 接入」入口。[六组画面与网络测量](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855368)
+
+Android 已接回旧版四档导航、首页间距及标签底部弹层。`4105b7a` 纯客户端构建、JVM、Lint 和 APK 检查通过。旧版默认／经典首页与标签弹层已有实际发布 APK 的回读摘要和云端原图；完整新旧同状态对照仍需新版同场景截图。[客户端构建](https://github.com/Surtr42u/qimeng-next/actions/runs/44284583229/job/134734519028) · [旧版原图](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855346)
 
 ## 已取得的证据
 
@@ -15,7 +23,7 @@ Web 恢复旧侧栏、顶栏和详情叠层后，`f2b884b` 的浏览器检查通
 | Go 与文件 | `e9fe1df` 在 Linux 两个 SQLite 驱动及 Windows 通过 Go 检查。覆盖发布恢复、大小写改名、批次独立备份、任务取消和监听。云 Linux 验证了来源的原生回收。Windows 云环境返回来源保留的回执。 |
 | Android 本机 | `35b8950` 在 API 35 云模拟器实际启动内嵌 Go，完成登录、重启读取同一实例和证书更新。Android SQLite 通过 NDK 访问系统支持的文件接口。ARM64 和 x86_64 原生构建分别通过。 |
 | Android 客户端 | `f2b884b` 的 APK、JVM、lint、两种原生架构和本机 API 35 仪器通过。后者实际核对了普通上传取得的资产 ID、磁盘原件及断电／接电扫描。联网模拟器的视频全屏画面仍未通过。此轮仍使用修正前的 Android 外观。[本机仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797/job/134686309823) |
-| Web 与桌面 | `f2b884b` 的 Web 浏览器用例通过，Web 与真实 Go 联调作业在准备阶段取消，最近一次联调通过为 `e9fe1df`。Windows 生成桌面包后，WebView2 真实窗口验收未能连接窗口。 |
+| Web 与桌面 | `e42260c` 的浏览器与真实 Go 联调通过。Windows 在云端已生成安装包和服务端程序，真实 WebView2 窗口的完整回执仍待验证。[真实 Go 与浏览器](https://github.com/Surtr42u/qimeng-next/actions/runs/44278862765/job/134719598585) |
 | PC／NAS 启动包 | `e9fe1df` 在云 Windows x64、Linux x64、Linux ARM64 对各自的服务端包执行了启动、登录与隔离恢复。 |
 | AI 执行器与 MCP | `e9fe1df` 的真实 Go、stdio、Pi、官方 TypeScript SDK 及 Hermes 客户端作业通过。Hermes 使用合成模型响应，记录范围为宿主与工具的协议往返。 |
 | 数据迁移 | 云端使用合成 v2 副本和全新目标目录验证导入、内容身份、历史记录及隔离恢复。真实资料留待独立的迁移验收。 |

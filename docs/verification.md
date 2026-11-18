@@ -6,7 +6,9 @@
 
 本地允许源码阅读与编辑、静态差异检查、Git 提交/推送和读取云端日志。需要设备或 NAS 才能证明的行为单列，不能用 CI 冒充。
 
-推送主分支和提交 PR 自动运行 Cloud verification。OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随该次检查提供；仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 会将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 同时使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
+主分支和 PR 有代码变更时自动运行 Cloud verification。纯 Markdown 变更走独立工程检查。开发分支平时运行轻量检查，需要集成验收时由维护者在 Actions 中为指定提交所在分支调用完整工作流。合成界面对照可独立调度。Web 展示源码进入主分支后会触发新旧对照，已安装的 Android 参考版只在基准变更或显式调度时重建。
+
+OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随完整检查提供。仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
 
 Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming`。归档下载、作者总表、片段与可读作者资料均按字节流交付。云端会核对这些方法的实际签名，避免手机在收到大备份时先把整个响应放进内存。
 

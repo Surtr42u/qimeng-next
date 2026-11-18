@@ -3,11 +3,18 @@ on:
   workflow_dispatch:
   workflow_call:
   push:
+    branches: [main]
     paths:
       - '.github/workflows/ui-reference.yml'
       - 'web/tests/ui-reference*.mjs'
+      - 'web/src/**'
+      - 'web/package-lock.json'
+      - 'ui/react/**'
 permissions:
   contents: read
+concurrency:
+  group: installed-web-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   compare:
     runs-on: ubuntu-24.04
