@@ -51,6 +51,6 @@ export function createPairingAttempt() {
 export function registerDevice(deviceId: string, attempt: ReturnType<typeof createPairingAttempt>) {
   return read(api.POST("/device/credentials", {
     params: { header: operationHeaders(attempt.key) },
-    body: { deviceId, label: deviceId, credentialSecret: attempt.secret },
+    body: { deviceId, label: deviceId.slice(0, 80), credentialSecret: attempt.secret },
   }));
 }

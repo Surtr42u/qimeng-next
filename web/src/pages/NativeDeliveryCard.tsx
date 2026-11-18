@@ -116,7 +116,7 @@ function DeliveryForm() {
     setChosen(existing ? chosen.map(entry => entry === existing ? item : entry) : [...chosen, item]);
   };
   return <div className="form-stack">
-    <label className="settings-field">目标设备标识<input value={device} maxLength={80} onChange={e => setDevice(e.target.value)} placeholder="与接收端登记的标识相同" /></label>
+    <label className="settings-field">目标设备标识<input value={device} maxLength={100} onChange={e => setDevice(e.target.value)} placeholder="与接收端登记的标识相同" /></label>
     <PairDevice key={device.trim()} device={device.trim()} />
     <details onToggle={e => { if (e.currentTarget.open) setHistoryDevice(device.trim()); }}><summary>查看这个设备的交付记录</summary>
       <button type="button" className="pill" disabled={!device.trim()} onClick={() => {

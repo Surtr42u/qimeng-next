@@ -379,10 +379,8 @@ export function ImageViewer({
   const fallbackRef = useRef(focusFallback)
   useEffect(() => { fallbackRef.current = focusFallback })
 
-  // F2·P3b：打开时焦点移入（关闭钮），卸载时归还触发元素——role=dialog +
-  // aria-modal 的键盘可达性配套。归还对已离场元素是 no-op（浏览器静默忽略），
-  // 无需存活检查。preventScroll：查看器是 fixed 全屏层，聚焦不许可滚动跳动。
-  // focus-visible 规则保证鼠标用户的点击打开不会闪焦点描边
+  // Browsers differ on whether clicking an image button focuses it. After a
+  // viewer switches images, return to the trigger for the currently shown one.
   useEffect(() => {
     const prev = document.activeElement
     const app = document.getElementById('root')
@@ -391,8 +389,9 @@ export function ImageViewer({
     closeBtnRef.current?.focus({ preventScroll: true })
     return () => {
       if (app) app.inert = wasInert
-      if (prev instanceof HTMLElement && prev.isConnected) prev.focus({ preventScroll: true })
-      else fallbackRef.current?.()?.focus({ preventScroll: true })
+      const trigger = fallbackRef.current?.()
+      if (trigger?.isConnected && !trigger.closest('[inert]')) trigger.focus({ preventScroll: true })
+      else if (prev instanceof HTMLElement && prev.isConnected && prev !== document.body) prev.focus({ preventScroll: true })
     }
   }, [])
 

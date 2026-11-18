@@ -10,6 +10,7 @@ test("sending selected native data retries the same request and reads the device
     createdAt: "2026-01-01T00:00:00Z", expiresAt: "2026-01-02T00:00:00Z" };
   const keys: string[] = [];
   const legacyCalls: string[] = [];
+  await page.route("**/api/v1/backups?**", route => route.fulfill({ json: { items: [] } }));
   page.on("request", request => { if (request.url().includes("/migration/v2/")) legacyCalls.push(request.url()); });
   await page.route("**/api/v1/author-lists?**", route => route.fulfill({ json: { items: [
     { id: "list-one", name: "作者 01.txt", revision: 4 }, { id: "list-two", name: "作者 02.txt", revision: 7 },
@@ -32,7 +33,7 @@ test("sending selected native data retries the same request and reads the device
   await expect(page.getByRole("list", { name: "待发送资料" })).toContainText("作者 02.txt · 修订 7");
   const send = page.getByRole("button", { name: "发送所选资料" });
   await send.click();
-  await expect(page.getByRole("alert")).toContainText("没有收到成功确认");
+  await expect(page.getByRole("alert").filter({ hasText: "没有收到成功确认" })).toBeVisible();
   await send.click();
   await expect(page.getByText("local-plan", { exact: true })).toBeVisible();
   expect(keys).toHaveLength(2);
