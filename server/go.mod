@@ -4,13 +4,13 @@ go 1.27.4
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/getkin/kin-openapi v0.142.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/hashicorp/mdns v1.0.7
 	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/oapi-codegen/runtime v1.9.0
 	github.com/shirou/gopsutil/v4 v4.26.10
 	golang.org/x/image v0.48.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
 	modernc.org/sqlite v1.62.0
 )
