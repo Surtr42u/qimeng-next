@@ -9,10 +9,43 @@ import (
 )
 
 func (a *API) PublishNativeDelivery(w http.ResponseWriter, r *http.Request, params generated.PublishNativeDeliveryParams) {
-	writeScoped[service.NativePublish](a, w, r, "admin", true, func(r *http.Request, tx *service.Write, in service.NativePublish) (any, int, error) {
-		v, err := a.s.PublishNativeDelivery(r.Context(), tx, in)
-		return v, http.StatusCreated, err
+	nativeVideoMutation(a, w, r, params.IdempotencyKey, http.StatusCreated, func(in service.NativePublish) (*service.NativeVideoProofs, error) {
+		return a.s.InspectNativePublish(r.Context(), principal(r), in)
+	}, func(tx *service.Write, in service.NativePublish, proofs *service.NativeVideoProofs) (any, error) {
+		return a.s.PublishNativeDelivery(r.Context(), tx, in, proofs)
 	})
+}
+
+func nativeVideoMutation[T any](a *API, w http.ResponseWriter, r *http.Request, key string, status int,
+	inspect func(T) (*service.NativeVideoProofs, error), apply func(*service.Write, T, *service.NativeVideoProofs) (any, error)) {
+	if !allowScope(w, r, "admin") {
+		return
+	}
+	if len(key) < 8 || len(key) > 128 {
+		fail(w, service.Fail(400, "idempotency_required", "原生交付需要有效的请求身份。"))
+		return
+	}
+	input, raw, err := decode[T](w, r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	proofs, err := inspect(input)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer proofs.Close()
+	raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
+	out, err := a.s.Run(r.Context(), principal(r), r.Method+" "+r.URL.Path, key, raw, func(tx *service.Write) (any, int, error) {
+		v, err := apply(tx, input, proofs)
+		return v, status, err
+	})
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	result(w, out)
 }
 
 func (a *API) StageNativeDelivery(w http.ResponseWriter, r *http.Request, params generated.StageNativeDeliveryParams) {
@@ -28,10 +61,16 @@ func (a *API) StageNativeDelivery(w http.ResponseWriter, r *http.Request, params
 		fail(w, service.Fail(413, "native_package_too_large", "原生包超过 2 MiB 段预算或正文读取失败。"))
 		return
 	}
+	proofs, err := a.s.InspectNativeStage(r.Context(), principal(r), raw, params.SourceInstanceId, params.TargetInstanceId, params.PackageId)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer proofs.Close()
 	// Staging may be replayed after commit. Bind the key transactionally and
 	// always read the current business result rather than a stale preview.
 	output, err := a.s.Run(r.Context(), principal(r), "stageNativeDelivery", "", nil, func(tx *service.Write) (any, int, error) {
-		v, err := a.s.StageNativeDelivery(r.Context(), tx, raw, params.SourceInstanceId, params.TargetInstanceId, params.PackageId, string(params.ConflictPolicy))
+		v, err := a.s.StageNativeDelivery(r.Context(), tx, raw, params.SourceInstanceId, params.TargetInstanceId, params.PackageId, string(params.ConflictPolicy), proofs)
 		if err == nil {
 			err = tx.BindNativeStageRequest(r.Context(), v, params.IdempotencyKey, string(params.ConflictPolicy))
 		}
@@ -51,8 +90,9 @@ func (a *API) GetNativeDelivery(w http.ResponseWriter, r *http.Request, id gener
 }
 
 func (a *API) CommitNativeDelivery(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.CommitNativeDeliveryParams) {
-	writeScoped[generated.NativeDeliveryCommit](a, w, r, "admin", true, func(r *http.Request, tx *service.Write, in generated.NativeDeliveryCommit) (any, int, error) {
-		v, err := a.s.CommitNativeDelivery(r.Context(), tx, id, in.Fingerprint)
-		return v, http.StatusOK, err
+	nativeVideoMutation(a, w, r, params.IdempotencyKey, http.StatusOK, func(in generated.NativeDeliveryCommit) (*service.NativeVideoProofs, error) {
+		return a.s.InspectNativeCommit(r.Context(), principal(r), id, in.Fingerprint)
+	}, func(tx *service.Write, in generated.NativeDeliveryCommit, proofs *service.NativeVideoProofs) (any, error) {
+		return a.s.CommitNativeDelivery(r.Context(), tx, id, in.Fingerprint, proofs)
 	})
 }

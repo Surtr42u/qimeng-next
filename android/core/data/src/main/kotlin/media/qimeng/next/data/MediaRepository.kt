@@ -199,6 +199,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(target).getAsset(id).bodyOrThrow().toModel(target)
     }
 
+    suspend fun selectableVideo(target: Session, id: String): Asset {
+        val record = provider.api(target).getAsset(id).bodyOrThrow()
+        check(!record.trashed && record.mediaType.value == "video") { "所选视频已不在当前影库，请重新选择" }
+        return record.toModel(target)
+    }
+
     suspend fun setFavorite(asset: Asset, favorite: Boolean, key: String): Asset = provider.api(asset.target)
         .setAssetFavorite(asset.id, key, AssetFavoriteUpdate(favorite)).bodyOrThrow().toModel(asset.target)
 

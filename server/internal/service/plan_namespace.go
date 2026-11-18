@@ -103,7 +103,9 @@ func planReferenceError(err error) error {
 }
 
 func hashCollectionMembers(ctx context.Context, q store.Querier, c model.Collection, own map[string]bool, enc *json.Encoder) error {
-	rows, err := q.QueryContext(ctx, "SELECT id,relative_path,coalesce(json_extract(data,'$.page'),0) FROM assets WHERE collection_id=? AND (trashed=0 OR ?) ORDER BY id", c.ID, c.Kind == "short_drama")
+	rows, err := q.QueryContext(ctx, `SELECT m.asset_id,l.relative_path,coalesce(m.position,m.reported_position,0)
+		FROM collection_members m JOIN asset_locations l ON l.asset_id=m.asset_id
+		WHERE m.collection_id=? AND (l.trashed=0 OR ?) ORDER BY m.asset_id`, c.ID, c.Kind == "short_drama")
 	if err != nil {
 		return err
 	}

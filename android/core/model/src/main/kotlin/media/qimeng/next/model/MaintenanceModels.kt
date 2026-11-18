@@ -16,4 +16,5 @@ data class DeviceDeliverySettings(val deviceId: String, val label: String = "", 
 data class DevicePackage(val id: String, val state: String, val createdAt: String, val results: List<DeviceSegmentResult>)
 data class DeviceSegmentResult(val kind: String, val state: String, val reason: String?, val receipt: String?, val native: DevicePackageBinding? = null)
 data class DevicePackageBinding(val source: String, val target: String, val packageId: String)
-data class DeviceReceiptItem(val label: String, val kind: String, val block: String?, val state: String, val reason: String?, val receipt: String?)
+data class DeviceReceiptItem(val label: String, val kind: String, val block: String?, val state: String, val reason: String?, val receipt: String?, val video: DeviceVideoBinding?)
+data class DeviceVideoBinding(val sourceId: String?, val sourceVersion: Long?, val targetId: String?, val targetVersion: Long?, val sha256: String?, val bytes: Long?)

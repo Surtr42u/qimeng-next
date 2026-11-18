@@ -20,10 +20,26 @@ const NativeDeliveryBytes = 2 << 20
 const nativeSegment = "nativeSelection"
 
 type NativeSelection struct {
+	NativeVideoBinding
 	Kind             string `json:"kind"`
 	SourceObjectID   string `json:"sourceObjectId"`
 	Block            string `json:"block,omitempty"`
 	ExpectedRevision int64  `json:"expectedRevision"`
+}
+
+type NativeVideoBinding struct {
+	SourceAssetID        string `json:"sourceAssetId,omitempty"`
+	SourceContentVersion int64  `json:"sourceContentVersion,omitempty"`
+	TargetAssetID        string `json:"targetAssetId,omitempty"`
+	TargetContentVersion int64  `json:"targetContentVersion,omitempty"`
+}
+
+type nativeTimeline struct {
+	NativeVideoBinding
+	ContentSHA256 string `json:"contentSha256"`
+	ContentBytes  int64  `json:"contentBytes"`
+	PositionMs    int64  `json:"positionMs"`
+	Color         string `json:"color,omitempty"`
 }
 
 type NativePublish struct {
@@ -47,6 +63,7 @@ type nativeItem struct {
 	Label          string         `json:"label"`
 	Profile        *nativeProfile `json:"profile,omitempty"`
 	Text           *string        `json:"text,omitempty"`
+	Timeline       *nativeTimeline `json:"timeline,omitempty"`
 }
 
 type nativePackage struct {
@@ -58,6 +75,9 @@ type nativePackage struct {
 }
 
 type NativeItemResult struct {
+	NativeVideoBinding
+	ContentSHA256  string `json:"contentSha256,omitempty"`
+	ContentBytes   int64  `json:"contentBytes,omitempty"`
 	Kind           string `json:"kind"`
 	SourceObjectID string `json:"sourceObjectId"`
 	Block          string `json:"block,omitempty"`
@@ -105,7 +125,7 @@ func validateNativeItem(item nativeItem) error {
 	}
 	switch item.Kind {
 	case "authorList":
-		if item.Block != "" || item.Profile != nil || item.Text == nil || len(*item.Text) > 1<<20 ||
+		if item.Block != "" || item.Profile != nil || item.Timeline != nil || item.Text == nil || len(*item.Text) > 1<<20 ||
 			!domain.ValidName(item.Label) || !strings.EqualFold(path.Ext(item.Label), ".txt") {
 			return Fail(400, "invalid_native_list", "作者片段须包含有效文件名及有界的编号声明。")
 		}
@@ -115,7 +135,7 @@ func validateNativeItem(item nativeItem) error {
 		}
 	case "authorProfileBlock":
 		p := item.Profile
-		if !validProfileBlock(item.Block) || item.Text != nil || p == nil || p.AuthorKind != "regular" && p.AuthorKind != "cos" ||
+		if !validProfileBlock(item.Block) || item.Text != nil || item.Timeline != nil || p == nil || p.AuthorKind != "regular" && p.AuthorKind != "cos" ||
 			p.Values.Note != nil || p.Values.Remark != nil || p.Values.AvatarSourceURL != nil {
 			return Fail(400, "invalid_native_profile", "资料块不能包含私人备注、头像或未确认候选。")
 		}
@@ -140,8 +160,14 @@ func validateNativeItem(item nativeItem) error {
 				return Fail(400, "invalid_native_evidence", "原生资料包只接受确认过的公开证据。")
 			}
 		}
+	case "timelineMark":
+		t := item.Timeline
+		if t == nil || item.Text != nil || item.Profile != nil || item.Block != "" || !t.NativeVideoBinding.valid() || !deviceHash.MatchString(t.ContentSHA256) ||
+			t.ContentBytes < 1 || !validTimelineValues(t.PositionMs, item.Label, t.Color, 0) {
+			return Fail(400, "invalid_native_mark", "时间轴标记需要明确绑定两端视频、版本、摘要和大小。")
+		}
 	default:
-		return Fail(400, "native_kind_unavailable", "当前只可选择作者资料块与作者 TXT 片段。")
+		return Fail(400, "native_kind_unavailable", "该对象类型尚未开放原生交付。")
 	}
 	return nil
 }
@@ -172,7 +198,7 @@ func readNativePackage(raw []byte, source, target, packageID string) (nativePack
 	return pkg, nil
 }
 
-func (s *Service) PublishNativeDelivery(ctx context.Context, w *Write, in NativePublish) (DeviceApplyTask, error) {
+func (s *Service) PublishNativeDelivery(ctx context.Context, w *Write, in NativePublish, proofs *NativeVideoProofs) (DeviceApplyTask, error) {
 	var task DeviceApplyTask
 	if err := Authorize(w.Principal, "admin", ""); err != nil {
 		return task, err
@@ -188,7 +214,7 @@ func (s *Service) PublishNativeDelivery(ctx context.Context, w *Write, in Native
 	pkg := nativePackage{Format: "qimeng-native-selection", FormatVersion: 1, SourceInstanceID: s.InstanceID, TargetInstanceID: in.TargetInstanceID}
 	size := 0
 	for _, selection := range in.Items {
-		item, err := exportNativeItem(ctx, q, selection)
+		item, err := s.exportNativeItem(ctx, q, selection, proofs)
 		if err != nil {
 			return task, err
 		}
@@ -206,8 +232,11 @@ func (s *Service) PublishNativeDelivery(ctx context.Context, w *Write, in Native
 		if a.Kind != b.Kind && a.Kind == "authorProfileBlock" {
 			return -1
 		}
-		if a.Kind != b.Kind {
+		if a.Kind != b.Kind && b.Kind == "authorProfileBlock" {
 			return 1
+		}
+		if a.Kind != b.Kind {
+			return strings.Compare(a.Kind, b.Kind)
 		}
 		return strings.Compare(nativeItemKey(a), nativeItemKey(b))
 	})
@@ -229,8 +258,11 @@ func (s *Service) PublishNativeDelivery(ctx context.Context, w *Write, in Native
 	})
 }
 
-func exportNativeItem(ctx context.Context, q store.Querier, in NativeSelection) (nativeItem, error) {
+func (s *Service) exportNativeItem(ctx context.Context, q store.Querier, in NativeSelection, proofs *NativeVideoProofs) (nativeItem, error) {
 	item := nativeItem{Kind: in.Kind, SourceObjectID: in.SourceObjectID, Block: in.Block}
+	if in.Kind != "timelineMark" && in.NativeVideoBinding != (NativeVideoBinding{}) {
+		return item, Fail(400, "unexpected_native_media_version", "作者资料和 TXT 没有适用的视频内容版本。")
+	}
 	switch in.Kind {
 	case "authorList":
 		var recordSize int64
@@ -314,8 +346,25 @@ func exportNativeItem(ctx context.Context, q store.Querier, in NativeSelection) 
 				return item, err
 			}
 		}
+	case "timelineMark":
+		if !in.NativeVideoBinding.valid() || in.Block != "" {
+			return item, Fail(400, "native_video_binding_required", "请选择两端稳定的视频资产和当前版本。")
+		}
+		mark, err := store.Get[TimelineMark](ctx, q, "SELECT data FROM timeline_marks WHERE id=? AND asset_id=?", in.SourceObjectID, in.SourceAssetID)
+		if err != nil {
+			return item, Normalize(err)
+		}
+		a, code, err := s.verifiedNativeVideo(ctx, q, proofs, in.SourceAssetID, in.SourceContentVersion)
+		if err != nil {
+			return item, err
+		}
+		if code != "" || mark.ContentVersion != in.SourceContentVersion {
+			return item, Fail(409, "native_source_content_changed", "来源标记与所选视频的当前版本不符。")
+		}
+		item.Label, item.SourceRevision = mark.Label, mark.Revision
+		item.Timeline = &nativeTimeline{NativeVideoBinding: in.NativeVideoBinding, ContentSHA256: a.Hash, ContentBytes: a.Size, PositionMs: mark.PositionMs, Color: mark.Color}
 	default:
-		return item, Fail(400, "native_kind_unavailable", "当前只可选择作者资料块与作者 TXT 片段。")
+		return item, Fail(400, "native_kind_unavailable", "该对象类型尚未开放原生交付。")
 	}
 	if in.ExpectedRevision != item.SourceRevision {
 		return item, Conflict(item.SourceRevision)

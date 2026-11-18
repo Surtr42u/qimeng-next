@@ -103,7 +103,7 @@ func (s *Service) CreateDirectory(ctx context.Context, w *Write, libraryID, rela
 		return Directory{}, e
 	}
 	dir := Directory{RelativePath: relative, Name: path.Base(relative)}
-	e = s.DB.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM assets WHERE library_id=? AND trashed=0 AND "+assetParentDir+"=?", libraryID, relative).Scan(&dir.FileCount)
+	e = s.DB.DB.QueryRowContext(ctx, "SELECT COUNT(*)"+liveDirectoryRows+assetParentDir+"=?", libraryID, relative).Scan(&dir.FileCount)
 	return dir, e
 }
 
@@ -284,6 +284,10 @@ type TimelineInput struct {
 
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
+func validTimelineValues(position int64, label, color string, duration int64) bool {
+	return position >= 0 && (duration <= 0 || position <= duration) && strings.TrimSpace(label) != "" && len(label) <= 200 && (color == "" || hexColor.MatchString(color))
+}
+
 func (s *Service) Timeline(ctx context.Context, assetID, cursor string, limit int) (model.Page[TimelineMark], error) {
 	n, e := limited(limit, 100)
 	if e != nil {
@@ -314,7 +318,7 @@ func (s *Service) SaveMark(ctx context.Context, w *Write, assetID, markID string
 	if a.ContentVersion != in.ContentVersion {
 		return TimelineMark{}, Fail(409, "content_changed", "视频内容已变化，旧标记不会自动映射。")
 	}
-	if in.PositionMs < 0 || (a.DurationMs > 0 && in.PositionMs > a.DurationMs) || strings.TrimSpace(in.Label) == "" || len(in.Label) > 200 || (in.Color != "" && !hexColor.MatchString(in.Color)) {
+	if !validTimelineValues(in.PositionMs, in.Label, in.Color, a.DurationMs) {
 		return TimelineMark{}, Fail(400, "invalid_mark", "标记时间、名称或颜色无效。")
 	}
 	now := time.Now().UTC()
@@ -334,16 +338,20 @@ func (s *Service) SaveMark(ctx context.Context, w *Write, assetID, markID string
 		m.Revision = old.Revision + 1
 		m.CreatedAt = old.CreatedAt
 	}
-	raw, e := store.Encode(m)
-	if e != nil {
-		return m, e
-	}
 	q, e := w.Q()
 	if e != nil {
 		return m, e
 	}
-	_, e = q.ExecContext(ctx, "INSERT INTO timeline_marks(id,asset_id,position_ms,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET position_ms=excluded.position_ms,data=excluded.data", m.ID, assetID, m.PositionMs, raw)
-	return m, e
+	return m, writeTimelineMark(ctx, q, m)
+}
+
+func writeTimelineMark(ctx context.Context, q store.Querier, m TimelineMark) error {
+	raw, err := store.Encode(m)
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, "INSERT INTO timeline_marks(id,asset_id,position_ms,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET position_ms=excluded.position_ms,data=excluded.data", m.ID, m.AssetID, m.PositionMs, raw)
+	return err
 }
 func (s *Service) DeleteMark(ctx context.Context, w *Write, assetID, id string, revision int64) error {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {

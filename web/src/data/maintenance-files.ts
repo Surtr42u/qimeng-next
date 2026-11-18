@@ -206,20 +206,12 @@ export async function recoveryFile(root: Directory, slot: Slot, instanceId: stri
   await checkOtherWriter(root);
   if (await readJournal(root)) throw new Error("请先在浏览器完成未结束的归档，再选择恢复来源。");
   const current = await readGeneration(root, slot);
-  if (current) {
-    if (current.instanceId !== instanceId) throw new Error("该代资料属于另一个影库。");
-    const file = await fileAt(root, [slot, ...layout.archive]);
-    const side = await fileAt(root, hashPath([slot, ...layout.archive]));
-    if (!file || !side || (await smallText(side, 1024)).trim() !== current.hashes.archive || await digest(file, signal) !== current.hashes.archive) throw new Error("归档或其独立摘要不符。");
-    return { kind: "next" as const, file, hash: current.hashes.archive };
-  }
-  const path = [slot, "备份", "影库备份.json"];
-  const file = await fileAt(root, path);
-  const side = await fileAt(root, hashPath(path));
-  if (!file || !side) throw new Error("这代备份或独立摘要不存在。");
-  const hash = (await smallText(side, 1024)).trim().toLowerCase();
-  if (!checksum.test(hash) || await digest(file, signal) !== hash) throw new Error("旧 v2 正文与独立摘要不符。");
-  return { kind: "v2" as const, file, hash };
+  if (!current) throw new Error("这代目录没有 Next 归档清单。");
+  if (current.instanceId !== instanceId) throw new Error("该代资料属于另一个影库。");
+  const file = await fileAt(root, [slot, ...layout.archive]);
+  const side = await fileAt(root, hashPath([slot, ...layout.archive]));
+  if (!file || !side || (await smallText(side, 1024)).trim() !== current.hashes.archive || await digest(file, signal) !== current.hashes.archive) throw new Error("归档或其独立摘要不符。");
+  return { file, hash: current.hashes.archive };
 }
 export async function folderAuthorLists(root: Directory) {
   await checkOtherWriter(root);

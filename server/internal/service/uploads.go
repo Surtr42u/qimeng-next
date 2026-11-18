@@ -494,6 +494,14 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 	}
 	now := time.Now().UTC()
 	kind, mime, _ := domain.MediaType(u.FileName)
+	if u.CollectionID != "" && u.ReplaceAssetID == "" && item == nil && kind == "video" {
+		// A staged upload follows the stable drama ID even if its display
+		// name and the directory for future episodes changed meanwhile.
+		if e := s.DB.DB.QueryRowContext(ctx, "SELECT name FROM collections WHERE id=?", u.CollectionID).Scan(&u.Family); e != nil {
+			return model.UploadResult{}, Normalize(e)
+		}
+		u.RelativeDirectory = u.Family
+	}
 	authors, e := s.resolveAuthors(ctx, u.LibraryID, u.AuthorIDs)
 	if e != nil {
 		return model.UploadResult{}, e
@@ -678,7 +686,7 @@ func (s *Service) CancelUpload(ctx context.Context, w *Write, id string) error {
 	return s.refreshBatch(ctx, q, u.BatchID)
 }
 
-const directoryNamesSQL = "SELECT file_name FROM asset_locations WHERE library_id=? AND trashed=0 AND " + assetParentDir + "=?"
+const directoryNamesSQL = "SELECT file_name" + liveDirectoryRows + assetParentDir + "=?"
 
 func (s *Service) directoryNames(ctx context.Context, library, dir string) ([]string, error) {
 	parent := path.Clean(dir)
@@ -753,13 +761,17 @@ func (s *Service) nextEpisode(ctx context.Context, collectionID string) (int, er
 	if e != nil {
 		return 0, Normalize(e)
 	}
-	var maximum int
-	if e = s.DB.DB.QueryRowContext(ctx, "SELECT COALESCE(MAX(json_extract(data,'$.page')),0) FROM assets WHERE collection_id=?", collectionID).Scan(&maximum); e != nil {
+	maximum, e := s.maximumCollectionPosition(ctx, collectionID)
+	if e != nil {
 		return 0, e
 	}
 	names, e := s.directoryNames(ctx, c.LibraryID, c.Name)
 	if e != nil {
 		return 0, e
 	}
-	return domain.NextChapter(c.Name, names, maximum), nil
+	next := domain.NextChapter(c.Name, names, maximum)
+	if next < 1 {
+		return 0, Fail(409, "collection_position_exhausted", "此集合已用尽可表示的位置。")
+	}
+	return next, nil
 }

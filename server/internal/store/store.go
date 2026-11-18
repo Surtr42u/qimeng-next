@@ -116,22 +116,32 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 	if a.FavoriteUpdatedAt != nil {
 		favoriteUpdatedAt = a.FavoriteUpdatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	}
-	query := `INSERT INTO asset_records(id,author_id,collection_id,revision,created_at,updated_at,favorite,favorite_updated_at,
-		data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,?,json_remove(?,
+	query := `INSERT INTO asset_records(id,author_id,revision,created_at,updated_at,favorite,favorite_updated_at,
+		data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,json_remove(?,
 		'$.id','$.hash','$.size','$.contentVersion','$.mediaType','$.mimeType','$.width','$.height','$.durationMs','$.probeState',
 		'$.libraryId','$.relativePath','$.fileName','$.contentMtime','$.storageLayoutVersion','$.trashed','$.positionMs','$.positionContentVersion',
-		'$.tags','$.authorId','$.authorIds','$.authorName','$.favorite','$.favoriteUpdatedAt','$.favoritedAt','$.liked','$.likeCount','$.unattributedLikeCount'),?,?,?)`
+		'$.tags','$.authorId','$.authorIds','$.authorName','$.favorite','$.favoriteUpdatedAt','$.favoritedAt','$.liked','$.likeCount','$.unattributedLikeCount',
+		'$.collectionId','$.page'),?,?,?)`
 	if !insertOnly {
-		query += ` ON CONFLICT(id) DO UPDATE SET author_id=excluded.author_id,collection_id=excluded.collection_id,
+		query += ` ON CONFLICT(id) DO UPDATE SET author_id=excluded.author_id,
 			revision=excluded.revision,updated_at=excluded.updated_at,data=excluded.data,file_date=excluded.file_date,cos_work_id=excluded.cos_work_id`
 	}
-	_, err = q.ExecContext(ctx, query, a.ID, a.AuthorID, a.CollectionID, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
+	_, err = q.ExecContext(ctx, query, a.ID, a.AuthorID, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
 		a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, favoriteUpdatedAt, raw, fileDate, favoritedAt, a.CosWorkID)
 	if err != nil {
 		return err
 	}
 	if err = saveAssetFile(ctx, q, a, insertOnly); err != nil {
 		return err
+	}
+	if a.CollectionID != "" {
+		// An existing member owns its position through its own revision.
+		// Publishing or moving a file must not replay an older position.
+		if _, err = q.ExecContext(ctx, `INSERT INTO collection_members(asset_id,collection_id,position,revision)
+			SELECT ?,?,nullif(?,0),1 WHERE NOT EXISTS(SELECT 1 FROM collection_members WHERE asset_id=?)`,
+			a.ID, a.CollectionID, a.Page, a.ID); err != nil {
+			return err
+		}
 	}
 	if err = saveAssetIDs(ctx, q, a.ID, "asset_authors", "author_id", a.AuthorIDs, insertOnly); err != nil {
 		return err

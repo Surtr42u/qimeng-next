@@ -201,6 +201,7 @@ func TestHistoricalDevicePackageRemainsReadableAndNewV2PublicationIsRetired(t *t
 			receipt = res.List.ID
 			local.json("POST", "/author-lists", "stale-device-txt", map[string]any{"name": "作者总表.txt", "content": string(got), "expectedRevision": 0}, 409)
 		case "v2Backup":
+			local.h = httpapi.LegacyImportTestHandler(local.s)
 			r := local.request("POST", "/migration/v2/imports?sourceId="+seg.SourceID, "device-local-v2-input", testSecret, got, map[string]string{"Content-Type": "application/octet-stream"})
 			if r.Code != 201 {
 				t.Fatal("stage received V2", r.Code)

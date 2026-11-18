@@ -134,6 +134,11 @@ func (s *Service) finishPublishedLink(j fileIntent) error {
 }
 
 func (s *Service) reservePublication(ctx context.Context, j fileIntent) error {
+	if j.Kind == "ingest" && j.After.CollectionID != "" && j.After.Page > 0 {
+		if err := checkCollectionSlot(ctx, s.DB.DB, j.After.CollectionID, j.After.ID, j.After.Page); err != nil {
+			return err
+		}
+	}
 	var occupied bool
 	e := s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM file_intents f WHERE f.state IN ('prepared','committed') AND (
   (?!='' AND json_extract(f.data,'$.After.id')=?) OR

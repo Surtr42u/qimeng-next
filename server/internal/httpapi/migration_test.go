@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"qimeng.local/next/server/internal/httpapi"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
@@ -24,6 +25,7 @@ func v2Document(t *testing.T, a model.Asset, data map[string]any) []byte {
 }
 func stageV2(t *testing.T, f *fixture, key string, raw []byte) service.V2Import {
 	t.Helper()
+	f.h = httpapi.LegacyImportTestHandler(f.s)
 	r := f.request("POST", "/migration/v2/imports?sourceId=synthetic-installation", key, testSecret, raw, map[string]string{"Content-Type": "application/octet-stream"})
 	if r.Code != 201 {
 		t.Fatalf("stage: %d %s", r.Code, r.Body.String())

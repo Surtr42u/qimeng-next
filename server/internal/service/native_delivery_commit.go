@@ -19,7 +19,7 @@ func sameNativeTarget(a, b NativeItemResult) bool {
 	return *a.TargetRevision == *b.TargetRevision
 }
 
-func (s *Service) CommitNativeDelivery(ctx context.Context, w *Write, id, fingerprint string) (NativePlan, error) {
+func (s *Service) CommitNativeDelivery(ctx context.Context, w *Write, id, fingerprint string, proofs *NativeVideoProofs) (NativePlan, error) {
 	var plan NativePlan
 	if err := Authorize(w.Principal, "admin", ""); err != nil {
 		return plan, err
@@ -51,7 +51,7 @@ func (s *Service) CommitNativeDelivery(ctx context.Context, w *Write, id, finger
 	}
 	plan.State = "applied"
 	for i, item := range pkg.Items {
-		current, err := inspectNativeItem(ctx, q, plan, item)
+		current, err := s.inspectNativeItem(ctx, q, plan, item, proofs)
 		if err != nil {
 			return plan, err
 		}
@@ -61,7 +61,9 @@ func (s *Service) CommitNativeDelivery(ctx context.Context, w *Write, id, finger
 				return plan, err
 			}
 			if !sameNativeTarget(current, plan.Items[i]) {
-				current.State, current.Code = "conflict", "target_changed"
+				if current.State != "conflict" {
+					current.State, current.Code = "conflict", "target_changed"
+				}
 			} else if current.State == "ready" {
 				if _, err = q.ExecContext(ctx, "SAVEPOINT native_item"); err != nil {
 					return plan, err
@@ -114,6 +116,9 @@ func (s *Service) CommitNativeDelivery(ctx context.Context, w *Write, id, finger
 }
 
 func (s *Service) applyNativeObject(ctx context.Context, w *Write, q store.Querier, plan NativePlan, item nativeItem, target NativeItemResult) (int64, error) {
+	if item.Timeline != nil {
+		return applyNativeMark(ctx, q, item, target)
+	}
 	if item.Kind == "authorList" {
 		list, err := s.importAuthorList(ctx, w, AuthorListInput{Name: item.Label, Content: *item.Text, ExpectedRevision: target.TargetRevision, ConflictResolution: "keep"}, func(kind string) string {
 			if kind == "author-list" {

@@ -41,8 +41,11 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         MaintenanceCard(BackupRestoreIcon,"设备结果包") {
-            Text("PC 或 NAS 选择要交付的作者资料、TXT 片段和目标设备；手机领取后将它们归入指定的 Next 本机影库。",style = MaterialTheme.typography.bodySmall)
-            if (local) SelectionContainer { Text("本机影库标识 ${session?.instanceId}", style = MaterialTheme.typography.bodySmall) }
+            Text("PC 或 NAS 选择作者资料、TXT 片段或指定视频版本的时间轴标记。手机领取后将它们归入指定的 Next 本机影库。",style = MaterialTheme.typography.bodySmall)
+            if (local) session?.instanceId?.let { id ->
+                DeviceTargetValue("本机影库标识", id)
+                DeviceTargetVideoPicker(id, model, busy)
+            }
             Text("设备标签",style = MaterialTheme.typography.labelMedium)
             QimengCapsuleTextField(device,{ device = it },Modifier.fillMaxWidth(),placeholder = "如 phone-main",singleLine = true,enabled = !busy)
             Text("设备 AI 令牌",style = MaterialTheme.typography.labelMedium)
@@ -91,7 +94,12 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
                         items.orEmpty().forEach { entry ->
                             val block = when (entry.block) { "x" -> "X 资料"; "basic" -> "基本资料"; "accounts" -> "其他账号"; else -> null }
                             val state = when (entry.state) { "applied" -> "已应用"; "preserved" -> "已保留"; "conflict" -> "冲突"; else -> "待提交" }
-                            Text(listOfNotNull(entry.label, block, state, deliveryReason(entry.reason), entry.receipt).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                            val kind = when (entry.kind) { "timelineMark" -> "时间轴标记"; "authorList" -> "TXT 片段"; else -> block }
+                            Text(listOfNotNull(entry.label, kind, state, deliveryReason(entry.reason), entry.receipt).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                            entry.video?.let { video ->
+                                Text("来源视频 ${video.sourceId ?: "未返回"} · 内容版本 ${video.sourceVersion ?: "未返回"}\n目标视频 ${video.targetId ?: "未返回"} · 内容版本 ${video.targetVersion ?: "未返回"}", style = MaterialTheme.typography.bodySmall)
+                                if (video.sha256 != null && video.bytes != null) SelectionContainer { Text("${video.bytes} 字节 · SHA-256 ${video.sha256}", style = MaterialTheme.typography.bodySmall) }
+                            }
                         }
                     }
                 }

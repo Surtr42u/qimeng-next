@@ -25,6 +25,7 @@ type DirectoryPage struct {
 }
 
 const assetParentDir = "substr(relative_path,1,max(0,length(relative_path)-length(file_name)-1))"
+const liveDirectoryRows = " FROM asset_locations INDEXED BY assets_live_directory WHERE library_id=? AND trashed=0 AND "
 
 func (s *Service) Directories(ctx context.Context, libraryID, parent, cursor string, limit int) (DirectoryPage, error) {
 	page := DirectoryPage{Page: model.Page[Directory]{Items: []Directory{}}}
@@ -93,7 +94,7 @@ func (s *Service) Directories(ctx context.Context, libraryID, parent, cursor str
 	if e != nil {
 		return page, e
 	}
-	rows, e := s.DB.DB.QueryContext(ctx, "SELECT "+assetParentDir+",count(*) FROM assets WHERE library_id=? AND trashed=0 AND "+assetParentDir+" IN (SELECT value FROM json_each(?)) GROUP BY "+assetParentDir, libraryID, raw)
+	rows, e := s.DB.DB.QueryContext(ctx, "SELECT "+assetParentDir+",count(*)"+liveDirectoryRows+assetParentDir+" IN (SELECT value FROM json_each(?)) GROUP BY "+assetParentDir, libraryID, raw)
 	if e != nil {
 		return page, e
 	}

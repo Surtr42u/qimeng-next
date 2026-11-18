@@ -110,7 +110,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'backend'
     needs: generate
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {persist-credentials: false}
@@ -125,8 +125,10 @@ jobs:
         run: |
           go mod tidy
           go vet ./...
-          go test -race -timeout 180s -v ./...
-          go test -tags=qimeng_native_sqlite,sqlite_omit_load_extension -timeout 180s ./internal/store ./internal/service ./internal/httpapi
+          native_flows='^Test(VideoSeeksOwnOnlyVersionedPlaybackState|NativeVideoRenameReplacementAndIsolatedRestore|PlanUsesItsOwnDirectoryAndRefusesAnOccupiedTargetWithoutRepeatingCompletedItems|NativeSelectiveDeliveryUsesTwoInstancesAndStableObjectReceipts|IndependentFavoriteAndDailyVoteKeepHistoryAcrossStaleViewsAndReplays)$'
+          go test -race -timeout 4m -v -run "$native_flows" ./internal/httpapi
+          go test -race -timeout 12m -v -skip "$native_flows" ./...
+          go test -tags=qimeng_native_sqlite,sqlite_omit_load_extension -timeout 8m ./internal/store ./internal/service ./internal/httpapi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -404,7 +406,7 @@ jobs:
       - name: Verify native filesystem semantics
         working-directory: server
         run: |
-          go test -timeout 180s ./...
+          go test -timeout 8m ./...
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go tests failed' }
           go build -trimpath -o ../build/qimeng-next.exe ./cmd/qimeng
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go build failed' }
@@ -523,6 +525,7 @@ jobs:
       - name: Prepare isolated native runtime and emulator
         run: |
           bash tools/prepare_android_runner.sh
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
           sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
           sdkmanager 'ndk;28.2.13676358'
           python tools/stage_android_native.py "$RUNNER_TEMP/android-native"

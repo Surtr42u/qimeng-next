@@ -7,6 +7,7 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -136,6 +137,12 @@ class EmbeddedRuntimeTest {
             }
             compose.waitUntil(20_000) { compose.onAllNodes(hasText("设备领取") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("设备领取").performClick()
+            compose.onNodeWithText("本机影库标识 ${target.instanceId}").assertExists()
+            compose.onNodeWithContentDescription("复制本机影库标识").performScrollTo().performClick()
+            compose.activityRule.scenario.onActivity { activity ->
+                val clip = activity.getSystemService(android.content.ClipboardManager::class.java)?.primaryClip
+                assertEquals(target.instanceId, clip?.getItemAt(0)?.text?.toString())
+            }
             compose.onNodeWithText("生成本机设备令牌").performScrollTo().performClick()
             compose.waitUntil(20_000) { graph.deviceDelivery.view().configured &&
                 compose.onAllNodes(hasTestTag("device-background") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }

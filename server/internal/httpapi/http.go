@@ -29,12 +29,16 @@ var _ generated.ServerInterface = (*API)(nil)
 
 func New(s *service.Service) http.Handler {
 	a := &API{s: s}
+	return a.routes(a)
+}
+
+func (a *API) routes(operations generated.ServerInterface) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.healthz)
 	mux.HandleFunc("GET /metrics", a.auth(a.GetServiceMetrics))
 	contract := embeddedContract()
 	router := &authenticatedRouter{ServeMux: mux, api: a, contract: contract}
-	handler := generated.HandlerWithOptions(a, generated.StdHTTPServerOptions{
+	handler := generated.HandlerWithOptions(operations, generated.StdHTTPServerOptions{
 		BaseURL: contract.baseURL, BaseRouter: router, ErrorHandlerFunc: parameterError,
 	})
 	if router.registered != len(contract.operations) {

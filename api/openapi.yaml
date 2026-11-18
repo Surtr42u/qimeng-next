@@ -1332,13 +1332,14 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: stageV2Import
-      description: Administrator-only. Validate and retain the exact v2 document without changing media or metadata. Media originals must first be registered and scanned. sourceId identifies the source installation across repeated exports; appIdentifier is not an installation identity.
+      deprecated: true
+      description: Retired write operation. Existing records can still be read.
       parameters:
         - {$ref: '#/components/parameters/IdempotencyKey'}
         - {name: sourceId, in: query, required: true, schema: {type: string, minLength: 8, maxLength: 128}}
       requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary, description: 'Complete UTF-8 qimeng_backup schemaVersion 2 JSON, at most 64 MiB'}}}}
       responses:
-        '201': {description: Validated immutable input; no business import yet, content: {application/json: {schema: {$ref: '#/components/schemas/V2Import'}}}}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /migration/v2/imports/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1358,10 +1359,11 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
       operationId: prepareV2Migration
+      deprecated: true
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/V2PlanCreate'}}}}
       responses:
-        '201': {description: Read-only plan; unique media matches are proposals until this fingerprint is committed, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /migration/v2/plans/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1390,13 +1392,14 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
       operationId: commitV2Migration
-      description: Administrator-only reviewed migration. Revalidates revisions and target original hashes, creates a pre-import database checkpoint, then applies metadata atomically. Never changes or deletes original media. Source settings cannot start network work or rewrite storage roots.
+      deprecated: true
+      description: Retired write operation. Prior durable migration results are available through the plan read endpoints.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [fingerprint, acceptSkipped], properties: {fingerprint: {type: string}, acceptSkipped: {type: boolean, description: Explicitly accept the unmatched or conflict items listed in this plan}}}}}
       responses:
-        '200': {description: Committed or partial migration with checkpoint and per-record report; repeat returns original plan result, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /recommendations:
     get:

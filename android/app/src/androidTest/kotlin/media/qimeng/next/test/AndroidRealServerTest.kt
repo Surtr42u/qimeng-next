@@ -284,6 +284,11 @@ class AndroidRealServerTest {
         }
         assertFalse("Rejecting a foreign folder must preserve its temporary-only grant", resolver.persistedUriPermissions.any { it.uri == tree })
         assertEquals(previous, graph.backups.folder(target))
+        compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].navigate("maintenance") }
+        compose.waitUntil(20_000) { compose.onAllNodes(hasText("设备领取") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("设备领取").performClick()
+        compose.onNodeWithText("设备结果包").assertExists()
+        compose.onNodeWithContentDescription("复制本机影库标识").assertDoesNotExist()
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {

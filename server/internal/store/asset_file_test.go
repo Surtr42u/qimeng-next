@@ -49,6 +49,20 @@ func TestAssetFileUpgradeRequiresCommittedEvidenceAndRetainsPendingLock(t *testi
 	exec(`INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,hash,size,revision,created_at,updated_at,data)
 		VALUES('asset','library','video.mp4','video.mp4','video','owner',?,5,7,'2026-01-01','2026-01-01',?)`, hash("sixth"), proof(6, "sixth"))
 	exec("INSERT INTO asset_authors(asset_id,author_id) VALUES('asset','owner')")
+	exec("INSERT INTO tags(name,revision,created_at,updated_at) VALUES('zulu',2,'2026-01-01','2026-01-01'),('alpha',1,'2026-01-01','2026-01-01')")
+	exec("INSERT INTO asset_tags(asset_id,tag) VALUES('asset','alpha'),('asset','zulu')")
+	exec(`UPDATE assets SET favorite=1,data=json_set(data,'$.tags',json('["zulu","alpha"]'),'$.favorite',json('true'),
+		'$.favoriteUpdatedAt','2026-01-01T00:00:00Z','$.authorIds',json('["owner"]')) WHERE id='asset'`)
+	exec("INSERT INTO collections(id,library_id,name,kind,data) VALUES('series','library','Series','short_drama','{}')")
+	exec("UPDATE assets SET collection_id='series',data=json_set(data,'$.collectionId','series','$.page',2) WHERE id='asset'")
+	for _, row := range []struct {
+		id   string
+		page any
+	}{{"other", 2}, {"unplaced", nil}, {"placed", 4}} {
+		exec(`INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,created_at,updated_at,data)
+			VALUES(?,'library',?,?,'video','owner','series',?,5,1,'2026-01-01','2026-01-01',json_set(?,'$.id',?,'$.page',?))`,
+			row.id, row.id+".mp4", row.id+".mp4", hash("shape"), proof(1, "shape"), row.id, row.page)
+	}
 	intent := func(id, state, side, record string) {
 		exec("INSERT INTO file_intents(id,kind,state,data) VALUES(?,'replace',?,json_object(?,json(?)))", id, state, side, record)
 	}
@@ -75,6 +89,20 @@ func TestAssetFileUpgradeRequiresCommittedEvidenceAndRetainsPendingLock(t *testi
 	if err = db.QueryRow(`SELECT a.relative_path FROM assets a JOIN asset_authors aa ON aa.asset_id=a.id
 		WHERE a.id='asset' AND aa.author_id='owner' AND json_extract(a.data,'$.contentVersion')=6`).Scan(&path); err != nil || path != "video.mp4" {
 		t.Fatal("current original or author foreign key missing", path, err)
+	}
+	var tags, authorIDs, favoriteDate string
+	var favorite bool
+	if err = db.QueryRow(`SELECT json_extract(data,'$.tags'),json_extract(data,'$.authorIds'),favorite,
+		json_extract(data,'$.favoriteUpdatedAt') FROM assets WHERE id='asset'`).Scan(&tags, &authorIDs, &favorite, &favoriteDate); err != nil ||
+		tags != `["zulu","alpha"]` || authorIDs != `["owner"]` || !favorite || favoriteDate != "2026-01-01T00:00:00Z" {
+		t.Fatal("upgrade lost tag ordering, author membership or a dated favorite", tags, authorIDs, favorite, favoriteDate, err)
+	}
+	var occupied, conflicts, unknown int
+	if err = db.QueryRow(`SELECT count(*) FILTER(WHERE position=4 AND reported_position IS NULL),
+		count(*) FILTER(WHERE position IS NULL AND reported_position=2),
+		count(*) FILTER(WHERE position IS NULL AND reported_position IS NULL) FROM collection_members WHERE collection_id='series'`).
+		Scan(&occupied, &conflicts, &unknown); err != nil || occupied != 1 || conflicts != 2 || unknown != 1 {
+		t.Fatal("upgrade invented or lost a disputed or unknown episode number", occupied, conflicts, unknown, err)
 	}
 	if _, err = db.Exec("UPDATE asset_records SET revision=revision+1 WHERE id='asset'"); err == nil || !strings.Contains(err.Error(), "qimeng_pending_asset") {
 		t.Fatal("prepared publication lost its lock", err)

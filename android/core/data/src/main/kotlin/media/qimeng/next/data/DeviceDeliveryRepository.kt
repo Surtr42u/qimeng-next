@@ -158,7 +158,11 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
         val receipt = provider.api(target).getNativeDelivery(id).bodyOrThrow()
         check(receipt.id == id) { "本机返回了其他回执" }
         DeviceSegments.checkBinding(receipt, binding)
-        receipt.items.map { DeviceReceiptItem(it.label, it.kind.value, it.block?.value, it.state.value, it.code, it.receiptId) }
+        receipt.items.map { item ->
+            val video = if (item.kind == NativeDeliveryKind.timelineMark) DeviceVideoBinding(item.sourceAssetId, item.sourceContentVersion,
+                item.targetAssetId, item.targetContentVersion, item.contentSha256, item.contentBytes) else null
+            DeviceReceiptItem(item.label, item.kind.value, item.block?.value, item.state.value, item.code, item.receiptId, video)
+        }
     }
     suspend fun clear() = withContext(Dispatchers.IO) { lock.withLock {
         check(prefs.edit().remove("auth").putBoolean("background", false).remove("destination").commit()) { "未能清除设备授权" }

@@ -54,7 +54,7 @@ func (s *Service) NativeDelivery(ctx context.Context, principal model.Principal,
 	return v, Normalize(err)
 }
 
-func (s *Service) StageNativeDelivery(ctx context.Context, w *Write, raw []byte, source, target, packageID, policy string) (NativePlan, error) {
+func (s *Service) StageNativeDelivery(ctx context.Context, w *Write, raw []byte, source, target, packageID, policy string, proofs *NativeVideoProofs) (NativePlan, error) {
 	var plan NativePlan
 	if err := Authorize(w.Principal, "admin", ""); err != nil {
 		return plan, err
@@ -94,7 +94,7 @@ func (s *Service) StageNativeDelivery(ctx context.Context, w *Write, raw []byte,
 	}
 	plan = NativePlan{ID: nativeID("native-plan", target, packageID), PackageID: packageID, SourceInstanceID: source, TargetInstanceID: target, ConflictPolicy: policy, State: "prepared"}
 	for _, item := range pkg.Items {
-		result, err := inspectNativeItem(ctx, q, plan, item)
+		result, err := s.inspectNativeItem(ctx, q, plan, item, proofs)
 		if err != nil {
 			return plan, err
 		}
@@ -114,8 +114,11 @@ func (s *Service) StageNativeDelivery(ctx context.Context, w *Write, raw []byte,
 	return plan, err
 }
 
-func inspectNativeItem(ctx context.Context, q store.Querier, plan NativePlan, item nativeItem) (NativeItemResult, error) {
+func (s *Service) inspectNativeItem(ctx context.Context, q store.Querier, plan NativePlan, item nativeItem, proofs *NativeVideoProofs) (NativeItemResult, error) {
 	r := NativeItemResult{Kind: item.Kind, SourceObjectID: item.SourceObjectID, Block: item.Block, SourceRevision: item.SourceRevision, Label: item.Label, State: "ready"}
+	if t := item.Timeline; t != nil {
+		r.NativeVideoBinding, r.ContentSHA256, r.ContentBytes = t.NativeVideoBinding, t.ContentSHA256, t.ContentBytes
+	}
 	hash, err := nativeItemHash(item)
 	if err != nil {
 		return r, err
@@ -173,6 +176,12 @@ func inspectNativeItem(ctx context.Context, q store.Querier, plan NativePlan, it
 				return r, err
 			}
 		}
+	} else if item.Kind == "timelineMark" {
+		r, err = s.inspectNativeMark(ctx, q, proofs, item, binding, r)
+		if err != nil || r.State != "ready" {
+			return r, err
+		}
+		revision = *r.TargetRevision
 	} else {
 		var author model.Author
 		author, err = store.Get[model.Author](ctx, q, "SELECT data FROM authors WHERE id=?", r.TargetObjectID)

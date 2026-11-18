@@ -94,3 +94,23 @@ func TestTagRenameKeepsItsIdentityMembershipAndStaleSpellingGuard(t *testing.T) 
 	f.json("PATCH", "/tags/former", "stale-owner-cannot-rename", action, 409)
 	t.Log("rename and replay performed zero writes to asset_tags; the original ID and ordinal survived")
 }
+
+func TestReactionsRemainAuthoritativeAcrossGenericFileWrites(t *testing.T) {
+	f := setup(t)
+	u, _ := f.upload("reactions.png", 73, nil)
+	a := f.complete(u).Asset
+	base := "/assets/" + a.ID
+	decode(t, f.json("PUT", base+"/favorite", "canonical-favorite", map[string]bool{"favorite": true}, 200), a)
+	decode(t, f.json("PUT", base+"/like/today", "canonical-vote", map[string]bool{"liked": true}, 200), a)
+	decode(t, f.json("POST", base+"/move", "generic-move-after-vote", map[string]any{"expectedRevision": a.Revision, "relativePath": "moved.png"}, 200), a)
+	var current model.Asset
+	decode(t, f.json("GET", base, "", nil, 200), &current)
+	var copies, votes int
+	var favorite bool
+	err := f.s.DB.DB.QueryRow(`SELECT favorite,(SELECT count(*) FROM likes WHERE asset_id=r.id),
+		(SELECT count(*) FROM json_each(r.data) WHERE key IN ('tags','authorId','authorIds','authorName','favorite',
+		'favoriteUpdatedAt','favoritedAt','liked','likeCount','unattributedLikeCount')) FROM asset_records r WHERE id=?`, a.ID).Scan(&favorite, &votes, &copies)
+	if err != nil || !favorite || votes != 1 || copies != 0 || !current.Favorite || !current.Liked || current.LikeCount != 1 {
+		t.Fatal("file operation duplicated or overwrote unrelated facts", favorite, votes, copies, err)
+	}
+}
