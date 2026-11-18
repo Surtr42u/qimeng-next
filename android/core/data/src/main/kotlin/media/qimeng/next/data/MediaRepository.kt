@@ -145,7 +145,8 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             sizeRange = DefaultApi.SizeRangeListAssets.entries.first { it.value == query.sizeRange },
             timeRange = DefaultApi.TimeRangeListAssets.entries.first { it.value == query.timeRange }, fromYear = query.fromYear, toYear = query.toYear,
             dateCounts = cursor == null, tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
-        return Page(page.items.map { it.toModel(target) }, page.nextCursor, page.totalMatched, page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) })
+        return Page(page.items.map { it.toModel(target) }, page.nextCursor, page.totalMatched,
+            page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) }, page.unknownDateCount)
     }
 
     suspend fun facets(row: String, query: AssetQuery, cursor: String? = null, search: String? = null): FacetResult {
@@ -330,7 +331,9 @@ private fun ApiAsset.toModel(target: Session): Asset {
         likeCount = likeCount, positionMs = positionMs, positionVersion = positionContentVersion, note = note,
         sourceIds = sourceIds.orEmpty(), characterIds = characterIds.orEmpty(), acquisitionSources = acquisitionSources.orEmpty(),
         collectionId = collectionId, page = page,
-        contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt)
+        contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt,
+        fileDate = fileDate, workGroups = workFacets.orEmpty().map { AssetGroup(it.key, it.name) },
+        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) })
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,

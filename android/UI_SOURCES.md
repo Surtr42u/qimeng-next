@@ -33,3 +33,5 @@
 后续导航纠偏只引用旧 `FloatingTabDock.TabDockDefaults` 的 62dp 高、16dp 左右距、10dp 底距、18dp 槽距、24dp 图标及原文字色 / 字重 / 1.12 图标选中比例；新的采样折射与选择滑块独立实现，不引入旧 renderer 或状态层。列表底部让位恢复旧 80dp 基线加系统 inset；大字号时按实际标签高度增加，默认字号不改变原几何。应用减少动效贯通按压反馈、详情 chrome 和图表；原 34dp 胶囊输入保留默认高度，大字号允许自然增高。
 
 旧 `feature/settings/ServerSettingsScreen.kt` 的服务器 / 本机 / 默认登录 / 仅充电扫描 / 存储权限卡顺序、文案、16dp 圆角与 16×12dp 内边距现用于新 `ServerSettingsScreen`；纯 `QimengScaffold.kt` 的 TopAppBar 进入 `core/ui/component/QimengTopBar.kt`。登录的发现状态、重新寻找与候选行恢复自旧 `LoginScreen` 的纯展示。未复制旧设置 ViewModel、地址推断、权限启动或扫描实现；新默认端持久化、NsdManager 发现、权限模块和充电待扫队列均独立编写。
+
+首页与相册的万能筛选采用旧 `core/ui/component/QimengFilterSheet*.kt` 的布局、标签按钮和资源，接入新草稿、分页词表与带修订的删除动作。相册和收藏直接使用旧 `QimengTitleRow`、`QimengChipRow`、`QimengValuePillBlock`。计数、过滤和 COS 推荐来自新 Go 查询。

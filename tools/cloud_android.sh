@@ -17,6 +17,7 @@ finish() {
   mkdir -p android/build/cloud-screenshots
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next.ui.test/files android/build/cloud-screenshots/core-ui > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next/files/screenshots android/build/cloud-screenshots/app > /dev/null 2>&1 || true
+  adb -s emulator-5556 pull /sdcard/Pictures/QimengNextCloudTests android/build/cloud-screenshots/retained > /dev/null 2>&1 || true
   kill "$service_pid" 2>/dev/null || true
   wait "$service_pid" 2>/dev/null || true
   exit "$result"

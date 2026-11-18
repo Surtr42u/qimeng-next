@@ -63,7 +63,7 @@ class ManagementViewModel(application: Application) : AndroidViewModel(applicati
     fun save(kind: String, item: VocabularyEntry?, name: String, aliases: List<String>, source: String?, onSaved: () -> Unit) = mutate {
         repository.saveVocabulary(kind, item, name, aliases, source); onSaved(); load(kind)
     }
-    fun deleteTag(item: VocabularyEntry) = mutate { repository.deleteTag(item); load("tags") }
+    fun deleteTag(item: VocabularyEntry, onSaved: () -> Unit = {}) = mutate { repository.deleteTag(item); onSaved(); load("tags") }
     fun loadMarks(asset: Asset, next: Boolean = false) {
         if (next && (mutableMarks.value.loading || mutableMarks.value.cursor == null)) return
         markJob?.cancel()

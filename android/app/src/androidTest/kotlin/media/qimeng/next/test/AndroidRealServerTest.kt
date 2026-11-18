@@ -48,7 +48,7 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("login-address").performTextInput(server)
         compose.onNodeWithTag("login-password").performTextInput(token)
         compose.waitUntil(30_000) { compose.onAllNodes(hasText("连接影库") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("连接影库").performClick()
+        compose.onNodeWithTag("login-password").performImeAction()
         await("login", graph) {
             val errors = compose.onAllNodesWithTag("login-error").fetchSemanticsNodes()
                 .flatMap { it.config[SemanticsProperties.Text] }.joinToString { it.text }
@@ -152,6 +152,25 @@ class AndroidRealServerTest {
         compose.onNodeWithContentDescription("退出全屏").performClick()
         val recommendation = runBlocking { graph.media.assets(AssetQuery(source = "recommendations", seed = 42)) }
         assertTrue(recommendation.items.any { it.id == picture.id })
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("navigation:albums").performClick()
+        compose.waitUntil(30_000) { compose.onAllNodesWithText("2 文件").fetchSemanticsNodes().isNotEmpty() }
+        screenshot("real-server-albums.png")
+        compose.onNodeWithText("分区 (2)").performClick()
+        compose.onNodeWithText("常规 (2)").assertExists()
+        screenshot("real-server-albums-expanded.png")
+        compose.onNodeWithTag("navigation:home").performClick()
+        compose.onNodeWithContentDescription("筛选").performClick()
+        compose.onNodeWithText("升序").performScrollTo().performClick()
+        screenshot("real-server-filter-sheet.png")
+        compose.onNodeWithText("应用筛选").performClick()
+        compose.onNodeWithContentDescription(picture.name).assertExists()
+        compose.onNodeWithText("COS").performClick()
+        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java]
+        compose.waitUntil(30_000) { model.query("home:1").let { it.kind == "cos" && it.source == "assets" && it.order == "asc" } }
+        compose.onNodeWithContentDescription("筛选").performClick()
+        compose.onNodeWithText("重置").performClick()
+        compose.waitUntil(30_000) { model.query("home:1").source == "recommendations" }
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {
@@ -171,10 +190,6 @@ class AndroidRealServerTest {
         saveScreenshot(name)
     }
     private fun saveScreenshot(name: String) {
-        val directory = InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir("screenshots")!!
-        directory.mkdirs()
-        val screenshot = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-        File(directory, name).outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        screenshot.recycle()
+        media.qimeng.next.testsupport.captureCloudScreenshot(name)
     }
 }

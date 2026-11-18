@@ -43,7 +43,11 @@ data class Asset(
     val thumbnailUrl: String,
     val addedAt: String,
     val rankingScore: Long? = null,
+    val fileDate: String? = null,
+    val workGroups: List<AssetGroup> = emptyList(),
+    val roleGroups: List<AssetGroup> = emptyList(),
 )
+data class AssetGroup(val key: String, val name: String)
 data class AssetQuery(
     val text: String = "",
     val libraryId: String? = null,
@@ -72,7 +76,8 @@ data class AssetQuery(
     val toYear: Int? = null,
 )
 data class DateCount(val date: String, val count: Long)
-data class Page<T>(val items: List<T>, val nextCursor: String?, val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList())
+data class Page<T>(val items: List<T>, val nextCursor: String?, val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(),
+    val unknownDateCount: Long? = null)
 data class FacetChoice(val key: String, val kind: String, val id: String, val name: String, val count: Long)
 data class FacetResult(val items: List<FacetChoice>, val nextCursor: String?, val totalMatched: Long, val totalOptions: Long)
 data class SearchWord(val id: String, val type: String, val name: String)

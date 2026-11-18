@@ -13,7 +13,8 @@ import java.util.UUID
 
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
-    val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null)
+    val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
+    val unknownDateCount: Long? = null)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -184,7 +185,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 if (generation.isCurrent(ticket) && connection == connectionGeneration) {
                     state.value = ListState(if (next) (old.items + page.items).distinctBy(Asset::id) else page.items,
                         page.nextCursor, loaded = true, totalMatched = page.totalMatched,
-                        dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query)
+                        dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query,
+                        unknownDateCount = if (next) old.unknownDateCount else page.unknownDateCount)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {

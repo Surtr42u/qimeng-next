@@ -46,10 +46,7 @@ class TrendChartBehaviorTest {
             val text = it.config[SemanticsProperties.StateDescription]
             text.contains("图片") && text.contains("视频") && text.contains("次")
         })
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val screenshot = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
-        File(instrumentation.targetContext.getExternalFilesDir(null), "stats-trend-synthetic.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        screenshot.recycle()
+        media.qimeng.next.testsupport.captureCloudScreenshot("stats-trend-synthetic.png")
         chart.performTouchInput { click(center) }
         chart.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "未选择数据点"))
     }

@@ -63,3 +63,5 @@ client 仪器任务为 `:app:connectedClientDebugAndroidTest`。本机原生产�
 作者 TXT、完整备份导入/导出与重复/替换/研究冲突的具体决定入口仍待后续正式协议；不是取消需求。手机本机运行层按新授权独立实现，复用同一新 Go 服务，不引入旧业务或日常双向合并。当前普通传输队列固定字节输入并保留来源。来源端回收尚未接通，必须具备本批独立备份证据与可回收的来源能力；界面不会宣称已清理来源。推荐/统计/缩略图等源码接线不等于已通过当前版本端到端验证。真实系统文件提供器、分享授权撤回、进程终止恢复、服务器切换、GPU 折射、TalkBack 与厂商后台限制仍需独立验收。
 
 实际读取资料：新仓 `AGENTS.md`、`README.md`、`docs/verification.md`、`docs/requirements.md`、`api/openapi.yaml`；规划需求 R01–R23 / 验收对照；旧 Android README 与 `GUIDE_UI` Android 相关段落（仅产品行为参考）；上列官方依赖与图形 API 文档。实现分工与模型证据由仓库 `docs/provenance.md` 统一记录。
+
+系统分享接收时固定已选服务、库、目录与本次输入身份。Files 暂存中的其他选择继续保留。云端仪器通过实际 SEND_MULTIPLE 发送两份合成媒体和一份不可读输入，校验同一份原始清单与独立手选草稿。相册和收藏的四维筛选、首页 COS 请求源及截图状态见 UI_PARITY。仪器截图使用云模拟器的合成相册 Pictures/QimengNextCloudTests，以便 connected 测试卸载后回收。

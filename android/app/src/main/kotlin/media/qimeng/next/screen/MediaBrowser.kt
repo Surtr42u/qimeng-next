@@ -66,7 +66,7 @@ fun HomeScreen(model: LibraryViewModel) {
     val current = controls[mode]
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize()) {
-        HomeTopRow(current.columns.intValue, { model.navigate("search") }, { current.showFilters.value = true }) {
+        HomeTopRow(current.columns.intValue, { model.navigate("search") }, { cos.showFilters.value = true }) {
             val next = if (current.columns.intValue == 2) 1 else 2
             controls.forEach { it.columns.intValue = next }
         }
@@ -94,6 +94,7 @@ fun HomeScreen(model: LibraryViewModel) {
             }
         }
     }
+    BrowserFilterSheet(cos)
 }
 
 /** Existing HomeTopRow geometry and controls; callbacks now belong to the new client. */
@@ -115,121 +116,91 @@ private fun HomeTopRow(columns: Int, onSearch: () -> Unit, onFilter: () -> Unit,
 
 @Composable
 fun AlbumsScreen(model: LibraryViewModel) {
-    Column {
-        PageHeader("相册", actions = { IconButton(onClick = { model.navigate("search") }) { Icon(Icons.Outlined.Search, "搜索相册") } })
-        MediaBrowser(model, "albums", bottomDock = true, libraryFilter = true)
-    }
+    MediaBrowser(model, "albums", bottomDock = true, albumTitle = "相册")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MediaBrowser(model: LibraryViewModel, key: String, search: Boolean = false, favorite: Boolean? = null,
-                 kind: String? = null, author: String? = null, bottomDock: Boolean = false, libraryFilter: Boolean = false,
-                 source: String = "assets", seed: Long = 1, period: String = "week", onRefresh: (() -> Unit)? = null, collectionId: String? = null, initialTag: String? = null,
-                 controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true, pinchEnabled: Boolean = true,
-                 textOverride: String? = null, caption: Boolean = search) {
+fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null,
+                 kind: String? = null, author: String? = null, bottomDock: Boolean = false,
+                 source: String = "assets", seed: Long = 1, period: String = "week", onRefresh: (() -> Unit)? = null,
+                 collectionId: String? = null, initialTag: String? = null, albumTitle: String? = null,
+                 controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true,
+                 pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false) {
     val state by model.assets(key).collectAsStateWithLifecycle()
-    val libraries by model.libraries.collectAsStateWithLifecycle()
-    var draft by rememberSaveable(key) { mutableStateOf(model.query(key).text) }
-    var submitted by rememberSaveable(key) { mutableStateOf(model.query(key).text) }
-    var type by controls.type
-    var partition by controls.partition
-    var library by controls.library
-    var sort by controls.sort
+    val session by model.session.collectAsStateWithLifecycle()
     var columns by controls.columns
-    var showFilters by controls.showFilters
-    var tag by controls.tag
     val grid = rememberLazyGridState()
-    val query = AssetQuery(text = textOverride ?: submitted, mediaType = type, kind = partition, favorite = favorite, authorId = author,
-        libraryId = library, tag = tag.takeIf(String::isNotBlank), sort = sort,
-        source = if (library != null || tag.isNotBlank() || sort != "added_desc") "assets" else source, seed = seed, period = period, collectionId = collectionId)
-    var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString()) }
-    LaunchedEffect(key, query) {
+    val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
+        sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId))
+    val group = if (albumTitle != null) controls.row else null
+    var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
+    LaunchedEffect(key, query, group) {
         model.browse(key, query)
-        if (appliedQuery != query.toString()) { grid.scrollToItem(0); appliedQuery = query.toString() }
+        val current = query.toString() + group
+        if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }
     }
-    val lastVisible by remember { derivedStateOf { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 } }
-    LaunchedEffect(lastVisible, state.items.size, state.cursor) {
-        if (state.items.isNotEmpty() && lastVisible >= state.items.size - 8) model.browse(key, query, next = true)
+    val nearEnd by remember { derivedStateOf {
+        val layout = grid.layoutInfo
+        layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 8
+    } }
+    LaunchedEffect(nearEnd, state.cursor, query) {
+        if (nearEnd && state.error == null) model.browse(key, query, next = true)
     }
     Column(Modifier.fillMaxSize()) {
-        if (search) Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(draft, { draft = it }, label = { Text("文件名、作者或标签") }, singleLine = true,
-                modifier = Modifier.weight(1f), trailingIcon = { IconButton(onClick = { submitted = draft.trim(); type = null; partition = null }) { Icon(Icons.Outlined.Search, "提交搜索") } })
+        var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
+        if (albumTitle != null) {
+            val facets: media.qimeng.next.FacetViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            val values by facets.rows.collectAsStateWithLifecycle()
+            rows = values
+            LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
+            AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, rows,
+                onBack = if (bottomDock) null else model::back, fetch = facets::fetch)
+        } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
+                FilterChip(controls.type.value == value, { controls.type.value = value }, label = { Text(label) })
+            }
+            IconButton(onClick = { controls.showFilters.value = true }) { Icon(Icons.Outlined.Tune, "筛选") }
+            IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "列数") }
         }
-        if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (source != "rankings") {
-                listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
-                    FilterChip(type == value, { type = value }, label = { Text(label) })
-                }
-                IconButton(onClick = { showFilters = !showFilters }) { Icon(Icons.Outlined.Tune, "筛选与排序") }
-            }
-            IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "网格 $columns 列，切换列数") }
-            IconButton(onClick = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) }) { Icon(Icons.Outlined.Refresh, "刷新") }
+        if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
+        state.error?.let { ErrorNotice(it) { model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true) } }
+        if (state.loading && !state.loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
+        val entries = if (state.loadedQuery == query) state.items else emptyList()
+        val sectionMode = group ?: if (caption) "partitions" else null
+        val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
+            gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }
-        if (toolbar && (search || source == "rankings")) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(null to "全部", "regular" to "常规", "cos" to "COS").forEach { (value, label) ->
-                FilterChip(partition == value, { partition = value }, label = { Text(label) })
-            }
-        }
-        if (toolbar && libraryFilter) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(library == null, { library = null }, label = { Text("全部影库") })
-            libraries.forEach { item -> FilterChip(library == item.id, { library = item.id }, label = { Text(item.name) }) }
-        }
-        if (showFilters) {
-            var filterType by rememberSaveable(key) { mutableStateOf(type) }
-            var filterPartition by rememberSaveable(key) { mutableStateOf(partition) }
-            var filterLibrary by rememberSaveable(key) { mutableStateOf(library) }
-            var filterSort by rememberSaveable(key) { mutableStateOf(sort) }
-            var filterTag by rememberSaveable(key) { mutableStateOf(tag) }
-            ModalBottomSheet(onDismissRequest = { showFilters = false }) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("筛选", style = MaterialTheme.typography.titleLarge)
-            QimengChipRow(listOf(null to "全部", "image" to "图片", "animated_image" to "动图", "video" to "视频").map { QimengPill(it.second, filterType == it.first) }, { filterType = listOf(null, "image", "animated_image", "video")[it] })
-            if (kind == null) QimengChipRow(listOf(null to "全部分区", "regular" to "常规", "cos" to "COS").map { QimengPill(it.second, filterPartition == it.first) }, { filterPartition = listOf(null, "regular", "cos")[it] })
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                media.qimeng.next.ui.component.QimengSegPill("全部影库", filterLibrary == null, { filterLibrary = null })
-                libraries.forEach { entry -> media.qimeng.next.ui.component.QimengSegPill(entry.name, filterLibrary == entry.id, { filterLibrary = entry.id }) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("added_desc" to "最新入库", "name_asc" to "名称", "updated_desc" to "最近修改").forEach { (value, label) ->
-                    FilterChip(filterSort == value, { filterSort = value }, label = { Text(label) })
-                }
-            }
-            OutlinedTextField(filterTag, { filterTag = it }, label = { Text("标签") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { filterType = null; filterPartition = kind; filterLibrary = null; filterSort = "added_desc"; filterTag = initialTag.orEmpty() }) { Text("重置") }
-                Button(onClick = { type = filterType; partition = filterPartition; library = filterLibrary; sort = filterSort; tag = filterTag; showFilters = false }) { Text("应用筛选") }
-            }
-        } } }
-        state.error?.let { ErrorNotice(it) { model.browse(key, query, force = true) } }
-        if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (state.loaded && state.items.isEmpty() && !state.loading) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("没有符合条件的媒体") }
-        PullToRefreshBox(isRefreshing = state.loading && state.loaded,
+        PullToRefreshBox(isRefreshing = state.loading && state.loaded && state.cursor == null,
             onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
-        LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
-            contentPadding = PaddingValues(start = 11.dp, end = 11.dp, top = 4.dp, bottom = if (bottomDock) NavigationDimensions.bottomClearance() else 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(0.dp), verticalArrangement = Arrangement.spacedBy(0.dp),
-            modifier = Modifier.fillMaxSize().pointerInput(key) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    var accumulated = 1f
-                    do {
-                        val event = awaitPointerEvent()
-                        if (pinchEnabled && event.changes.count { it.pressed } >= 2) {
-                            accumulated *= event.calculateZoom()
-                            if (accumulated > 1.22f) { columns = (columns - 1).coerceAtLeast(2); accumulated = 1f }
-                            if (accumulated < 0.82f) { columns = (columns + 1).coerceAtMost(5); accumulated = 1f }
-                            event.changes.forEach { it.consume() }
-                        }
-                    } while (event.changes.any { it.pressed })
+            if (state.loaded && entries.isEmpty() && !state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有符合条件的媒体") }
+            LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
+                contentPadding = PaddingValues(start = 11.dp, end = 11.dp, top = 4.dp, bottom = if (bottomDock) NavigationDimensions.bottomClearance() else 24.dp),
+                modifier = Modifier.fillMaxSize().pointerInput(key, pinchEnabled) {
+                    if (!pinchEnabled) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var accumulated = 1f
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.count { it.pressed } >= 2) {
+                                accumulated *= event.calculateZoom()
+                                if (accumulated > 1.22f) { columns = (columns - 1).coerceAtLeast(2); accumulated = 1f }
+                                if (accumulated < 0.82f) { columns = (columns + 1).coerceAtMost(5); accumulated = 1f }
+                                event.changes.forEach { it.consume() }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                }) {
+                sections.forEach { section ->
+                    section.header?.let { label -> item(key = "group:${section.key}", span = { GridItemSpan(maxLineSpan) }) {
+                        Text(label, Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    } }
+                    items(section.items, key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
                 }
-            }) {
-            items(if (state.loadedQuery == query) state.items else emptyList(), key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
-            if (state.cursor != null && state.loadedQuery == query) item(span = { GridItemSpan(maxLineSpan) }) {
-                TextButton(onClick = { model.browse(key, query, next = true) }, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) { Text("加载更多") }
             }
-        }
         }
     }
 }

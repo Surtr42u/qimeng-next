@@ -11,6 +11,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    sourceSets["androidTest"].java.srcDir(rootProject.file("test-support"))
     flavorDimensions += "runtime"
     productFlavors {
         create("client") { dimension = "runtime" }

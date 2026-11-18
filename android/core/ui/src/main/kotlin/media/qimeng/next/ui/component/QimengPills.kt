@@ -153,9 +153,15 @@ fun QimengValuePillBlock(
     modifier: Modifier = Modifier,
     resetKey: Any? = null,
     pillModifier: Modifier = Modifier,
+    loadMore: (() -> Unit)? = null,
 ) {
     // 区块内「两行/全部」与调用方的 filter.expanded（整块显隐）是两层不同的展开
     var valuesExpanded by rememberSaveable(resetKey) { mutableStateOf(false) }
+    val scroll = rememberScrollState()
+    val nearEnd = scroll.value >= scroll.maxValue - 100
+    androidx.compose.runtime.LaunchedEffect(valuesExpanded, nearEnd, pills.size, loadMore != null) {
+        if (valuesExpanded && nearEnd) loadMore?.invoke()
+    }
     Column(
         modifier = modifier
             .padding(
@@ -168,7 +174,7 @@ fun QimengValuePillBlock(
                 if (valuesExpanded) {
                     Modifier
                         .heightIn(max = LocalConfiguration.current.screenHeightDp.dp / VALUE_BLOCK_MAX_HEIGHT_DIVISOR)
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(scroll)
                 } else {
                     Modifier
                 },

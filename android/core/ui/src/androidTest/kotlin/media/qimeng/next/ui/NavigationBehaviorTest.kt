@@ -75,12 +75,8 @@ class NavigationBehaviorTest {
     }
 
     private fun screenshot(name: String) {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val file = File(context.getExternalFilesDir(null), name)
         compose.waitForIdle()
-        val screenshot = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
-        file.outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        screenshot.recycle()
+        media.qimeng.next.testsupport.captureCloudScreenshot(name)
     }
 }
 
