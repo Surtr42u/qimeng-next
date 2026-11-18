@@ -51,7 +51,7 @@ func TestScannedWorkUsesScopedResearchAndTheSameNamingRules(t *testing.T) {
 	}
 	start := func(tag, secret string, fields []string) service.DelegatedTask {
 		t.Helper()
-		in := service.DelegatedTaskStart{Kind: "asset", Label: "One selected work", AssetID: a.ID, ExpectedContentVersion: a.ContentVersion, ExpectedRevision: a.Revision, AssetFields: fields, CredentialSecret: secret}
+		in := map[string]any{"kind": "asset", "label": "One selected work", "assetId": a.ID, "expectedContentVersion": a.ContentVersion, "expectedRevision": a.Revision, "assetFields": fields, "credentialSecret": secret}
 		var task service.DelegatedTask
 		decode(t, call("POST", "/ai/delegated-tasks", "task-start-"+tag, grant.Credential.Token, in, 201), &task)
 		return task

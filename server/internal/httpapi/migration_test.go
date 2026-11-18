@@ -34,7 +34,7 @@ func stageV2(t *testing.T, f *fixture, key string, raw []byte) service.V2Import 
 }
 func planV2(t *testing.T, f *fixture, input service.V2Import, key string) service.V2MigrationPlan {
 	t.Helper()
-	r := f.json("POST", "/migration/v2/imports/"+input.ID+"/plans", key, service.V2PlanCreate{}, 201)
+	r := f.json("POST", "/migration/v2/imports/"+input.ID+"/plans", key, map[string]any{}, 201)
 	var plan service.V2MigrationPlan
 	decode(t, r, &plan)
 	return plan

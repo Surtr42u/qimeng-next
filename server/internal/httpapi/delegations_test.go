@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
@@ -26,9 +27,9 @@ func TestDelegationScopesLeaseRotationAndDurableBudget(t *testing.T) {
 		return response.Body.Bytes()
 	}
 	firstSecret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
-	input := service.DelegatedTaskStart{Kind: "intake", Label: "Synthetic task", LibraryID: f.library, Mode: "intelligent", CredentialSecret: firstSecret}
-	denied := input
-	denied.LibraryID = "outside-authorized-library"
+	input := map[string]any{"kind": "intake", "label": "Synthetic task", "libraryId": f.library, "mode": "intelligent", "credentialSecret": firstSecret}
+	denied := maps.Clone(input)
+	denied["libraryId"] = "outside-authorized-library"
 	request("POST", "/ai/delegated-tasks", "delegation-outside-key", grant.Credential.Token, denied, 403)
 	raw := request("POST", "/ai/delegated-tasks", "delegation-start-key", grant.Credential.Token, input, 201)
 	if strings.Contains(string(raw), firstSecret) {
@@ -95,7 +96,7 @@ func TestSourceRecyclingRequiresSeparateLibraryBoundOptIn(t *testing.T) {
 	var grant service.DelegationCreated
 	decode(t, f.json("POST", "/ai/delegations", "", policy, 201), &grant)
 	secret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("r", 32)))
-	body, _ := json.Marshal(service.DelegatedTaskStart{Kind: "intake", Label: "Authorized recycle task", LibraryID: f.library, Mode: "ordinary", CredentialSecret: secret})
+	body, _ := json.Marshal(map[string]any{"kind": "intake", "label": "Authorized recycle task", "libraryId": f.library, "mode": "ordinary", "credentialSecret": secret})
 	response := f.request("POST", "/ai/delegated-tasks", "explicit-source-recycle", grant.Credential.Token, body, nil)
 	if response.Code != 201 {
 		t.Fatal(response.Body.String())
