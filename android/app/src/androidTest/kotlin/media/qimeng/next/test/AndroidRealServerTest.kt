@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -73,14 +74,18 @@ class AndroidRealServerTest {
                 assertTrue("Push a nonempty synthetic H.264 fixture before this test", bytes in 100L..8_000_000L)
             }
         }
-        runBlocking {
-            // An unreadable picker input must remain part of the server's original manifest.
-            graph.uploads.receive(listOf(imageUri, Uri.parse("content://media.qimeng.next.test.fixture/unreadable-selection"), videoUri))
-            assertEquals(2, graph.queue.state.value!!.drafts.size)
-            assertEquals(3, graph.queue.state.value!!.pendingInputs.size)
-            assertNull(graph.queue.state.value!!.pendingInputs[1].originalFileName)
-            assertEquals(1, graph.queue.state.value!!.intakeFailures.size)
-            graph.uploads.enqueue(library.id, "android-cloud", UploadMode.ORDINARY)
+        val manualDraft = runBlocking {
+            graph.settings.saveUploadLibrary(graph.settings.session.value!!, library.id)
+            graph.uploads.receive(listOf(imageUri)).single()
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.startActivity(Intent(activity, MainActivity::class.java).apply {
+                action = Intent.ACTION_SEND_MULTIPLE
+                type = "image/*"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(imageUri,
+                    Uri.parse("content://media.qimeng.next.test.fixture/unreadable-selection"), videoUri))
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
         }
         await("manifest-and-upload", graph) {
             val transfers = graph.queue.state.value!!.transfers
@@ -94,6 +99,12 @@ class AndroidRealServerTest {
         assertTrue(picture.thumbnailUrl.isNotEmpty())
         assertTrue((video.durationMs ?: 0) > 0)
         val batch = graph.queue.state.value!!.batches.single()
+        assertEquals(listOf(manualDraft), graph.queue.state.value!!.drafts.map { it.id })
+        assertEquals(listOf(manualDraft), graph.queue.state.value!!.pendingInputs.map { it.id })
+        assertEquals(3, batch.inputs.size)
+        assertNull(batch.inputs[1].originalFileName)
+        assertEquals(batch.key, graph.queue.state.value!!.intakeFailures.single().batchKey)
+        screenshot("real-server-shared-upload.png")
         assertEquals(64, batch.manifestFingerprint!!.length)
         val originalReport = runBlocking { graph.media.report(batch.serverId!!) }
         assertEquals(3, originalReport.items.size)
@@ -112,6 +123,7 @@ class AndroidRealServerTest {
         assertNull(stopped.uploadId)
         assertEquals("cancelled", runBlocking { graph.media.report(stopped.batchId!!).items.single().state })
 
+        compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("navigation:home").performClick()
         compose.onNodeWithTag("media-browser:home:0").performTouchInput { swipeDown() }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }

@@ -131,6 +131,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 collectionState.value = ListState()
                 if (saved.get<String>("uploadInstance") != connection?.instanceId) {
                     saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""; saved["uploadFamily"] = ""; saved["uploadAutoName"] = false
+                    saved["uploadDirectory"] = ""; saved["uploadNote"] = ""
                 }
                 saved["uploadInstance"] = connection?.instanceId
                 analyticsState.value = LoadState(); reviewState.value = LoadState(); recommendationState.value = null
@@ -213,10 +214,6 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         mutableLibraries.value = libraries
         graph.uploads.schedule()
         if (uploadLibrary.value.isEmpty() && libraries.count { it.enabled } == 1) persistUploadLibrary(libraries.single { it.enabled }.id)
-        if (saved.get<Boolean>("sharedUpload") == true && queue.value?.drafts?.isNotEmpty() == true && libraries.any { it.id == uploadLibrary.value && it.enabled }) {
-            graph.uploads.enqueue(uploadLibrary.value, uploadDirectory.value, UploadMode.ORDINARY)
-            saved["sharedUpload"] = false
-        }
     }
 
     fun login(address: String, password: String, expectedInstanceId: String? = null) = action {
@@ -485,6 +482,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         session.value?.let { target -> withContext(Dispatchers.IO) { graph.settings.saveUploadLibrary(target, id) } }
         if (id != uploadLibrary.value) {
             saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""; saved["uploadFamily"] = ""; saved["uploadAutoName"] = false
+            saved["uploadDirectory"] = ""
             collectionJob?.cancel(); collectionState.value = ListState()
         }
         saved["uploadLibrary"] = id
@@ -520,14 +518,20 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun receiveFiles(uris: List<Uri>, shared: Boolean = false) {
         navigate("upload")
-        if (shared) saved["sharedUpload"] = true
-        action {
-            if (queue.value == null) graph.queue.load()
-            graph.uploads.receive(uris)
-            if (shared && session.value != null && libraries.value.any { it.id == uploadLibrary.value && it.enabled }) {
-                graph.uploads.enqueue(uploadLibrary.value, uploadDirectory.value, UploadMode.ORDINARY)
-                saved["sharedUpload"] = false
-            }
+        val target = session.value
+        val destination = if (shared && target != null) graph.settings.uploadLibrary(target) else null
+        val directory = if (destination == uploadLibrary.value && saved.get<String>("uploadInstance") == target?.instanceId) uploadDirectory.value else ""
+        // Transient Android URI grants must be consumed even when another UI action is busy or a login changes.
+        viewModelScope.launch {
+            try {
+                if (queue.value == null) graph.queue.load()
+                val inputs = graph.uploads.receive(uris)
+                if (target != null && !destination.isNullOrEmpty() && sameTarget(target, session.value) &&
+                    repository.libraries().any { it.id == destination && it.enabled }) {
+                    graph.uploads.enqueue(destination, directory, UploadMode.ORDINARY, target = target, inputIds = inputs)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { mutableMessage.value = explain(failure) }
         }
     }
     fun startUpload() = action {
@@ -535,7 +539,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val libraryId = uploadLibrary.value
         val directory = uploadDirectory.value
         val mode = UploadMode.valueOf(uploadMode.value)
-        val draftFiles = queue.value?.drafts.orEmpty()
+        val snapshot = queue.value ?: error("请先恢复传输记录")
+        val draftFiles = snapshot.drafts
+        val inputs = snapshot.pendingInputs.map { it.id }
+        check(draftFiles.all { it.id in inputs }) { "旧待传项缺少原始输入身份，请重新选择" }
         check(libraries.value.any { it.id == libraryId && it.enabled }) { "请选择正在接收上传的影库" }
         val family = uploadFamily.value.trim().takeIf { mode == UploadMode.ORDINARY && (uploadAutoName.value || uploadCollectionId.value != null) }?.takeIf(String::isNotBlank)
         val options = UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank), family)
@@ -546,8 +553,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             check(inspection.preview != null) { "请先填写作品基名并选择文件" }
         }
         check(sameTarget(target, session.value)) { "服务器已改变，请重新确认上传位置" }
-        check(draftFiles == queue.value?.drafts.orEmpty()) { "待传文件已改变，请核对本批后重试" }
-        graph.uploads.enqueue(libraryId, directory, mode, options)
+        graph.uploads.enqueue(libraryId, directory, mode, options, target, inputs, reviewed = draftFiles)
     }
     fun renameDraft(id: String, name: String, onSaved: () -> Unit) = action { graph.uploads.renameDraft(id, name); onSaved() }
     fun removeDraft(id: String) = action { graph.uploads.discardDraft(id) }

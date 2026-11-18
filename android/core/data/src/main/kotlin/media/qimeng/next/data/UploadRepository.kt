@@ -26,7 +26,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
     private val intakeLock = Mutex()
 
     /** Copy grants into app-owned immutable snapshots; a later provider change cannot change a retry. */
-    suspend fun receive(uris: List<Uri>) = withContext(Dispatchers.IO) {
+    suspend fun receive(uris: List<Uri>): List<String> = withContext(Dispatchers.IO) {
         intakeLock.withLock {
         require(uris.size <= 100) { "每批最多选择 100 个文件" }
         check(queue.state.value != null) { "请先恢复传输记录" }
@@ -104,6 +104,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
                     if (failure is java.io.IOException || failure is SecurityException) "无法读取来源文件，请检查文件与系统授权后重试" else safeFailure(failure))) }
             }
         }
+        selection.map { it.second.id }
         }
     }
 
@@ -129,23 +130,28 @@ class UploadRepository internal constructor(private val context: Context, val qu
         withContext(Dispatchers.IO) { File(spool, draft.spoolName).delete() }
     }
 
-    suspend fun enqueue(libraryId: String, directory: String, mode: UploadMode, options: UploadOptions = UploadOptions()) {
+    suspend fun enqueue(libraryId: String, directory: String, mode: UploadMode, options: UploadOptions = UploadOptions(),
+                        target: Session = settings.session.value ?: error("请先登录服务器"),
+                        inputIds: List<String> = queue.state.value?.pendingInputs.orEmpty().map { it.id },
+                        reviewed: List<UploadDraft>? = null) {
         intakeLock.withLock {
-        val target = settings.session.value ?: error("请先登录服务器")
         require(libraryId.isNotBlank()) { "请选择上传影库" }
         val batchKey = UUID.randomUUID().toString()
         queue.update { previous ->
-            check(previous.drafts.isNotEmpty()) { "请先选择文件" }
-            require(previous.pendingInputs.size in 1..100) { "原始输入清单缺失或超出 100 项，请重新选择" }
-            check(previous.drafts.all { draft -> previous.pendingInputs.any { it.id == draft.id } }) { "旧待传项缺少原始输入身份，请重新选择" }
-            check(previous.drafts.all { it.sourceHash.length == 64 }) { "待传快照缺少完整摘要，请重新选择文件" }
-            val label = "Android ${previous.pendingInputs.size} 个文件"
-            val selectedIds = previous.pendingInputs.map { it.id }.toSet()
-            previous.copy(drafts = emptyList(), pendingInputs = emptyList(),
-                batches = previous.batches + TransferBatch(batchKey, target, libraryId, mode, label, previous.pendingInputs,
+            check(sameTarget(target, settings.session.value)) { "服务器已改变，请重新确认上传位置" }
+            val selectedIds = inputIds.toSet()
+            val inputs = previous.pendingInputs.filter { it.id in selectedIds }
+            val drafts = previous.drafts.filter { it.id in selectedIds }
+            require(inputIds.size in 1..100 && inputs.map { it.id } == inputIds) { "原始输入清单已改变，请核对本批后重试" }
+            check(drafts.isNotEmpty()) { "本批没有可读取的文件，请查看读取结果" }
+            check(reviewed == null || reviewed == drafts) { "待传文件已改变，请核对本批后重试" }
+            check(drafts.all { it.sourceHash.length == 64 }) { "待传快照缺少完整摘要，请重新选择文件" }
+            val label = "Android ${inputs.size} 个文件"
+            previous.copy(drafts = previous.drafts.filterNot { it.id in selectedIds }, pendingInputs = previous.pendingInputs.filterNot { it.id in selectedIds },
+                batches = previous.batches + TransferBatch(batchKey, target, libraryId, mode, label, inputs,
                     relativeDirectory = directory.trim(), options = options),
                 intakeFailures = previous.intakeFailures.map { if (it.id in selectedIds) it.copy(batchKey = batchKey) else it },
-                transfers = previous.transfers + previous.drafts.map {
+                transfers = previous.transfers + drafts.map {
                     Transfer(it.id, target, libraryId, it.name, it.mimeType, it.bytes, it.spoolName, mode, it.sourceMtime,
                         batchKey, label, directory.trim(), options = options, sourceHash = it.sourceHash, originalName = it.originalName)
                 })
