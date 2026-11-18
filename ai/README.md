@@ -2,6 +2,30 @@
 
 本模块从零实现，使用官方 MCP Python SDK 2.3.0 处理 stdio 协议。CLI 与 MCP 共用执行路径；业务接口、参数和工具 schema 从本仓 OpenAPI 在云端生成，工具不能访问任意 URL 或运行任意脚本。
 
+## 安装到运行 AI 的电脑
+
+在 GitHub 打开通过的 `Cloud verification`，选与影库相同的提交，下载 **ai-first-check** 并解压。找到有 `install.lock` 和 `.whl` 的文件夹，在此文件夹打开终端。云端制品保留 7 天。下面的步骤使用 64 位 Python 3.13，安装时按随包的摘要核对客户端和依赖。[下载运行列表](https://github.com/Surtr42u/qimeng-next/actions/workflows/prepare.yml)
+
+Windows x64 使用 PowerShell。
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --only-binary=:all: --require-hashes -r install.lock -r windows-recycle.lock
+.\.venv\Scripts\qai.exe --help
+```
+
+Linux x64 使用终端。
+
+```sh
+python3.13 -m venv .venv
+.venv/bin/python -m pip install --only-binary=:all: --require-hashes -r install.lock
+.venv/bin/qai --help
+```
+
+看到 `mcp`、`worker`、`catalog` 等子命令后，在影库「设置 → AI 接入」选择允许的媒体库与动作，签发长期凭据。把下表中的地址、凭据和私有目录配置到运行执行器的账号。在 Pi、Hermes 等宿主的 MCP 配置中，`command` 填刚安装的 `qai.exe` 或 `qai` 的完整路径，`args` 填 `["mcp"]`。只需要在 App 提交后自动整理时，按下文配置 `worker` 的模型地址。[宿主配置示例](../docs/mcp-compatibility.md)
+
+维护者使用固定版本的 Setuptools 将同提交生成的协议打入 wheel。云端安装检查从下载制品创建新环境，在源码目录外运行入口并核对内置协议摘要。[构建依赖及校验和](../tools/ai-build.lock) · [Setuptools 84.2.1](https://pypi.org/project/setuptools/84.2.1/)
+
 ## 职责
 
 - Go：资产身份、命名编号、关联、权限、对象修订、批次、计划、研究证据与完成事实。
