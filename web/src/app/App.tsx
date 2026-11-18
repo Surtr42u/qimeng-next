@@ -19,6 +19,7 @@ import { EventsProvider, EventSyncStatus } from "../data/events";
 import { useRefreshLibrary } from "../data/refresh";
 import { usePageRestoration, UnsavedProvider } from "../lib/navigation";
 import { setTheme } from "../lib/preferences";
+import { reportClientProblem } from "../lib/client-problems";
 import { LegacySearchBox } from "../components/LegacySearchBox";
 import {
   BackIcon,
@@ -336,6 +337,7 @@ function Shell() {
 
 export function RouteError() {
   const error = useRouteError();
+  useEffect(() => { if (error instanceof Error) reportClientProblem("render_failed"); }, [error]);
   return (
     <div className="connection-screen">
       <h1>页面暂时无法打开</h1>

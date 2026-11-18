@@ -17,6 +17,10 @@ import (
 type LibraryUpdate struct{ExpectedRevision int64 `json:"expectedRevision"`;Name *string `json:"name"`;Enabled *bool `json:"enabled"`}
 func(s *Service)UpdateLibrary(ctx context.Context,w *Write,id string,in LibraryUpdate)(model.Library,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Library{},e};l,e:=s.library(ctx,id);if e!=nil{return l,e};if l.Revision!=in.ExpectedRevision{return l,Conflict(l.Revision)}
+ if in.Enabled!=nil&&*in.Enabled!=l.Enabled{
+  w.after=append(w.after,func()error{s.wakeLibraryMonitor();s.wakeScans();return nil})
+  if !*in.Enabled{q,e:=w.Q();if e!=nil{return l,e};if _,e=q.ExecContext(ctx,`UPDATE scans SET state='cancelled',data=json_set(data,'$.state','cancelled','$.updatedAt',?) WHERE library_id=? AND state IN ('queued','running') AND json_extract(data,'$.trigger') IN ('watch','poll')`,dateKey(time.Now().UTC()),id);e!=nil{return l,e}}
+ }
  if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>120{return l,Fail(400,"invalid_library","库名称无效。")};l.Name=v};if in.Enabled!=nil{l.Enabled=*in.Enabled;if l.Enabled{w.after=append(w.after,func()error{s.previews.changed(id,"");return nil})}};l.Revision++;raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};if _,e=q.ExecContext(ctx,"UPDATE libraries SET name=?,data=? WHERE id=?",l.Name,raw,l.ID);e!=nil{return l,e};return store.Get[model.Library](ctx,q,libraryProjection+"WHERE l.id=?",id)
 }
 func(s *Service)CreateDirectory(ctx context.Context,w *Write,libraryID,relative string)(Directory,error){

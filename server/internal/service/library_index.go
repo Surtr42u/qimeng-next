@@ -59,5 +59,5 @@ func(s *Service)DeleteLibrary(ctx context.Context,w *Write,id string,revision in
  }
  for _,table:=range []string{"assets","cos_works","collections","scans"}{if _,e=q.ExecContext(ctx,"DELETE FROM "+table+" WHERE library_id=?",id);e!=nil{return e}}
  if _,e=q.ExecContext(ctx,"DELETE FROM libraries WHERE id=?",id);e!=nil{return e}
- w.after=append(w.after,func()error{s.Root.DetachLibrary(id,retain);s.previews.changed("","");return nil});return nil
+ w.after=append(w.after,func()error{s.Root.DetachLibrary(id,retain);s.previews.changed("","");s.wakeLibraryMonitor();return nil});return nil
 }

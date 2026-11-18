@@ -2,6 +2,7 @@ import createClient from "openapi-fetch";
 import type { paths, components } from "../api/generated/schema";
 import { newId } from "../lib/id";
 import { ApiError } from "../lib/errors";
+import { reportClientProblem } from "../lib/client-problems";
 export { ApiError } from "../lib/errors";
 
 export type Schema<K extends keyof components["schemas"]> =
@@ -12,10 +13,15 @@ export const api = createClient<paths>({
 });
 
 api.use({
-  onResponse({ response }) {
+  onResponse({ response, request, schemaPath }) {
     if (response.status === 401 && !response.url.includes("/sessions"))
       window.dispatchEvent(new Event("qimeng-session-expired"));
+    if (response.status >= 500 && !request.signal.aborted && schemaPath !== "/system/client-errors" && !schemaPath.startsWith("/sessions"))
+      reportClientProblem("request_failed", response.status);
     return response;
+  },
+  onError({ request, schemaPath }) {
+    if (!request.signal.aborted && schemaPath !== "/system/client-errors" && !schemaPath.startsWith("/sessions")) reportClientProblem("connection_lost");
   },
 });
 

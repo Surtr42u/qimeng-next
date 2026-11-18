@@ -24,7 +24,7 @@ try {
   await page.screenshot({ path: join(evidence, target + "-" + mode + "-home.png") });
   const api = base + "/api/v1";
   const required = async result => { assert(result.ok(), "Packaged API returned " + result.status()); return result; };
-  const key = text => ({ "Idempotency-Key": "package-smoke-" + text });
+  const key = text => ({ Origin: base, "Idempotency-Key": "package-smoke-" + text });
   const inventory = await (await required(await page.request.get(api + "/libraries"))).json();
   assert.equal(inventory.totalMatched, 0);
   let checkpoint = await (await required(await page.request.post(api + "/backups", { headers: key("checkpoint") }))).json();
@@ -53,7 +53,7 @@ try {
     const library = await (await required(await page.request.post(api + "/libraries", { headers: key("library"), data: { name: "合成视频", kind: "regular" } }))).json();
     const intake = await (await required(await page.request.post(api + "/uploads", { headers: key("video-create"), data: { libraryId: library.id, mode: "ordinary", fileName: "synthetic-preview.mp4", mimeType: "video/mp4", size: video.length, expectedHash: sourceHash } }))).json();
     const upload = api + "/uploads/" + encodeURIComponent(intake.id);
-    await required(await page.request.put(upload + "/content", { data: video, headers: { "Content-Type": "application/octet-stream", "Upload-Offset": "0" } }));
+    await required(await page.request.put(upload + "/content", { data: video, headers: { Origin: base, "Content-Type": "application/octet-stream", "Upload-Offset": "0" } }));
     const published = await (await required(await page.request.post(upload + "/complete", { headers: key("video-complete") }))).json();
     assert.equal(published.asset.mediaType, "video");
     assert.equal(published.asset.probeState, "ready");

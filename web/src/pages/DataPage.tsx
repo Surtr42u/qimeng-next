@@ -20,8 +20,7 @@ import {
 import type { StatsRange } from "../data/analytics";
 import type { Schema } from "../data/client";
 import { useAuthors } from "../data/manage";
-import { useSession } from "../data/session";
-import { ErrorNotice, Loading, PageHeading } from "../components/Feedback";
+import { ErrorNotice, Loading } from "../components/Feedback";
 import { WorkspaceHeading } from "../components/LegacyPageHeading";
 import { DonutCard } from "../components/LegacyDonutCard";
 import { LegacyTrendChart } from "../components/LegacyTrendChart";
@@ -485,43 +484,5 @@ export function ReviewPage() {
         query.data && <BrowsingReviewContent review={query.data} />
       )}
     </div>
-  );
-}
-export function MaintenancePage() {
-  const { instance } = useSession();
-  return (
-    <>
-      <PageHeading title="服务与维护" subtitle="当前连接与维护入口。" />
-      <section className="panel">
-        <h2>{instance.name}</h2>
-        <dl className="facts">
-          <div>
-            <dt>协议</dt>
-            <dd>{instance.apiVersion}</dd>
-          </div>
-          <div>
-            <dt>智能执行器</dt>
-            <dd>{instance.capabilities.aiConfigured ? "已配置" : "未配置"}</dd>
-          </div>
-        </dl>
-        <p className="muted">
-          已配置不代表执行器当前在线，逐批进度以任务报告为准。
-        </p>
-      </section>
-      <div className="manage-grid section-space">
-        <Link className="panel manage-card" to="/manage/upload">
-          <h2>上传与入库</h2>
-        </Link>
-        <Link className="panel manage-card" to="/manage/tasks">
-          <h2>任务与报告</h2>
-        </Link>
-        <Link className="panel manage-card" to="/manage/trash">
-          <h2>回收站</h2>
-        </Link>
-        <Link className="panel manage-card" to="/manage/backup">
-          <h2>备份与归档</h2>
-        </Link>
-      </div>
-    </>
   );
 }

@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import type { Schema } from "../data/client";
 
-const tipStyle = {
+export const tipStyle = {
   contentStyle: {
     background: "var(--pop-chip-hover-bg)",
     border: "none",

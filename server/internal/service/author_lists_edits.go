@@ -4,6 +4,7 @@ import (
  "context"
  "database/sql"
  "errors"
+ "slices"
  "time"
 
  "qimeng.local/next/server/internal/authorlist"
@@ -57,6 +58,53 @@ func touchAuthorListMetadata(ctx context.Context,q store.Querier,a model.Author,
  lists,e:=store.List[authorListRecord](ctx,q,"SELECT DISTINCT l.data FROM author_lists l JOIN author_list_members m ON m.list_id=l.id WHERE m.author_id=? ORDER BY l.position",a.ID);if e!=nil{return e};for _,list:=range lists{blocks:=[]authorListBlock{};for _,block:=range list.Blocks{if block.AuthorID==a.ID{if removed{continue};if identityChanged{names,e:=authorlist.Names(a.Name);if e!=nil{return Fail(400,"invalid_author_name","作者名称不能安全写入清单。")};block.Declaration.Names=names;block.Declaration.Header=""}};blocks=append(blocks,block)};list.Blocks=blocks;list.Revision++;list.UpdatedAt=time.Now().UTC();if e=saveAuthorList(ctx,q,&list);e!=nil{return e}};return nil
 }
 func(s *Service)renameAuthorListWorks(ctx context.Context,q store.Querier,a model.Asset,oldName string)error{
- if oldName==a.FileName{return nil};for _,authorID:=range a.AuthorIDs{if authorID=="unknown"{continue};author,e:=store.Get[model.Author](ctx,q,"SELECT data FROM authors WHERE id=?",authorID);if e!=nil{return e};if author.Kind!="regular"{continue};lists,e:=store.List[authorListRecord](ctx,q,"SELECT DISTINCT l.data FROM author_lists l JOIN author_list_members m ON m.list_id=l.id WHERE m.author_id=? ORDER BY l.position",authorID);if e!=nil{return e};for _,list:=range lists{changed:=false;for index:=range list.Blocks{if list.Blocks[index].AuthorID!=authorID{continue};works:=[]string{};for _,work:=range list.Blocks[index].Declaration.Works{if work==oldName{work=a.FileName;changed=true};works=appendUnique(works,work)};list.Blocks[index].Declaration.Works=works};if changed{list.Revision++;list.UpdatedAt=time.Now().UTC();if e=saveAuthorList(ctx,q,&list);e!=nil{return e}}}}
+ if oldName==a.FileName{return nil}
+ for _,authorID:=range a.AuthorIDs{
+  if authorID=="unknown"{continue}
+  lists,e:=store.List[authorListRecord](ctx,q,`SELECT DISTINCT l.data FROM author_lists l
+   JOIN author_list_members m ON m.list_id=l.id JOIN authors c ON c.id=m.author_id
+   WHERE m.author_id=? AND json_extract(c.data,'$.kind')='regular' ORDER BY l.position`,authorID)
+  if e!=nil{return e}
+  if len(lists)==0{continue}
+  var shared bool
+  e=q.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM assets a JOIN asset_authors x ON x.asset_id=a.id
+   WHERE x.author_id=? AND a.file_name=? AND a.id!=?) OR EXISTS(
+   SELECT 1 FROM author_list_matches WHERE author_id=? AND work=? AND asset_id!=?)`,
+   authorID,oldName,a.ID,authorID,oldName,a.ID).Scan(&shared)
+  if e!=nil{return e}
+  for _,list:=range lists{
+   bindings,e:=store.List[string](ctx,q,"SELECT json_quote(work) FROM author_list_matches WHERE list_id=? AND asset_id=? AND author_id=?",list.ID,a.ID,authorID)
+   if e!=nil{return e}
+   rebind:=map[string]bool{}
+   for _,work:=range bindings{
+    if work==oldName||!authorlist.Matches(work,a.FileName){rebind[work]=true}
+   }
+   changed:=false
+   for index:=range list.Blocks{
+    block:=&list.Blocks[index]
+    if block.AuthorID!=authorID{continue}
+    previous:=block.Declaration.Works
+    seen:=make(map[string]bool,len(previous)+1)
+    works:=make([]string,0,len(previous)+1)
+    add:=func(name string){if !seen[name]{seen[name]=true;works=append(works,name)}}
+    for _,work:=range previous{
+     if work!=oldName||shared{add(work)}
+     // Preserve page/base rules for siblings, then add the renamed file as
+     // a literal so that an export can reconstruct it on a fresh instance.
+     if work==oldName||rebind[work]{add(a.FileName)}
+    }
+    if !slices.Equal(previous,works){changed=true;block.Declaration.Works=works}
+   }
+   if changed{
+    list.Revision++;list.UpdatedAt=time.Now().UTC()
+    if e=saveAuthorList(ctx,q,&list);e!=nil{return e}
+   }
+   if len(rebind)==0{continue}
+   if _,e=q.ExecContext(ctx,"INSERT OR IGNORE INTO author_list_matches(list_id,asset_id,author_id,work) VALUES(?,?,?,?)",list.ID,a.ID,authorID,a.FileName);e!=nil{return e}
+   for work:=range rebind{
+    if _,e=q.ExecContext(ctx,"DELETE FROM author_list_matches WHERE list_id=? AND asset_id=? AND author_id=? AND work=?",list.ID,a.ID,authorID,work);e!=nil{return e}
+   }
+  }
+ }
  return nil
 }

@@ -12,6 +12,7 @@
 - `QIMENG_ADMIN_PASSWORD`：可选日常登录密码，至少12个字符、至多1024字节。启动时以随机盐和PBKDF2-HMAC-SHA256派生校验值，不写入数据库/回执/日志，子进程环境移除此项。原密码输入界面交换独立设备会话；密码不是API Bearer凭据。变更配置并重启即可改变后续登录密码，已签发设备会话继续按自身撤销/过期规则管理。
 - `QIMENG_STORAGE_ROOTS`：可信运维配置的 JSON 对象，键为逻辑存储 ID，值为该存储的绝对根。路径不进入源码、日志或AI工具。本人管理界面保留原来的绝对根目录输入框，经专用解析接口转换为已授权根内的位置；注册库仍只保存逻辑 ID 与根内相对目录。未配置时使用内置 `data` 存储。
 - `QIMENG_TIMEZONE`：IANA 时区，在数据库启动前加载；缺省使用宿主时区，非法值阻止启动。
+- `QIMENG_SCANNER_WATCH_ENABLED` 控制已登记媒体库的原生文件通知，默认 `true`。关闭后仍按 `QIMENG_SCANNER_POLL_INTERVAL` 对账，默认 `5m`。网络挂载漏事件、系统拒绝通知或超过监听目录上限时，轮询继续。设置在启动时读取。
 - `QIMENG_LOCAL_SYNC_ROOT` 启用服务器目录投放。服务按 `QIMENG_LOCAL_SYNC_INTERVAL`（默认 30s）轮询；文件大小、修改时间与文件身份跨轮稳定且达到 `QIMENG_LOCAL_SYNC_STABLE_AGE`（默认 60s）后接收。根目录下的 TXT 导入作者清单，一级目录名匹配已启用常规库，其下的媒体按相对目录入库。上传开关暂停媒体接收，TXT 仍可处理。每次成功后保留来源，服务重启仍可识别已入库版本。管理员可在上传页查看失败原因和最近成功记录，手动触发下一轮。同步根须存在，且与媒体库、备份及服务数据根分开。
 - `QIMENG_DISCOVERY=true`：在已启用的私有局域网接口发布 `_qimeng._tcp` DNS-SD 服务，缺省关闭；可用 `QIMENG_DISCOVERY_INTERFACE` 选择单网卡、`QIMENG_DISCOVERY_NAME` 指定不含私人信息的显示名。端口取实际监听地址，不固定猜测8421。组播不可用时服务继续运行并给出不含网络地址的警告。
 - `QIMENG_PUBLIC_ORIGIN`：反向代理的明确 HTTPS origin，用于发现候选，例如 `https://library.example`；不得包含账号、路径、查询参数或令牌。客户端仍执行正常证书及实例身份核验。只绑定回环且没有公开origin的独立实例不广播，Android受监督TLS实例始终不广播。
@@ -27,6 +28,8 @@
 密码验证使用[Go标准库PBKDF2](https://pkg.go.dev/crypto/pbkdf2)与[OWASP建议](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)的600,000次HMAC-SHA256，32字节随机盐。单实例每分钟最多20次登录尝试、最多2个同时进行的密码派生，防止弱密码暴力试探和不受限CPU消耗；部署仍须按同源HTTPS/可信隧道访问。
 
 ## 数据布局与恢复
+
+已启用的库注册监听后先扫描一次。外部新增、删除、改名和目录移入会触发整库对账。已有媒体的写通知按路径核对实际内容。每库在 300 毫秒静默期后处理一批，连续写入最多合并 30 秒。每批最多保存 128 个路径，超过即扫描整库。每实例至多监听 64 个库、8192 个目录，每库至多 2048 个目录。停用或注销库会撤销监听。管理者可通过 `GET /libraries/{id}/monitoring` 查看当前模式、登记目录数及失败说明。
 
 SQLite 与媒体位于本机数据根，不支持把数据库置于网络共享并由多个服务打开。独立 SQLite 排他锁阻止第二进程拥有同一根；主业务库采用 WAL、外键和 FULL 同步。
 

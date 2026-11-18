@@ -5,6 +5,10 @@ if [[ "${CI:-}" != "true" || "${ANDROID_SERIAL:-}" != "emulator-5556" ]]; then
   exit 2
 fi
 export QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-android"
+independent_target=$(mktemp -d /dev/shm/qimeng-android-proof-XXXXXXXX)
+export QIMENG_BACKUP_TARGETS
+QIMENG_BACKUP_TARGETS=$(jq -cn --arg path "$independent_target" '{proof:{path:$path,failureDomain:"ephemeral-cloud-volume"}}')
+export QIMENG_DEFAULT_BACKUP_TARGET=proof
 export QIMENG_LISTEN='127.0.0.1:18481'
 export QIMENG_TIMEZONE='Asia/Shanghai'
 export QIMENG_ADMIN_TOKEN='synthetic-cloud-only-owner-credential-18481'
@@ -30,7 +34,7 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'Isolated Android server did not become ready'; exit 1; fi
-ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=160x240:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
+ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
 adb -s emulator-5556 reverse tcp:18481 tcp:18481
 adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test.mp4" /data/local/tmp/qimeng-next-test.mp4
 gradle --no-daemon -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest --stacktrace

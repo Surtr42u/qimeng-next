@@ -44,7 +44,25 @@ func(s *Service)refreshBatch(ctx context.Context,q store.Querier,id string)error
  switch{case b.ManifestState=="sealed"&&declared>0&&total==declared&&ingested==declared&&cancelled==0:b.State="completed";case problems>0||ingested>0||cancelled>0:b.State="partial";case receiving>0||b.ManifestState!="sealed"||bound<declared:b.State="receiving";case staged>0:b.State="waiting_executor";default:b.State="receiving"};b.Revision++;b.UpdatedAt=time.Now().UTC();return store.SaveBatch(ctx,q,b)
 }
 func(s *Service)CancelBatch(ctx context.Context,w *Write,id string,revision int64)(model.Batch,error){
- if e:=Authorize(w.Principal,"admin",id);e!=nil{return model.Batch{},e};b,e:=s.Batch(ctx,id);if e!=nil{return b,e};if b.Revision!=revision{return b,Conflict(b.Revision)};b.State="cancelled";b.Revision++;b.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return b,e};return b,store.SaveBatch(ctx,q,b)
+ if e:=Authorize(w.Principal,"admin",id);e!=nil{return model.Batch{},e}
+ q,e:=w.Q();if e!=nil{return model.Batch{},e}
+ b,e:=store.Get[model.Batch](ctx,q,"SELECT data FROM batches WHERE id=?",id)
+ if e!=nil{return b,Normalize(e)}
+ if b.Revision!=revision{return b,Conflict(b.Revision)}
+ if b.State=="completed"||b.State=="cancelled"{return b,nil}
+ var publishing bool
+ e=q.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM file_intents f JOIN uploads u ON u.id=json_extract(f.data,'$.UploadID')
+  WHERE u.batch_id=? AND f.state='prepared')`,id).Scan(&publishing)
+ if e!=nil{return b,e}
+ if publishing{return b,Fail(409,"publication_pending","批次已有文件开始发布，请先恢复原操作再取消其余输入。")}
+ // Release transfer capacity but keep the durable prefix, original manifest,
+ // duplicate decision and all previously published asset/version receipts.
+ if _,e=q.ExecContext(ctx,`UPDATE uploads SET state='cancelled',data=json_set(data,'$.state','cancelled')
+  WHERE batch_id=? AND state IN ('receiving','staged')`,id);e!=nil{return b,e}
+ if _,e=q.ExecContext(ctx,`UPDATE batch_inputs SET cancelled=1 WHERE batch_id=? AND cancelled=0 AND
+  (upload_id IS NULL OR upload_id IN (SELECT id FROM uploads WHERE batch_id=? AND state='cancelled'))`,id,id);e!=nil{return b,e}
+ b.State="cancelled";b.Revision++;b.UpdatedAt=time.Now().UTC()
+ return b,store.SaveBatch(ctx,q,b)
 }
 func(s *Service)Context(ctx context.Context,p model.Principal,id,cursor string,limit int)(map[string]any,error){
  d,e:=s.BatchDetail(ctx,p,id);if e!=nil{return nil,e};n,e:=limited(limit,20);if e!=nil{return nil,e};key:=fmt.Sprintf("context:%s:%d",id,d.Batch.Revision);o,e:=pageOffset(cursor,key);if e!=nil{return nil,e};total:=len(d.Inputs);if d.Batch.ManifestState=="legacy_unverified"{total=len(d.Items)};if o>total{return nil,Fail(400,"invalid_cursor","分页游标超出批次范围。")};end:=min(o+n,total)

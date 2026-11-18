@@ -22,6 +22,7 @@ import (
  "qimeng.local/next/server/internal/model"
  "qimeng.local/next/server/internal/store"
  "qimeng.local/next/server/internal/storage"
+ "qimeng.local/next/server/internal/sysmon"
 )
 
 type Error struct { Code string `json:"code"`; Message string `json:"message"`; CurrentRevision int64 `json:"currentRevision,omitempty"`; Details map[string]any `json:"details,omitempty"`; Status int `json:"-"` }
@@ -29,8 +30,8 @@ func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};if err!=nil&&strings.Contains(err.Error(),"qimeng_pending_asset"){return Fail(409,"publication_pending","此资产已有未提交的文件操作，请先恢复原操作。")};return err}
-type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64; LocalSync LocalSyncConfig }
-type Service struct { previews previewWork; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner }
+type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64; LocalSync LocalSyncConfig; Scanner *LibraryMonitorConfig }
+type Service struct { Traffic sysmon.Traffic; samples systemSamples; previews previewWork; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner; monitor *libraryMonitor }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -52,8 +53,10 @@ func New(config Config)(*Service,error){
  s:=&Service{DB:db,Root:root,Config:config,owner:owner,scanWake:make(chan struct{}),password:password,loginLimit:loginBudget{slots:make(chan struct{},2)}}
  s.workCtx,s.stopWork=context.WithCancel(context.Background())
  s.localSync=localSync
+ s.monitor=newLibraryMonitor(config.Scanner)
  s.recommendations.init()
  s.previews.init()
+ s.samples.init()
  ctx:=context.Background()
  libraries,err:=store.List[model.Library](ctx,db.DB,"SELECT data FROM libraries ORDER BY id");if err!=nil{s.Close();return nil,err}
  for _,library:=range libraries{if err=root.RegisterLibrary(library.ID,library.StorageID,library.RootRelativePath);err!=nil{s.Close();return nil,err}}
@@ -79,6 +82,7 @@ func New(config Config)(*Service,error){
  mirror,err:=readAuthorMirror(ctx,db.DB);if err!=nil{s.Close();return nil,err}
  s.mirrorEnabled.Store(mirror.Path!="");s.mirrorWake=make(chan struct{},1);s.workers.Add(1);go s.authorMirrorWorker();s.wakeAuthorMirror()
  if localSync.config.Root!=""{s.workers.Add(1);go s.localSyncWorker()}
+ if s.monitor!=nil{s.workers.Add(1);go s.runLibraryMonitor()}
  s.workers.Add(1);go s.warmRecommendationOrders()
  s.workers.Add(1);go s.previewWorker()
  return s,nil

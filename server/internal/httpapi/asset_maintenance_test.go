@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"qimeng.local/next/server/internal/httpapi"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
@@ -71,4 +73,31 @@ func TestScannedWorkUsesScopedResearchAndTheSameNamingRules(t *testing.T) {
 	denied:=call("PATCH","/asset-tasks/"+fresh.TaskID+"/metadata","respect-manual-empty",secondSecret,tags,409)
 	if !strings.Contains(denied.Body.String(),"human_field_protected"){t.Fatal("a new task could undo a deliberate human clearing")}
 	p,err:=f.s.Authenticate(context.Background(),secondSecret);if err!=nil||p.Has("ingest")||p.Has("organize")||p.Has("admin"){t.Fatal("asset task gained unrelated authority")}
+	t.Run("restore revokes the inherited task and keeps its evidence",func(t *testing.T){
+		original:=*f;original.t=t;f:=&original
+		var checkpoint service.Backup
+		decode(t,f.json("POST","/backups","existing-task-checkpoint",struct{}{},201),&checkpoint)
+		f.json("POST","/backups/"+checkpoint.ID+"/export","export-existing-task",struct{}{},202)
+		checkpoint=awaitBackup(t,f,checkpoint.ID)
+		if checkpoint.ExportState!="completed"{t.Fatal(checkpoint.ExportError)}
+		destination:=filepath.Join(t.TempDir(),"restored")
+		_,err:=service.RestoreBackup(context.Background(),service.RestoreOptions{
+			ArchivePath:filepath.Join(f.s.Config.DataDir,"backups",checkpoint.ID,"archive.qnext"),
+			Destination:destination,ExpectedSHA256:checkpoint.ArchiveHash,ReserveBytes:1,
+		})
+		if err!=nil{t.Fatal(err)}
+		restored,err:=service.New(service.Config{DataDir:destination,AdminToken:testSecret,ReserveBytes:1})
+		if err!=nil{t.Fatal(err)}
+		defer restored.Close()
+		reader:=&fixture{t:t,s:restored,h:httpapi.New(restored)}
+		var historical service.AssetMaintenanceTask
+		decode(t,reader.json("GET",route,"",nil,200),&historical)
+		if historical.State!="revoked"||historical.AssetID!=a.ID||historical.UsedUpdates<1{t.Fatal("previous scope remained active or facts disappeared",historical)}
+		decode(t,reader.json("GET",route+"/evidence","",nil,200),&records)
+		if len(records.Items)==0||records.Items[0].Evidence[0].URL!=evidence[0].URL{t.Fatal("lost previous research")}
+		if response:=reader.request("GET",route,"",secret,nil,nil);response.Code!=401{t.Fatal("old credential still authenticated",response.Code)}
+		update:=reader.json("PATCH",route+"/metadata","restored-task-write",tags,409)
+		if !strings.Contains(update.Body.String(),"asset_task_revoked"){t.Fatal("owner could still act under predecessor's task",update.Body.String())}
+		if materials:=reader.json("GET",route+"/materials","",nil,409);!strings.Contains(materials.Body.String(),"asset_task_revoked"){t.Fatal("historical task produced new research material")}
+	})
 }

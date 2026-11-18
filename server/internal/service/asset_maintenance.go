@@ -14,6 +14,7 @@ var maintenanceFields=[]string{"authors","taxonomy","tags","rename"}
 
 type AssetMaintenanceTask struct {
 	ID string `json:"id"`
+	State string `json:"state,omitempty"`
 	AssetID string `json:"assetId"`
 	LibraryID string `json:"libraryId"`
 	ContentVersion int64 `json:"contentVersion"`
@@ -23,6 +24,7 @@ type AssetMaintenanceTask struct {
 	Research bool `json:"research"`
 	UsedUpdates int `json:"usedUpdates"`
 	MaxUpdates int `json:"maxUpdates"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
@@ -47,8 +49,9 @@ func(s *Service) prepareAssetMaintenance(ctx context.Context,id string,d Delegat
 	if !lib.Enabled||a.Trashed{return t,Fail(409,"asset_unavailable","库已停用或作品已进入回收站。")}
 	if a.Revision!=in.ExpectedRevision||a.ContentVersion!=in.ExpectedContentVersion{return t,Conflict(a.Revision)}
 	updates:=in.MaxUpdates;if updates==0{updates=d.MaxUpdates};if updates<1||updates>d.MaxUpdates{return t,Fail(403,"update_budget_denied","作品修改次数超出授权。")}
-	return AssetMaintenanceTask{ID:id,AssetID:a.ID,LibraryID:a.LibraryID,ContentVersion:a.ContentVersion,Hash:a.Hash,
-		ExpectedRevision:a.Revision,AssetFields:allowed,Research:d.CanResearchAssets,MaxUpdates:updates,ExpiresAt:limitExpiry(d,time.Duration(d.TaskSeconds)*time.Second)},nil
+	now:=time.Now().UTC()
+	return AssetMaintenanceTask{ID:id,State:"authorized",AssetID:a.ID,LibraryID:a.LibraryID,ContentVersion:a.ContentVersion,Hash:a.Hash,
+		ExpectedRevision:a.Revision,AssetFields:allowed,Research:d.CanResearchAssets,MaxUpdates:updates,CreatedAt:&now,ExpiresAt:limitExpiry(d,time.Duration(d.TaskSeconds)*time.Second)},nil
 }
 func (s *Service) assetMaintenance(ctx context.Context,id string)(AssetMaintenanceTask,error){
 	t,err:=store.Get[AssetMaintenanceTask](ctx,s.DB.DB,"SELECT data FROM asset_maintenance_tasks WHERE id=?",id)
@@ -66,6 +69,7 @@ func(s *Service) AssetTaskContext(ctx context.Context,p model.Principal,id strin
 func(s *Service) activeAssetTask(ctx context.Context,p model.Principal,id string)(AssetMaintenanceTask,model.Asset,error){
 	var a model.Asset
 	t,err:=s.AssetTaskContext(ctx,p,id);if err!=nil{return t,a,err}
+	if t.State=="revoked"{return t,a,Fail(409,"asset_task_revoked","此作品任务的授权已撤销，历史记录和研究依据仍可查看。")}
 	if !t.ExpiresAt.After(time.Now()){return t,a,Fail(409,"asset_task_expired","作品维护任务已到期。")}
 	a,err=s.Asset(ctx,t.AssetID);if err!=nil{return t,a,err}
 	lib,err:=s.library(ctx,a.LibraryID);if err!=nil{return t,a,err}

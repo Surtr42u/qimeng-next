@@ -16,8 +16,11 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   );
   const directory = testInfo.outputPath("synthetic-inputs");
   mkdirSync(directory, { recursive: true });
-  const picture = resolve(directory, "CI 合成图片.png");
-  const video = resolve(directory, "CI 合成视频.mp4");
+  const pictureName = "CI 合成图片 " + testInfo.retry + ".png";
+  const videoName = "CI 合成视频 " + testInfo.retry + ".mp4";
+  const tagName = "CI 合成标签 " + testInfo.retry;
+  const picture = resolve(directory, pictureName);
+  const video = resolve(directory, videoName);
   execFileSync(
     "ffmpeg",
     [
@@ -97,19 +100,19 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     .setInputFiles(picture);
   const pictureRow = page
     .locator(".upload-task")
-    .filter({ hasText: "CI 合成图片.png" });
+    .filter({ hasText: pictureName });
   await expect(pictureRow.getByText("已完成", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
   await pictureRow.getByRole("link", { name: "查看入库内容" }).click();
   await expect(
-    page.getByRole("heading", { name: "CI 合成图片.png", exact: true }),
+    page.getByRole("heading", { name: pictureName, exact: true }),
   ).toBeVisible();
   const assetId = decodeURIComponent(
     new URL(page.url()).pathname.split("/").at(-1)!,
   );
   await page.getByRole("button", { name: "管理标签", exact: true }).click();
-  await page.getByLabel("新标签名称").fill("CI 合成标签");
+  await page.getByLabel("新标签名称").fill(tagName);
   await page.getByRole("dialog").getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("button", { name: "保存标签", exact: true }).click();
   await expect(
@@ -146,14 +149,14 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     page.getByRole("button", { name: "已收藏", exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator(".detail-tags").getByText("CI 合成标签", { exact: true }),
+    page.locator(".detail-tags").getByText(tagName, { exact: true }),
   ).toBeVisible();
   const response = await page.request.get(
     `/api/v1/assets/${encodeURIComponent(assetId)}`,
   );
   expect(response.ok()).toBe(true);
   const saved = await response.json();
-  expect(saved.tags).toContain("CI 合成标签");
+  expect(saved.tags).toContain(tagName);
   expect(saved.authorIds).toContain(authorId);
   expect(saved.authorIds).toHaveLength(2);
   const createdAuthorId = saved.authorIds.find((id: string) => id !== authorId);
@@ -196,7 +199,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   expect(avatarResponse.headers()["content-type"]).toBe("image/png");
   await page.goto("/");
   await expect(
-    page.getByRole("link", { name: "打开 CI 合成图片.png", exact: true }),
+    page.getByRole("link", { name: "打开 " + pictureName, exact: true }),
   ).toBeVisible();
 
   await page.goto("/manage/upload");
@@ -212,7 +215,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     .setInputFiles(video);
   const videoRow = page
     .locator(".upload-task")
-    .filter({ hasText: "CI 合成视频.mp4" });
+    .filter({ hasText: videoName });
   await expect(videoRow.getByText("已完成", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
@@ -251,7 +254,13 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     data: { label: markLabel, positionMs: 500, color: "#a855f7", contentVersion: videoData.contentVersion },
   });
   expect(markResponse.ok()).toBe(true);
+  const timelineURL = "/api/v1/assets/" + encodeURIComponent(videoId) + "/timeline";
+  const storedMarks = await (await page.request.get(timelineURL)).json();
+  expect(storedMarks.items.find((item: { label: string }) => item.label === markLabel)?.contentVersion).toBe(videoData.contentVersion);
+  const timelineRead = page.waitForResponse(response => new URL(response.url()).pathname === timelineURL && response.request().method() === "GET");
   await page.reload();
+  expect((await timelineRead).status()).toBe(200);
+  await expect.poll(() => page.locator("video").evaluate(video => (video as HTMLVideoElement).duration)).toBeGreaterThan(0);
   const marker = page.locator('.art-progress-highlight span');
   await expect(marker).toHaveCount(1);
   await expect(marker).toHaveAttribute("data-text", markLabel);

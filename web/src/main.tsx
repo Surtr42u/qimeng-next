@@ -25,7 +25,8 @@ import {
   TrashPage,
   BackupPage,
 } from "./pages/LibraryPages";
-import { DataPage, ReviewPage, MaintenancePage } from "./pages/DataPage";
+import { DataPage, ReviewPage } from "./pages/DataPage";
+import { MaintenancePage, StorageDetailsPage, ClientErrorsPage } from "./pages/MaintenancePage";
 import { ActivityRankingPage } from "./pages/ActivityRankingPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AIAccessPage } from "./pages/AIAccessPage";
@@ -46,7 +47,7 @@ const router = createBrowserRouter([
   {
     element: <App />,
     errorElement: <RouteError />,
-    children: [
+    children: [{ errorElement: <RouteError />, children: [
       { path: "/", element: <HomePage /> },
       { path: "/album", element: <BrowsePage /> },
       { path: "/search", element: <BrowsePage /> },
@@ -81,9 +82,11 @@ const router = createBrowserRouter([
         element: <AuthorArchivesPage />,
       },
       { path: "/maintenance", element: <MaintenancePage /> },
+      { path: "/maintenance/storage", element: <StorageDetailsPage /> },
+      { path: "/maintenance/client-errors", element: <ClientErrorsPage /> },
       { path: "/settings", element: <SettingsPage /> },
       { path: "/settings/ai", element: <AIAccessPage /> },
-    ],
+    ] }],
   },
 ]);
 createRoot(document.getElementById("root")!).render(

@@ -4,11 +4,13 @@ import (
  "context"
  "encoding/json"
  "errors"
+ "fmt"
  "os"
  "path/filepath"
  "slices"
  "strings"
  "sync"
+ "syscall"
  "time"
 
  "qimeng.local/next/server/internal/model"
@@ -94,7 +96,7 @@ func(s *Service)localSyncWorker(){
   select{case <-s.workCtx.Done():return;case <-r.wake:case <-ticker.C:}
  }
 }
-func publicSyncError(e error)string{var app *Error;if errors.As(e,&app){return app.Message};return "目录或持久记录暂不可用。"}
+func publicSyncError(e error)string{var app *Error;if errors.As(e,&app){return app.Message};var sys syscall.Errno;if errors.As(e,&sys){return fmt.Sprintf("系统文件操作失败（系统错误 %d）。",uintptr(sys))};return "目录或持久记录暂不可用。"}
 func(s *Service)localSyncCycle(ctx context.Context){
  r:=s.localSync;r.mu.Lock();r.status.Running=true;v:=r.status;r.mu.Unlock()
  v.Items=[]LocalSyncItem{};v.Counts=LocalSyncCounts{};v.LastError=""

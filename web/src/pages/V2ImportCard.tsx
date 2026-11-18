@@ -20,16 +20,17 @@ export function V2ImportCard({ selected }: { selected?: File }) {
   const [confirm, setConfirm] = useState(false);
   const [mediaMap, setMediaMap] = useState<Record<string, string>>({});
   const [authorMap, setAuthorMap] = useState<Record<string, string>>({});
+  const [inputsChanged, setInputsChanged] = useState(false);
   const attempt = useRef({ stage: newId(), plan: newId(), commit: newId() });
   const inputs = useV2Inputs();
   const items = inputs.data?.pages.flatMap(page => page.items) ?? [];
   const review = useV2Review(plan?.id ?? "");
   const commit = useV2Commit();
   const locked = busy || commit.isPending;
-  const inputsChanged = Object.keys(mediaMap).length > 0 || Object.keys(authorMap).length > 0;
   const needsConsent = !!plan && (plan.skippedCount > 0 || plan.issueCount > 0);
   const reset = (chosen?: File) => {
-    setFile(chosen); setStaged(undefined); setPlan(undefined); setMediaMap({}); setAuthorMap({}); setError(undefined); setSkipped(false); commit.reset();
+    requests.current?.abort(); requests.current = undefined; setBusy(false); setConfirm(false); setInputsChanged(false);
+    setFile(chosen); setSourceId(""); setStaged(undefined); setPlan(undefined); setMediaMap({}); setAuthorMap({}); setError(undefined); setSkipped(false); commit.reset();
     attempt.current = { stage: newId(), plan: newId(), commit: newId() };
   };
   useEffect(() => { if (selected) reset(selected); }, [selected]);
@@ -47,14 +48,14 @@ export function V2ImportCard({ selected }: { selected?: File }) {
       };
       const prepared = await planV2(document.id, attempt.current.plan, body, controller.signal);
       controller.signal.throwIfAborted();
-      setPlan(prepared); setMediaMap({}); setAuthorMap({}); setSkipped(false);
+      setPlan(prepared); setInputsChanged(false); setSkipped(false);
       attempt.current.commit = newId(); void inputs.refetch();
     } catch (failure) { if (!controller.signal.aborted) setError(failure); }
-    finally { requests.current = undefined; if (!controller.signal.aborted) setBusy(false); }
+    finally { if (requests.current === controller) { requests.current = undefined; if (!controller.signal.aborted) setBusy(false); } }
   };
   const changeMapping = (key: string, value: string, author: boolean) => {
     const update = author ? setAuthorMap : setMediaMap;
-    update(previous => ({ ...previous, [key]: value })); attempt.current.plan = newId();
+    update(previous => ({ ...previous, [key]: value })); setInputsChanged(true); attempt.current.plan = newId();
   };
   return <div className="v2-import">
     <button type="button" className="upload-drop" disabled={locked} onClick={() => input.current?.click()}><FileUp aria-hidden /><b>选择备份文件导入恢复</b><span>选择旧版 v2 JSON，先预检资产、作者和事件，再确认合并。</span></button>

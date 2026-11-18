@@ -74,6 +74,7 @@ func(a *API)routes(){
  a.get("/storages",func(r *http.Request)(any,error){return a.s.Storages(),nil})
  a.libraryLocationRoutes()
  a.localSyncRoutes()
+ a.systemRoutes()
  a.authorListRoutes()
  write[libraryCreateRequest](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in libraryCreateRequest)(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind,in.StorageID,in.RootRelativePath);return v,201,e})
  a.get("/assets",func(r *http.Request)(any,error){f,e:=assetFilterRequest(r);if e!=nil{return nil,e};return a.s.Assets(r.Context(),f)})

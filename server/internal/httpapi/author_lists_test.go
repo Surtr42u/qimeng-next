@@ -23,6 +23,43 @@ func listContent(t *testing.T,f *fixture,url string)string{
  t.Helper();r:=f.request("GET",url,"",testSecret,nil,nil);if r.Code!=200||r.Header().Get("ETag")==""{t.Fatal("text export",r.Code,r.Body.String())};return r.Body.String()
 }
 
+func TestRenamingOneSharedOrPageRulePreservesSiblingAndExportsNewBinding(t *testing.T){
+ f:=setup(t)
+ names:=[]string{"left/shared.png","right/shared.png","pages/Pages (1).png","pages/Pages (2).png"}
+ for i,name:=range names{
+  file,err:=f.s.Root.OpenFile("libraries/"+f.library+"/"+name,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
+  if err!=nil{t.Fatal(err)}
+  _,err=file.Write(pngBytes(t,uint8(110+i)));closeErr:=file.Close()
+  if err!=nil||closeErr!=nil{t.Fatal(err,closeErr)}
+ }
+ if scan:=f.scan("scan-shared-author-works");scan.Added!=4{t.Fatal(scan)}
+ initialText:="1  Synthetic author\n作品\nshared.png\nPages\n"
+ imported:=importList(t,f,"import-shared-author-text","shared.txt",initialText,0)
+ var page model.Page[model.Asset]
+ decode(t,f.json("GET","/assets","",nil,200),&page)
+ if imported.List==nil||len(page.Items)!=4||imported.MatchedAssets!=4{t.Fatal("setup did not match all works",imported)}
+ byPath:=map[string]model.Asset{}
+ for _,a:=range page.Items{byPath[a.RelativePath]=a}
+ moves:=[]struct{old,new,key string}{{names[0],"left/renamed.png","move-one-shared-work"},{names[2],"pages/edited.png","move-one-page-work"}}
+ for _,m:=range moves{
+  a:=byPath[m.old]
+  decode(t,f.json("POST","/assets/"+a.ID+"/move",m.key,map[string]any{"expectedRevision":a.Revision,"relativePath":m.new},200),&a)
+ }
+ exported:=listContent(t,f,"/author-lists/"+imported.List.ID+"/content")
+ for _,line:=range []string{"shared.png","renamed.png","Pages","edited.png"}{if strings.Count(exported,"\n"+line+"\n")!=1{t.Fatal("fragment lost or repeated work declaration",exported)}}
+ f.json("POST","/author-lists/rebuild","rebuild-shared-renames",struct{}{},200)
+ decode(t,f.json("GET","/assets","",nil,200),&page)
+ for _,a:=range page.Items{if a.AuthorName!="Synthetic author"{t.Fatal("rebuild lost a sibling or renamed work",a.RelativePath)}}
+ var current service.AuthorList
+ decode(t,f.json("GET","/author-lists/"+imported.List.ID,"",nil,200),&current)
+ importList(t,f,"remove-renamed-text-declarations","shared.txt",initialText,current.Revision)
+ decode(t,f.json("GET","/assets","",nil,200),&page)
+ for _,a:=range page.Items{
+  edited:=a.ID==byPath[names[0]].ID||a.ID==byPath[names[2]].ID
+  if edited!=(a.AuthorID=="unknown"){t.Fatalf("asset retained an obsolete rule or lost its own: %s %s",a.RelativePath,a.AuthorID)}
+ }
+}
+
 func TestAuthorListsCrossListUnionsAndExplicitRemovals(t *testing.T){
  f:=setup(t);u,_:=f.upload("合成画集 (2).png",41,nil);asset:=*f.complete(u).Asset
  a:=importList(t,f,"first-text-import","第一份.txt","1  Painter A  Alias\n来源  甲  渠道 B\n作品\n合成画集\n",0)

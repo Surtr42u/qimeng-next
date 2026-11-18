@@ -42,6 +42,7 @@ def move(config, binding, permit, arm, observe):
     entered = False
     vetoed = False
     approved = False
+    refusal = "native_recycle_refused"
     if win32file.GetDriveType(path.anchor) != 3:  # DRIVE_FIXED
         return {"outcome": "retained", "code": "recycle_bin_unavailable"}
 
@@ -56,13 +57,18 @@ def move(config, binding, permit, arm, observe):
             self._wrap_(self)
 
         def PreDeleteItem(self, flags, item):
-            nonlocal entered, vetoed
+            nonlocal entered, vetoed, refusal
             try:
                 actual = Path(item.GetDisplayName(shellcon.SIGDN_FILESYSPATH))
-                allowed = (flags & shellcon.TSF_DELETE_RECYCLE_IF_POSSIBLE and actual == path
-                           and identity(actual.lstat()) == record["identity"])
-                if not allowed:
-                    raise OSError("native provider cannot honor the recycle-only request")
+                if not flags & shellcon.TSF_DELETE_RECYCLE_IF_POSSIBLE:
+                    refusal = "native_recycle_not_offered"
+                    raise OSError("native provider did not offer recycling")
+                # Windows may spell an ordinary directory using either its
+                # long or 8.3 name. Require the same canonical directory entry
+                # and the original identity; a hard link elsewhere is distinct.
+                if actual.resolve(strict=True) != path.resolve(strict=True) or identity(actual.lstat()) != record["identity"]:
+                    refusal = "native_source_identity_changed"
+                    raise OSError("native source differs from the sealed entry")
                 arm()
                 entered = True
             except Exception:
@@ -126,7 +132,7 @@ def move(config, binding, permit, arm, observe):
             operation = pythoncom.CoCreateInstance(shell.CLSID_FileOperation, None, pythoncom.CLSCTX_INPROC_SERVER,
                                                    shell.IID_IFileOperation)
             # FOFX_RECYCLEONDELETE, FOFX_EARLYFAILURE, FOF_NO_CONNECTED_ELEMENTS.
-            operation.SetOperationFlags(0x00080000 | 0x00100000 | 0x2000 | shellcon.FOF_SILENT
+            operation.SetOperationFlags(0x00080000 | 0x00100000 | 0x20000000 | 0x2000 | shellcon.FOF_SILENT
                                         | shellcon.FOF_NOERRORUI | shellcon.FOF_NOCONFIRMATION)
             native_item = shell.SHCreateItemFromParsingName(str(path), None, shell.IID_IShellItem)
             # pywin32 registers a server gateway for this sink, but has no
@@ -137,8 +143,13 @@ def move(config, binding, permit, arm, observe):
             armed = True
             operation.PerformOperations()
             approved = not operation.GetAnyOperationsAborted() and outcome is not None
-    except (OSError, pywintypes.com_error):
-        pass
+    except (OSError, pywintypes.com_error) as err:
+        # Only a numeric Windows status can be reported. Error descriptions
+        # may include an absolute user path.
+        if not vetoed:
+            number = getattr(err, "winerror", None) or getattr(err, "hresult", None)
+            if isinstance(number, int):
+                refusal = f"native_recycle_refused_{number & 0xffffffff:08x}"
     finally:
         known_preserved = False
         try:
@@ -151,5 +162,5 @@ def move(config, binding, permit, arm, observe):
     if outcome is not None:
         return outcome
     if not armed or (vetoed and not entered):
-        return {"outcome": "retained", "code": "native_recycle_refused"}
+        return {"outcome": "retained", "code": refusal}
     raise ToolError("CLEANUP_OUTCOME_PENDING", "Windows 回收站尚未确认去向，保留恢复链接供本人核对", uncertain=True)

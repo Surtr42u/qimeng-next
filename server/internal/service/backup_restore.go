@@ -51,10 +51,11 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
  // reports remain, but no previous session or delegated writer can claim them.
  for _,statement:=range []string{
   "DELETE FROM credentials","DELETE FROM idempotency","DELETE FROM file_intents","DELETE FROM delegated_tasks",
-  "DELETE FROM author_list_mirror",
+  "DELETE FROM author_list_mirror","DELETE FROM client_diagnostics",
   "DELETE FROM detached_upload_roots",
   "UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
   "UPDATE author_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE state='authorized'",
+  "UPDATE asset_maintenance_tasks SET data=json_set(data,'$.state','revoked') WHERE coalesce(json_extract(data,'$.state'),'authorized')!='revoked'",
   "UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",
   "UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')",
   "UPDATE backups SET data=json_set(json_remove(data,'$.archiveHash','$.archiveBytes','$.exportedAt'),'$.state','snapshot_not_included','$.exportState','unavailable','$.exportError','backup_snapshot_not_included')",

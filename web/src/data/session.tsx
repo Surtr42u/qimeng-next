@@ -6,6 +6,7 @@ import type { Schema } from "./client";
 import { queryClient } from "./query";
 import { ErrorNotice, Loading } from "../components/Feedback";
 import { LegacyLogin } from "../components/LegacyLogin";
+import { ClientDiagnostics } from "./client-diagnostics";
 
 const SessionContext = createContext<{
   instance: Schema<"Instance">;
@@ -97,6 +98,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
       key={JSON.stringify([instance.data.id, session.data.id])}
       value={{ instance: instance.data, session: session.data }}
     >
+      <ClientDiagnostics />
       {instance.isError && (
         <div className="connection-warning" role="status">
           连接检查失败，当前内容可能已过期。

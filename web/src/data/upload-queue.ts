@@ -4,6 +4,7 @@ import { fileDigest } from './hash';
 import { localReadAll, localWrite, localWriteGroup } from './storage';
 import { newId } from '../lib/id';
 import { invalidateLibrary } from './query';
+import { reportClientProblem } from '../lib/client-problems';
 
 export type UploadPhase = 'waiting_file' | 'queued' | 'hashing' | 'uploading' | 'completing' | 'ingested' | 'staged' | 'duplicate' | 'failed' | 'paused' | 'cancelled';
 export type QueueEntry = {
@@ -54,6 +55,7 @@ export class UploadQueue {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
   private publish(patch: Partial<Snapshot> = {}) {
+    if (!this.disposed && patch.persistenceError && patch.persistenceError !== this.snapshot.persistenceError) reportClientProblem('storage_unavailable');
     this.snapshot = { ...this.snapshot, ...patch, entries: [...this.entries.values()].map(entry => ({ ...entry, waitingFor: entry.phase === 'queued' ? this.blockingEntry(entry)?.name : undefined })) };
     this.listeners.forEach(listener => listener());
   }
@@ -140,6 +142,7 @@ export class UploadQueue {
   private change(id: string, patch: Partial<QueueEntry>, persist = true) {
     const current = this.entries.get(id);
     if (!current || this.disposed) return;
+    if (patch.phase === 'failed' && current.phase !== 'failed') reportClientProblem('upload_failed');
     const next = { ...current, ...patch }; this.entries.set(id, next);
     if (persist) this.persist(next);
     this.publish();

@@ -4,6 +4,7 @@ import { attachFullscreenChrome } from "../lib/player-fullscreen";
 import { attachProgressSeekFix } from "../lib/player-seek";
 import { attachSelectorBehavior, playerControls, playerSettings, PLAYBACK_RATES, updateHighlights, updateVideoTrackControls } from "../lib/player-controls";
 import type { PlayerHighlight } from "../lib/player-controls";
+import { reportClientProblem } from "../lib/client-problems";
 
 export function VideoPlayer({
   src, title, poster, highlights = [], initialPosition, progressMatches,
@@ -60,9 +61,14 @@ export function VideoPlayer({
         callbacks.current.onProgress(position);
       }
     };
+    const renderMarks = () => queueMicrotask(() => {
+      // ArtPlayer's progress control installs its own metadata listener during
+      // mounting and clears the container. Publish after all its listeners run.
+      if (!disposed && player.current === art) updateHighlights(art, marks.current);
+    });
     const metadata = () => {
       updateVideoTrackControls(art);
-      updateHighlights(art, marks.current);
+      renderMarks();
       if (!resumed && initial.progressMatches && initial.initialPosition > 0) {
         resumed = true;
         // A saved position belongs only to this exact content version.
@@ -71,6 +77,8 @@ export function VideoPlayer({
       }
     };
     art.on("video:loadedmetadata", metadata);
+    art.on("video:durationchange", renderMarks);
+    art.on("ready", renderMarks);
     const tracksChanged = () => updateVideoTrackControls(art);
     art.video.textTracks.addEventListener("addtrack", tracksChanged);
     art.video.textTracks.addEventListener("removetrack", tracksChanged);
@@ -87,7 +95,7 @@ export function VideoPlayer({
       if (value) value.textContent = art.playbackRate === 1 ? "倍速" : `${art.playbackRate}x`;
     });
     const failure = () => {
-      if (!disposed) setError("此浏览器无法播放该文件或原件不可读取。");
+      if (!disposed) { setError("此浏览器无法播放该文件或原件不可读取。"); reportClientProblem("playback_failed"); }
     };
     art.on("video:error", failure);
     art.on("error", failure);

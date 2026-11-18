@@ -59,7 +59,7 @@ func recordSyncItem(v *LocalSyncStatus,item LocalSyncItem){
 }
 func(s *Service)walkSyncDirectory(ctx context.Context,root *os.Root,dir string,depth int,cycle string,libs map[string][]model.Library,v *LocalSyncStatus)error{
  name:=dir;if name==""{name="."}
- f,_,e:=openSyncSource(root,name);if e!=nil{return e};defer f.Close()
+ f,_,e:=openSyncSource(root,name);if e!=nil{return Fail(503,"local_sync_open_directory","无法打开投放目录。"+publicSyncError(e))};defer f.Close()
  for{
   if e=ctx.Err();e!=nil{return e}
   entries,readErr:=f.ReadDir(128)
@@ -83,12 +83,12 @@ func(s *Service)walkSyncDirectory(ctx context.Context,root *os.Root,dir string,d
    item.SizeBytes=info.Size()
    e=s.observeSyncSource(ctx,root,file,info,item,cycle,libs,v);file.Close();if e!=nil{return e}
   }
-  if errors.Is(readErr,io.EOF){return nil};if readErr!=nil{return readErr}
+  if errors.Is(readErr,io.EOF){return nil};if readErr!=nil{return Fail(503,"local_sync_read_directory","无法枚举投放目录。"+publicSyncError(readErr))}
  }
 }
 type syncObservation struct{stamp,state,uploadID string;attempts int}
 func(s *Service)observeSyncSource(ctx context.Context,root *os.Root,f *os.File,info os.FileInfo,item LocalSyncItem,cycle string,libs map[string][]model.Library,v *LocalSyncStatus)error{
- stamp,e:=syncFileStamp(f,info);if e!=nil{return e}
+ stamp,e:=syncFileStamp(f,info);if e!=nil{return Fail(503,"local_sync_source_version","无法核验来源版本。"+publicSyncError(e))}
  r:=s.localSync;var old syncObservation
  e=s.DB.DB.QueryRowContext(ctx,"SELECT stamp,state,upload_id,attempts FROM local_sync_sources WHERE root_id=? AND path=?",r.rootID,item.Path).Scan(&old.stamp,&old.state,&old.uploadID,&old.attempts)
  if e!=nil&&!errors.Is(e,sql.ErrNoRows){return e}

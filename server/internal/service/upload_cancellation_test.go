@@ -20,4 +20,10 @@ func TestCancellationCannotErasePreparedPublication(t *testing.T){
  _,e=s.Run(ctx,owner,"cancel-pending","cancel-pending-key",nil,func(w *Write)(any,int,error){return nil,204,s.CancelUpload(ctx,w,u.ID)})
  var problem *Error;if !errors.As(e,&problem)||problem.Code!="publication_pending"{t.Fatalf("prepared publication was cancelled: %v",e)}
  preserved,e:=s.Upload(ctx,owner,u.ID);if e!=nil||preserved.State!="staged"{t.Fatal("failed cancellation changed the original input")}
+ batch,e:=s.Batch(ctx,u.BatchID);if e!=nil{t.Fatal(e)}
+ _,e=s.Run(ctx,owner,"cancel-pending-batch","cancel-pending-batch-key",nil,func(w *Write)(any,int,error){
+  b,e:=s.CancelBatch(ctx,w,batch.ID,batch.Revision);return b,200,e
+ })
+ if !errors.As(e,&problem)||problem.Code!="publication_pending"{t.Fatalf("batch cancellation stranded its prepared publication: %v",e)}
+ still,e:=s.Batch(ctx,batch.ID);if e!=nil||still.State!=batch.State||still.Revision!=batch.Revision{t.Fatal("rejected batch cancellation changed its manifest",e)}
 }

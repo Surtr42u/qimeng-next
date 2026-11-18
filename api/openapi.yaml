@@ -2,13 +2,58 @@ openapi: 3.0.3
 info:
   title: Qimeng Next API
   version: 0.1.0
-  description: Single-user media authority. All writes use server revisions; AI credentials are bound to one intake batch.
+  description: Single-user media authority. Scoped AI tasks bind an executor to one intake batch, author or versioned asset.
 servers:
   - url: /api/v1
 security:
   - bearerAuth: []
   - sessionCookie: []
 paths:
+  /metrics:
+    get:
+      operationId: getServiceMetrics
+      description: Owner-authenticated Prometheus text metrics. The same handler is available at the root /metrics path for scrapers.
+      responses:
+        '200': {description: Numeric service counters and gauges, content: {text/plain: {schema: {type: string}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /system/status:
+    get:
+      operationId: getSystemStatus
+      description: Owner-only system and storage measurements. Unavailable measurements are omitted.
+      responses:
+        '200': {description: Current sampled measurements, content: {application/json: {schema: {$ref: '#/components/schemas/SystemStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /system/storage:
+    get:
+      operationId: listSystemStorage
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Storage readings by registered directory, content: {application/json: {schema: {$ref: '#/components/schemas/SystemStoragePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /system/client-errors:
+    get:
+      operationId: listClientErrors
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Most recent typed and redacted client failures, content: {application/json: {schema: {$ref: '#/components/schemas/ClientErrorPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: recordClientError
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClientErrorReport'}}}}
+      responses:
+        '201': {description: Stored error, content: {application/json: {schema: {$ref: '#/components/schemas/ClientErrorItem'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /maintenance/jobs:
+    get:
+      operationId: listMaintenanceJobs
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: kind, in: query, schema: {$ref: '#/components/schemas/MaintenanceJobKind'}}
+        - {name: state, in: query, schema: {$ref: '#/components/schemas/MaintenanceJobState'}}
+      responses:
+        '200': {description: Persistent tasks ordered across kinds, content: {application/json: {schema: {$ref: '#/components/schemas/MaintenanceJobPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /instance:
     get:
       operationId: getInstance
@@ -113,6 +158,13 @@ paths:
       parameters: [{$ref: '#/components/parameters/ExpectedRevision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
         '204': {description: Library index removed}
+        default: {$ref: '#/components/responses/Error'}
+  /libraries/{id}/monitoring:
+    get:
+      operationId: getLibraryMonitoring
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Filesystem notifications and reconciliation state, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryMonitoring'}}}}
         default: {$ref: '#/components/responses/Error'}
   /libraries/{id}/directories:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1556,6 +1608,94 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    SystemStatus:
+      type: object
+      required: [instanceId, version, goVersion, startedAt, sampledAt, uptimeSeconds, receivedBytes, sentBytes, mounts, trashCount, clientErrorCount]
+      properties:
+        instanceId: {type: string}
+        version: {type: string}
+        goVersion: {type: string}
+        startedAt: {type: string, format: date-time}
+        sampledAt: {type: string, format: date-time}
+        uptimeSeconds: {type: integer, format: int64}
+        receivedBytes: {type: integer, format: int64}
+        sentBytes: {type: integer, format: int64}
+        cpuPercent: {type: number, format: double, minimum: 0, maximum: 100}
+        memoryUsedBytes: {type: integer, format: int64}
+        memoryTotalBytes: {type: integer, format: int64}
+        processRssBytes: {type: integer, format: int64}
+        mounts: {type: array, items: {$ref: '#/components/schemas/MonitoredMount'}}
+        nextMountCursor: {type: string}
+        trashCount: {type: integer, format: int64}
+        clientErrorCount: {type: integer, format: int64}
+    MonitoredMount:
+      type: object
+      required: [id, label, mount, available]
+      properties:
+        id: {type: string}
+        label: {type: string}
+        mount: {type: string}
+        available: {type: boolean}
+        usedBytes: {type: integer, format: int64}
+        totalBytes: {type: integer, format: int64}
+        availableBytes: {type: integer, format: int64}
+    SystemStoragePage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MonitoredMount'}}
+        nextCursor: {type: string}
+    ClientErrorReport:
+      type: object
+      required: [level, code, screen]
+      additionalProperties: false
+      properties:
+        level: {type: string, enum: [warning, error]}
+        code: {type: string, enum: [request_failed, render_failed, playback_failed, upload_failed, storage_unavailable, connection_lost]}
+        screen: {type: string, enum: [home, album, search, detail, upload, author, settings, maintenance, backup, other]}
+        httpStatus: {type: integer, minimum: 400, maximum: 599}
+    ClientErrorItem:
+      allOf:
+        - {$ref: '#/components/schemas/ClientErrorReport'}
+        - type: object
+          required: [id, occurredAt, message]
+          properties:
+            id: {type: string}
+            occurredAt: {type: string, format: date-time}
+            message: {type: string}
+    ClientErrorPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ClientErrorItem'}}
+        nextCursor: {type: string}
+    MaintenanceJobKind:
+      type: string
+      enum: [scan, batch, backup, protection, author, asset]
+    MaintenanceJobState:
+      type: string
+      enum: [waiting, running, completed, partial, failed, cancelled]
+    MaintenanceJob:
+      type: object
+      required: [id, kind, state, rawState, label, cancellable]
+      properties:
+        id: {type: string}
+        kind: {$ref: '#/components/schemas/MaintenanceJobKind'}
+        state: {$ref: '#/components/schemas/MaintenanceJobState'}
+        rawState: {type: string}
+        label: {type: string}
+        createdAt: {type: string, format: date-time}
+        cancellable: {type: boolean}
+        batchId: {type: string}
+        updatedAt: {type: string, format: date-time}
+        completedSteps: {type: integer, format: int64}
+        totalSteps: {type: integer, format: int64}
+    MaintenanceJobPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MaintenanceJob'}}
+        nextCursor: {type: string}
     ResearchArtifact:
       type: object
       required: [id, artifactRef, sourceSha256, sha256, mimeType, size, positionSeconds, expiresAt]
@@ -1692,6 +1832,7 @@ components:
       required: [id, assetId, libraryId, contentVersion, hash, expectedRevision, assetFields, research, usedUpdates, maxUpdates, expiresAt]
       properties:
         id: {type: string}
+        state: {type: string, enum: [authorized, revoked], description: Restoring into a new instance revokes prior tasks and preserves their evidence}
         assetId: {type: string}
         libraryId: {type: string}
         contentVersion: {type: integer, format: int64}
@@ -1699,6 +1840,7 @@ components:
         expectedRevision: {type: integer, format: int64}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
         research: {type: boolean}
+        createdAt: {type: string, format: date-time}
         usedUpdates: {type: integer}
         maxUpdates: {type: integer}
         expiresAt: {type: string, format: date-time}
@@ -2039,6 +2181,15 @@ components:
             fileCount: {type: integer, format: int64, minimum: 0, description: 'Indexed assets outside trash, including disabled libraries'}
             scanState: {type: string, enum: [idle, scanning, error]}
             latestScanId: {type: string}
+    LibraryMonitoring:
+      type: object
+      required: [watchEnabled, state, watchedDirectories, pollIntervalSeconds, lastError]
+      properties:
+        watchEnabled: {type: boolean}
+        state: {type: string, enum: [disabled, registering, watching, polling, degraded]}
+        watchedDirectories: {type: integer, minimum: 0}
+        pollIntervalSeconds: {type: integer, minimum: 0}
+        lastError: {type: string}
     InputDirectoryNames:
       type: object
       required: [names]
@@ -2120,6 +2271,8 @@ components:
       properties:
         id: {type: string}
         libraryId: {type: string}
+        trigger: {type: string, enum: [manual, watch, poll], description: Older jobs may omit the trigger}
+        scope: {type: string, enum: [library, paths], description: Full reconciliation or a bounded group of write notifications}
         state: {type: string, enum: [queued, running, completed, partial, failed, interrupted, cancelled]}
         processed: {type: integer}
         added: {type: integer}

@@ -17,25 +17,42 @@ import (
 )
 
 type ScanIssue struct{RelativePath string `json:"relativePath"`;Code string `json:"code"`}
-type ScanJob struct{ID string `json:"id"`;LibraryID string `json:"libraryId"`;State string `json:"state"`;Processed int `json:"processed"`;Added int `json:"added"`;Moved int `json:"moved"`;Changed int `json:"changed"`;Skipped int `json:"skipped"`;Missing int `json:"missing"`;IssueCount int `json:"issueCount"`;Issues []ScanIssue `json:"issues"`;CreatedAt time.Time `json:"createdAt"`;UpdatedAt time.Time `json:"updatedAt"`}
+type ScanJob struct{ID string `json:"id"`;LibraryID string `json:"libraryId"`;Trigger string `json:"trigger,omitempty"`;Scope string `json:"scope,omitempty"`;State string `json:"state"`;Processed int `json:"processed"`;Added int `json:"added"`;Moved int `json:"moved"`;Changed int `json:"changed"`;Skipped int `json:"skipped"`;Missing int `json:"missing"`;IssueCount int `json:"issueCount"`;Issues []ScanIssue `json:"issues"`;CreatedAt time.Time `json:"createdAt"`;UpdatedAt time.Time `json:"updatedAt"`}
 func(s *Service)Scan(ctx context.Context,id string)(ScanJob,error){j,e:=store.Get[ScanJob](ctx,s.DB.DB,"SELECT data FROM scans WHERE id=?",id);return j,Normalize(e)}
 func saveScan(ctx context.Context,q store.Querier,j ScanJob)error{raw,e:=store.Encode(struct{ScanJob;CreatedAt string `json:"createdAt"`;UpdatedAt string `json:"updatedAt"`}{j,dateKey(j.CreatedAt),dateKey(j.UpdatedAt)});if e!=nil{return e};_,e=q.ExecContext(ctx,"INSERT INTO scans(id,library_id,state,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,data=excluded.data",j.ID,j.LibraryID,j.State,raw);return e}
 func(s *Service)Scans(ctx context.Context,libraryID,state,cursor string,limit int)(model.Page[ScanJob],error){n,e:=limited(limit,50);if e!=nil{return model.Page[ScanJob]{},e};filter:=libraryID+"\x00"+state;seek,e:=readSeek(cursor,filter,"created_desc");if e!=nil{return model.Page[ScanJob]{},e};where:="(?='' OR library_id=?) AND (?='' OR state=?)";args:=[]any{libraryID,libraryID,state,state};if seek.ID!=""{where+=" AND (json_extract(data,'$.createdAt')<? OR (json_extract(data,'$.createdAt')=? AND id<?))";args=append(args,seek.Value,seek.Value,seek.ID)};args=append(args,n+1);items,e:=store.List[ScanJob](ctx,s.DB.DB,"SELECT data FROM scans WHERE "+where+" ORDER BY json_extract(data,'$.createdAt') DESC,id DESC LIMIT ?",args...);if e!=nil{return model.Page[ScanJob]{},e};page:=model.Page[ScanJob]{Items:items};if len(items)>n{page.Items=items[:n];last:=page.Items[n-1];page.NextCursor=makeSeek(filter,"created_desc",dateKey(last.CreatedAt),last.ID)};return page,nil}
 func(s *Service)StartScan(ctx context.Context,w *Write,libraryID string,revision int64)(ScanJob,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return ScanJob{},e};l,e:=s.library(ctx,libraryID);if e!=nil{return ScanJob{},e};if l.Revision!=revision{return ScanJob{},Conflict(l.Revision)};if !l.Enabled{return ScanJob{},Fail(409,"library_disabled","库已停用。")};var active,sameLibrary int
+ return s.startScan(ctx,w,libraryID,revision,"manual",nil)
+}
+func(s *Service)startScan(ctx context.Context,w *Write,libraryID string,revision int64,trigger string,paths []string)(ScanJob,error){
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return ScanJob{},e};l,e:=s.library(ctx,libraryID);if e!=nil{return ScanJob{},e};if trigger=="manual"&&l.Revision!=revision{return ScanJob{},Conflict(l.Revision)};if !l.Enabled{return ScanJob{},Fail(409,"library_disabled","库已停用。")};var active,sameLibrary int
  if e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*),coalesce(sum(CASE WHEN library_id=? THEN 1 ELSE 0 END),0) FROM scans WHERE state IN ('queued','running')",libraryID).Scan(&active,&sameLibrary);e!=nil{return ScanJob{},e}
- if sameLibrary>0{return ScanJob{},Fail(409,"scan_already_queued","此库已有扫描正在执行或等待。")};if active>=64{return ScanJob{},Fail(429,"scan_capacity","扫描队列已满，请等待现有任务完成。")}
- now:=time.Now().UTC();job:=ScanJob{ID:w.ID("scan"),LibraryID:libraryID,State:"queued",Issues:[]ScanIssue{},CreatedAt:now,UpdatedAt:now};q,e:=w.Q();if e!=nil{return job,e};if e=saveScan(ctx,q,job);e!=nil{return job,e};w.after=append(w.after,func()error{s.workers.Add(1);go func(){defer s.workers.Done();s.scanLibrary(s.workCtx,job.ID)}();return nil});return job,nil
+ if sameLibrary>0{
+  if trigger=="manual"||trigger=="poll"{
+   existing,e:=store.Get[ScanJob](ctx,s.DB.DB,"SELECT data FROM scans WHERE library_id=? AND state IN ('queued','running') LIMIT 1",libraryID);if e!=nil{return ScanJob{},e}
+   if existing.Scope!="paths"&&(trigger=="poll"||existing.Trigger=="poll"||existing.Trigger=="watch"){return existing,nil}
+  }
+  return ScanJob{},Fail(409,"scan_already_queued","此库已有扫描正在执行或等待。")
+ }
+ if active>=64{return ScanJob{},Fail(429,"scan_capacity","扫描队列已满，请等待现有任务完成。")}
+ scope:="library";if len(paths)>0{scope="paths"}
+ now:=time.Now().UTC();job:=ScanJob{ID:w.ID("scan"),LibraryID:libraryID,Trigger:trigger,Scope:scope,State:"queued",Issues:[]ScanIssue{},CreatedAt:now,UpdatedAt:now};q,e:=w.Q();if e!=nil{return job,e};if e=saveScan(ctx,q,job);e!=nil{return job,e}
+ if trigger!="manual"{if _,e=q.ExecContext(ctx,`DELETE FROM scans WHERE id IN (SELECT id FROM scans WHERE library_id=? AND json_extract(data,'$.trigger') IN ('poll','watch') AND state NOT IN ('queued','running') ORDER BY json_extract(data,'$.createdAt') DESC,id DESC LIMIT -1 OFFSET 32)`,libraryID);e!=nil{return job,e}}
+ w.after=append(w.after,func()error{s.workers.Add(1);go func(){defer s.workers.Done();s.scanLibrary(s.workCtx,job.ID,paths)}();return nil});return job,nil
 }
 func(s *Service)CancelScan(ctx context.Context,w *Write,id string)(ScanJob,error){if e:=Authorize(w.Principal,"admin","");e!=nil{return ScanJob{},e};j,e:=s.Scan(ctx,id);if e!=nil{return j,e};if j.State=="completed"||j.State=="partial"||j.State=="failed"||j.State=="interrupted"||j.State=="cancelled"{return j,nil};j.State="cancelled";j.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return j,e};if e=saveScan(ctx,q,j);e!=nil{return j,e};w.after=append(w.after,func()error{s.wakeScans();return nil});return j,nil}
 func scanIssue(j *ScanJob,relative,code string){j.IssueCount++;if len(j.Issues)<100{j.Issues=append(j.Issues,ScanIssue{RelativePath:relative,Code:code})}}
 func(s *Service)scanProgress(ctx context.Context,id,relative,code string,skipped bool)error{
  s.mu.Lock();defer s.mu.Unlock();j,e:=s.Scan(ctx,id);if e!=nil{return e};if j.State=="cancelled"{return context.Canceled};j.Processed++;if skipped{j.Skipped++};if code=="missing_original"{j.Missing++};if code!=""{scanIssue(&j,relative,code)};j.UpdatedAt=time.Now().UTC();return saveScan(ctx,s.DB.DB,j)
 }
-func(s *Service)scanLibrary(ctx context.Context,id string){
+func(s *Service)scanLibrary(ctx context.Context,id string,paths []string){
  j,e:=s.admitScan(ctx,id)
- if e==nil{defer s.releaseScan();e=s.walkLibrary(ctx,id,j.LibraryID,"",0)}
- if e==nil{e=s.scanMissing(ctx,id,j.LibraryID)}
+ if e==nil{
+  defer s.releaseScan()
+  if len(paths)==0{e=s.walkLibrary(ctx,id,j.LibraryID,"",0);if e==nil{e=s.scanMissing(ctx,id,j.LibraryID)}}else{
+   for _,relative:=range paths{if e=ctx.Err();e!=nil{break};if e=s.scanFile(ctx,id,j.LibraryID,relative,true);e!=nil{break}}
+  }
+ }
  finishCtx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel();s.mu.Lock();defer s.mu.Unlock();j,readErr:=s.Scan(finishCtx,id);if readErr!=nil||j.State=="cancelled"{return}
  if errors.Is(e,context.Canceled){j.State="interrupted"}else if e!=nil{j.State="failed";scanIssue(&j,"","scan_io_failed")}else if j.IssueCount>0{j.State="partial"}else{j.State="completed"};j.UpdatedAt=time.Now().UTC();if e=saveScan(finishCtx,s.DB.DB,j);e!=nil{slog.Error("scan terminal persistence failed","scanId",id)}
  if j.Added+j.Moved+j.Changed>0{s.previews.changed(j.LibraryID,"")}
@@ -43,12 +60,43 @@ func(s *Service)scanLibrary(ctx context.Context,id string){
 func(s *Service)scanMissing(ctx context.Context,id,libraryID string)error{last:="";for{items,e:=store.List[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE library_id=? AND trashed=0 AND id>? ORDER BY id LIMIT 200",libraryID,last);if e!=nil{return e};if len(items)==0{return nil};for _,a:=range items{if e:=ctx.Err();e!=nil{return e};if _,e=s.Root.Stat(assetPath(a));errors.Is(e,os.ErrNotExist){if e=s.scanProgress(ctx,id,a.RelativePath,"missing_original",false);e!=nil{return e}}else if e!=nil{return e};last=a.ID}}}
 func(s *Service)walkLibrary(ctx context.Context,jobID,libraryID,relative string,depth int)error{
  if e:=ctx.Err();e!=nil{return e};if depth>32{return s.scanProgress(ctx,jobID,relative,"directory_depth_limit",true)};full:=path.Join("libraries",libraryID,relative);if e:=s.safe(full);e!=nil{return e};directory,e:=s.Root.Open(full);if e!=nil{return e};defer directory.Close()
- for{entries,readErr:=directory.ReadDir(128);for _,entry:=range entries{if e:=ctx.Err();e!=nil{return e};if entry.Name()==".qimeng-internal"{continue};child:=path.Join(relative,entry.Name());if entry.Type()&os.ModeSymlink!=0{if e=s.scanProgress(ctx,jobID,child,"symlink_denied",true);e!=nil{return e};continue};if !domain.ValidMediaPath(child){if e=s.scanProgress(ctx,jobID,child,"invalid_path",true);e!=nil{return e};continue};if entry.IsDir(){if e=s.walkLibrary(ctx,jobID,libraryID,child,depth+1);e!=nil{return e};continue};if e=s.scanFile(ctx,jobID,libraryID,child);e!=nil{return e}};if readErr!=nil{if errors.Is(readErr,io.EOF){return nil};return readErr}}
+ for {
+  entries,readErr:=directory.ReadDir(128)
+  for _,entry:=range entries {
+   if e:=ctx.Err();e!=nil{return e}
+   if privateLibraryEntry(entry.Name()){continue}
+   child:=path.Join(relative,entry.Name())
+   if !domain.ValidMediaPath(child){
+    if e=s.scanProgress(ctx,jobID,child,"invalid_path",true);e!=nil{return e}
+    continue
+   }
+   if entry.Type()&os.ModeSymlink!=0{
+    if e=s.scanProgress(ctx,jobID,child,"symlink_denied",true);e!=nil{return e}
+    continue
+   }
+   if entry.IsDir(){
+    info,err:=s.Root.Lstat(path.Join(full,entry.Name()))
+    if err!=nil{return err}
+    if syncPathLink(info){
+     if e=s.scanProgress(ctx,jobID,child,"symlink_denied",true);e!=nil{return e}
+     continue
+    }
+    if e=s.walkLibrary(ctx,jobID,libraryID,child,depth+1);e!=nil{return e}
+   }else if e=s.scanFile(ctx,jobID,libraryID,child,false);e!=nil{return e}
+  }
+  if errors.Is(readErr,io.EOF){return nil}
+  if readErr!=nil{return readErr}
+ }
 }
-func(s *Service)scanFile(ctx context.Context,jobID,libraryID,relative string)error{
+func(s *Service)scanFile(ctx context.Context,jobID,libraryID,relative string,writeNotice bool)error{
  kind,mime,ok:=domain.MediaType(relative);if !ok{return s.scanProgress(ctx,jobID,relative,"",true)};full:=path.Join("libraries",libraryID,relative);if e:=s.safe(full);e!=nil{return s.scanProgress(ctx,jobID,relative,"symlink_denied",true)};initial,e:=s.Root.Stat(full);if e!=nil{return s.scanProgress(ctx,jobID,relative,"stat_failed",true)};if !initial.Mode().IsRegular(){return s.scanProgress(ctx,jobID,relative,"not_regular_file",true)}
- previous,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE library_id=? AND relative_path=? AND trashed=0",libraryID,relative);if e!=nil&&!errors.Is(e,sql.ErrNoRows){return e};if e==nil&&previous.Size==initial.Size()&&previous.ContentMtime!=nil&&previous.ContentMtime.Equal(initial.ModTime()){library,e:=s.library(ctx,libraryID);if e!=nil{return e};depth:=strings.Count(relative,"/");if library.Kind!="cos"||depth==0||(previous.COSDirectoryAuthorID!=""&&(depth<2||previous.CosWorkID!="")){return s.scanProgress(ctx,jobID,relative,"",true)}}
- hash,size,e:=s.hashFile(full);if e!=nil{return s.scanProgress(ctx,jobID,relative,"read_failed",true)};probe:=model.Asset{ID:"scan",MimeType:mime};if e=s.probe(ctx,full,&probe);e!=nil{return s.scanProgress(ctx,jobID,relative,"invalid_media",true)}
+ previous,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE library_id=? AND relative_path=? AND trashed=0",libraryID,relative);if e!=nil&&!errors.Is(e,sql.ErrNoRows){return e}
+ unchanged:=e==nil&&previous.Size==initial.Size()&&previous.ContentMtime!=nil&&previous.ContentMtime.Equal(initial.ModTime())
+ if unchanged{library,e:=s.library(ctx,libraryID);if e!=nil{return e};depth:=strings.Count(relative,"/");unchanged=library.Kind!="cos"||depth==0||previous.COSDirectoryAuthorID!=""&&(depth<2||previous.CosWorkID!="")}
+ if unchanged&&!writeNotice{return s.scanProgress(ctx,jobID,relative,"",true)}
+ hash,size,e:=s.hashFile(full);if e!=nil{return s.scanProgress(ctx,jobID,relative,"read_failed",true)}
+ if unchanged&&hash==previous.Hash{return s.scanProgress(ctx,jobID,relative,"",true)}
+ probe:=model.Asset{ID:"scan",MimeType:mime};if e=s.probe(ctx,full,&probe);e!=nil{return s.scanProgress(ctx,jobID,relative,"invalid_media",true)}
  s.mu.Lock();defer s.mu.Unlock();j,e:=s.Scan(ctx,jobID);if e!=nil{return e};if j.State=="cancelled"{return context.Canceled};library,e:=s.library(ctx,libraryID);if e!=nil{return e};if !library.Enabled{return Fail(409,"library_disabled","库已停用。")}
  nowInfo,e:=s.Root.Stat(full);if e!=nil{return e};if !os.SameFile(initial,nowInfo)||initial.Size()!=size||nowInfo.Size()!=size||!initial.ModTime().Equal(nowInfo.ModTime()){j.Processed++;j.Skipped++;scanIssue(&j,relative,"source_changed");return saveScan(ctx,s.DB.DB,j)}
  var pending bool;if e=s.DB.DB.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM file_intents WHERE state IN ('prepared','committed') AND

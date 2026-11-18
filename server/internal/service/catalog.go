@@ -23,7 +23,7 @@ func(s *Service)CreateLibrary(ctx context.Context,w *Write,name,kind string,loca
  w.rollback=append(w.rollback,func(){s.Root.UnregisterLibrary(l.ID)})
  if syncRoot:=s.localSync.config.Root;syncRoot!=""{bound,e:=s.Root.LibraryPath(l.ID);if e!=nil{return l,e};if syncRootsOverlap(bound,syncRoot){return l,Fail(409,"local_sync_root_overlap","媒体库不可与服务器导入目录重叠。")}}
  if err:=s.Root.MkdirAll("libraries/"+l.ID,0700);err!=nil{return l,err}
- raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};_,e=q.ExecContext(ctx,"INSERT INTO libraries(id,name,kind,data) VALUES(?,?,?,?)",l.ID,l.Name,l.Kind,raw);return l,e
+ raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};_,e=q.ExecContext(ctx,"INSERT INTO libraries(id,name,kind,data) VALUES(?,?,?,?)",l.ID,l.Name,l.Kind,raw);if e==nil{w.after=append(w.after,func()error{s.wakeLibraryMonitor();return nil})};return l,e
 }
 func(s *Service)Storages()any{return map[string]any{"items":s.Root.Storages()}}
 func(s *Service)library(ctx context.Context,id string)(model.Library,error){a,e:=store.Get[model.Library](ctx,s.DB.DB,"SELECT data FROM libraries WHERE id=?",id);return a,Normalize(e)}
