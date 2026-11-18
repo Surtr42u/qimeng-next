@@ -40,6 +40,7 @@ class ModelUsage:
     def __init__(self):
         self.turns = self.calls = self.repeated = 0
         self.prompt_tokens = self.completion_tokens = 0
+        self.request_bytes = self.response_bytes = self.schema_bytes = 0
         self.seen = set()
         self.started = time.monotonic()
 
@@ -58,11 +59,14 @@ class ModelUsage:
         self.calls += 1
         self.repeated += signature in self.seen
         self.seen.add(signature)
+        return signature
 
     def summary(self):
         return {"turns": self.turns, "toolCalls": self.calls, "repeatedToolCalls": self.repeated,
                 "promptTokens": self.prompt_tokens if self.turns else None,
                 "completionTokens": self.completion_tokens if self.turns else None,
+                "requestBytes": self.request_bytes, "responseBytes": self.response_bytes,
+                "toolSchemaBytes": self.schema_bytes,
                 "elapsedMillis": round((time.monotonic() - self.started) * 1000)}
 
 
@@ -99,21 +103,25 @@ class WorkerHost:
         if len(body) > 12 << 20:
             raise ToolError("WORKER_CONTEXT_LIMIT", "本机模型本次上下文已达上限，任务保持可接续")
         usage.turns += 1
+        usage.request_bytes += len(body)
         try:
             with self.client.stream("POST", "/v1/chat/completions", content=body,
                                     headers={"Content-Type": "application/json"}, timeout=remaining) as response:
-                if response.status_code != 200:
-                    usage.response(None)
-                    code = "WORKER_HOST_REJECTED"
-                    if response.status_code in {408, 429, 502, 503, 504} or response.status_code >= 500:
-                        code = "WORKER_HOST_UNAVAILABLE"
-                    raise ToolError(code, "本机模型没有接受本次任务", status=response.status_code)
                 raw = bytearray()
                 for chunk in response.iter_bytes():
+                    usage.response_bytes += len(chunk)
                     if len(raw) + len(chunk) > 1 << 20:
                         usage.response(None)
                         raise ToolError("WORKER_HOST_RESPONSE", "本机模型响应超过上限")
                     raw.extend(chunk)
+                if response.status_code != 200:
+                    usage.response(None)
+                    code = "WORKER_HOST_REJECTED"
+                    if response.status_code in {401, 403}:
+                        code = "WORKER_HOST_AUTH"
+                    elif response.status_code in {408, 429} or response.status_code >= 500:
+                        code = "WORKER_HOST_UNAVAILABLE"
+                    raise ToolError(code, "本机模型没有接受本次任务", status=response.status_code)
         except httpx.HTTPError:
             usage.response(None)
             raise ToolError("WORKER_HOST_UNAVAILABLE", "本机模型离线或请求超时") from None
@@ -157,14 +165,16 @@ def offered_tools(runtime, allow_image_lookup):
     return definitions, wire
 
 
-def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_lookup, usage):
+def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_lookup, usage, on_active):
     definitions, wire = offered_tools(runtime, allow_image_lookup)
+    usage.schema_bytes = len(encode(wire).encode())
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": "处理已接收的智能批次，当前服务端报告为 " + encode(report)}]
     status = runtime.state.status()
     deadline = time.monotonic() + max(0, status["maxSeconds"] - status["seconds"])
     remaining_calls = status["maxCalls"] - status["calls"]
     result_refs = {report["resultRef"]} if "resultRef" in report else set()
+    rejected = {}
     for _ in range(remaining_calls):
         remaining = min(deadline - time.monotonic(), runtime.config.timeout)
         if stop.is_set():
@@ -174,6 +184,7 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
         calls = host.reply(messages, wire, remaining, usage)
         if not calls:
             return "host_finished"
+        on_active()
         messages.append({"role": "assistant", "content": None, "tool_calls": calls})
         seen = set()
         images = []
@@ -187,7 +198,7 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
             if not isinstance(identity, str) or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,160}", identity) or identity in seen:
                 raise ToolError("WORKER_HOST_RESPONSE", "模型工具调用缺少唯一标识")
             seen.add(identity)
-            usage.called(call.get("function"))
+            signature = usage.called(call.get("function"))
             try:
                 function = call.get("function", {})
                 name, read_only, hidden = definitions[function["name"]]
@@ -224,6 +235,11 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
                 if (name == "plan.commit" and isinstance(value, dict) and "inputs" in value
                         and not any(item["state"] in {"pending", "receiving", "staged"} for item in value["inputs"])):
                     return "backend_settled"
+            if isinstance(value, dict) and "code" in value and (value.get("status") == "error" or value["code"] == "WORKER_TOOL_NOT_OFFERED"):
+                failure = (signature, value["code"])
+                rejected[failure] = rejected.get(failure, 0) + 1
+                if rejected[failure] >= runtime.config.max_unchanged:
+                    raise ToolError("NO_PROGRESS", "模型重复提交遭拒的同一操作，请核对任务再恢复")
             messages.append({"role": "tool", "tool_call_id": identity, "content": encode(value)})
         if images:
             messages.append({"role": "user", "content": [{"type": "text", "text": "刚才工具读取的本批已授权预览"}, *images]})

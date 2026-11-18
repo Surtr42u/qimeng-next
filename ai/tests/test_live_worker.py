@@ -29,6 +29,9 @@ class ChatHost(BaseHTTPRequestHandler):
         first = request["messages"][1]["content"]
         report = json.loads(first[first.index("{"):])
         batch = report["batch"]
+        if self.server.behavior.get(batch["id"]) == "offline":
+            self.send_error(503)
+            return
         calls = []
         if self.server.behavior.get(batch["id"]) != "wait":
             if report["plans"]:
@@ -164,6 +167,9 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         info = result["modelUsage"]
         self.assertEqual((info["promptTokens"], info["completionTokens"]), (17 * info["turns"], 6 * info["turns"]))
         self.assertGreaterEqual(info["toolCalls"], 1)
+        self.assertGreater(info["requestBytes"], info["toolSchemaBytes"])
+        self.assertGreater(info["toolSchemaBytes"], 0)
+        self.assertGreater(info["responseBytes"], 0)
         final = self.request("GET", "/batches/" + batch)
         self.assertEqual([p["id"] for p in final["plans"]], [pending["plans"][0]["id"]])
         self.assertEqual([p["state"] for p in final["plans"]], ["completed"])
@@ -175,7 +181,8 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
             encoded = json.dumps(request)
             self.assertFalse(any(key in encoded for key in (self.secret, self.host.host_key, os.environ["QIMENG_E2E_TOKEN"])))
             names = {entry["function"]["name"] for entry in request["tools"]}
-            self.assertFalse(names & {"task_start", "task_resume", "source_recycle", "research_image_search"})
+            self.assertFalse(names & {"task_start", "task_resume", "source_recycle", "research_image_search",
+                                      "reportIntakeExecutorStatus", "listReadyIntakeBatches"})
 
     async def test_waiting_batch_does_not_wake_the_model_or_starve_later_work(self):
         waiting = self.submit("worker-attention")
@@ -183,10 +190,31 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         completed = self.submit("worker-later")
         result = (await self.worker())["batches"]
         self.assertEqual({b["batchId"]: b["state"] for b in result}, {waiting: "needs_attention", completed: "completed"})
+        paused = self.request("GET", "/batches/" + waiting)["executorStatus"]
+        self.assertEqual((paused["state"], paused["source"], paused["reason"]), ("paused", "worker", "needs_attention"))
         count = len(self.host.requests)
         await asyncio.sleep(1.1)
         self.assertEqual((await self.worker())["state"], "idle")
         self.assertEqual(len(self.host.requests), count)
+        self.assertEqual(self.request("GET", "/batches/" + waiting)["executorStatus"], paused)
         del self.host.behavior[waiting]
         resumed, = (await self.worker("--retry-batch", waiting))["batches"]
         self.assertEqual(resumed["state"], "completed")
+
+    async def test_unavailable_model_reports_one_pause_and_recovers_the_same_task(self):
+        batch = self.submit("worker-offline")
+        self.host.behavior[batch] = "offline"
+        failed, = (await self.worker())["batches"]
+        self.assertEqual(failed["state"], "WORKER_HOST_UNAVAILABLE")
+        self.assertIsNone(failed["modelUsage"]["promptTokens"])
+        paused = self.request("GET", "/batches/" + batch)["executorStatus"]
+        self.assertEqual((paused["state"], paused["reason"]), ("paused", "host_unavailable"))
+        await asyncio.sleep(1.1)
+        failed, = (await self.worker())["batches"]
+        self.assertEqual(failed["state"], "WORKER_HOST_UNAVAILABLE")
+        self.assertEqual(self.request("GET", "/batches/" + batch)["executorStatus"], paused)
+        del self.host.behavior[batch]
+        await asyncio.sleep(1.1)
+        completed, = (await self.worker())["batches"]
+        self.assertEqual(completed["state"], "completed")
+        self.assertEqual(len(self.request("GET", "/batches/" + batch)["plans"]), 1)

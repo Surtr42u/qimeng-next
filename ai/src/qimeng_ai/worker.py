@@ -14,6 +14,7 @@ from .config import positive
 from .errors import ToolError
 from .state import encode
 from .worker_host import ModelUsage, WorkerHost, work_with_host
+from .worker_status import WorkerStatus, pause_reason
 
 
 class ClaimJournal:
@@ -117,7 +118,7 @@ def intake_state(report):
     return "waiting"
 
 
-def drive_claim(runtime, host, journal, row, stop, usage):
+def drive_claim(runtime, host, journal, row, stop, usage, status):
     batch = row["batch"]
     body = json.loads(row["body"])
     try:
@@ -128,9 +129,10 @@ def drive_claim(runtime, host, journal, row, stop, usage):
         started = runtime.call("task.start", {"operationId": row["claim_key"], "body": body})
         if started.get("taskId") != batch:
             raise ToolError("TASK_RESPONSE_INVALID", "签发响应与原应用批次不符", uncertain=True)
+    report, visible = current_report(runtime, batch)
+    status.observe(report)
     if row["paused"]:
-        snapshot, _ = current_report(runtime, batch)
-        if snapshot["batch"]["revision"] == row["revision"]:
+        if report["batch"]["revision"] == row["revision"]:
             return "unchanged", row["revision"]
         journal.resume(batch)
     if row["action"]:
@@ -139,12 +141,15 @@ def drive_claim(runtime, host, journal, row, stop, usage):
         if isinstance(value, dict) and value.get("state") == "pending":
             return "waiting_receipt", None
         journal.after_call(batch)
-    report, visible = current_report(runtime, batch)
+        report, visible = current_report(runtime, batch)
+        status.observe(report)
     before = intake_state(report)
     if before != "staged" or stop.is_set():
         return ("stopped" if stop.is_set() else before), report["batch"]["revision"]
-    outcome = work_with_host(runtime, host, journal, batch, visible, stop, body.get("allowImageLookup", False), usage)
+    outcome = work_with_host(runtime, host, journal, batch, visible, stop, body.get("allowImageLookup", False),
+                             usage, lambda: status.transition(batch, "claimed"))
     report, _ = current_report(runtime, batch)
+    status.observe(report)
     after = intake_state(report)
     if after == "staged":
         return ("stopped" if outcome == "stopped" else "needs_attention"), report["batch"]["revision"]
@@ -156,6 +161,9 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
     state = runtime.task_state(None)
     with exclusive_worker(state):
         journal = ClaimJournal(state)
+        status = WorkerStatus(runtime, state)
+        status.flush()
+        runtime.transport.active_token = None
         if retry_batch:
             journal.resume(retry_batch)
         admission = None
@@ -179,7 +187,7 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
             usage = ModelUsage()
             revision = None
             try:
-                outcome, revision = drive_claim(runtime, host, journal, row, stop, usage)
+                outcome, revision = drive_claim(runtime, host, journal, row, stop, usage, status)
             except ToolError as exc:
                 outcome = exc.code
             if outcome == "unchanged":
@@ -191,6 +199,8 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
                 journal.defer(batch, poll_seconds)
             else:
                 journal.park(batch, outcome, revision, poll_seconds)
+            if outcome not in {"completed", "partial", "cancelled", "stopped", "batch_not_claimable", "task_already_claimed"}:
+                status.transition(batch, "paused", pause_reason(outcome))
             outcomes.append({"batchId": batch, "state": outcome, "modelUsage": usage.summary()})
             if outcome == "WORKER_HOST_UNAVAILABLE":
                 break

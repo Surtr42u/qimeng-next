@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "openapiSha256": "fe05fc4a8082fe8ffa5eeef35eba38bda910994ab7cf556ffa7be3ef9aed76ba",
+  "openapiSha256": "356451e7088c35c4cee230d3e9c4d50204f9b780d7b0a332e796ce28fbcca25f",
   "generators": {
     "kotlin": "7.27.0",
     "go": "v2.8.2",
@@ -8,7 +8,7 @@
     "python": "tools/generate_sdks.py"
   },
   "files": {
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt": "04fa3f94d1e7a0c297ab5261a5d4a4d76b4b2d59f2cb89193dedc2fccb703ccc",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt": "a333706c9ba6aa37d7d97d96c6931e01783b2ddd99445e0aafcd765f568f5c9c",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/auth/ApiKeyAuth.kt": "42d967a37b4d28fab15819f17313a273f9346740791c3302ef6c1ddec7c99076",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/auth/HttpBearerAuth.kt": "b9629c5d42794c2c96e7d69f6b782a56f62fc39513509f619d6cebb21ddd5292",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/infrastructure/ApiClient.kt": "d9a51509612ee3d92eaf14b40142e36a54132cec91956df0e23d20c15c1d2170",
@@ -85,7 +85,10 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BackupTargetPage.kt": "d7276df775dddfc77cdefc4c146fb2130a51fd95eaa818463807620c81cea75f",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/Batch.kt": "fdd0df5c4f7d80ba22ef0e00554778d8d68864ab6099477f05edebeff9357116",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchCreate.kt": "57189612d5b1de5dcbc87f41b19f2f153cdbd6457b12eb7577afff436090cb39",
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchDetail.kt": "c71a40fd516c4e112d67247e4b3d64b0795fa963ffb20fe5fe5340ee9cdbfb5c",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchDetail.kt": "cff3a4b9f8375ed32fb0f3141e17e6e3fdb474c0dc194c62ab1aef5992e732be",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchExecutorReason.kt": "ebab89abce85c4cf6912de850725953556d5a6736b7cbea35bda1cb7706537a9",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchExecutorReport.kt": "ae161642794a914d11e5679912ef02a027a728f58301e6e697bae04e69b45474",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchExecutorStatus.kt": "4f94e93571e0c159535580b78a42607ee9bf41c5bd809bf514ff938acb157755",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInput.kt": "c2efe96ec9f3b48d1569318b4ad0445cedc60879f12ae8d7c9b5248b0c3f8b7a",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInputCancel.kt": "9a5eb32063f436315e4e611ef5b767357c977051aee8ea98c6e75db35a43e53d",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInputsSet.kt": "a5ed2087219b0edf81bf934fba338fab0ca185a127cec636ac47aea6800ce5d2",
@@ -270,8 +273,8 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateAuthorMappingsInner.kt": "82601b4020ed75bbf9242e837074542cb51ac996ea5eee53739b75a8939b0e05",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateMediaMappingsInner.kt": "d11e83e6bdcb004d856c6d77f85eb744f12f07d6fbcd5fb985e0ca7197f13f99",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2ProfileBlockPlan.kt": "2cd827fbaa9c3e8409d7a412c01a882ad8b16cc9ee2c48aaf391d79f3a100bdd",
-    "api/generated/python/operations.json": "08df2e8e16efcaed7ec856d361665b62a104e955563f3cb7718c1c968d4c2813",
-    "server/internal/transport/generated/api.gen.go": "32292549320e02199f26a0ece8383688bb381453ad2c4424f439b4702c62a73f",
-    "web/src/api/generated/schema.d.ts": "7445a7d2821d45832ada20dbff22c226b560f809efe64b85c9f5e04eac463c44"
+    "api/generated/python/operations.json": "333f663192a62aa18f621b3f7d49103383daf19d25af34eeecc53e0ac0a1a872",
+    "server/internal/transport/generated/api.gen.go": "69a56201cebdb2d5cf79b89662bb262344adc170b2f8f47c5096f52266db5421",
+    "web/src/api/generated/schema.d.ts": "2ab233f569df5cf4b11f34e0b5c0dcd76df2e5a96894fdc212ca11a9d105eb3c"
   }
 }
