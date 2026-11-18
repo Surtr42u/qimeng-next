@@ -897,6 +897,34 @@ paths:
       responses:
         '201': {description: Collection, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /collections/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    patch:
+      operationId: renameCollection
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionRename'}}}}
+      responses:
+        '200': {description: Renamed collection with the same stable ID, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections/{id}/members:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listCollectionMembers
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Ordered collection membership, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionMemberPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections/{id}/members/{assetId}/position:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+      - {name: assetId, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: setCollectionMemberPosition
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionPositionUpdate'}}}}
+      responses:
+        '200': {description: Current page or episode number of the selected member, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionMember'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /uploads:
     post:
       operationId: createUpload
@@ -1895,7 +1923,7 @@ components:
         label: {type: string}
         expiresAt: {type: string, format: date-time}
     DeviceSegmentKind: {type: string, enum: [masterTxt, v2Backup, nativeSelection], description: v2Backup is a read-only historical segment kind}
-    NativeDeliveryKind: {type: string, enum: [authorProfileBlock, authorList]}
+    NativeDeliveryKind: {type: string, enum: [authorProfileBlock, authorList, timelineMark]}
     NativeDeliveryBlock: {type: string, enum: [x, basic, accounts]}
     NativeDeliveryConflictPolicy: {type: string, enum: [keep, replace]}
     NativeDeliveryItemState: {type: string, enum: [ready, applied, preserved, conflict]}
@@ -1909,6 +1937,10 @@ components:
         sourceObjectId: {type: string, minLength: 1, maxLength: 128}
         block: {$ref: '#/components/schemas/NativeDeliveryBlock'}
         expectedRevision: {type: integer, format: int64, minimum: 1}
+        sourceAssetId: {type: string, description: Required for timelineMark. Explicit source video owning the selected mark}
+        sourceContentVersion: {type: integer, format: int64, minimum: 1, description: Required current source video version for a timelineMark}
+        targetAssetId: {type: string, description: Required for timelineMark. Explicit recipient video identity chosen by the owner}
+        targetContentVersion: {type: integer, format: int64, minimum: 1, description: Required captured version of the exact recipient video}
     NativeDeliveryPublish:
       type: object
       additionalProperties: false
@@ -1925,6 +1957,12 @@ components:
         kind: {$ref: '#/components/schemas/NativeDeliveryKind'}
         sourceObjectId: {type: string}
         sourceRevision: {type: integer, format: int64, minimum: 1}
+        sourceAssetId: {type: string}
+        sourceContentVersion: {type: integer, format: int64, minimum: 1}
+        targetAssetId: {type: string}
+        targetContentVersion: {type: integer, format: int64, minimum: 1}
+        contentSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        contentBytes: {type: integer, format: int64, minimum: 1}
         label: {type: string}
         block: {$ref: '#/components/schemas/NativeDeliveryBlock'}
         targetObjectId: {type: string}
@@ -2928,6 +2966,35 @@ components:
       type: object
       required: [author, affectedAssets, preservedConflicts]
       properties: {author: {$ref: '#/components/schemas/Author'}, affectedAssets: {type: integer}, preservedConflicts: {type: array, items: {type: string}}}
+    CollectionRename:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, name]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        name: {type: string, minLength: 1, maxLength: 200}
+    CollectionPositionUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, position]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1, description: Revision of this membership}
+        position: {type: integer, minimum: 1}
+    CollectionMember:
+      type: object
+      required: [collectionId, assetId, revision]
+      properties:
+        collectionId: {type: string}
+        assetId: {type: string}
+        revision: {type: integer, format: int64, minimum: 1}
+        position: {type: integer, minimum: 1}
+        reportedPosition: {type: integer, minimum: 1, description: Previously recorded conflicting position awaiting an explicit decision}
+    CollectionMemberPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/CollectionMember'}}
+        nextCursor: {type: string}
     CollectionCreate:
       type: object
       required: [libraryId, name, kind]
