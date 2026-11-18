@@ -15,6 +15,8 @@
 
 ## 维护与验收
 
+Web 的 `8df9cd4` 在 Chromium、移动 Chromium 和 WebKit 共通过 107 项浏览器用例。浏览器目录写入演练只在支持所需 OPFS 接口的 Chromium 执行，WebKit 跳过这一项。设备配对、跨实例资料交付和用户实际拖动视频使用独立的真实服务作业验收。[浏览器回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44356165266/job/134985901182)
+
 维护者从[开发与维护](../CONTRIBUTING.md)进入。公开后的主分支 `89edb6a` 通过 Go 格式、模块引用、文档、迁移历史及密钥扫描。Web 的展示层依赖检查、浏览器测试和真实服务联调也在该提交通过。[工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305960995) · [Web 检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058447) · [真实服务联调](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134821281600)
 
 数据库启动先核对已有迁移，再执行待办。`89edb6a` 的 Go 云测覆盖历史迁移表定义的备份恢复、较新数据库或校验和冲突时中止、设备分段交付以及研究回执恢复。Linux 的两个 SQLite 驱动和 Windows 原生 Go 步骤均通过。该次 Windows 桌面窗口测试止于云账号权限检查。[Linux 服务端](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058518) · [Windows 分步结果](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058701)

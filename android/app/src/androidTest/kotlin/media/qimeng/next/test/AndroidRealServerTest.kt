@@ -221,18 +221,46 @@ class AndroidRealServerTest {
                 graph.media.asset(requireNotNull(graph.queue.state.value!!.transfers.single { it.id == input }.assetId))
             }
         }
-        compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].openAsset(video.id) }
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("进入全屏").performClick()
-        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
-        compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
-        captureDecoderSurface(compose.activity)
-        screenshotWithMedia("real-server-video-fullscreen.png", landscape = true)
-        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
-        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
-        compose.onNodeWithContentDescription("退出全屏").performClick()
+        var resumePosition = 0L
+        repeat(2) { index ->
+            val suffix = if (index == 0) "" else "-resumed"
+            val before = runBlocking { graph.media.asset(video.id) }
+            assertEquals(video.version, before.version)
+            compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].openAsset(video.id) }
+            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
+            compose.activityRule.scenario.onActivity { assertNull(it.findViewById<android.view.View>(media.qimeng.next.R.id.video_playback_window)) }
+            compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
+            if (index == 1) {
+                var position: Long? = null
+                compose.waitUntil(10_000) {
+                    compose.activityRule.scenario.onActivity { activity ->
+                        val player = activity.findViewById<androidx.media3.ui.PlayerView>(media.qimeng.next.R.id.video_playback_window)?.player
+                        position = player?.takeIf { it.currentMediaItem != null }?.currentPosition
+                    }
+                    position != null
+                }
+                assertTrue("The new player must start at the position read back from Go", requireNotNull(position) >= resumePosition)
+            }
+            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("进入全屏").performClick()
+            compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+            compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+            captureDecoderSurface(compose.activity, suffix)
+            screenshotWithMedia("real-server-video-fullscreen$suffix.png", landscape = true)
+            await("video-play-event$suffix", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (before.playCount ?: 0L) }
+            assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
+            compose.onNodeWithContentDescription("退出全屏").performClick()
+            if (index == 0) {
+                compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
+                compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                compose.waitUntil(10_000) { compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("返回").performClick()
+                await("video-position", graph) { graph.media.asset(video.id).let { asset ->
+                    resumePosition = asset.positionMs
+                    asset.positionVersion == video.version && resumePosition > 0L
+                } }
+            }
+        }
     }
 
     @Test(timeout = 240_000)
