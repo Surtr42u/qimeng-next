@@ -24,7 +24,7 @@ internal class ArchiveStore(context: Context) : SQLiteOpenHelper(context, "archi
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = error("归档清单版本不受支持")
     fun start(target: Session, tree: String, local: Boolean): String {
         val id = UUID.randomUUID().toString()
-        writableDatabase.execSQL("INSERT INTO plans(id,tree,base,instance,label,state,local) VALUES(?,?,?,?,?,'scanning',?)", arrayOf(id, tree, target.baseUrl, target.instanceId, target.label, if (local) 1 else 0))
+        writableDatabase.execSQL("INSERT INTO plans(id,tree,base,instance,label,state,local) VALUES(?,?,?,?,?,'scanning',?)", arrayOf<Any>(id, tree, target.baseUrl, target.instanceId, target.label, if (local) 1 else 0))
         return id
     }
     fun exclude(plan: String, name: String, reason: String) = writableDatabase.execSQL("INSERT INTO excluded VALUES(?,?,?)", arrayOf(plan, name, reason))
@@ -40,9 +40,9 @@ internal class ArchiveStore(context: Context) : SQLiteOpenHelper(context, "archi
         db.beginTransaction()
         try {
             val batch = "archive-${UUID.randomUUID()}"
-            db.execSQL("INSERT INTO batches(id,plan,library,directory,count) VALUES(?,?,?,?,?)", arrayOf(batch, plan, folder.library, folder.directory, files.size))
+            db.execSQL("INSERT INTO batches(id,plan,library,directory,count) VALUES(?,?,?,?,?)", arrayOf<Any>(batch, plan, folder.library, folder.directory, files.size))
             files.forEach { file -> db.execSQL("INSERT INTO inputs(id,batch,uri,name,size,modified,original_media,original_generation,file_identity) VALUES(?,?,?,?,?,?,?,?,?)",
-                arrayOf(file.id, batch, file.uri, file.name, file.size, file.modified, file.mediaUri, file.mediaGeneration, file.fileIdentity)) }
+                arrayOf<Any?>(file.id, batch, file.uri, file.name, file.size, file.modified, file.mediaUri, file.mediaGeneration, file.fileIdentity)) }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
@@ -102,7 +102,7 @@ internal class ArchiveStore(context: Context) : SQLiteOpenHelper(context, "archi
     fun protection(batch: String, protection: String) = writableDatabase.execSQL("UPDATE batches SET protection=? WHERE id=?", arrayOf(protection, batch))
     fun permit(id: String, permit: String) = writableDatabase.execSQL("UPDATE inputs SET permit=? WHERE id=?", arrayOf(permit, id))
     fun arm(id: String, media: String, generation: Long) = writableDatabase.execSQL(
-        "UPDATE inputs SET stage='armed',media=?,generation=? WHERE id=? AND stage='pending'", arrayOf(media, generation, id))
+        "UPDATE inputs SET stage='armed',media=?,generation=? WHERE id=? AND stage='pending'", arrayOf<Any>(media, generation, id))
     fun observe(id: String, outcome: String, code: String, receipt: String?) = writableDatabase.execSQL(
         "UPDATE inputs SET stage='observed',outcome=?,code=?,receipt=? WHERE id=?", arrayOf(outcome, code, receipt, id))
     fun finish(id: String, code: String) = writableDatabase.execSQL("UPDATE inputs SET stage='done',code=? WHERE id=?", arrayOf(code, id))

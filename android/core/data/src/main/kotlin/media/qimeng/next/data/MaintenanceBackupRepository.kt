@@ -54,8 +54,9 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
             check(sameTarget(target, settings.session.value)) { "连接已改变，请重新选择维护目录" }
             save(target, previous.copy(tree = uri.toString(), label = label, lastChecked = 0))
             archives.selectMaintenanceArchive(archive)
-            if (previous.tree != null && previous.tree != uri.toString() && !referenced(previous.tree) && !archives.store.needsGrant(previous.tree)) {
-                val oldUri = Uri.parse(previous.tree)
+            val previousTree = previous.tree
+            if (previousTree != null && previousTree != uri.toString() && !referenced(previousTree) && !archives.store.needsGrant(previousTree)) {
+                val oldUri = Uri.parse(previousTree)
                 if (context.contentResolver.persistedUriPermissions.any { it.uri == oldUri }) context.contentResolver.releasePersistableUriPermission(oldUri, access)
             }
         }

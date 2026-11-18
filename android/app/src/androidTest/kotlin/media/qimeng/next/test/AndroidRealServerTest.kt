@@ -18,6 +18,7 @@ import kotlinx.coroutines.withTimeout
 import media.qimeng.next.MainActivity
 import media.qimeng.next.data.DataGraph
 import media.qimeng.next.model.AssetQuery
+import media.qimeng.next.model.TabBarMaterial
 import media.qimeng.next.model.TransferState
 import media.qimeng.next.model.UploadMode
 import media.qimeng.next.model.OriginalInput
@@ -134,6 +135,7 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("media-browser:home:0").performTouchInput { swipeDown() }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
         screenshotWithMedia("real-server-home.png")
+        captureClassicHome(graph, picture.name)
         compose.onNodeWithContentDescription(picture.name).performClick()
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("标签").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("标签").performClick()
@@ -225,6 +227,25 @@ class AndroidRealServerTest {
     private fun screenshot(name: String) {
         compose.waitForIdle()
         saveScreenshot(name)
+    }
+    private fun captureClassicHome(graph: DataGraph, picture: String) {
+        val original = graph.settings.preferences.value
+        assertEquals(TabBarMaterial.LIQUID, original.material)
+        try {
+            compose.onNodeWithTag("navigation:me").performClick()
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("外观"))
+            compose.onNodeWithText("外观").performClick()
+            compose.onNodeWithText("经典").performScrollTo().performClick()
+            compose.waitUntil(10_000) { graph.settings.preferences.value.material == TabBarMaterial.CLASSIC }
+            compose.onNodeWithContentDescription("返回").performClick()
+            compose.onNodeWithTag("navigation:home").performClick()
+            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("navigation:home").assertIsSelected()
+            screenshotWithMedia("real-server-home-classic.png")
+        } finally {
+            graph.settings.savePreferences(original)
+            compose.waitForIdle()
+        }
     }
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun screenshotWithMedia(name: String, landscape: Boolean = false) {
