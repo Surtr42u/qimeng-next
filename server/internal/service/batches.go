@@ -459,6 +459,7 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		return model.Plan{}, Fail(409, "plan_limit", "本批计划数量达到上限。")
 	}
 	p := model.Plan{PlanSummary: model.PlanSummary{ID: w.ID("plan"), State: "prepared"}, BatchID: id, BatchRevision: b.Revision, Items: []model.PlanItem{}}
+	declaredByUpload := map[string][]string{}
 	type group struct {
 		family, class, dir, collection, sep string
 		number, width, lastPage             int
@@ -507,7 +508,10 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		sourceIDs := input.SourceIDs
 		characterIDs := input.CharacterIDs
 		if sourceIDs == nil {
-			sourceIDs = u.SourceIDs
+			sourceIDs, e = uploadDeclaredSources(ctx, s.DB.DB, u)
+			if e != nil {
+				return p, e
+			}
 		}
 		if characterIDs == nil {
 			characterIDs = u.CharacterIDs
@@ -517,6 +521,16 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 			return p, e
 		}
 		if e = preserveUploadSelection(w.Principal, u, authorIDs, taxonomy.SourceIDs, taxonomy.CharacterIDs); e != nil {
+			return p, e
+		}
+		if input.SourceIDs == nil {
+			declaredByUpload[u.ID] = sourceIDs
+		} else if !w.Principal.Has("admin") && (u.ExplicitTaxonomy || len(u.SourceIDs) > 0) {
+			declaredByUpload[u.ID], e = uploadDeclaredSources(ctx, s.DB.DB, u)
+		} else {
+			declaredByUpload[u.ID], e = cleanStrings(input.SourceIDs, 20, 100)
+		}
+		if e != nil {
 			return p, e
 		}
 		input.Family = domain.NamingFamily(taxonomy.Source, taxonomy.Characters, input.Family)
@@ -660,12 +674,19 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		item.NamespaceFingerprint, scopes[i] = scope, scope
 	}
 	p.DirectoryFingerprint = digest([]byte(strings.Join(scopes, "\n")))
-	raw, e := json.Marshal(p)
+	declared, e := store.Encode(declaredByUpload)
+	if e != nil {
+		return p, e
+	}
+	raw, e := json.Marshal([]any{p, declaredByUpload})
 	if e != nil {
 		return p, e
 	}
 	p.Fingerprint = digest(raw)
 	if e = store.SavePlan(ctx, q, p); e != nil {
+		return p, e
+	}
+	if _, e = q.ExecContext(ctx, "UPDATE plans SET declared_source_ids=? WHERE id=?", declared, p.ID); e != nil {
 		return p, e
 	}
 	return p, nil
@@ -711,6 +732,10 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 	}
 	if p.Fingerprint != fingerprint {
 		return Result{}, Fail(409, "plan_fingerprint_conflict", "计划摘要不匹配，必须使用服务端原计划。")
+	}
+	declaredByUpload, e := store.Get[map[string][]string](ctx, s.DB.DB, "SELECT coalesce(declared_source_ids,'{}') FROM plans WHERE id=?", planID)
+	if e != nil {
+		return Result{}, e
 	}
 	for _, item := range p.Items {
 		_, e = s.Run(ctx, principal, "commitPlanItem:"+planID+":"+item.UploadID, fingerprint, []byte(fingerprint), func(w *Write) (any, int, error) {
@@ -785,7 +810,11 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 					return nil, 0, Fail(409, "namespace_changed", "该命名族的占号、集合或引用对象已变化，请重新核对。")
 				}
 			}
-			r, e := s.ingest(ctx, w, u, &item)
+			declared, ok := declaredByUpload[item.UploadID]
+			if !ok {
+				declared = append([]string{}, item.SourceIDs...)
+			}
+			r, e := s.ingestPrepared(ctx, w, u, &item, nil, declared)
 			return r, 200, e
 		})
 		if e != nil {

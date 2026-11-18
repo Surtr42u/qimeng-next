@@ -251,27 +251,27 @@ func (s *Service) ApplyAssetMaintenance(ctx context.Context, w *Write, id string
 	notMissing := func() error {
 		return Fail(409, "asset_field_occupied", "该字段已填写或曾被清空，本任务只补全缺失资料。")
 	}
+	q, err := w.Q()
+	if err != nil {
+		return t, err
+	}
+	var taxonomy *store.TaxonomyEdits
 	if in.AuthorIDs != nil && (len(*in.AuthorIDs) == 0 || a.AuthorID != "unknown" || containsString(*in.AuthorIDs, "unknown")) {
 		return t, notMissing()
 	}
 	if in.SourceIDs != nil || in.CharacterIDs != nil {
-		a.TaxonomyDerived = false
-		a.TaxonomyCandidates = nil
-		sources, characters := a.SourceIDs, a.CharacterIDs
 		if in.SourceIDs != nil {
-			if len(*in.SourceIDs) == 0 || len(sources) > 0 || a.Source != "" {
+			if len(*in.SourceIDs) == 0 || len(a.SourceIDs) > 0 || a.Source != "" {
 				return t, notMissing()
 			}
-			sources = *in.SourceIDs
 		}
 		if in.CharacterIDs != nil {
-			if len(*in.CharacterIDs) == 0 || len(characters) > 0 || len(a.Characters) > 0 {
+			if len(*in.CharacterIDs) == 0 || len(a.CharacterIDs) > 0 || len(a.Characters) > 0 {
 				return t, notMissing()
 			}
-			characters = *in.CharacterIDs
 		}
 		previous := append([]string(nil), a.SourceIDs...)
-		if err = s.resolveTaxonomy(ctx, &a, sources, characters); err != nil {
+		if taxonomy, err = editAssetTaxonomy(ctx, q, &a, AssetUpdate{SourceIDs: in.SourceIDs, CharacterIDs: in.CharacterIDs}); err != nil {
 			return t, err
 		}
 		if len(previous) > 0 && !withinStrings(a.SourceIDs, previous) {
@@ -288,10 +288,6 @@ func (s *Service) ApplyAssetMaintenance(ctx context.Context, w *Write, id string
 		}
 		a.TagsRevision++
 		a.TagSetSource = "ai"
-	}
-	q, err := w.Q()
-	if err != nil {
-		return t, err
 	}
 	previousAuthors := a.AuthorIDs
 	if in.AuthorIDs != nil {
@@ -310,7 +306,7 @@ func (s *Service) ApplyAssetMaintenance(ctx context.Context, w *Write, id string
 		}
 	}
 	if in.AuthorIDs != nil || in.SourceIDs != nil || in.CharacterIDs != nil {
-		if err = store.SaveAssetEdits(ctx, q, a, in.AuthorIDs != nil, in.SourceIDs != nil || in.CharacterIDs != nil); err != nil {
+		if err = store.SaveAssetEdits(ctx, q, a, in.AuthorIDs != nil, taxonomy); err != nil {
 			return t, err
 		}
 	}

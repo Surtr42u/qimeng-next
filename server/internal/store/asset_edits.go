@@ -8,7 +8,7 @@ import (
 
 // SaveAssetEdits writes editable catalog fields. Only an explicit author or
 // taxonomy edit can touch its respective membership rows.
-func SaveAssetEdits(ctx context.Context, q Querier, a model.Asset, authors, taxonomy bool) error {
+func SaveAssetEdits(ctx context.Context, q Querier, a model.Asset, authors bool, taxonomy *TaxonomyEdits) error {
 	patch := map[string]any{"revision": a.Revision, "updatedAt": a.UpdatedAt, "metadataSource": a.MetadataSource,
 		"note": a.Note, "acquisitionSources": a.AcquisitionSources}
 	set := "revision=?,updated_at=?,data=json_patch(data,?)"
@@ -16,11 +16,6 @@ func SaveAssetEdits(ctx context.Context, q Querier, a model.Asset, authors, taxo
 		patch["authorsRevision"] = a.AuthorsRevision
 		patch["authorStatus"] = a.AuthorStatus
 		set += ",author_id=?"
-	}
-	if taxonomy {
-		patch["source"], patch["sourceIds"] = a.Source, a.SourceIDs
-		patch["characters"], patch["characterIds"] = a.Characters, a.CharacterIDs
-		patch["taxonomyDerived"], patch["taxonomyCandidates"] = a.TaxonomyDerived, a.TaxonomyCandidates
 	}
 	raw, err := Encode(patch)
 	if err != nil {
@@ -38,11 +33,8 @@ func SaveAssetEdits(ctx context.Context, q Querier, a model.Asset, authors, taxo
 			return err
 		}
 	}
-	if taxonomy {
-		if err = saveAssetIDs(ctx, q, a.ID, "asset_sources", "source_id", a.SourceIDs, false); err != nil {
-			return err
-		}
-		return saveAssetIDs(ctx, q, a.ID, "asset_characters", "character_id", a.CharacterIDs, false)
+	if taxonomy != nil {
+		return SaveAssetTaxonomy(ctx, q, a, taxonomy)
 	}
 	return nil
 }

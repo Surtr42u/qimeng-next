@@ -138,6 +138,10 @@ func (s *Service) SaveCharacter(ctx context.Context, w *Write, id string, in Ter
 	return v, e
 }
 func (s *Service) resolveTaxonomy(ctx context.Context, a *model.Asset, sourceIDs, characterIDs []string) error {
+	return resolveTaxonomyOn(ctx, s.DB.DB, a, sourceIDs, characterIDs)
+}
+
+func resolveTaxonomyOn(ctx context.Context, q store.Querier, a *model.Asset, sourceIDs, characterIDs []string) error {
 	if sourceIDs == nil {
 		sourceIDs = []string{}
 	}
@@ -156,23 +160,23 @@ func (s *Service) resolveTaxonomy(ctx context.Context, a *model.Asset, sourceIDs
 	characterNames := []string{}
 	seen := map[string]bool{}
 	for _, id := range characters {
-		c, e := store.Get[Character](ctx, s.DB.DB, "SELECT data FROM characters WHERE id=?", id)
-		if e != nil {
+		var name, parent string
+		if e = q.QueryRowContext(ctx, "SELECT name,source_id FROM characters WHERE id=?", id).Scan(&name, &parent); e != nil {
 			return Normalize(e)
 		}
-		characterNames = append(characterNames, c.Name)
-		sources = appendUnique(sources, c.SourceID)
+		characterNames = append(characterNames, name)
+		sources = appendUnique(sources, parent)
 	}
 	for _, id := range sources {
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
-		v, e := store.Get[Source](ctx, s.DB.DB, "SELECT data FROM sources WHERE id=?", id)
-		if e != nil {
+		var name string
+		if e = q.QueryRowContext(ctx, "SELECT name FROM sources WHERE id=?", id).Scan(&name); e != nil {
 			return Normalize(e)
 		}
-		names = append(names, v.Name)
+		names = append(names, name)
 	}
 	a.SourceIDs = sources
 	a.CharacterIDs = characters

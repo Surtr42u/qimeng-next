@@ -53,7 +53,7 @@ func replaceAuthor(ctx context.Context, q store.Querier, a *model.Asset, source,
 	a.AuthorsRevision++
 	a.Revision++
 	a.UpdatedAt = time.Now().UTC()
-	return store.SaveAssetEdits(ctx, q, *a, true, false)
+	return store.SaveAssetEdits(ctx, q, *a, true, nil)
 }
 func (s *Service) DeleteAuthor(ctx context.Context, w *Write, id string, revision int64) error {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {

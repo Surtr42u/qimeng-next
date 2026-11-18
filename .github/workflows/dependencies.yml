@@ -1,0 +1,48 @@
+name: Dependency advisories
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/**']
+    paths:
+      - .github/workflows/dependencies.yml
+      - tools/dependency_advisories.py
+      - server/go.mod
+      - server/go.sum
+      - ai/requirements.lock
+      - tools/mcp-compat/package-lock.json
+      - web/package-lock.json
+      - desktop/package-lock.json
+      - desktop/package.json
+      - desktop/src-tauri/Cargo.toml
+      - desktop/src-tauri/Cargo.lock
+      - desktop/src-tauri/tauri.conf.json
+permissions:
+  contents: read
+jobs:
+  locked-packages:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Check every lock and the Windows release dependency graph
+        env:
+          OSV_VERSION: 2.7.1
+          OSV_SHA256: 7121dcf420aefbbf89a7f0050c4d3094e079ff93afd334dfc96f16b02ec85800
+        run: |
+          $scanner = Join-Path $env:RUNNER_TEMP 'osv-scanner.exe'
+          $uri = "https://github.com/google/osv-scanner/releases/download/v$env:OSV_VERSION/osv-scanner_windows_amd64.exe"
+          curl.exe --fail --silent --show-error --location --retry 2 --max-time 120 $uri --output $scanner
+          if ($LASTEXITCODE -ne 0) { throw "OSV-Scanner download failed" }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $scanner).Hash -ne $env:OSV_SHA256) { throw "Unexpected OSV-Scanner digest" }
+          python tools/dependency_advisories.py $scanner (Join-Path $env:RUNNER_TEMP 'advisories')
+          if ($LASTEXITCODE -ne 0) { throw "Review the advisory results or scanner error above" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-advisories
+          path: ${{ runner.temp }}/advisories/
+          if-no-files-found: warn
+          retention-days: 14
