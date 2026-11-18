@@ -12,8 +12,8 @@ func TestUpgradeReleasesCancelledReservationsWithoutHidingPreparedOrPublishedInp
 		t.Fatal(err)
 	}
 	defer func() { s.DB.Close() }()
-	_, err = s.DB.Exec(`INSERT INTO batches VALUES('closed','','{"id":"closed","state":"cancelled"}'),('active','','{"id":"active","state":"receiving"}');
-	 INSERT INTO uploads VALUES
+	_, err = s.DB.Exec(`INSERT INTO batches(id,created_at,data) VALUES('closed','','{"id":"closed","state":"cancelled"}'),('active','','{"id":"active","state":"receiving"}');
+	 INSERT INTO uploads(id,batch_id,state,data) VALUES
 	  ('staged','closed','staged','{"state":"staged","offset":7}'),
 	  ('inflight','closed','staged','{"state":"staged","offset":7}'),
 	  ('finished','closed','ingested','{"state":"ingested","assetId":"keep","publishedContentVersion":4,"offset":7}'),

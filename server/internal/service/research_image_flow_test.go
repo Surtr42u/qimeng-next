@@ -127,7 +127,7 @@ func TestImageLookupUsesOnlyOneAuthorizedDerivedFrameAndReceipt(t *testing.T) {
 	_, narrowToken := imageResearchTask(t, f, grant, library.ID, false, 42, 201)
 	batchID, token := imageResearchTask(t, f, grant, library.ID, true, 43, 201)
 	batch := "/batches/" + batchID
-	inputs := []model.IntakeInput{{ID: "first", OriginalFileName: "synthetic-first.png"}, {ID: "second", OriginalFileName: "synthetic-second.png"}}
+	inputs := []model.IntakeInput{{ID: "fixture-first", OriginalFileName: "synthetic-first.png"}, {ID: "fixture-second", OriginalFileName: "synthetic-second.png"}}
 	f.request("PUT", batch+"/inputs", researchTestOwner, "image-lookup-manifest", model.BatchInputsSet{ExpectedManifestRevision: 1, Inputs: inputs}).expect(t, 200, nil)
 	u := f.stage(t, library.ID, batchID, inputs[0].ID, inputs[0].OriginalFileName, "", 81)
 	second := f.stage(t, library.ID, batchID, inputs[1].ID, inputs[1].OriginalFileName, "", 127)
