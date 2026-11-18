@@ -38,8 +38,8 @@ func TestClaimedIntakeStatusIsVisibleAcrossSessionsAndCannotCommitOrOverrideNewe
 		t.Fatal("ready selection should wait for a claim without an invented observation time", now)
 	}
 	oldToken := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
-	claim := service.DelegatedTaskStart{Kind: "intake", Label: "Real worker", LibraryID: library.ID, BatchID: b.ID,
-		Mode: "intelligent", ReadyManifestFingerprint: &b.ManifestFingerprint, CredentialSecret: oldToken}
+	claim := map[string]string{"kind": "intake", "label": "Real worker", "libraryId": library.ID, "batchId": b.ID,
+		"mode": "intelligent", "readyManifestFingerprint": b.ManifestFingerprint, "credentialSecret": oldToken}
 	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, "claim-observed-intake", claim).expect(t, 201, nil)
 	var observer model.Principal
 	f.request("POST", "/credentials", researchTestOwner, "", map[string]any{"label": "Other reader", "batchId": b.ID, "scopes": []string{"read"}}).expect(t, 201, &observer)
