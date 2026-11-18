@@ -123,7 +123,7 @@ def go() -> None:
     destination = ROOT / "server/internal/transport/generated"
     destination.mkdir(parents=True, exist_ok=True)
     run("go", "run", f"github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{OAPI_CODEGEN}",
-        "-generate", "types,client", "-package", "generated", "-o", str(destination / "api.gen.go"),
+        "-generate", "types,client,std-http-server", "-package", "generated", "-o", str(destination / "api.gen.go"),
         str(ROOT / "api/openapi.yaml"), cwd=ROOT / "server")
 
 

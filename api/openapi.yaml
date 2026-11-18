@@ -554,10 +554,32 @@ paths:
       responses:
         '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/favorite:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setAssetFavorite
+      summary: Set this asset's favorite state
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetFavoriteUpdate'}}}}
+      responses:
+        '200': {description: Asset after applying the favorite intent, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/like/today:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setAssetTodayLike
+      summary: Set or cancel the like for the current day in the server time zone
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTodayLikeUpdate'}}}}
+      responses:
+        '200': {description: Asset with its current daily state and cumulative count, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /assets/{id}/reaction:
     parameters: [{$ref: '#/components/parameters/Id'}]
     put:
       operationId: updateReaction
+      deprecated: true
+      description: Legacy clients may set a favorite when liked is false. A like carrying a conflicting favorite returns 409. Use the dedicated intent routes for new requests.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ReactionUpdate'}}}}
       responses:
@@ -2708,8 +2730,21 @@ components:
       properties:
         expectedRevision: {type: integer, format: int64, description: 'Compare Asset.tagsRevision, not the overall revision'}
         tags: {type: array, maxItems: 100, items: {type: string, minLength: 1, maxLength: 100}}
+    AssetFavoriteUpdate:
+      type: object
+      additionalProperties: false
+      required: [favorite]
+      properties:
+        favorite: {type: boolean}
+    AssetTodayLikeUpdate:
+      type: object
+      additionalProperties: false
+      required: [liked]
+      properties:
+        liked: {type: boolean, description: False removes the current day vote while preserving earlier votes and imported unattributed counts.}
     ReactionUpdate:
       type: object
+      additionalProperties: false
       required: [favorite, liked]
       properties: {favorite: {type: boolean}, liked: {type: boolean, description: True requests one daily like. False does not add a like and never undoes accumulated likes.}}
     EventCreate:
