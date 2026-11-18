@@ -78,11 +78,11 @@ func readSchemaMigrations(source fs.FS) ([]schemaMigration, error) {
 }
 
 func verifyMigrationHistory(db *sql.DB, steps []schemaMigration) (map[int]bool, error) {
-	checksums := make(map[int]string, len(steps))
+	known := make(map[int]schemaMigration, len(steps))
 	for _, step := range steps {
-		checksums[step.version] = step.checksum
+		known[step.version] = step
 	}
-	rows, err := db.Query("SELECT version, sha256 FROM schema_migrations ORDER BY version")
+	rows, err := db.Query("SELECT version, name, sha256 FROM schema_migrations ORDER BY version")
 	if err != nil {
 		return nil, err
 	}
@@ -90,20 +90,30 @@ func verifyMigrationHistory(db *sql.DB, steps []schemaMigration) (map[int]bool, 
 	applied := make(map[int]bool)
 	for rows.Next() {
 		var version int
-		var checksum string
-		if err := rows.Scan(&version, &checksum); err != nil {
+		var name, checksum string
+		if err := rows.Scan(&version, &name, &checksum); err != nil {
 			return nil, err
 		}
-		expected, found := checksums[version]
+		step, found := known[version]
 		if !found {
 			return nil, fmt.Errorf("database schema %d requires a newer server", version)
 		}
-		if checksum != expected {
-			return nil, fmt.Errorf("migration %d checksum changed", version)
+		if err := step.checkRecord(name, checksum); err != nil {
+			return nil, err
 		}
 		applied[version] = true
 	}
 	return applied, rows.Err()
+}
+
+func (step schemaMigration) checkRecord(name, checksum string) error {
+	if name != step.name {
+		return fmt.Errorf("migration %d filename changed", step.version)
+	}
+	if checksum != step.checksum {
+		return fmt.Errorf("migration %d checksum changed", step.version)
+	}
+	return nil
 }
 
 func (step schemaMigration) apply(db *sql.DB) error {

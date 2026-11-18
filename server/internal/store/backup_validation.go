@@ -62,11 +62,11 @@ func ValidateBackupSchema(ctx context.Context, db *sql.DB) error {
 	}
 	for _, r := range records {
 		step, ok := known[r.version]
-		if !ok || step.name != r.name {
+		if !ok {
 			return errors.New("backup requires an unknown migration")
 		}
-		if step.checksum != r.hash {
-			return errors.New("backup migration checksum mismatch")
+		if err := step.checkRecord(r.name, r.hash); err != nil {
+			return err
 		}
 		if _, e = expected.ExecContext(ctx, step.sql); e != nil {
 			return e

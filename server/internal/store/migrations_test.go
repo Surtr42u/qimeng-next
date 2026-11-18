@@ -16,6 +16,7 @@ func TestMigrationHistoryIsValidatedBeforePendingSteps(t *testing.T) {
 	}{
 		{"newer version", "0099_future.sql", "SELECT 1", "requires a newer server"},
 		{"changed history", "0003_existing.sql", "SELECT 2", "checksum changed"},
+		{"renamed step", "0003_previous_name.sql", "SELECT 1", "filename changed"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			db, err := OpenDatabase(filepath.Join(t.TempDir(), "history.sqlite"), CatalogDatabase)
