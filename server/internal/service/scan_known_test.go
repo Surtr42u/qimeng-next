@@ -27,7 +27,7 @@ func TestScanKnownDirectoryRejectsSwappedAndCancelledPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	stamp := info.ModTime()
-	known := map[string]scanSignature{"album/known.png": {RelativePath: "album/known.png", Size: info.Size(), Mtime: &stamp}}
+	known := map[string]scanSignature{"album/known.png": {RelativePath: "album/known.png", Hash: digest(data), Size: info.Size(), Mtime: &stamp}}
 	dir, err := s.Root.Open("libraries/" + run.library.ID + "/album")
 	if err != nil {
 		t.Fatal(err)
