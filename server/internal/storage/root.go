@@ -186,7 +186,8 @@ func (r *Root) resolve(name string) (location, string, error) {
 		if !ok || l.root == nil {
 			return location{}, "", ErrUnavailable
 		}
-		relative := path.Join(append([]string{lib.relative}, rest...)...)
+		// os.Root addresses the configured directory itself as ".".
+		relative := path.Join(append([]string{".", lib.relative}, rest...)...)
 		parts := strings.Split(relative, "/")
 		for i := range parts {
 			info, e := l.root.Lstat(strings.Join(parts[:i+1], "/"))

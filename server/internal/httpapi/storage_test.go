@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -13,9 +14,15 @@ import (
 )
 
 func TestExternalLogicalRootKeepsOriginalsOutsideDatabaseDirectory(t *testing.T) {
+	t.Run("configured root", func(t *testing.T) { checkExternalLibrary(t, "") })
+	t.Run("configured subdirectory", func(t *testing.T) { checkExternalLibrary(t, "existing") })
+}
+
+func checkExternalLibrary(t *testing.T, relative string) {
+	t.Helper()
 	mediaRoot := t.TempDir()
 	dataRoot := t.TempDir()
-	existing := filepath.Join(mediaRoot, "existing")
+	existing := filepath.Join(mediaRoot, relative)
 	if e := os.MkdirAll(existing, 0700); e != nil {
 		t.Fatal(e)
 	}
@@ -30,11 +37,11 @@ func TestExternalLogicalRootKeepsOriginalsOutsideDatabaseDirectory(t *testing.T)
 	}
 	f := &fixture{t: t, s: s, h: httpapi.New(s)}
 	t.Cleanup(func() { f.s.Close() })
-	r := f.json("POST", "/libraries", "external-library-create", map[string]any{"name": "External synthetic", "kind": "regular", "storageId": "media", "rootRelativePath": "existing"}, 201)
+	r := f.json("POST", "/libraries", "external-library-create", map[string]any{"name": "External synthetic", "kind": "regular", "storageId": "media", "rootRelativePath": relative}, 201)
 	var library model.Library
 	decode(t, r, &library)
 	f.library = library.ID
-	f.json("POST", "/libraries", "overlapping-library-create", map[string]any{"name": "Overlap", "kind": "regular", "storageId": "media", "rootRelativePath": "existing/child"}, 409)
+	f.json("POST", "/libraries", "overlapping-library-create", map[string]any{"name": "Overlap", "kind": "regular", "storageId": "media", "rootRelativePath": path.Join(relative, "child")}, 409)
 	upload, body := f.upload("external-upload.png", 201, map[string]any{"originalFileName": "source�.png", "sourceRelativePath": "download/source�.png"})
 	a := *f.complete(upload).Asset
 	if a.OriginalFileName != "source�.png" || a.SourceRelativePath != "download/source�.png" {
