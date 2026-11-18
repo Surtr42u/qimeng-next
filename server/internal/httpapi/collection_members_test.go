@@ -15,8 +15,8 @@ import (
 func TestCollectionMemberOrderAndRenameDoNotWriteAssetFacts(t *testing.T) {
 	f := setup(t)
 	var c model.Collection
-	decode(t, f.json("POST", "/collections", "create-member-group", map[string]string{
-		"libraryId": f.library, "kind": "image_set", "name": "Members"}, 201), &c)
+	decode(t, f.json("POST", "/collections", "create-member-group", map[string]any{
+		"libraryId": f.library, "kind": "image_set", "name": "Members", "aliases": []string{"Member reference"}}, 201), &c)
 	aUpload, original := f.upload("member-a.png", 78, map[string]any{"collectionId": c.ID})
 	first := *f.complete(aUpload).Asset
 	bUpload, _ := f.upload("member-b.png", 79, map[string]any{"collectionId": c.ID})
@@ -37,6 +37,11 @@ func TestCollectionMemberOrderAndRenameDoNotWriteAssetFacts(t *testing.T) {
 	decode(t, f.json("PATCH", base, "rename-member-group", map[string]any{"expectedRevision": c.Revision, "name": "Renamed group"}, 200), &renamed)
 	if renamed.ID != c.ID || renamed.Name != "Renamed group" || renamed.Revision != c.Revision+1 {
 		t.Fatal("collection identity or revision changed unexpectedly", renamed)
+	}
+	var hits model.Page[model.Collection]
+	decode(t, f.json("GET", "/collections?libraryId="+f.library+"&q=Member+reference", "", nil, 200), &hits)
+	if len(hits.Items) != 1 || hits.Items[0].ID != c.ID || len(hits.Items[0].Aliases) != 1 || hits.Items[0].Aliases[0] != "Member reference" {
+		t.Fatal("rename lost the collection's explicitly assigned alias", hits)
 	}
 	f.json("PATCH", base, "stale-rename-group", map[string]any{"expectedRevision": c.Revision, "name": "Stale"}, 409)
 	route := func(id string) string { return base + "/members/" + id + "/position" }

@@ -145,7 +145,7 @@ func (s *Service) inspectNativeVideo(ctx context.Context, ref nativeVideoRef) (n
 	if !syncPlatformSupported {
 		return proof, nil
 	}
-	file, asset, err := s.Content(ctx, ref.id, ref.version)
+	file, asset, err := s.openNativeVideo(ctx, ref)
 	if err != nil {
 		var problem *Error
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) || errors.As(err, &problem) && (problem.Status == 404 || problem.Status == 409) {
@@ -178,6 +178,33 @@ func (s *Service) inspectNativeVideo(ctx context.Context, ref nativeVideoRef) (n
 	}
 	retained = true
 	return nativeVideoProof{file, info, stamp, hash, n}, nil
+}
+
+func (s *Service) openNativeVideo(ctx context.Context, ref nativeVideoRef) (*os.File, model.Asset, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, err := s.Asset(ctx, ref.id)
+	if err != nil {
+		return nil, a, err
+	}
+	if a.Trashed || a.MediaType != "video" || a.ContentVersion != ref.version {
+		return nil, a, Fail(409, "native_content_changed", "所选视频的活动版本不符。")
+	}
+	name := assetPath(a)
+	if err = s.safe(name); err != nil {
+		return nil, a, err
+	}
+	info, err := s.Root.Lstat(name)
+	if err != nil {
+		return nil, a, err
+	}
+	if !info.Mode().IsRegular() || syncPathLink(info) {
+		return nil, a, Fail(409, "native_content_changed", "视频原件已被其他类型的目录项替换。")
+	}
+	// On Unix an external replacement with a FIFO between Lstat and Open must
+	// not block the mutation lock indefinitely.
+	file, err := s.Root.OpenFile(name, os.O_RDONLY|syncReadFlags, 0)
+	return file, a, err
 }
 
 func (s *Service) verifiedNativeVideo(ctx context.Context, q store.Querier, proofs *NativeVideoProofs, id string, version int64) (model.Asset, string, error) {

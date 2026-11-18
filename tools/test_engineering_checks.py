@@ -15,6 +15,8 @@ class EngineeringChecksTest(unittest.TestCase):
         self.assertEqual(missing, ["数据迁移"])
         self.assertEqual(evaluate(paths | {"docs/migration.md", "docs/architecture.md"}, "")[1], [])
         self.assertEqual(evaluate({"server/internal/service/migration_profile_test.go"}, ""), ([], []))
+        self.assertEqual(evaluate({"server/internal/service/native_delivery_commit.go"}, "")[1], ["数据迁移"])
+        self.assertEqual(evaluate({"server/internal/service/native_delivery_commit.go", "docs/migration.md"}, "")[1], [])
 
     def test_document_references(self):
         with tempfile.TemporaryDirectory() as directory:

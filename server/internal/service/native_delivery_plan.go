@@ -129,6 +129,15 @@ func (s *Service) inspectNativeItem(ctx context.Context, q store.Querier, plan N
 	if err == nil {
 		if oldHash != hash {
 			r.State, r.Code = "conflict", "source_revision_conflict"
+			if t := item.Timeline; t != nil {
+				var old NativeItemResult
+				if err := json.Unmarshal([]byte(raw), &old); err != nil {
+					return r, err
+				}
+				if old.TargetAssetID != t.TargetAssetID || old.TargetContentVersion != t.TargetContentVersion {
+					r.Code = "target_binding_conflict"
+				}
+			}
 			return r, nil
 		}
 		err = json.Unmarshal([]byte(raw), &r)

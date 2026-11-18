@@ -15,7 +15,8 @@ def affected_guides(paths):
     if "server/internal/architecture/boundaries_test.go" in paths:
         matches["模块边界"] = {"docs/architecture.md", "server/README.md"}
     if any(p.startswith("server/internal/store/migrations/") and p.endswith(".sql") or
-           (p.startswith("server/internal/migration/") or p.startswith("server/internal/service/migration_"))
+           p.startswith(("server/internal/migration/", "server/internal/service/migration_",
+                         "server/internal/service/native_delivery", "server/internal/service/native_timeline"))
            and p.endswith(".go") and not p.endswith("_test.go") for p in paths):
         matches["数据迁移"] = {"docs/migration.md", "docs/author-profiles.md", "server/README.md"}
     return matches

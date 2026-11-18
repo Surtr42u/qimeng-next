@@ -2,28 +2,43 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mockLibrary } from "./fixture";
 
-test('a second v2 preflight carries all earlier explicit mappings for the same source', async ({ page }) => {
+test("sending selected native data retries the same request and reads the device receipt", async ({ page }) => {
   await mockLibrary(page);
-  const source = { id: 'synthetic-v2', sourceId: 'synthetic-legacy', createdAt: '2026-01-01T00:00:00Z', mediaCount: 2, authorCount: 0, eventCount: 0 };
-  const mappings: { mediaMappings: { recordKey: string; assetId: string }[] }[] = [];
-  await page.route('**/api/v1/migration/v2/imports?**', route => route.fulfill({ json: { items: [source] } }));
-  await page.route('**/api/v1/migration/v2/imports/synthetic-v2/plans', route => {
-    mappings.push(route.request().postDataJSON());
-    return route.fulfill({ json: { id: 'plan-' + mappings.length, importId: source.id, state: 'prepared', mediaCount: 2, matchedCount: 0, skippedCount: 0, issueCount: 0, issues: [], fingerprint: 'synthetic' } });
+  const digest = "a".repeat(64);
+  const task = { id: "synthetic-task", targetDeviceId: "phone", protocolVersion: 2, revision: 1,
+    state: "pending", segments: [{ kind: "nativeSelection", packageId: digest, sha256: digest, bytes: 512 }],
+    createdAt: "2026-01-01T00:00:00Z", expiresAt: "2026-01-02T00:00:00Z" };
+  const keys: string[] = [];
+  const legacyCalls: string[] = [];
+  page.on("request", request => { if (request.url().includes("/migration/v2/")) legacyCalls.push(request.url()); });
+  await page.route("**/api/v1/author-lists?**", route => route.fulfill({ json: { items: [
+    { id: "list-one", name: "作者 01.txt", revision: 4 }, { id: "list-two", name: "作者 02.txt", revision: 7 },
+  ] } }));
+  await page.route("**/api/v1/device/native-deliveries", async route => {
+    keys.push(route.request().headers()["idempotency-key"] ?? "");
+    expect(route.request().postDataJSON()).toEqual({ targetDeviceId: "phone", targetInstanceId: "instance-two",
+      items: [{ kind: "authorList", sourceObjectId: "list-two", expectedRevision: 7 }] });
+    if (keys.length === 1) { await route.abort("connectionreset"); return; }
+    await route.fulfill({ status: 201, json: task });
   });
-  await page.route('**/api/v1/migration/v2/plans/*/items?**', route => route.fulfill({ json: { items: ['one', 'two'].map(recordKey => ({ recordKey, fileName: recordKey, state: 'unmatched', reason: '合成', issues: [] })) } }));
-  await page.route('**/api/v1/migration/v2/plans/*/authors?**', route => route.fulfill({ json: { items: [] } }));
-  await page.goto('/manage/backup');
-  await page.getByText('已暂存的 v2 文档', { exact: true }).click();
-  await page.getByRole('button', { name: /synthetic-legacy/ }).click();
-  await page.getByRole('button', { name: '生成预检报告' }).click();
-  await page.getByText('逐项匹配与冲突', { exact: true }).click();
-  await page.getByLabel('目标资产 ID').nth(0).fill('target-one');
-  await page.getByRole('button', { name: '重新生成预检' }).click();
-  await expect(page.getByRole('button', { name: '重新生成预检' })).toHaveCount(0);
-  await page.getByLabel('目标资产 ID').nth(1).fill('target-two');
-  await page.getByRole('button', { name: '重新生成预检' }).click();
-  await expect.poll(() => mappings.at(-1)?.mediaMappings).toEqual([{ recordKey: 'one', assetId: 'target-one' }, { recordKey: 'two', assetId: 'target-two' }]);
+  await page.route("**/api/v1/device/apply-tasks/synthetic-task", route => route.fulfill({
+    json: { ...task, state: "applied", results: [{ kind: "nativeSelection", state: "applied", sha256: digest, receiptId: "local-plan" }] },
+  }));
+  await page.goto("/manage/backup");
+  await page.getByText("发送资料到另一台设备", { exact: true }).click();
+  await page.getByLabel("目标设备标识").fill("phone");
+  await page.getByLabel("接收实例 ID").fill("instance-two");
+  await page.getByLabel("选择来源作者 TXT").selectOption("list-two");
+  await expect(page.getByRole("list", { name: "待发送资料" })).toContainText("作者 02.txt · 修订 7");
+  const send = page.getByRole("button", { name: "发送所选资料" });
+  await send.click();
+  await expect(page.getByRole("alert")).toContainText("没有收到成功确认");
+  await send.click();
+  await expect(page.getByText("local-plan", { exact: true })).toBeVisible();
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBe(keys[0]);
+  expect(legacyCalls).toEqual([]);
 });
 
 test("maintenance folder freezes real browser files, resumes interrupted rotation and preserves an external edit", async ({ page, browserName }, testInfo) => {
@@ -55,7 +70,6 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
     }
     return route.fulfill({ json: backup(rev!, part === "export") });
   });
-  await page.route("**/api/v1/migration/v2/imports?**", route => route.fulfill({ json: { items: [] } }));
   await page.goto("/manage/backup");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 800 });

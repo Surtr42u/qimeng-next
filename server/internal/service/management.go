@@ -214,6 +214,10 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 		return nil, e
 	}
 	if remove {
+		if _, e = q.ExecContext(ctx, `INSERT OR IGNORE INTO asset_human_fields(asset_id,field)
+			SELECT asset_id,'tags' FROM asset_tags WHERE tag_id=?`, tag.ID); e != nil {
+			return nil, e
+		}
 		if _, e = q.ExecContext(ctx, "DELETE FROM asset_tags WHERE tag_id=?", tag.ID); e != nil {
 			return nil, e
 		}
@@ -258,6 +262,9 @@ func (s *Service) RemoveAssetTag(ctx context.Context, w *Write, id, tag string, 
 	a.TagSetSource = "human"
 	q, e := w.Q()
 	if e != nil {
+		return a, e
+	}
+	if e = protectHumanField(ctx, q, a.ID, "tags"); e != nil {
 		return a, e
 	}
 	return a, store.SaveAssetTags(ctx, q, a)

@@ -18,11 +18,11 @@ v2 迁入只读取旧协议定义，未复制旧实现。PrepareImportedAuthorPr
 
 独立实现参考：旧项目 api/openapi.yaml 的 CreatorProfile/CreatorXProfile/LegacyAuthor 结构、docs/domain/authors.md 的公开档案与 X 简介章节、docs/domain/migration.md 的作者公开档案章节。技术依据为 [Go HTTP Transport](https://pkg.go.dev/net/http#Transport)、[netip 地址分类](https://pkg.go.dev/net/netip#Addr.IsPrivate)、[image.DecodeConfig](https://pkg.go.dev/image#DecodeConfig)、[官方 WebP decoder](https://pkg.go.dev/golang.org/x/image/webp)。新增依赖锁为 golang.org/x/image v0.48.0，来自 [Go 模块代理官方记录](https://proxy.golang.org/golang.org/x/image/@v/v0.48.0.info)，go.sum 由云端生成。
 
-### 显式替换 v2 来源资料
+### 历史 v2 档案的处置记录
 
 明确选择替换后，只有 v2 中标记 `verified` 的资料可用于填入缺失块或替换先前迁入的字段。来源未提供的字段继续保留。账号或原文变化时，根据来源重新核对译文和头像，离线头像按绑定来源与内容摘要应用。计划保存各块修订和指纹；用户编辑过的块及明确清空、从其他作者合并来的块均保留。正在追踪作品的作者，其 X 身份和账号块也受保护。此操作保留本机订阅配置、既有人工候选处置和本机核心作者名。
 
-计划作者明细的 `profileBlocks` 分别列出恢复、替换、保留、受保护和待核实的结果。原始资料与嵌套候选归档。实际替换在应用前检查点完成后提交；重复提交回读同一回执。操作参数和冲突处理见[迁移与回退](migration.md#设备包的作者资料选择)。
+计划作者明细的 `profileBlocks` 分别列出恢复、替换、保留、受保护和待核实的结果。原始资料与嵌套候选归档。实际替换在应用前检查点完成后提交；重复提交回读同一回执。早期 Next 保存的这些处置可回读。当前设备间的资料保护见[选择性设备交付](migration.md#选择性设备交付)。
 
 ## 作品订阅
 

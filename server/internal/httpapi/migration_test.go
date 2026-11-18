@@ -42,6 +42,21 @@ func planV2(t *testing.T, f *fixture, input service.V2Import, key string) servic
 	return plan
 }
 
+func TestOrdinaryServiceRetiresV2WritesAndReadsEarlierRecords(t *testing.T) {
+	f := setup(t)
+	archive := stageV2(t, f, "historical-fixture", []byte(`{"format":"qimeng_backup","schemaVersion":2,"appIdentifier":"synthetic.legacy","data":{"mediaFiles":[],"viewEvents":[]}}`))
+	plan := planV2(t, f, archive, "historical-plan")
+	f.h = httpapi.New(f.s)
+	f.json("GET", "/migration/v2/imports/"+archive.ID, "", nil, 200)
+	f.json("GET", "/migration/v2/plans/"+plan.ID, "", nil, 200)
+	response := f.request("POST", "/migration/v2/imports?sourceId=synthetic-installation", "retired-stage", testSecret, []byte("{}"), map[string]string{"Content-Type": "application/octet-stream"})
+	if response.Code != 410 {
+		t.Fatalf("retired stage status = %d", response.Code)
+	}
+	f.json("POST", "/migration/v2/imports/"+archive.ID+"/plans", "retired-prepare", map[string]any{}, 410)
+	f.json("POST", "/migration/v2/plans/"+plan.ID+"/commit", "retired-commit", map[string]any{"fingerprint": plan.Fingerprint, "acceptSkipped": false}, 410)
+}
+
 func TestV2PlanIsReadOnlyAndCommitPreservesIdentitiesAndEmptyTags(t *testing.T) {
 	f := setup(t)
 	u, _ := f.upload("migrate.png", 71, nil)
