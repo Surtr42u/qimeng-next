@@ -375,7 +375,7 @@ private fun ApiAsset.toModel(target: Session): Asset {
         collectionId = collectionId, page = page,
         contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt,
         fileDate = fileDate, workGroups = workFacets.orEmpty().map { AssetGroup(it.key, it.name) },
-        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount)
+        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount, cosWorkName = cosWorkName, sourceName = source)
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,

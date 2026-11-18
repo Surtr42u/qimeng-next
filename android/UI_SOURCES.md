@@ -1,6 +1,6 @@
 # Android UI 复用来源
 
-用户授权直接复用旧版纯展示 UI，保留实际页面与操作，只增加平滑过渡和底栏玻璃选中效果。旧版来源为 `qimeng-media@d0215962bb1e9c29baabeed9fc9dc5c8b4b94555`。下表路径相对各自的 Android 模块根；设备与截图情况见[界面对照与验收](UI_PARITY.md)。
+用户授权直接复用旧版纯展示 UI，默认展示以旧版实际代码为准，包含其已有的四档材质与选中动效。旧版来源为 `qimeng-media@d0215962bb1e9c29baabeed9fc9dc5c8b4b94555`。下表路径相对各自的 Android 模块根；设备与截图情况见[界面对照与验收](UI_PARITY.md)。
 
 | 旧版展示来源 | Next 落点及适配 |
 | --- | --- |
@@ -8,7 +8,8 @@
 | `core/ui/.../component/Qimeng{SegmentedControl,SegPill,Settings,Pills,TitleRow,CapsuleTextField,TouchGuards}.kt`、`QimengScaffold.kt` 顶栏与计数格式函数 | 新 `ui/component/`；计数接 Go 的 Long，胶囊、标题、顶栏、筛选值区和分组均由这些共享组件渲染。 |
 | `core/ui/.../component/QimengFilterSheet*.kt` 及筛选文字资源 | 新 `ui/component/QimengFilterSheet*.kt`、`filter_strings.xml`。保留行顺序、年份、标签长按确认、重置和应用。新草稿、分页和修订写入由客户端数据层管理。 |
 | `core/ui/.../icon/Qimeng{Icons,ManageIcons,DetailIcons}.kt` | 新 `ui/icon/` 保留图形路径和来源注释。 |
-| `HomeScreen.HomeTopRow`、`AllScreen`、`FavoriteScreen`、`HistoryScreen`、`QimengMediaGrid.AssetCard`、`FloatingTabDock.TabDockDefaults` | `MediaBrowser.kt`、`AlbumFilters.kt`、`GallerySections.kt` 和 `LiquidNavigation.kt`。保留 16:9、5dp 外距、24px 封面圆角、四维控件及原底栏几何。导航采样与选择动画为新实现。 |
+| `HomeScreen.HomeTopRow`、`AllScreen`、`FavoriteScreen`、`HistoryScreen`、`QimengMediaGrid.AssetCard`、`FloatingTabDock.TabDockDefaults` | `MediaBrowser.kt`、`AlbumFilters.kt`、`GallerySections.kt` 。封面为 16:9、5dp 外距、24px 圆角。网格顶距位于视口外，左右边距为 8dp。首页顶行使用原 BackdropGlassPanel 与 BackdropGlassIconButton。 |
+| `app/navigation/{QimengNavHost,ClassicBottomBar}.kt`、`core/ui/glass/{FloatingTabDock,QimengBackdrop,BackdropGlassPanel}.kt`、`feature/settings/AppearanceScreen.kt` | Next 的 AppRoot 按原材质选择两套底栏，通过原采样库渲染。外观页恢复三个主题及四个材质。路由瞬切，首页点按芯片瞬时对齐，双击主标签回顶。 |
 | `feature/login/LoginScreen.kt`、`feature/settings/ServerSettingsScreen.kt`、`SettingsScreen` 与 `SettingsCards.CountCard` | 新登录/服务器/我的页面沿用双卡、候选行、密码、计数和分组。NSD、连接恢复、权限和充电任务经新独立模块接入。 |
 | `feature/detail/{DetailChromeBars,DetailChromeIcons,DetailSections}.kt`、原详情资源及 `feature/search/SearchScreen.kt` | 同名详情组件、`detail_strings.xml` 与新搜索页；图像、视频、点赞与查询接新 Asset 和 SDK。播放器沿用系统 Media3 控件，横屏时保留同一解码输出。 |
 | `feature/stats/{StatsScreen,StatsDetailScreen,StatsFormatters}.kt`、`QimengTrendLineChart.kt` 和 `QimengTrendMarker.kt` | 新统计页与 `core/ui/.../ui/chart/`。趋势和榜单由 Go 返回；Vico 以真实数据点实现点选。 |
@@ -17,6 +18,6 @@
 
 ## 依赖与模块边界
 
-- `android/gradle/libs.versions.toml` 锁定 Compose BOM 2025.09.01、Material3 1.5.0-alpha01 与 Vico 2.2.0。原阴影和 Expressive 加载组件使用这些版本的公开接口。[Compose UI](https://developer.android.com/jetpack/androidx/releases/compose-ui#1.9.0) [Material3](https://developer.android.com/jetpack/androidx/releases/compose-material3#1.5.0-alpha01) [Vico 2.2.0 POM](https://repo.maven.apache.org/maven2/com/patrykandpatrick/vico/compose/2.2.0/compose-2.2.0.pom)
+- `android/gradle/libs.versions.toml` 锁定 旧展示使用的 Compose BOM 2026.09.00、Material3 1.5.0-alpha28 与 Backdrop 2.0.1。图表继续使用 Vico 2.2.0。原阴影和 Expressive 加载组件使用这些版本的公开接口。[Compose UI](https://developer.android.com/jetpack/androidx/releases/compose-ui) [Material3](https://developer.android.com/jetpack/androidx/releases/compose-material3#1.5.0-alpha28) [Vico 2.2.0 POM](https://repo.maven.apache.org/maven2/com/patrykandpatrick/vico/compose/2.2.0/compose-2.2.0.pom)
 - 上传归档采用 Android SAF 的持久授权；可回收来源还需可核验的 MediaStore 条目、物理文件和版本。视频使用 Media3 官方 `PlayerView` 的纹理输出。[DocumentsContract](https://developer.android.com/reference/android/provider/DocumentsContract) [MediaStore](https://developer.android.com/reference/android/provider/MediaStore) [StructStat](https://developer.android.com/reference/android/system/StructStat) [Media3 输出视图](https://developer.android.com/media/media3/ui/surface)
 - 新仓库没有引入旧 ViewModel、旧业务数据库或旧服务端。数据层消费云端从 OpenAPI 生成的 SDK；可剥离的本机运行模块托管与 NAS 相同的新 Go 后端。

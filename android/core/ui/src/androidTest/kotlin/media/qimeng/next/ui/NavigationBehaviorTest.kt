@@ -24,6 +24,8 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import media.qimeng.next.model.TabBarMaterial
+import media.qimeng.next.ui.glass.*
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Rule
 import org.junit.Test
@@ -74,6 +76,18 @@ class NavigationBehaviorTest {
         screenshot("navigation-light-glass.png")
     }
 
+    @Test fun allOriginalMaterialsPreserveOneSelectedDestination() {
+        val material = mutableStateOf(TabBarMaterial.LIQUID)
+        compose.setContent { Fixture(material = material.value) }
+        for (option in TabBarMaterial.entries) {
+            compose.runOnIdle { material.value = option }
+            compose.onNodeWithTag("navigation:albums").performClick()
+            compose.onNodeWithTag("navigation:albums").assertIsSelected()
+            compose.onAllNodesWithTag("navigation:albums").assertCountEquals(1)
+            screenshot("navigation-${option.name.lowercase()}.png")
+        }
+    }
+
     private fun screenshot(name: String) {
         compose.waitForIdle()
         media.qimeng.next.testsupport.captureCloudScreenshot(name)
@@ -81,13 +95,14 @@ class NavigationBehaviorTest {
 }
 
 @Composable
-private fun Fixture(reduced: Boolean = false, dark: Boolean = false) {
+private fun Fixture(reduced: Boolean = false, dark: Boolean = false, material: TabBarMaterial = TabBarMaterial.LIQUID) {
     QimengTheme(dark) {
+        CompositionLocalProvider(LocalReducedMotion provides reduced) {
         var selected by remember { mutableIntStateOf(0) }
-        val backdrop = rememberGlassBackdrop()
+        val backdrop = if (material.usesBackdrop) rememberQimengBackdropState(androidx.compose.material3.MaterialTheme.colorScheme.background) else null
         Box(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                SingleSceneHost(selected.toString(), reduced) {
+            Box(Modifier.fillMaxSize().then(if (backdrop == null) Modifier else Modifier.qimengBackdropSource(backdrop))) {
+                SingleSceneHost(selected.toString()) {
                     Column(Modifier.fillMaxSize().testTag("scene")) {
                         Text("页面 $selected", Modifier.testTag("content:$selected"))
                         var draft by rememberSaveable { mutableStateOf("") }
@@ -101,9 +116,9 @@ private fun Fixture(reduced: Boolean = false, dark: Boolean = false) {
                     }
                 }
             }
-            LiquidNavigation(listOf(NavigationItem("home", "首页", Icons.Outlined.Home), NavigationItem("albums", "相册", Icons.Outlined.PhotoLibrary),
-                NavigationItem("me", "我的", Icons.Outlined.Person)), selected, backdrop, reduced, true, { selected = it },
-                Modifier.align(Alignment.BottomCenter).padding(20.dp).fillMaxWidth())
+            LibraryNavigationBar(listOf(GlassNavItem("首页", Icons.Outlined.Home, "home"), GlassNavItem("相册", Icons.Outlined.PhotoLibrary, "albums"),
+                GlassNavItem("我的", Icons.Outlined.Person, "me")), selected, material, backdrop, { selected = it }, Modifier.align(Alignment.BottomCenter))
+        }
         }
     }
 }

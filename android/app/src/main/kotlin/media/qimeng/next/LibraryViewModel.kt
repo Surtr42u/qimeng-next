@@ -264,6 +264,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun stopLocal() = action { runtime.stop() }
     fun restoreLocalConnection() {
         runtime.files.refreshAccess()
+        session.value?.let { graph.backups.resume(it) }
         if (runtime.available && runtime.shouldRestore && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
     }
     private suspend fun connectLocal(forceLogin: Boolean, password: String = "") {

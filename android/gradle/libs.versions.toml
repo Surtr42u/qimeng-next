@@ -1,8 +1,9 @@
 [versions]
-agp = "8.9.2"
-kotlin = "2.1.20"
-compose = "2025.09.01"
-material3 = "1.5.0-alpha01"
+agp = "9.3.1"
+kotlin = "2.4.20"
+compose = "2026.09.00"
+material3 = "1.5.0-alpha28"
+backdrop = "2.0.1"
 core = "1.16.0"
 activity = "1.10.1"
 lifecycle = "2.9.0"
@@ -19,11 +20,11 @@ vico = "2.2.0"
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 
 [libraries]
+backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
 core = { module = "androidx.core:core-ktx", version.ref = "core" }
 activity = { module = "androidx.activity:activity-compose", version.ref = "activity" }
 lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }

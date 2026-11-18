@@ -1,0 +1,214 @@
+package media.qimeng.next.data
+
+import android.content.Context
+import android.util.Base64
+import androidx.work.*
+import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import media.qimeng.next.model.*
+import media.qimeng.next.sdk.api.DefaultApi
+import media.qimeng.next.sdk.model.*
+import media.qimeng.next.model.Session
+import java.io.File
+import java.security.SecureRandom
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+
+interface DeviceDeliveryHost { fun isSelectedLocalInstance(target: Session): Boolean }
+private class WaitingForDeviceBackup : Exception()
+
+private data class DeliveryAuth(val publisher: String, val address: String, val device: String, val label: String,
+    val encrypted: String, val credentialId: String?, val pendingKey: String? = null, val previous: String? = null)
+internal data class ReceivedSegment(val kind: String, val state: String, val hash: String? = null, val receipt: String? = null, val code: String? = null)
+private data class DeliveryRun(val task: String, val publisher: String, val device: String, val destination: String,
+    val results: List<ReceivedSegment> = emptyList())
+
+class DeviceDeliveryRepository internal constructor(private val context: Context, private val settings: SecureSettings,
+    private val provider: ApiProvider, private val backups: MaintenanceBackupRepository) {
+    private val prefs = context.getSharedPreferences("device-delivery", Context.MODE_PRIVATE)
+    private val gson = Gson()
+    private val lock = Mutex()
+    private val changed = MutableStateFlow(0L)
+    val revision = changed.asStateFlow()
+    private val staging = File(context.filesDir, "device-delivery")
+    private fun auth(): DeliveryAuth? = prefs.getString("auth", null)?.let { gson.fromJson(it, DeliveryAuth::class.java) }
+    private fun run(): DeliveryRun? = prefs.getString("run", null)?.let { gson.fromJson(it, DeliveryRun::class.java) }
+    private fun save(key: String, value: Any?) {
+        check(prefs.edit().putString(key, value?.let { gson.toJson(it) }).commit()) { "设备领取状态未能保存" }; changed.update { it + 1 }
+    }
+    private fun saveRun(value: DeliveryRun?) = save("run", value)
+    private fun notice(value: String) { check(prefs.edit().putString("notice", value).commit()); changed.update { it + 1 } }
+
+    @Synchronized private fun installation(): String {
+        prefs.getString("installation", null)?.let { return it }
+        val id = "android-${UUID.randomUUID()}"
+        check(prefs.edit().putString("installation", id).commit()) { "无法保存本机设备身份" }
+        return id
+    }
+    fun view(): DeviceDeliverySettings {
+        val auth = auth()
+        return DeviceDeliverySettings(auth?.device ?: installation(), auth?.label.orEmpty(), auth?.address.orEmpty(), auth?.credentialId != null,
+            prefs.getBoolean("background", false), prefs.getString("destination", null), prefs.getString("notice", null))
+    }
+    internal fun local(target: Session): Boolean = (context.applicationContext as? DeviceDeliveryHost)?.isSelectedLocalInstance(target) == true
+    private fun pin(address: String): String? = settings.session.value?.takeIf { it.baseUrl == address }?.let(settings::certificateFor)
+    private fun aad(address: String, publisher: String, id: String) = operationKey("device", address, publisher, id)
+    private suspend fun connection(authorization: DeliveryAuth): DefaultApi {
+        val pinned = pin(authorization.address)
+        val instance = provider.anonymous(authorization.address, pinned).getInstance().bodyOrThrow()
+        check(instance.id == authorization.publisher) { "领取地址已指向另一影库，请核对设备授权" }
+        val secret = settings.openDeviceSecret(aad(authorization.address, authorization.publisher, authorization.device), authorization.encrypted)
+        val api = provider.scoped(authorization.address, pinned, secret)
+        val identity = api.getCurrentSession().bodyOrThrow()
+        check(identity.id == authorization.credentialId && identity.deviceId == authorization.device && identity.scopes.toSet() == setOf("device.apply")) {
+            "需要由领取服务端签发并绑定此设备的专用授权"
+        }
+        return api
+    }
+    suspend fun saveCredential(target: Session, address: String, id: String, label: String, secret: String) = withContext(Dispatchers.IO) { lock.withLock {
+        require(id.isNotBlank() && label.isNotBlank() && secret.isNotBlank()) { "请填写设备身份、名称和专用密钥" }
+        val url = normalizedServer(address.ifBlank { target.baseUrl })
+        val pin = pin(url)
+        val instance = provider.anonymous(url, pin).getInstance().bodyOrThrow()
+        val candidate = provider.scoped(url, pin, secret.trim())
+        val identity = candidate.getCurrentSession().bodyOrThrow()
+        check(identity.deviceId == id.trim() && identity.scopes.toSet() == setOf("device.apply")) { "密钥未绑定此设备或不是专用领取授权" }
+        candidate.listDeviceApplyTasks(targetDeviceId = id.trim(), limit = 1).bodyOrThrow()
+        check(run()?.let { it.publisher != instance.id || it.device != id.trim() } != true) { "先完成原设备上已领取的包" }
+        check(sameTarget(target, settings.session.value)) { "配置过程中连接已改变" }
+        val cipher = settings.sealDeviceSecret(aad(url, instance.id, id.trim()), secret.trim())
+        save("auth", DeliveryAuth(instance.id,url,id.trim(),label.trim(),cipher,identity.id))
+        notice("设备专用授权已配置")
+    } }
+    suspend fun generate(target: Session, id: String, label: String) = withContext(Dispatchers.IO) { lock.withLock {
+        require(id.isNotBlank() && label.isNotBlank()) { "请填写设备身份与名称" }
+        val device = id.trim()
+        check(run()?.let { it.publisher != target.instanceId || it.device != device } != true) { "先完成原设备上已领取的包" }
+        val api = provider.api(target)
+        val prior = auth()
+        val issuing = prior?.takeIf { it.pendingKey != null && it.address == target.baseUrl && it.publisher == target.instanceId && it.device == device && it.label == label.trim() } ?: run {
+            val result = api.getDeviceCredential(device)
+            val previous = if (result.code() == 404) null else result.bodyOrThrow()
+            val raw = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            val secret = Base64.encodeToString(raw, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            DeliveryAuth(target.instanceId,target.baseUrl,device,label.trim(),settings.sealDeviceSecret(aad(target.baseUrl,target.instanceId,device),secret),
+                null,UUID.randomUUID().toString(),previous?.id).also { save("auth", it) }
+        }
+        val secret = settings.openDeviceSecret(aad(issuing.address,issuing.publisher,issuing.device), issuing.encrypted)
+        val saved = api.createDeviceCredential(requireNotNull(issuing.pendingKey), DeviceCredentialInput(deviceId = device,label = issuing.label,
+            credentialSecret = secret, replaceCredentialId = issuing.previous)).bodyOrThrow()
+        check(saved.deviceId == device) { "签发回执不属于此设备" }
+        val final = issuing.copy(credentialId = saved.id, pendingKey = null, previous = null)
+        connection(final)
+        save("auth", final); notice("专用授权已保存在本机")
+    } }
+    suspend fun recent(): List<DevicePackage> = withContext(Dispatchers.IO) {
+        val identity = auth()?.takeIf { it.credentialId != null } ?: return@withContext emptyList()
+        connection(identity).listDeviceApplyTasks(targetDeviceId = identity.device, limit = 20).bodyOrThrow().items.map {
+            DevicePackage(it.id,it.state.value,it.createdAt,it.results.orEmpty().map { outcome -> "${outcome.kind.value} · ${outcome.state.value} ${outcome.code.orEmpty()}" })
+        }
+    }
+    suspend fun clear() = withContext(Dispatchers.IO) { lock.withLock {
+        check(prefs.edit().remove("auth").putBoolean("background", false).remove("destination").commit()) { "未能清除设备授权" }
+        WorkManager.getInstance(context).cancelUniqueWork("device-delivery-poll")
+        notice("已清除本机设备令牌")
+    } }
+    suspend fun background(target: Session, enabled: Boolean) = withContext(Dispatchers.IO) { lock.withLock {
+        if (enabled) check(local(target) && auth()?.credentialId != null) { "请连接本机影库并配置设备领取授权" }
+        check(prefs.edit().putBoolean("background", enabled).putString("destination", target.instanceId.takeIf { enabled }).commit())
+        val manager = WorkManager.getInstance(context)
+        if (enabled) {
+            val work = PeriodicWorkRequestBuilder<DeviceDeliveryWorker>(15, TimeUnit.MINUTES).build()
+            manager.enqueueUniquePeriodicWork("device-delivery-poll", ExistingPeriodicWorkPolicy.UPDATE, work)
+        } else manager.cancelUniqueWork("device-delivery-poll")
+        changed.update { it + 1 }
+    } }
+    fun schedule(target: Session) {
+        check(local(target)) { "请先连接本机影库，结果包将应用到此实例" }
+        val request = OneTimeWorkRequestBuilder<DeviceDeliveryWorker>().setInputData(workDataOf("manualInstance" to target.instanceId)).build()
+        WorkManager.getInstance(context).enqueueUniqueWork("device-delivery-now", ExistingWorkPolicy.KEEP, request)
+    }
+    internal suspend fun process(target: Session, manual: Boolean): Unit = withContext(Dispatchers.IO) { lock.withLock {
+        if (!local(target) || (!manual && (!prefs.getBoolean("background",false) || prefs.getString("destination",null) != target.instanceId))) return@withLock
+        val authorization = requireNotNull(auth()?.takeIf { it.credentialId != null }) { "请先配置设备领取授权" }
+        val source = connection(authorization)
+        var active = run()
+        if (active == null) {
+            val first = source.listDeviceApplyTasks(targetDeviceId = authorization.device, state = DeviceApplyState.pending, limit = 1).bodyOrThrow().items.firstOrNull()
+                ?: run { if (manual) notice("目前没有待领取的资料包"); return@withLock }
+            check(backups.folder(target).tree != null) { "请先选择可写的维护目录，再领取资料包" }
+            if (!backups.advance(target, manual)) { notice("正在准备本机两代备份，完成后领取"); throw WaitingForDeviceBackup() }
+            active = DeliveryRun(first.id, authorization.publisher, authorization.device, target.instanceId); saveRun(active)
+        }
+        var work = requireNotNull(active)
+        check(work.destination == target.instanceId && work.device == authorization.device && work.publisher == authorization.publisher) { "未完成的领取属于原设备或实例" }
+        var task = source.getDeviceApplyTask(work.task).bodyOrThrow()
+        check(task.targetDeviceId == work.device && task.protocolVersion == 1) { "服务端包与已登记的设备不一致" }
+        if (task.state.value == "pending") {
+            task = source.claimDeviceApplyTask(task.id, operationKey("claim", work.publisher, task.id, work.device), RevisionRequest(task.revision)).bodyOrThrow()
+        }
+        if (task.state.value != "claimed") {
+            if (task.state.value in setOf("failed", "partial", "applied")) cleanup(task, work)
+            else notice("服务端任务已到终态 ${task.state.value}；请核对服务端与本机的实际回执")
+            if (task.state.value in setOf("expired","cancelled")) { discardSegments(work); saveRun(null) }
+            return@withLock
+        }
+        val localApi = provider.api(target)
+        for (segment in task.segments) {
+            if (work.results.any { it.kind == segment.kind.value }) continue
+            check(local(target) && sameTarget(target, settings.session.value)) { "本机实例已改变，待处理段保留" }
+            val file = DeviceSegments.fetch(staging, work.publisher, task, segment, source)
+            val latest = source.getDeviceApplyTask(task.id).bodyOrThrow()
+            check(latest.state == task.state && latest.revision == task.revision && latest.segments == task.segments) { "领取已失效，停止应用后续段" }
+            val result = try { DeviceSegments.apply(localApi, file, segment, operationKey("device",work.publisher,work.task,work.destination,segment.kind.value)) }
+            catch (failure: ApiFailure) {
+                if (failure.status in setOf(400, 404, 409, 413, 415, 422))
+                    ReceivedSegment(segment.kind.value,"skipped", code = failure.code?.takeIf { it.matches(Regex("[a-z0-9_]{1,80}")) } ?: "local_import_conflict")
+                else throw failure
+            }
+            work = work.copy(results = work.results + result)
+            saveRun(work)
+        }
+        val applied = work.results.count { it.state == "applied" }
+        if (applied > 0 && !backups.advance(target, manual)) { notice("已应用的段已保存，等待本机两代备份完成再回报"); throw WaitingForDeviceBackup() }
+        val state = when { applied == task.segments.size -> DeviceApplyReport.State.applied; applied > 0 -> DeviceApplyReport.State.partial; else -> DeviceApplyReport.State.failed }
+        val outcomes = work.results.map { it.toOutcome() }
+        val result = source.reportDeviceApplyTask(task.id, operationKey("device-result",work.publisher,task.id,work.device),
+            DeviceApplyReport(expectedRevision = task.revision, state = state, results = outcomes)).bodyOrThrow()
+        cleanup(result, work)
+    } }
+    private fun ReceivedSegment.toOutcome() = DeviceApplyOutcome(kind = DeviceSegmentKind.entries.first { it.value == kind },
+        state = DeviceApplyOutcome.State.entries.first { it.value == state }, sha256 = hash, receiptId = receipt, code = code)
+    private fun cleanup(task: DeviceApplyTask, work: DeliveryRun) {
+        check(task.id == work.task && task.results.orEmpty() == work.results.map { it.toOutcome() }) { "服务器尚未确认本机各段结果" }
+        discardSegments(work); saveRun(null)
+        notice(when (task.state.value) { "applied" -> "资料包已应用并取得服务端回执"; "partial" -> "资料包部分应用，未应用段请核对冲突"; else -> "资料包未应用，详情见最近任务" })
+    }
+    private fun discardSegments(work: DeliveryRun) {
+        listOf("masterTxt","v2Backup").forEach { kind ->
+            val file = File(staging, operationKey("segment",work.publisher,work.task,kind))
+            check(!file.exists() || file.delete()) { "已取得回执，设备暂存尚未清理" }
+        }
+    }
+    internal fun showFailure(failure: Exception) = notice(safeFailure(failure))
+}
+
+class DeviceDeliveryWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val graph = DataGraph.get(applicationContext)
+        val target = graph.settings.session.value ?: return Result.success()
+        val requested = inputData.getString("manualInstance")
+        if (requested != null && requested != target.instanceId) return Result.success()
+        return try { graph.deviceDelivery.process(target, requested != null); Result.success() }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: WaitingForDeviceBackup) { Result.retry() }
+        catch (problem: Exception) { graph.deviceDelivery.showFailure(problem)
+            if (problem is java.io.IOException && (problem !is ApiFailure || problem.status >= 500 || problem.status == 429) && runAttemptCount < 5) Result.retry() else Result.failure() }
+    }
+}

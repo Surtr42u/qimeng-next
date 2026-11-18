@@ -19,6 +19,10 @@ class DataGraph private constructor(context: Context) {
     val discovery = ServerDiscovery(context, media::discoverRemembered)
     val scans = ScanRepository(settings, provider)
     val archives = ArchiveRepository(context, provider, settings)
+    val backups = MaintenanceBackupRepository(context, provider, settings, archives).also { archives.retainedByMaintenance = it::referenced }
+    val authorLists = AuthorListRepository(context, provider)
+    val legacyBackups = LegacyBackupRepository(context, provider)
+    val deviceDelivery = DeviceDeliveryRepository(context, settings, provider, backups)
     internal val archiveProtection = ArchiveProtection(context, archives.store, provider, queue)
     val uploads = UploadRepository(context, queue, settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -36,7 +40,7 @@ class DataGraph private constructor(context: Context) {
     }
 
     private val recovery = scope.async {
-            try { queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule(); settings.session.value?.let { archives.resume(it) } }
+            try { queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule(); settings.session.value?.let { archives.resume(it); backups.resume(it) } }
             catch (failure: CancellationException) { throw failure }
             catch (failure: Exception) { queue.reportProblem(safeFailure(failure)) }
     }

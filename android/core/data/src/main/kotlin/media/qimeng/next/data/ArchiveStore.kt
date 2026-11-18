@@ -110,7 +110,7 @@ internal class ArchiveStore(context: Context) : SQLiteOpenHelper(context, "archi
     fun retry(id: String) = writableDatabase.execSQL("UPDATE inputs SET stage='pending',code=NULL WHERE id=? AND stage='blocked'", arrayOf(id))
     fun needsGrant(tree: String): Boolean = readableDatabase.rawQuery("""SELECT EXISTS(
         SELECT 1 FROM plans p JOIN batches b ON b.plan=p.id JOIN inputs i ON i.batch=b.id
-        WHERE p.tree=? AND p.state IN ('confirmed','preparing','queued') AND i.stage NOT IN ('done','blocked'))""", arrayOf(tree))
+        WHERE (p.tree=? OR substr(p.tree,1,length(?)+1)=?||'/') AND p.state IN ('confirmed','preparing','queued') AND i.stage!='done')""", arrayOf(tree,tree,tree))
         .use { it.moveToFirst(); it.getInt(0) != 0 }
     fun prune(ids: Set<String>) {
         val db = writableDatabase

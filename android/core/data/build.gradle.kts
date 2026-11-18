@@ -1,11 +1,10 @@
-plugins { alias(libs.plugins.android.library); alias(libs.plugins.kotlin.android) }
+plugins { alias(libs.plugins.android.library) }
 android {
     namespace = "media.qimeng.next.data"
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig { minSdk = 26; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
-kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":core:transport"))
     api(project(":core:model"))

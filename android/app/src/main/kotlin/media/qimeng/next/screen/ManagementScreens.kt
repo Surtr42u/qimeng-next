@@ -44,7 +44,9 @@ fun ProfileScreen(model: LibraryViewModel) {
     var showPreferences by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { model.loadStatistics(); if (recommendation == null) model.loadRecommendationPreferences() }
     // Presentation hierarchy and dimensions retained from the existing SettingsScreen.
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = media.qimeng.next.ui.NavigationDimensions.bottomClearance()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(scroll) { TabScrollController.events.collect { if (it == 3) scroll.scrollToItem(0) } }
+    LazyColumn(Modifier.fillMaxSize(), state = scroll, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = media.qimeng.next.ui.glass.TabDockDefaults.bottomClearance()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Column(Modifier.padding(top = 12.dp)) {
             Text("我的", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             QimengPageIntro("你的收藏、浏览足迹与影库偏好")
@@ -61,10 +63,10 @@ fun ProfileScreen(model: LibraryViewModel) {
         } }
         item { QimengSettingsGroup("影库与连接") {
             QimengSettingsRow(CloudUploadIcon, "数据管理", "上传、媒体库、词表与备份", { model.navigate("data-manage") })
-            QimengSettingsRow(ServerDnsIcon, "服务器", "连接地址与登录", { model.navigate("server") })
+            QimengSettingsRow(ServerDnsIcon, "服务器", "连接地址、本机模式与登录", { model.navigate("server") })
         } }
         item { QimengSettingsGroup("使用偏好") {
-            QimengSettingsRow(PaletteColorIcon, "外观", "${themeName(preferences.theme)} · ${if (preferences.glass) "液态玻璃" else "纯色"}", { model.navigate("appearance") })
+            QimengSettingsRow(PaletteColorIcon, "外观", "${themeName(preferences.theme)} · ${preferences.material.label}", { model.navigate("appearance") })
             val preset = recommendation?.presets?.entries?.find { it.value == recommendation?.weights }?.key
             QimengSettingsRow(TuneSlidersIcon, "推荐偏好", if (recommendation == null) "正在读取…" else mapOf("balanced" to "均衡", "familiar" to "熟悉内容", "explore" to "探索", "fresh" to "新鲜内容")[preset] ?: "自定义偏好", { showPreferences = true })
             QimengSettingsRow(Icons.Outlined.Key, "AI 接入", "只读与写入权限、连接凭据和撤销", { model.navigate("ai-access") })
@@ -99,6 +101,8 @@ internal fun InventoryCountCard(title: String, count: Long?, modifier: Modifier 
 
 @Composable
 fun DataManageScreen(model: LibraryViewModel) {
+    Column(Modifier.fillMaxSize()) {
+    QimengTopBar("数据管理", onBack = model::back)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         QimengPageIntro("从添加作品到整理和备份，照顾好你的媒体库。")
         QimengSettingsGroup("入库与整理") {
@@ -110,9 +114,10 @@ fun DataManageScreen(model: LibraryViewModel) {
             QimengSettingsRow(VocabularyBookIcon, "词表维护", "编辑出处、角色与标签", { model.navigate("vocabulary-manage") })
         }
         QimengSettingsGroup("备份与存储") {
-            QimengSettingsRow(FolderManagedIcon, "上传归档文件夹", "按库名归档与一键上传", { model.navigate("archive-folder") })
+            QimengSettingsRow(BackupRestoreIcon, "资料备份与归档", "一个目录管理作者TXT、备份与上传归档", { model.navigate("maintenance") })
             QimengSettingsRow(Icons.Outlined.DeleteOutline, "回收站", "恢复移除的媒体", { model.navigate("trash") })
         }
+    }
     }
 }
 
@@ -123,37 +128,6 @@ fun VocabularyManageScreen(model: LibraryViewModel) {
             QimengSettingsRow(LabelTagIcon, "标签", "维护词表与媒体关联", { model.navigate("vocabulary:tags") })
             QimengSettingsRow(VocabularyBookIcon, "原作 / 出处", "维护名称与别名", { model.navigate("vocabulary:sources") })
             QimengSettingsRow(AuthorPeopleIcon, "角色", "维护角色及所属出处", { model.navigate("vocabulary:characters") })
-        }
-    }
-}
-
-@Composable
-fun AppearanceScreen(model: LibraryViewModel) {
-    val preferences by model.preferences.collectAsStateWithLifecycle()
-    val capability = glassCapability(Build.VERSION.SDK_INT, LocalView.current.isHardwareAccelerated, preferences.glass)
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        ContentCard {
-            Text("主题", style = MaterialTheme.typography.titleMedium)
-            Column(Modifier.selectableGroup()) {
-                ThemeChoice.entries.forEach { theme ->
-                    Row(Modifier.fillMaxWidth().selectable(preferences.theme == theme, role = Role.RadioButton,
-                        onClick = { model.savePreferences(preferences.copy(theme = theme)) }).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(preferences.theme == theme, null)
-                        Text(themeName(theme), Modifier.padding(start = 12.dp))
-                    }
-                }
-            }
-        }
-        ContentCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("玻璃导航"); Text(capability.description, style = MaterialTheme.typography.bodySmall) }
-                Switch(preferences.glass, { model.savePreferences(preferences.copy(glass = it)) })
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("减少动效"); Text("立即切换页面与选中状态", style = MaterialTheme.typography.bodySmall) }
-                Switch(preferences.reducedMotion, { model.savePreferences(preferences.copy(reducedMotion = it)) })
-            }
-            Text("系统关闭动画时也会减少动效。字体大小跟随系统设置。", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

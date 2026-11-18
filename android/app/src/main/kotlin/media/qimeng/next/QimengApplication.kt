@@ -9,12 +9,15 @@ import kotlinx.coroutines.CancellationException
 import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.runtime.*
 
-class QimengApplication : Application(), LocalScanHost {
+class QimengApplication : Application(), LocalScanHost, media.qimeng.next.data.DeviceDeliveryHost {
     val graph by lazy { DataGraph.get(this) }
     override val runtime by lazy { createRuntime(this) }
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val localConnection by lazy { LocalConnectionCoordinator(graph, runtime, runtimeScope) }
 
+    override fun isSelectedLocalInstance(target: media.qimeng.next.model.Session) = runtime.available && runtime.shouldRestore &&
+        runtime.status.value.phase == RuntimePhase.READY && target.baseUrl in runtime.ownedEndpoints(target.instanceId) &&
+        media.qimeng.next.model.sameTarget(target, graph.settings.session.value)
     override fun onCreate() {
         super.onCreate()
         if (runtime.available) localConnection

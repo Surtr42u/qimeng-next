@@ -8,6 +8,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import media.qimeng.next.model.Preferences
+import media.qimeng.next.model.TabBarMaterial
 import media.qimeng.next.model.Session
 import media.qimeng.next.model.sameTarget
 import java.security.KeyStore
@@ -38,7 +39,12 @@ class SecureSettings(context: Context) {
     init {
         try {
             storage.getString("session", null)?.let { mutableSession.value = gson.fromJson(it, Session::class.java) }
-            storage.getString("preferences", null)?.let { mutablePreferences.value = gson.fromJson(it, Preferences::class.java) }
+            storage.getString("preferences", null)?.let { raw ->
+                val json = com.google.gson.JsonParser.parseString(raw).asJsonObject
+                val material = json.get("material")?.asString?.let { name -> TabBarMaterial.entries.find { it.name == name } }
+                    ?: if (json.get("glass")?.asBoolean == false) TabBarMaterial.SOLID else TabBarMaterial.LIQUID
+                mutablePreferences.value = gson.fromJson(raw, Preferences::class.java).copy(material = material)
+            }
             storage.getString("recent-servers", null)?.let { mutableRecentServers.value = gson.fromJson(it, Array<String>::class.java).toList() }
             storage.getString("search-history", null)?.let { mutableSearchHistory.value = gson.fromJson(it, Array<String>::class.java).toList() }
             mutableDefaultEndpoint.value = storage.getString("default-endpoint", null)?.takeIf { it in setOf("local", "nas") }
@@ -111,6 +117,21 @@ class SecureSettings(context: Context) {
     fun uploadLibrary(target: Session): String? = storage.getString("upload-library-${target.instanceId}", null)
     fun saveUploadLibrary(target: Session, id: String) {
         check(storage.edit().putString("upload-library-${target.instanceId}", id).commit()) { "无法保存上传位置" }
+    }
+
+    @Synchronized
+    internal fun sealDeviceSecret(identity: String, secret: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key()); cipher.updateAAD(identity.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(cipher.iv + cipher.doFinal(secret.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    }
+    @Synchronized
+    internal fun openDeviceSecret(identity: String, encrypted: String): String {
+        val bytes = Base64.decode(encrypted, Base64.NO_WRAP)
+        check(bytes.size > 12) { "设备授权不可用，请重新配置" }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12))); cipher.updateAAD(identity.toByteArray(Charsets.UTF_8))
+        return cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
     }
 
     @Synchronized

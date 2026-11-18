@@ -1,14 +1,15 @@
-plugins { alias(libs.plugins.android.library); alias(libs.plugins.kotlin.android); alias(libs.plugins.kotlin.compose) }
+plugins { alias(libs.plugins.android.library); alias(libs.plugins.kotlin.compose) }
 android {
     namespace = "media.qimeng.next.ui"
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig { minSdk = 26; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     buildFeatures { compose = true }
-    sourceSets["androidTest"].java.srcDir(rootProject.file("test-support"))
+    sourceSets["androidTest"].kotlin.directories += rootProject.file("test-support").path
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
-kotlin { jvmToolchain(17) }
 dependencies {
+    api(project(":core:model"))
+    implementation(libs.backdrop)
     api(platform(libs.compose.bom))
     api(libs.compose.ui)
     api(libs.compose.foundation)

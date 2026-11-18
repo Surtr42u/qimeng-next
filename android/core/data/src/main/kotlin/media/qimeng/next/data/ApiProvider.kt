@@ -72,7 +72,7 @@ internal class ApiProvider(private val settings: SecureSettings) {
     fun anonymous(baseUrl: String, certificateDerBase64: String? = null): DefaultApi = build(baseUrl, trustedClient(baseUrl, certificateDerBase64))
 
     /** In-memory credential for one explicitly authenticated owner operation; no selected-session mutation. */
-    fun scoped(baseUrl: String, certificate: String, credential: String): DefaultApi {
+    fun scoped(baseUrl: String, certificate: String?, credential: String): DefaultApi {
         val expected = baseUrl.toHttpUrl()
         val client = trustedClient(baseUrl, certificate).newBuilder().addInterceptor { chain ->
             if (!sameOrigin(chain.request().url, expected)) throw IOException("拒绝向其他服务器发送凭据")

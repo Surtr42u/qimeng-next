@@ -30,6 +30,7 @@ import java.io.File
 import java.util.UUID
 
 /** Run only against the same-SHA isolated Go process, using explicit cloud runner arguments. */
+@org.junit.FixMethodOrder(org.junit.runners.MethodSorters.NAME_ASCENDING)
 class AndroidRealServerTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
@@ -136,9 +137,10 @@ class AndroidRealServerTest {
         compose.onNodeWithContentDescription(picture.name).performClick()
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("标签").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("标签").performClick()
-        compose.onNodeWithText("新建标签").performTextInput("安卓云端标签")
+        compose.onNodeWithTag("detail-new-tag").performTextInput("安卓云端标签")
         compose.onNodeWithText("添加").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithText("安卓云端标签").fetchSemanticsNodes().isNotEmpty() }
+        screenshot("real-server-tag-sheet.png")
         compose.onNodeWithText("保存").performClick()
         await("save-tags", graph) { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }
         compose.onNodeWithContentDescription("收藏").performClick()
@@ -146,16 +148,6 @@ class AndroidRealServerTest {
         screenshot("real-server-detail.png")
 
         compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithContentDescription(video.name).performClick()
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("进入全屏").performClick()
-        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
-        screenshotWithMedia("real-server-video-fullscreen.png", landscape = true)
-        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
-        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
-        compose.onNodeWithContentDescription("退出全屏").performClick()
         val recommendation = runBlocking { graph.media.assets(AssetQuery(source = "recommendations", seed = 42)) }
         assertTrue(recommendation.items.any { it.id == picture.id })
         repeat(2) {
@@ -190,7 +182,32 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("author-search").performTextReplacement("合成别名")
         compose.waitUntil(30_000) { compose.onAllNodesWithText("合成作者").fetchSemanticsNodes().isNotEmpty() }
         screenshot("real-server-author-directory.png")
-        runBlocking { archiveRoundTrip(graph) }
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("navigation:home").performClick()
+        compose.onNodeWithText("推荐").performClick()
+        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(video.name).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription(video.name).performClick()
+        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
+        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("进入全屏").performClick()
+        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+        screenshotWithMedia("real-server-video-fullscreen.png", landscape = true)
+        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
+        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
+        compose.onNodeWithContentDescription("退出全屏").performClick()
+    }
+
+    @Test(timeout = 240_000)
+    fun readOnlyArchivePreservesOriginalAfterIndependentBackup() = runBlocking {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        val address = requireNotNull(args.getString("qimengServerUrl"))
+        require(address == "http://127.0.0.1:18481/")
+        val graph = DataGraph.get(instrument.targetContext)
+        graph.awaitRecovery()
+        if (graph.settings.session.value?.baseUrl != address) graph.media.login(address, requireNotNull(args.getString("qimengToken")))
+        archiveRoundTrip(graph)
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {
@@ -209,9 +226,13 @@ class AndroidRealServerTest {
         compose.waitForIdle()
         saveScreenshot(name)
     }
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun screenshotWithMedia(name: String, landscape: Boolean = false) {
+        var observed = ""
+        try {
         compose.waitUntil(30_000) {
             media.qimeng.next.testsupport.captureCloudScreenshot(name) { bitmap ->
+                observed = "${bitmap.width}×${bitmap.height}"
                 if (landscape && bitmap.width <= bitmap.height) return@captureCloudScreenshot false
                 // Both the PNG and H.264 fixtures contain saturated colors; the surrounding UI and shutter are neutral.
                 val readable = if (bitmap.config == Bitmap.Config.HARDWARE) requireNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false)) else bitmap
@@ -222,11 +243,24 @@ class AndroidRealServerTest {
                         val r = Color.red(pixel); val g = Color.green(pixel); val b = Color.blue(pixel)
                         if (maxOf(r, g, b) - minOf(r, g, b) > 75) colored++
                     }
+                    observed += " saturatedSamples=$colored"
                     colored >= 30
                 } finally {
                     if (readable !== bitmap) readable.recycle()
                 }
             }
+        }
+        } catch (failure: Throwable) {
+            saveScreenshot("unverified-$name")
+            var playback = ""
+            if (landscape) compose.activityRule.scenario.onActivity { activity ->
+                val view = activity.findViewById<androidx.media3.ui.PlayerView>(media.qimeng.next.R.id.video_playback_window)
+                val player = view?.player as? androidx.media3.exoplayer.ExoPlayer
+                playback = " playerVisible=${view?.isShown} playerBounds=${view?.width}x${view?.height}" +
+                    " playerState=${player?.playbackState} firstFrameCount=${player?.videoDecoderCounters?.renderedOutputBufferCount}" +
+                    " mediaPosition=${player?.currentPosition} error=${player?.playerError?.errorCode}"
+            }
+            throw AssertionError("Window capture $name failed. Last sample $observed.$playback", failure)
         }
     }
     private fun saveScreenshot(name: String) {

@@ -93,11 +93,15 @@ class EmbeddedRuntimeTest {
                 asset.libraryId == library.id && receipt.assetId == assetId && page.items.any { it.id == assetId })
 
             shell("dumpsys battery unplug")
+            shell("dumpsys battery set status 3")
+            awaitPower(plugged = false)
             runtime.scans.setChargeOnly(true)
             runtime.scans.request(first.instanceId, library.id, library.revision)
             delay(1_500)
             assertNull("A pending scan must not be submitted while unplugged", runtime.scans.state.value.requests.single().jobId)
             shell("dumpsys battery set ac 1")
+            shell("dumpsys battery set status 2")
+            awaitPower(plugged = true)
             val scanId = withTimeout(60_000) {
                 while (runtime.scans.state.value.requests.single().jobId == null) {
                     val pending = runtime.scans.state.value.requests.single()
@@ -128,6 +132,18 @@ class EmbeddedRuntimeTest {
             runtime.stop()
             runtime.configureAddress("https://127.0.0.1:18431/")
             EmbeddedDebugDiagnostics.disable()
+        }
+    }
+
+    private suspend fun awaitPower(plugged: Boolean) = withTimeout(12_000) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        while (true) {
+            val battery = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+            val supply = battery?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+            val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, 0)
+            if (supply != null && (supply != 0) == plugged && status ==
+                (if (plugged) android.os.BatteryManager.BATTERY_STATUS_CHARGING else android.os.BatteryManager.BATTERY_STATUS_DISCHARGING)) break
+            delay(100)
         }
     }
 

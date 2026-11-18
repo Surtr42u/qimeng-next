@@ -25,10 +25,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
@@ -93,21 +91,9 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
         DetailBottomChrome(visible, item, busy || item.liked, busy, { model.changeReaction(item.favorite, true) },
             { model.changeReaction(!item.favorite, item.liked) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))
     }
-    if (showAuthorSheet) ModalBottomSheet(onDismissRequest = { showAuthorSheet = false }) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("作者", style = MaterialTheme.typography.titleLarge)
-            if (assetAuthors.isEmpty()) Text("该文件暂无关联作者")
-            assetAuthors.forEach { author ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AuthorAvatar(author.id, author.name, 56.dp)
-                    Text(author.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    OutlinedButton(onClick = { model.followAssetAuthor(author) }, enabled = !busy) { Text(if (author.followed) "已关注" else "关注") }
-                }
-                TextButton(onClick = { showAuthorSheet = false; model.openAuthor(author.id) }) { Text("进入作者主页") }
-            }
-            TextButton(onClick = { showAuthorSheet = false; showEditor = true }) { Text("编辑作者与来源") }
-        }
-    }
+    if (showAuthorSheet) DetailAuthorSheet(assetAuthors, busy,
+        { id -> assetAuthors.find { it.id == id }?.let(model::followAssetAuthor) }, { author, _ -> model.openAuthor(author) },
+        { showEditor = true }, { showAuthorSheet = false })
     if (showEditor) ModalBottomSheet(onDismissRequest = { showEditor = false }) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(item.name, style = MaterialTheme.typography.titleLarge)
@@ -153,26 +139,7 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
         confirmButton = { TextButton(onClick = { model.trashCurrentAsset(item.copy(revision = revision)) }, enabled = !busy) { Text("移到回收站") } },
         dismissButton = { TextButton(onClick = { showTrash = false }) { Text("取消") } })
     }
-    if (showInfo) {
-        val clipboard = LocalClipboardManager.current
-        var copied by remember { mutableStateOf(false) }
-        ModalBottomSheet(onDismissRequest = { showInfo = false }) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("详细信息", style = MaterialTheme.typography.titleLarge)
-                Text(item.name)
-                if (item.originalName != item.name) Text("来源原名：${item.originalName}")
-                Text("${item.mediaType} · ${formatBytes(item.bytes)}")
-                if (item.width != null && item.height != null) Text("${item.width} × ${item.height}")
-                item.durationMs?.let { Text("时长 ${it / 1000} 秒") }
-                Text("入库时间：${item.addedAt}")
-                Text("内容版本 ${item.version}")
-                TextButton(onClick = { clipboard.setText(AnnotatedString(item.name)); copied = true }) { Text(if (copied) "已复制文件名" else "复制完整文件名") }
-                Text("目录：${item.relativePath.substringBeforeLast('/', "")}")
-                Text("路径：${item.relativePath}")
-                TextButton(onClick = { showInfo = false; showEditor = true }) { Text("编辑作者与来源") }
-            }
-        }
-    }
+    if (showInfo) DetailInfoSheet(item) { showInfo = false }
 }
 
 @Composable
@@ -280,41 +247,30 @@ private fun TagsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Uni
     val message by model.message.collectAsStateWithLifecycle()
     var selected by rememberSaveable(asset.id) { mutableStateOf(asset.tags) }
     var baseRevision by rememberSaveable(asset.id) { mutableLongStateOf(asset.tagsRevision) }
-    var extra by rememberSaveable { mutableStateOf("") }
-    var added by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var added by rememberSaveable(asset.id) { mutableStateOf(emptyList<String>()) }
     val candidates = remember(vocabulary, asset.tags, added) { (vocabulary + asset.tags + added).distinct().sortedWith(::compareTags) }
-    AlertDialog(onDismissRequest = { if (!busy) onClose() }, title = { Text("标签 · 已选 ${selected.size}") },
-        text = { Column(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            FlowRow(Modifier.height(76.dp).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                selected.forEach { tag -> InputChip(selected = true, onClick = { }, label = { Text(tag) }, trailingIcon = {
-                    IconButton(onClick = {
-                        if (tag in asset.tags) {
-                            val baseWasCurrent = baseRevision == asset.tagsRevision
-                            model.removeTag(tag) { updated -> selected = selected - tag; if (baseWasCurrent) baseRevision = updated.tagsRevision }
-                        } else selected = selected - tag
-                    }, enabled = !busy, modifier = Modifier.size(24.dp)) { Icon(Icons.Outlined.Close, if (tag in asset.tags) "立即解除标签 $tag" else "移除草稿标签 $tag", Modifier.size(16.dp)) }
-                }) }
+    DetailTagManageSheet(pool = candidates, selectedTagIds = selected, savingTags = busy, saveEnabled = baseRevision == asset.tagsRevision,
+        onToggleTag = { tag -> if (!busy) selected = if (tag in selected) selected - tag else selected + tag },
+        onUnbindTag = { tag ->
+            if (!busy) {
+                if (tag in asset.tags) {
+                    val baseWasCurrent = baseRevision == asset.tagsRevision
+                    model.removeTag(tag) { updated -> selected = selected - tag; if (baseWasCurrent) baseRevision = updated.tagsRevision }
+                } else selected = selected - tag
             }
-            FlowRow(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                candidates.forEach { tag ->
-                    FilterChip(tag in selected, { selected = if (tag in selected) selected - tag else selected + tag }, label = { Text(tag) })
-                }
+        }, onCreateTag = { value, created ->
+            if (!busy && value.isNotBlank()) model.createTag(value.trim()) { result ->
+                added = added + result; selected = (selected + result).distinct(); created()
             }
-            if (cursor != null) TextButton(onClick = { model.loadTags(true) }, enabled = !busy) { Text("更多标签") }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(extra, { extra = it }, label = { Text("新建标签") }, singleLine = true, modifier = Modifier.weight(1f))
-                TextButton(onClick = { val value = extra.trim(); if (value.isNotEmpty()) model.createTag(value) { created ->
-                    added = added + created; selected = (selected + created).distinct(); extra = ""
-                } }, enabled = !busy) { Text("添加") }
-            }
+        }, onSave = { model.saveTags(selected, baseRevision, onClose) }, onDismiss = { if (!busy) onClose() },
+        poolFooter = { if (cursor != null) TextButton(onClick = { model.loadTags(true) }, enabled = !busy) { Text("更多标签") } },
+        feedback = {
             message?.let { ErrorNotice(it, model::refreshTagsState) }
             if (baseRevision != asset.tagsRevision) {
                 Text("服务器标签已变化，请载入当前标签后再编辑。")
                 TextButton(onClick = { selected = asset.tags; baseRevision = asset.tagsRevision }) { Text("载入服务器标签") }
             }
-        } },
-        confirmButton = { TextButton(onClick = { model.saveTags(selected, baseRevision, onClose) }, enabled = !busy && baseRevision == asset.tagsRevision) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("取消") } })
+        })
 }
 
 private fun compareTags(left: String, right: String): Int {

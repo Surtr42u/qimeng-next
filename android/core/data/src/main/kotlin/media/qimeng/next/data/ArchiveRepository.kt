@@ -27,19 +27,26 @@ class ArchiveRepository internal constructor(private val context: Context, priva
     private val changes = MutableStateFlow(0L)
     val revision = changes.asStateFlow()
     private val scanner = Mutex()
+    internal var retainedByMaintenance: (String) -> Boolean = { false }
 
     suspend fun select(uri: Uri?, flags: Int = 0) = withContext(Dispatchers.IO) {
-        val previous = currentTree.value
         if (uri != null) {
             require(uri.scheme == "content" && DocumentsContract.isTreeUri(uri)) { "请选择系统提供的归档文件夹" }
             val persisted = flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             check(persisted and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) { "系统未授予读取权限" }
             context.contentResolver.takePersistableUriPermission(uri, persisted)
         }
+        setTree(uri)
+    }
+    internal suspend fun selectMaintenanceArchive(uri: Uri) = withContext(Dispatchers.IO) { setTree(uri) }
+    private fun setTree(uri: Uri?) {
+        val previous = currentTree.value
         check(prefs.edit().putString("tree", uri?.toString()).commit()) { "归档文件夹设置未能保存" }
         currentTree.value = uri?.toString()
-        if (previous != null && previous != currentTree.value && !store.needsGrant(previous)) {
-            val old = Uri.parse(previous)
+        if (previous != null && previous != currentTree.value) {
+            val prior = Uri.parse(previous)
+            val old = DocumentsContract.buildTreeDocumentUri(requireNotNull(prior.authority), DocumentsContract.getTreeDocumentId(prior))
+            if (old == uri || uri?.toString()?.startsWith("$old/") == true || store.needsGrant(old.toString()) || retainedByMaintenance(old.toString())) return
             context.contentResolver.persistedUriPermissions.find { it.uri == old }?.let { grant ->
                 val access = (if (grant.isReadPermission) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
                     (if (grant.isWritePermission) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
@@ -57,7 +64,7 @@ class ArchiveRepository internal constructor(private val context: Context, priva
             check(previous?.state !in setOf("confirmed", "preparing")) { "上一批归档仍在入队" }
             val plan = store.start(target, tree.toString(), local)
             try {
-                val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                val root = if (DocumentsContract.isDocumentUri(context, tree)) tree else DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
                 val candidates = ArrayList<Pair<String, String>>(100)
                 suspend fun route() {
                     if (candidates.isEmpty()) return

@@ -1,7 +1,7 @@
-plugins { alias(libs.plugins.android.application); alias(libs.plugins.kotlin.android); alias(libs.plugins.kotlin.compose) }
+plugins { alias(libs.plugins.android.application); alias(libs.plugins.kotlin.compose) }
 android {
     namespace = "media.qimeng.next"
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig {
         applicationId = "media.qimeng.next"
         minSdk = 26
@@ -11,7 +11,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
-    sourceSets["androidTest"].java.srcDir(rootProject.file("test-support"))
+    sourceSets["androidTest"].kotlin.directories += rootProject.file("test-support").path
     flavorDimensions += "runtime"
     productFlavors {
         create("client") { dimension = "runtime" }
@@ -23,7 +23,6 @@ android {
         jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libqimeng*.so", "**/libffmpeg_cli.so", "**/libffprobe_cli.so") }
     }
 }
-kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":runtime-api"))
     if (providers.gradleProperty("qimeng.embedded").orNull != "false") add("embeddedImplementation", project(":embedded"))

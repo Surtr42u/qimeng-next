@@ -30,6 +30,9 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
+import media.qimeng.next.ui.glass.GlassNavItem
+import media.qimeng.next.ui.glass.rememberQimengBackdropState
+import media.qimeng.next.ui.glass.qimengBackdropSource
 import media.qimeng.next.ui.icon.HomeIcon
 import media.qimeng.next.ui.icon.AlbumIcon
 import media.qimeng.next.ui.icon.StatsIcon
@@ -70,12 +73,12 @@ fun AppRoot(model: LibraryViewModel) {
                 LoginScreen(model)
             } else {
                 BackHandler(route != "main") { model.back() }
-                val backdrop = rememberGlassBackdrop()
+                val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
                 val detailRoute = route.startsWith("asset:")
-                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder") || route.startsWith("author:") ||
+                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage") || route.startsWith("author:") ||
                     route.startsWith("profile:") || route.startsWith("profile-archive:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
-                    Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
+                    Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
                         if (!detailRoute && !ownTopBar && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "favorites", "history")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -87,7 +90,7 @@ fun AppRoot(model: LibraryViewModel) {
                             Text(queueError!!, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                             TextButton(onClick = { model.navigate("upload") }) { Text("查看传输") }
                         }
-                        SingleSceneHost(if (route == "main") "tab:$tab" else route, preferences.reducedMotion, Modifier.weight(1f)) {
+                        SingleSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) {
                             when {
                                 route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'))
                                 route.startsWith("author:") -> AuthorCollectionScreen(model, route.substringAfter(':'))
@@ -106,8 +109,10 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
                                 route == "upload" -> UploadScreen(model)
                                 route == "archive-folder" -> ArchiveSettingsScreen(model::back)
+                                route == "maintenance" -> MaintenanceScreen(model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
                                 route == "reports" -> TasksScreen(model)
-                                route == "appearance" -> AppearanceScreen(model)
+                                route == "appearance" -> AppearanceScreen(preferences.theme, preferences.material,
+                                    { model.savePreferences(preferences.copy(theme = it)) }, { model.savePreferences(preferences.copy(material = it)) }, model::back)
                                 route == "server" -> ServerSettingsScreen(model)
                                 route == "libraries" -> LibraryManagementScreen(model::back)
                                 route == "data-manage" -> DataManageScreen(model)
@@ -124,13 +129,20 @@ fun AppRoot(model: LibraryViewModel) {
                             }
                         }
                     }
-                    if (route == "main") LiquidNavigation(
-                        items = listOf(NavigationItem("home", "首页", HomeIcon), NavigationItem("albums", "相册", AlbumIcon),
-                            NavigationItem("stats", "数据", StatsIcon), NavigationItem("me", "我的", ProfileIcon)),
-                        selected = tab, backdrop = backdrop, reducedMotion = preferences.reducedMotion, glass = preferences.glass,
-                        onSelect = model::selectTab,
-                        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
-                            .padding(horizontal = NavigationDimensions.horizontalMargin).padding(bottom = NavigationDimensions.bottomMargin).fillMaxWidth())
+                    if (route == "main") {
+                        var lastTap by remember { mutableLongStateOf(0L) }
+                        var lastNavigation by remember { mutableLongStateOf(0L) }
+                        LibraryNavigationBar(listOf(GlassNavItem("首页", HomeIcon, "home"), GlassNavItem("相册", AlbumIcon, "albums"),
+                            GlassNavItem("数据", StatsIcon, "stats"), GlassNavItem("我的", ProfileIcon, "me")), tab, preferences.material, backdrop,
+                            onSelect = { index ->
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                when {
+                                    index == tab && now - lastTap <= 400L -> TabScrollController.scrollToTop(index)
+                                    now - lastNavigation >= 200L -> { lastNavigation = now; model.selectTab(index) }
+                                }
+                                lastTap = now
+                            }, modifier = Modifier.align(Alignment.BottomCenter))
+                    }
                 }
             }
         }

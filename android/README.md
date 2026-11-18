@@ -7,12 +7,12 @@
 - `core/model`：端内展示、传输和队列模型，不计算推荐、排名、统计与命名规则。
 - `sdk`：引用 `api/generated/kotlin/src/main/kotlin`，源码仅由云端按 OpenAPI 生成。
 - `core/data`：生成 SDK 的唯一业务调用边界，Repository 将 DTO 映射成端内模型；媒体引擎经限定来源的认证客户端取字节。
-- `core/ui`：独立于业务的主题、卡片、`SingleSceneHost`、`GlassBackdrop` 和 `LiquidNavigation`。可由其他 Compose 应用通过适配层复用。
+- `core/ui`：独立于业务的主题、卡片、经典底栏，以及旧版的 `FloatingTabDock`、`QimengBackdropState` 和 `BackdropGlassPanel`。可由其他 Compose 应用通过适配层复用。
 - `app`：ViewModel 管理查询代际、会话与用户草稿；页面只调用 ViewModel，不引用 SDK。
 
 主要导航保留首页、相册、数据、我的；上传、报告、作者、历史、收藏和设置经原类型入口进入。页面的保存状态与查询状态分别保留；换服务器清空旧实例的浏览数据，持久传输仍绑定原地址与实例身份。
 
-2026-11-17 界面复核确认当前页面结构存在偏离，不能把功能接线称为旧版界面已保留。具体源码对照、纠偏顺序与截图缺口见 [现行界面对照](UI_PARITY.md)；后续严格恢复现行布局与操作，只加入用户授权的过渡和导航材质效果。
+2026-11-17 界面复核确认当前页面结构存在偏离，不能把功能接线称为旧版界面已保留。具体源码对照、纠偏顺序与截图缺口见 [现行界面对照](UI_PARITY.md)；当前直接恢复旧版已使用的布局、材质档位及路由切换。
 
 ## 当前源码行为
 
@@ -34,15 +34,13 @@ SAF 批选先保存待传快照，允许改名后提交；系统分享可用已�
 
 ## 材质和动效
 
-`captureGlassBackdrop` 只录制导航下面的页面，避免导航递归采样。API 33+ 且硬件加速时，导航重绘真实场景图层，AGSL 根据移动选中胶囊位移采样坐标，实现折射；选中态用弹簧位移与拖动反馈。API 31–32 使用实时采样模糊，不称为折射；API 26–30、软件渲染及关闭玻璃时使用高对比实色材质。
+外观页沿用旧版的四个底栏材质选项。默认液态玻璃，其他选项为磨砂玻璃、纯色坞和经典导航。前三档复用旧版 FloatingTabDock，经典档使用原 Material3 NavigationBar 的布局和颜色。首页搜索框与两个图标随材质启用原内容采样。覆盖页隐藏底栏，视频直接绘制在自己的窗口中。
 
-`SingleSceneHost` 同时只保留一个可交互页面，按页面键从首帧初始化入场位移，避免快速切页保留旧页面与其触摸语义；保存容器恢复常驻页与最近 12 个详情页的草稿/滚动，作者和集合查询缓存也有数量上限。系统动画关闭或应用减少动效设置会停用位移及选择弹簧。导航有 Tab/选中语义，触摸目标不小于 48 dp，文字随系统字号，胶囊空隙消费触摸。
-
-这描述源码设计，不替代实际 GPU 截图、帧时长、手势或设备验收。云端模拟器与真机验收须分别记录。
+页面直接切换，顶部推荐、COS 与排行榜点按芯片时直接换页，仍可手指横滑。保存容器恢复此前页面的草稿和滚动状态。同一主标签 400 毫秒内二击回顶。跟随系统减少动画，屏幕阅读器仍可读取标签名称与选中态。云端仪器采集四档材质的独立截图。
 
 ## 云端构建
 
-仅云端执行：JDK 17、Gradle 8.11.1、Android SDK 35 / Build Tools 35.0.0。先运行仓库 SDK 生成脚本，再运行：
+仅云端执行：JDK 17、Gradle 9.7.0、Android SDK 37 / Build Tools 36.0.0。应用 targetSdk 和隔离模拟器为 35。先运行仓库 SDK 生成脚本，再运行：
 
 ```sh
 gradle -p android -Pqimeng.embedded=false :app:assembleClientDebug :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug --stacktrace
@@ -54,7 +52,7 @@ gradle -p android -Pqimeng.embedded=false :app:assembleClientDebug :app:testClie
 
 client 仪器任务为 `:app:connectedClientDebugAndroidTest`。本机原生产物按 embedded README 云端装配后构建 `:app:assembleEmbeddedDebug`；隔离清空合成应用数据，再单独运行 `:app:connectedEmbeddedDebugAndroidTest`，限定类 `media.qimeng.next.test.EmbeddedRuntimeTest` 且显式参数 `qimengEmbedded=true`。该测试验证受包 Go 在 App UID 下启动、TLS pin 与正常 SDK 登录、同一实例的库数据经停止 / 重启仍在，并要求新启动更换临时证书。不能用这条基础测试代替全部本机媒体 / 后台 / 迁移验收。
 
-锁定版本见 `gradle/libs.versions.toml`。选择已知兼容的稳定版本；官方依据：[AGP 8.9 兼容矩阵](https://developer.android.com/build/releases/agp-8-9-0-release-notes)、[Compose 编译器与 Kotlin](https://developer.android.com/jetpack/androidx/releases/compose-kotlin)、[AndroidX 稳定发布](https://developer.android.com/jetpack/androidx/versions/stable-channel)、[Media3 发布说明](https://developer.android.com/jetpack/androidx/releases/media3)、[Coil 更新记录](https://coil-kt.github.io/coil/changelog/)、[Retrofit](https://square.github.io/retrofit/)、[OpenAPI Kotlin 生成器](https://openapi-generator.tech/docs/generators/kotlin/)。
+锁定版本见 `gradle/libs.versions.toml`。选择已知兼容的稳定版本；官方依据：[AGP 9.3 兼容矩阵](https://developer.android.com/build/releases/agp-9-3-0-release-notes)、[Compose 编译器与 Kotlin](https://developer.android.com/jetpack/androidx/releases/compose-kotlin)、[AndroidX 稳定发布](https://developer.android.com/jetpack/androidx/versions/stable-channel)、[Media3 发布说明](https://developer.android.com/jetpack/androidx/releases/media3)、[Coil 更新记录](https://coil-kt.github.io/coil/changelog/)、[Retrofit](https://square.github.io/retrofit/)、[OpenAPI Kotlin 生成器](https://openapi-generator.tech/docs/generators/kotlin/)。
 
 ## 验证和仍在接通的能力
 

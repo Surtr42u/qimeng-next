@@ -31,9 +31,11 @@ fun StatisticsScreen(model: LibraryViewModel) {
     val state by model.analytics.collectAsStateWithLifecycle()
     LaunchedEffect(range) { model.loadAnalytics(range) }
     val report = state.data?.takeIf { it.overview.range == range }
-    LazyColumn(Modifier.fillMaxSize().softDaylightBackground().padding(horizontal = 16.dp),
+    val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(scroll) { media.qimeng.next.ui.TabScrollController.events.collect { if (it == 2) scroll.scrollToItem(0) } }
+    LazyColumn(Modifier.fillMaxSize().softDaylightBackground().padding(horizontal = 16.dp), state = scroll,
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(bottom = media.qimeng.next.ui.NavigationDimensions.bottomClearance())) {
+        contentPadding = PaddingValues(bottom = media.qimeng.next.ui.glass.TabDockDefaults.bottomClearance())) {
         item { Text("数据统计", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)) }
         item { RangeSelector(range) { range = it } }
         state.error?.let { item { ErrorNotice(it) { model.loadAnalytics(range) } } }

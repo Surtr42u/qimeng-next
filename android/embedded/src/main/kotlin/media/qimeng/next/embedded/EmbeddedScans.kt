@@ -1,6 +1,9 @@
 package media.qimeng.next.embedded
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -129,6 +132,11 @@ class EmbeddedScanWorker(context: Context, parameters: WorkerParameters) : Corou
         try {
             val connection = host.runtime.start()
             check(connection.instanceId == request.instanceId) { "待扫任务属于另一实例，已保留并停止提交" }
+            // WorkManager can dispatch using the previous charging broadcast. Check the live supply at submission.
+            if (scheduler.state.value.chargeOnly && !suppliedAndCharging()) {
+                scheduler.result(request.id, "queued", "等待接入电源后继续扫描")
+                return Result.retry()
+            }
             val job = host.submitLocalScan(connection, request)
             scheduler.result(request.id, "submitted", "已提交，扫描进度由本机服务保存", job)
             return Result.success()
@@ -141,5 +149,12 @@ class EmbeddedScanWorker(context: Context, parameters: WorkerParameters) : Corou
             scheduler.result(request.id, "waiting", "本机服务暂不可用；请回到应用核对运行状态，原待扫任务已保留")
             return Result.success()
         }
+    }
+
+    private fun suppliedAndCharging(): Boolean {
+        val battery = applicationContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return false
+        val status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
+        return battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0 &&
+            (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
     }
 }

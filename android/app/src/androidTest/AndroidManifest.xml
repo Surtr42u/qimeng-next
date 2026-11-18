@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:name="android.app.Application">
         <provider android:name="media.qimeng.next.test.FixtureProvider" android:authorities="media.qimeng.next.test.fixture" android:exported="true" android:grantUriPermissions="true" />
+        <provider android:name="media.qimeng.next.test.MaintenanceDocumentsProvider" android:authorities="media.qimeng.next.test.maintenance"
+            android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+        </provider>
         <provider android:name="media.qimeng.next.test.ArchiveDocumentsProvider" android:authorities="media.qimeng.next.test.archive"
             android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
             <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>

@@ -2,7 +2,12 @@ package media.qimeng.next.model
 
 data class Session(val baseUrl: String, val instanceId: String, val label: String)
 enum class ThemeChoice { SYSTEM, LIGHT, DARK }
-data class Preferences(val theme: ThemeChoice = ThemeChoice.SYSTEM, val reducedMotion: Boolean = false, val glass: Boolean = true)
+enum class TabBarMaterial(val label: String) {
+    LIQUID("液态玻璃"), FROSTED("磨砂玻璃"), SOLID("纯色坞"), CLASSIC("经典");
+    val usesBackdrop: Boolean get() = this == LIQUID || this == FROSTED
+}
+data class Preferences(val theme: ThemeChoice = ThemeChoice.SYSTEM, val reducedMotion: Boolean = false,
+    val material: TabBarMaterial = TabBarMaterial.LIQUID)
 
 data class Library(val id: String, val name: String, val kind: String, val enabled: Boolean, val revision: Long,
     val fileCount: Long, val scanState: String, val latestScanId: String?)
@@ -51,6 +56,8 @@ data class Asset(
     val roleGroups: List<AssetGroup> = emptyList(),
     val playCount: Long? = null,
     val lastViewedAt: String? = null,
+    val cosWorkName: String? = null,
+    val sourceName: String? = null,
 )
 data class AssetGroup(val key: String, val name: String)
 data class AssetQuery(
