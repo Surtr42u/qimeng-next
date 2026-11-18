@@ -272,3 +272,42 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual((asset["hash"], asset["authorStatus"]), (upload["hash"], "unknown"))
         self.assertTrue(asset["fileName"].startswith("Reviewed"))
         self.assertEqual((await self.worker())["state"], "idle")
+
+    async def test_naming_and_evidenced_author_selection_use_distinct_worker_inputs(self):
+        batch = self.submit("worker-optional-author", research_calls=1)
+        path = "/batches/" + batch
+        detail = self.request("GET", path)
+        upload = detail["items"][0]["upload"]
+        author = self.request("POST", "/authors", {"kind": "regular", "name": "合成版画校对员"}, key="worker-optional-author-create")
+        self.request("POST", path + "/research", {"expectedRevision": detail["batch"]["revision"], "uploadId": upload["id"],
+            "expectedHash": upload["hash"], "outcome": "candidates", "callsUsed": 1,
+            "candidates": [{"authorId": author["id"], "sourceUrl": "https://example.org/synthetic-credit",
+                            "evidence": "Synthetic fixture records this author's credit for this input"}]}, key="worker-optional-author-evidence")
+
+        def script(results):
+            step = len(results)
+            if step == 0:
+                return "plan_prepare", {"items": [{"input": 1, "family": "版画", "authorIds": ["guessed-person"]}]}
+            if step == 1:
+                return "worker_tools", {"group": "authors"}
+            if step == 2:
+                return "author_query", {"exactName": author["name"]}
+            if step == 3:
+                found, = results[-1]["items"]
+                return "plan_prepare", {"items": [{"input": 1, "family": "版画", "authorIds": [found["id"]]}]}
+            return "plan_commit", {"plan": results[-1]["plan"]}
+
+        self.host.scripts[batch] = script
+        outcome, = (await self.worker())["batches"]
+        self.assertEqual(outcome["state"], "completed")
+        self.assertEqual([event["code"] for event in outcome["modelUsage"]["toolResults"]], ["WORKER_ENTITY_LOOKUP_REQUIRED", "ok", "ok", "ok", "ok"])
+        def plan_fields(request):
+            schema = next(tool["function"]["parameters"] for tool in request["tools"] if tool["function"]["name"] == "plan_prepare")
+            return set(schema["properties"]["items"]["items"]["properties"])
+        self.assertEqual(plan_fields(self.host.requests[0]), {"input", "family"})
+        self.assertIn("authorIds", plan_fields(self.host.requests[2]))
+        self.assertNotIn("collectionId", plan_fields(self.host.requests[2]))
+        actual = self.request("GET", path)
+        self.assertEqual(len(actual["plans"]), 1)
+        asset = self.request("GET", "/assets/" + actual["inputs"][0]["assetId"])
+        self.assertEqual((asset["authorIds"], asset["hash"]), ([author["id"]], upload["hash"]))

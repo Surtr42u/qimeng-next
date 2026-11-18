@@ -13,6 +13,9 @@ GROUPS = {
                  "research.provider.query", "research.provider.result", "research.image.search"},
     "records": {"task.read", "platform.result.read", "platform.budget", "operation.read"},
 }
+ENTITY_FIELDS = {"authorId": ("authors", "author.query"), "authorIds": ("authors", "author.query"),
+                 "sourceIds": ("taxonomy", "source.query"), "characterIds": ("taxonomy", "character.query"),
+                 "collectionId": ("taxonomy", "collection.query")}
 PAGE = 10
 
 
@@ -37,6 +40,8 @@ class WorkerIntake:
         self.views = {}
         self.stale = set()
         self.details = set()
+        self.entities = {query: set() for _, query in ENTITY_FIELDS.values()}
+        self.entity_refs = {}
         self.shown_inputs = set()
         self.groups = set()
         self.update(full_result(runtime, report))
@@ -139,6 +144,33 @@ class WorkerIntake:
     def reject_plan(self, plan_id):
         self.stale.update(key for key, plan in self.plans.items() if plan["id"] == plan_id)
 
+    def observed_choices(self, name, args, value):
+        query = name if name in self.entities else None
+        if name == "platform.result.read" and args.get("pointer") == "/items":
+            query = self.entity_refs.get(args.get("resultRef"))
+        if query is None or not isinstance(value, dict):
+            return
+        if value.get("truncated") and value.get("resultRef"):
+            self.entity_refs[value["resultRef"]] = query
+        for row in value.get("items", []):
+            if isinstance(row, dict) and isinstance(row.get("id"), str):
+                self.entities[query].add(row["id"])
+
+    def check_choices(self, intent, upload):
+        for field, (group, query) in ENTITY_FIELDS.items():
+            if field not in intent:
+                continue
+            values = intent[field]
+            if not isinstance(values, list):
+                values = [values]
+            original = upload.get("authorIds" if field == "authorId" else field) or []
+            if isinstance(original, str):
+                original = [original]
+            for reference in values:
+                if not isinstance(reference, str) or not reference or reference not in original and reference not in self.entities[query]:
+                    raise ToolError("WORKER_ENTITY_LOOKUP_REQUIRED", f"{field} 须使用此项原选择或 {query} 已返回的稳定 ID。无需改变归属时请省略该字段。",
+                                    details={"field": field, "group": group, "lookup": query})
+
     def staged(self, number, shown, *, for_plan=True):
         row = self.by_number.get(number) if type(number) is int else None
         if row is None or number not in shown or row["state"] != "staged":
@@ -159,8 +191,13 @@ class WorkerIntake:
                 if not isinstance(intent, dict) or "input" not in intent or "uploadId" in intent:
                     raise ToolError("INVALID_INPUT", "逐项给出 input 序号和 family 基名")
                 upload = self.staged(intent["input"], shown)
+                self.check_choices(intent, upload)
                 items.append({**{k: v for k, v in intent.items() if k != "input"}, "uploadId": upload["id"]})
             return {"body": {"expectedRevision": revision, "items": items}}
+        if name == "plan.prepare" and isinstance(args.get("body"), dict) and isinstance(args["body"].get("items"), list):
+            for item in args["body"]["items"]:
+                if isinstance(item, dict) and isinstance(item.get("uploadId"), str) and item["uploadId"] not in self.by_upload:
+                    raise ToolError("WORKER_UPLOAD_NOT_IN_SELECTION", "该上传不属于本批封存清单。读取 task_context 后，可按 input 序号准备。")
         if name in {"plan.read", "plan.commit"} and "planId" not in args:
             allowed = {"plan", "offset"} if name == "plan.read" else {"plan"}
             if args.keys() - allowed:
@@ -199,9 +236,23 @@ class WorkerIntake:
             active |= GROUPS[group]
         if "plan.prepare" in definitions:
             groups.add("planning")
-        menu = [definitions[name] for name in definitions if name in active]
+        menu = []
+        for name, definition in definitions.items():
+            if name not in active:
+                continue
+            if name == "plan.prepare":
+                function = definition["function"]
+                items = function["parameters"]["properties"]["items"]
+                fields = items["items"]["properties"]
+                selected = {"input", "family"} | {field for field, (group, _) in ENTITY_FIELDS.items() if group in self.groups}
+                if "planning" in self.groups:
+                    selected.update(("groupKey", "page"))
+                row = obj({field: value for field, value in fields.items() if field in selected}, ["input", "family"])
+                definition = {"type": "function", "function": {**function,
+                    "parameters": obj({"items": {**items, "items": row}}, ["items"])}}
+            menu.append(definition)
         menu.append({"type": "function", "function": {"name": "worker_tools",
-                     "description": "按需要展开作者、分类、命名、研究或重新规划工具。已确定的普通新增可直接准备计划。",
+                     "description": "需要更改归属时，authors 或 taxonomy 展开查询与稳定 ID 字段；planning 展开组图、页序与重新规划。普通命名直接用 input 和 family。",
                      "parameters": obj({"group": options(groups)}, ["group"])}})
         return menu, groups
 
@@ -214,7 +265,7 @@ def model_schema(name, schema):
         items = schema["properties"]["body"]["properties"]["items"]
         fields = dict(items["items"]["properties"])
         fields.pop("uploadId")
-        return "给所选待整理项准备 Go 命名计划。逐项传 input 和 family 基名，可附有依据的归属与分组，保留其他原选择。返回实际目标预览。", obj({
+        return "逐项传清单序号 input 和命名基名 family，准备 Go 目标预览。省略归属字段会保留每项原选择及未知状态。", obj({
             "items": {**items, "items": obj({"input": number, **fields}, ["input", "family"])}}, ["items"])
     if name == "plan.read":
         return "按 plan 读 Go 的原计划。用 nextOffset 续看，直至完整预览。", obj({"plan": plan, "offset": offset}, ["plan"])

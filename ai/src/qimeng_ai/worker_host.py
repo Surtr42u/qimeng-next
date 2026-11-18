@@ -258,6 +258,7 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
                             journal.before_call(batch_id, name, args)
                             journaled = True
                         value = runtime.call(name, args)
+                        intake.observed_choices(name, args, value)
                         if name in {"plan.prepare", "plan.read"}:
                             value = intake.preview(full_result(runtime, value), offset)
                         elif name in {"research.submit", "plan.commit"}:
