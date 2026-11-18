@@ -31,6 +31,7 @@ type providerGrant struct {
 	taskID, kind, subjectID, subjectHash, libraryID string
 	revision, version                               int64
 	knownAuthor                                     bool
+	imageLookup                                      bool
 	allowed                                         []string
 	researchLeft                                    int
 	callsLeft                                       int
@@ -69,9 +70,9 @@ func (s *Service) providerCredential(ctx context.Context, p model.Principal) (pr
 	var credential, delegation, providers, deadline string
 	var used, limit int
 	err := s.DB.DB.QueryRowContext(ctx, `SELECT c.data,d.data,t.kind,t.research_providers,t.provider_calls,t.provider_limit,
-	 t.max_calls-t.calls,t.deadline FROM delegated_tasks t JOIN credentials c ON c.id=t.credential_id
+	 t.max_calls-t.calls,t.deadline,t.allow_image_lookup FROM delegated_tasks t JOIN credentials c ON c.id=t.credential_id
 	 JOIN ai_delegations d ON d.id=t.delegation_id WHERE t.task_id=? AND c.id=? AND d.id=?`, g.taskID, p.ID, p.ParentDelegationID).
-		Scan(&credential, &delegation, &g.kind, &providers, &used, &limit, &g.callsLeft, &deadline)
+		Scan(&credential, &delegation, &g.kind, &providers, &used, &limit, &g.callsLeft, &deadline, &g.imageLookup)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, Fail(403, "research_task_revoked", "公开研究任务凭据已撤销或不属于此任务。")
 	}
@@ -104,6 +105,7 @@ func (s *Service) providerCredential(ctx context.Context, p model.Principal) (pr
 		g.deadline = parent.ExpiresAt
 	}
 	g.allowed = slices.DeleteFunc(g.allowed, func(name string) bool { return !containsString(parent.ResearchProviders, name) })
+	g.imageLookup = g.imageLookup && parent.CanLookupImages && (g.kind == "intake" || g.kind == "asset")
 	g.researchLeft = limit - used
 	return g, nil
 }
@@ -203,7 +205,7 @@ func (s *Service) publicResearchSubject(ctx context.Context, p model.Principal, 
 	return nil
 }
 func (s *Service) ResearchProviderContext(ctx context.Context, p model.Principal) (PublicResearchContext, error) {
-	v := PublicResearchContext{Enabled: s.Config.ResearchEnabled, Providers: researchprovider.Matrix(), AllowedProviders: []string{}}
+	v := PublicResearchContext{Enabled: s.Config.ResearchEnabled, ImageLookupEnabled: s.researchGateway.lens != nil, Providers: researchprovider.Matrix(), AllowedProviders: []string{}}
 	if p.ParentDelegationID == "" {
 		return v, nil
 	}
@@ -213,6 +215,7 @@ func (s *Service) ResearchProviderContext(ctx context.Context, p model.Principal
 			return v, e
 		}
 		v.AllowedProviders = append(v.AllowedProviders, d.ResearchProviders...)
+		v.ImageLookupAllowed = d.CanLookupImages
 		return v, nil
 	}
 	if !p.Has("research") {
@@ -223,6 +226,7 @@ func (s *Service) ResearchProviderContext(ctx context.Context, p model.Principal
 		return v, e
 	}
 	v.TaskID = g.taskID
+	v.ImageLookupAllowed = g.imageLookup
 	v.AllowedProviders = append(v.AllowedProviders, g.allowed...)
 	v.RemainingResearchCalls = &g.researchLeft
 	rows, e := s.DB.DB.QueryContext(ctx, `SELECT id,subject_id,provider,json_extract(data,'$.operation'),state FROM research_provider_calls WHERE task_id=? AND json_extract(data,'$.receiptCredentialId')=? AND json_extract(data,'$.receiptDelegationId')=? ORDER BY started_at DESC,id DESC LIMIT 100`, g.taskID, p.ID, p.ParentDelegationID)

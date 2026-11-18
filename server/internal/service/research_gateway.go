@@ -19,13 +19,16 @@ type providerFlight struct {
 }
 type publicResearchGateway struct {
 	slots    chan struct{}
+	frameReads chan struct{}
 	mu       sync.Mutex
 	inFlight map[string]providerFlight
 	client   *http.Client
+	lens     *lensSidecar
 }
 
 func (g *publicResearchGateway) init() {
 	g.slots = make(chan struct{}, 2)
+	g.frameReads = make(chan struct{}, 2)
 	g.inFlight = make(map[string]providerFlight)
 	g.client = avatarHTTPClient(defaultAvatarNetwork())
 	// Even another public host has not been approved for this adapter's query.
@@ -129,11 +132,16 @@ type PublicResearchResult struct {
 	State           string                  `json:"state"`
 	EvidenceKind    string                  `json:"evidenceKind"`
 	Items           []researchprovider.Item `json:"items"`
+	FrameID         string                  `json:"frameId,omitempty"`
+	FrameSHA256     string                  `json:"frameSha256,omitempty"`
+	ImageHints      []researchprovider.ImageHint `json:"imageHints,omitempty"`
 	StartedAt       time.Time               `json:"startedAt"`
 	FinishedAt      *time.Time              `json:"finishedAt,omitempty"`
 }
 type PublicResearchContext struct {
 	Enabled                bool                    `json:"enabled"`
+	ImageLookupEnabled     bool                    `json:"imageLookupEnabled"`
+	ImageLookupAllowed     bool                    `json:"imageLookupAllowed"`
 	Providers              []researchprovider.Info `json:"providers"`
 	AllowedProviders       []string                `json:"allowedProviders"`
 	TaskID                 string                  `json:"taskId,omitempty"`

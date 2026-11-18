@@ -20,6 +20,22 @@ def config(directory, **extra):
 
 
 class BudgetAndReferences(unittest.TestCase):
+    def test_lost_frame_lookup_needs_the_image_operation_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = config(directory, QIMENG_AI_TASK_ID="task-for-frame")
+            state = State(cfg, "instance-a", "contract-a")
+            key = "lost-frame-response"
+            request = state.reserve("research.image.search", {"Idempotency-Key": key}, key)
+            state.finish(request, {"code": "NETWORK_ERROR"}, key, uncertain=True)
+            self.assertEqual(state.receipt_target(key), (key, "lookupResearchImage"))
+            receipt = {"state": "committed", "idempotencyKey": key, "operation": "lookupResearchImage",
+                       "response": {"id": "frame-query", "taskId": cfg.task_id, "state": "interrupted"}}
+            with self.assertRaises(ToolError):
+                state.reconcile(key, {**receipt, "operation": "queryResearchProvider"})
+            self.assertEqual([row["key"] for row in state.status()["pending"]], [key])
+            state.reconcile(key, receipt)
+            self.assertEqual(state.status()["pending"], [])
+
     def test_disabled_lookup_leaves_local_writes_available_but_timeout_needs_its_own_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg = config(directory, QIMENG_AI_TASK_ID="task-for-research")

@@ -24,6 +24,14 @@
 
 若实例关闭公开查证，返回 HTTP 403 和 `research_provider_disabled`，请求尚未发出，本地整理可继续。遇到查询应答丢失，可用当前任务凭据读取 `GET /operations/{key}?operation=queryResearchProvider`。原查询仍在进行时返回 HTTP 409 和 `research_query_pending`。终态回执含原键、查询 ID、任务 ID 及结果状态。同一任务续接后可核销原回执。隔离恢复后重新授权的执行器只能核销自身签发的查询。旧开发版本缺少签发记录时，管理员仍可按查询 ID 阅读留存的证据。
 
+### 单帧反向查证
+
+`GET /research/context` 的 `imageLookupEnabled` 表示部署者已配置受信 Lens 伴随服务，`imageLookupAllowed` 表示当前授权或任务允许外发。本人创建长期授权时须指定 `canLookupImages=true`、研究权限、正数预算与媒体范围。接收或作品任务还须主动指定 `allowImageLookup=true`。旧授权、旧任务与省略字段的任务均保持单帧外发关闭。七个文本来源的名单与执行器向模型展示预览的许可分别配置。
+
+从当前任务的研究材料取 `artifacts[i].id` 和 `artifacts[i].sha256`。调用 `POST /research/image-lookup` 时将两者传作 `frameId` 和 `frameSha256`，接收任务另传 `uploadId` 与 `expectedHash`，已有作品另传 `assetId` 与 `contentVersion`。本地预览缓存有效期为 24 小时，过期后可重新读取当前任务的材料。Go 在入账前核实任务、源版本及帧摘要，只向配置好的 `/lens` 发送一个名为 `frame.jpg` 的 multipart 文件，最长边 640 像素、最多 2 MiB。上传名、路径、作品或任务 ID 均留在本机。伴随服务收到的字节摘要须与所选帧一致。
+
+请求与文本查证共享任务调用和研究预算。单次最长 95 秒，并受任务截止时间约束；响应上限 256 KiB。同一幂等键重复提交只取得原回执，处理中为 202。应答丢失可按 `GET /operations/{key}?operation=lookupResearchImage` 或查询 ID 核销。成功回执的 `items` 只收录真实候选链接，`imageHints` 单列无链接的域名与标题，二者最多各 20 项。空结果为 `not_found`。伴随服务的 `BUSY` 为 `rate_limited`，`BLOCKED_BOT` 为 `blocked`；浏览器未就绪、未到结果页、超时或摘要不符均为 `unavailable`。已中断的任务保留 `interrupted`。所有 Lens 线索的 `evidenceKind` 都是 `lead`，确认作品归属仍须独立核实。
+
 ## 显式设备维护包
 
 PC 或 NAS 的管理员在 `POST /device/credentials` 登记目标设备及客户端生成的 32 字节独立随机凭据（无填充 base64url）。服务只返回凭据 ID、设备标签、显示名和到期时间。轮换须提供当前凭据 ID。设备可用 `GET /sessions/current` 核对本人的设备身份与 `device.apply` 权限，登记端的媒体目录和管理接口另需本人会话。

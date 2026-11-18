@@ -55,7 +55,13 @@ if [[ "$mode" == nas || "$mode" == nas-media || "$mode" == nas-stop ]]; then
 fi
 # Use only this package's dedicated roots. Service credentials are environment
 # entries of the child and never command-line arguments.
+lens_endpoint=${QIMENG_RESEARCH_LENS_ENDPOINT:-}
+sidecar_token=${QIMENG_RESEARCH_SIDECAR_TOKEN:-}
 for key in ${!QIMENG_@}; do unset "$key"; done
+if [[ -n "$lens_endpoint" ]]; then
+  export QIMENG_RESEARCH_LENS_ENDPOINT="$lens_endpoint" QIMENG_RESEARCH_SIDECAR_TOKEN="$sidecar_token"
+fi
+unset sidecar_token
 if [[ "$media" =~ [[:cntrl:]] ]]; then echo '持久目录中不能有控制字符。' >&2; exit 1; fi
 json_path=${media//\\/\\\\}
 json_path=${json_path//\"/\\\"}

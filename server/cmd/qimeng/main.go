@@ -49,6 +49,10 @@ func run() error {
 	if e := os.Unsetenv("QIMENG_ADMIN_PASSWORD"); e != nil {
 		return e
 	}
+	sidecarToken := os.Getenv("QIMENG_RESEARCH_SIDECAR_TOKEN")
+	if e := os.Unsetenv("QIMENG_RESEARCH_SIDECAR_TOKEN"); e != nil {
+		return e
+	}
 	localSync := service.LocalSyncConfig{Root: os.Getenv("QIMENG_LOCAL_SYNC_ROOT")}
 	for key, field := range map[string]*time.Duration{"QIMENG_LOCAL_SYNC_INTERVAL": &localSync.Interval, "QIMENG_LOCAL_SYNC_STABLE_AGE": &localSync.StableAge} {
 		if value := os.Getenv(key); value != "" {
@@ -84,7 +88,7 @@ func run() error {
 			scanner.PollInterval = duration
 		}
 	}
-	s, e := service.New(service.Config{DataDir: os.Getenv("QIMENG_DATA_DIR"), AdminToken: os.Getenv("QIMENG_ADMIN_TOKEN"), AdminPassword: password, AIToken: os.Getenv("QIMENG_AI_TOKEN"), StorageRoots: storages, BackupTargets: backupTargets, DefaultBackupTarget: os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"), SecureCookies: os.Getenv("QIMENG_SECURE_COOKIES") == "true" || os.Getenv("QIMENG_EPHEMERAL_TLS") == "true", ResearchEnabled: researchEnabled, AIConfigured: os.Getenv("QIMENG_AI_CONFIGURED") == "true", LocalSync: localSync, Scanner: &scanner})
+	s, e := service.New(service.Config{DataDir: os.Getenv("QIMENG_DATA_DIR"), AdminToken: os.Getenv("QIMENG_ADMIN_TOKEN"), AdminPassword: password, AIToken: os.Getenv("QIMENG_AI_TOKEN"), StorageRoots: storages, BackupTargets: backupTargets, DefaultBackupTarget: os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"), SecureCookies: os.Getenv("QIMENG_SECURE_COOKIES") == "true" || os.Getenv("QIMENG_EPHEMERAL_TLS") == "true", ResearchEnabled: researchEnabled, ResearchLensEndpoint: os.Getenv("QIMENG_RESEARCH_LENS_ENDPOINT"), ResearchSidecarToken: sidecarToken, AIConfigured: os.Getenv("QIMENG_AI_CONFIGURED") == "true", LocalSync: localSync, Scanner: &scanner})
 	password = ""
 	if e != nil {
 		return e

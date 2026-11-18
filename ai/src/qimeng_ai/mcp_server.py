@@ -13,6 +13,7 @@ from .config import Config
 from .content import ImageResult
 from .errors import ToolError
 from .runtime import Runtime
+from .state import RESEARCH_QUERY_OPERATIONS
 
 
 def create_server(runtime: Runtime) -> Server:
@@ -22,7 +23,7 @@ def create_server(runtime: Runtime) -> Server:
                                          annotations=ToolAnnotations(read_only_hint=tool["readOnly"],
                                              destructive_hint=not tool["readOnly"],
                                              idempotent_hint=tool["readOnly"] or any(key in tool["inputSchema"].get("required", []) for key in ("operationId", "Idempotency-Key")),
-                                             open_world_hint=False))
+                                             open_world_hint=tool["name"] in RESEARCH_QUERY_OPERATIONS))
                                     for tool in sorted(runtime.tools(), key=lambda item: item["name"])])
 
     async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:

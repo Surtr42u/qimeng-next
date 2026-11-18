@@ -53,6 +53,10 @@ $start.UseShellExecute = $false
 foreach ($name in @($start.EnvironmentVariables.Keys)) { if ($name -like 'QIMENG_*') { $start.EnvironmentVariables.Remove($name) } }
 $start.EnvironmentVariables['QIMENG_ADMIN_TOKEN'] = [Convert]::ToBase64String($random)
 $start.EnvironmentVariables['QIMENG_ADMIN_PASSWORD'] = $plain
+if ($env:QIMENG_RESEARCH_LENS_ENDPOINT) {
+  $start.EnvironmentVariables['QIMENG_RESEARCH_LENS_ENDPOINT'] = $env:QIMENG_RESEARCH_LENS_ENDPOINT
+  $start.EnvironmentVariables['QIMENG_RESEARCH_SIDECAR_TOKEN'] = $env:QIMENG_RESEARCH_SIDECAR_TOKEN
+}
 $start.EnvironmentVariables['QIMENG_DATA_DIR'] = $data
 $start.EnvironmentVariables['QIMENG_STORAGE_ROOTS'] = (ConvertTo-Json @{media=$media} -Compress)
 $start.EnvironmentVariables['QIMENG_LISTEN'] = "127.0.0.1:$port"
@@ -64,6 +68,7 @@ if ($secure) { $secure.Dispose() }
 $process = [Diagnostics.Process]::Start($start)
 $start.EnvironmentVariables.Remove('QIMENG_ADMIN_TOKEN')
 $start.EnvironmentVariables.Remove('QIMENG_ADMIN_PASSWORD')
+$start.EnvironmentVariables.Remove('QIMENG_RESEARCH_SIDECAR_TOKEN')
 try {
   $deadline = [DateTime]::UtcNow.AddSeconds(60)
   while (-not $process.HasExited -and -not (Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 150 }

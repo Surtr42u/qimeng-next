@@ -39,7 +39,13 @@
 
 需要公开文本查证时，先调用 `research.context`。实例须启用公开研究，首次授权须勾选所用来源，任务凭据须拥有 `research` 和可用研究额度。`research.provider.query` 接受来源、公开标识或词语、固定操作以及稳定的 `Idempotency-Key`。批次另传当前待整理上传的 ID 与 SHA-256。相同键可回读原结果。任务重启后可从 `research.context.queries` 找到回执，再以 `research.provider.result` 阅读。提交已经计费的候选时传 `providerQueryIds` 及 `callsUsed=0`。平台记录、存档和搜索结果仅提供证据，人工已确认的选择继续生效。
 
-未授权公开来源时，`research.probe` 和获准的本地/服务端预览仍可用于取证。公开文本来源只接收主动提交的查询参数。原始媒体、预览帧和批次私有字段通过各自的授权边界处理。本版公开来源不提供 Lens 图片上传或后台反查。
+单帧查证使用 `research.image.search`。实例管理员在 Go 服务配置 `QIMENG_RESEARCH_LENS_ENDPOINT` 和 `QIMENG_RESEARCH_SIDECAR_TOKEN`，首次授权开启 `canLookupImages`，创建接收或已有作品任务时显式传 `allowImageLookup=true`。在 `research.context` 检查 `imageLookupEnabled`、`imageLookupAllowed` 和剩余额度。执行器只需 `research` 权限。将预览交给模型仍由执行器上的 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL` 单独授权。
+
+1. 接收任务用 `research.materials` 指定上传和原件摘要，已有作品任务用 `asset.research.materials` 指定当前任务。从返回的 `artifacts` 中选一帧，取它的 `id` 和 `sha256`。同项的 `artifactRef` 用于获准的预览读取。
+2. MCP 调用 `research.image.search`，或使用 `qai call research.image.search` 从标准输入传入相同 JSON。顶层传 `taskId` 和稳定的 `Idempotency-Key`，在 `body` 传 `frameId`、`frameSha256`。接收任务同时传 `uploadId`、`expectedHash`，已有作品任务同时传 `assetId`、`contentVersion`。Go 核对对象、版本与帧摘要后，只向管理员配置的接收服务发送所选的派生 JPEG。执行器保管任务凭据，Go 使用独立的接收服务凭据，模型读取 JSON 回执。
+3. 回执的 `items` 是有链接的候选，`imageHints` 是只有域名或标题的线索。两者都需要再核实，保留现有人工归属。首次实际查证占一份研究额度。同一任务、操作键和参数可以回读同一回执。返回 `pending` 时，用原回执 ID 读 `research.provider.result`。断线丢失回执 ID 时，用 `operation.read` 传原 `key` 和 `operation=lookupResearchImage`。
+
+未获单帧外发许可时，已授权的本地探测和服务端预览仍可使用。文本查证只发送明确选定来源需要的公开标识或搜索词。
 
 部署明确拒绝公开查询时，执行器可以继续本地研究和入库。连接中断时，执行器保留未决操作。可信端可用 `qai admin --task-id <任务ID> reconcile <原键>` 回读该任务及原签发凭据的查询结果。只有键、操作、任务身份和终态都匹配时才解除阻塞，已中断的查询回执也会保留实际结果。
 
@@ -84,6 +90,6 @@ Linux 使用同卷的 [Freedesktop 回收站](https://specifications.freedesktop
 
 同一未决写入允许以完全相同的工具、参数与操作键恢复，新写入仍被阻止。分片上传沿原会话offset接续；可信端核销整次上传必须取得`:complete`回执，仅创建了上传会话不能算上传完成。SDK契约升级保留消费记录和未决操作，同时使旧契约的结果展示引用失效。
 
-长期授权任务另有Go保存的调用预算与截止时间，换宿主不会清零；执行器每次实际工具执行前先保留一次调用额度，本地预算可能更严格。`platform.budget`不消费额度，显示两层预算。每日控制通道与业务任务分开，避免首次配置后所有后续任务共用一个永久耗尽的计数。预算耗尽保留进度，只有可信本人会话可提高服务端上限；续期不清已消费次数，模型不能自行续期。
+长期授权任务另有 Go 保存的调用预算与截止时间。外部查证由 Go 随回执键一次保留任务调用和研究额度，原键重放沿用该次扣费。其他任务工具沿用既有调用预算。执行器本地限制可以更严格，`platform.budget` 免费显示两层预算。每日控制通道与各业务任务分开，换宿主保留服务端计数和任务进度。只有可信本人会话可提高服务端上限，续期保留已消费次数。
 
 开发、打包与所有测试只在云端执行，当前结果见[状态](../docs/status.md)。模型token/费用依赖宿主遥测，本模块不宣称控制外部账号全部消费。真实provider、NAS与设备验证按证据单列。

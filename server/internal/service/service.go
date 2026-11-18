@@ -52,6 +52,7 @@ func Normalize(err error) error {
 
 type Config struct {
 	DataDir, AdminToken, AdminPassword, AIToken  string
+	ResearchLensEndpoint, ResearchSidecarToken   string
 	StorageRoots                                 map[string]string
 	BackupTargets                                map[string]BackupTarget
 	DefaultBackupTarget                          string
@@ -101,6 +102,11 @@ func New(config Config) (*Service, error) {
 	if err := validateBackupTargets(config.BackupTargets, config.DefaultBackupTarget); err != nil {
 		return nil, err
 	}
+	lens, err := newLensSidecar(config.ResearchLensEndpoint, config.ResearchSidecarToken)
+	if err != nil {
+		return nil, err
+	}
+	config.ResearchSidecarToken = ""
 	localSync, err := initializeLocalSync(config.LocalSync)
 	if err != nil {
 		return nil, err
@@ -158,6 +164,7 @@ func New(config Config) (*Service, error) {
 	s.monitor = newLibraryMonitor(config.Scanner)
 	s.recommendations.init()
 	s.researchGateway.init()
+	s.researchGateway.lens = lens
 	s.previews.init()
 	s.samples.init()
 	ctx := context.Background()
