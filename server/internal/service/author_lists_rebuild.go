@@ -285,10 +285,12 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 
 // The single-file path queries precompiled rules by the same pure match keys.
 // Upload/scan do not rebuild or scan every stored TXT for each new file.
-func (s *Service) matchAuthorListsForAsset(ctx context.Context, q store.Querier, a *model.Asset) error {
+func (s *Service) matchAuthorListsForAsset(ctx context.Context, q store.Querier, a *model.Asset, newRegularScan bool) error {
 	var cos int
-	if e := q.QueryRowContext(ctx, "SELECT count(*) FROM asset_authors x JOIN authors au ON au.id=x.author_id WHERE x.asset_id=? AND json_extract(au.data,'$.kind')='cos'", a.ID).Scan(&cos); e != nil {
-		return e
+	if !newRegularScan {
+		if e := q.QueryRowContext(ctx, "SELECT count(*) FROM asset_authors x JOIN authors au ON au.id=x.author_id WHERE x.asset_id=? AND json_extract(au.data,'$.kind')='cos'", a.ID).Scan(&cos); e != nil {
+			return e
+		}
 	}
 	if cos == 0 {
 		keys := authorlist.Keys(a.FileName)
@@ -314,6 +316,11 @@ func (s *Service) matchAuthorListsForAsset(ctx context.Context, q store.Querier,
 		rows.Close()
 		if e != nil {
 			return e
+		}
+		// A newly inserted regular scan asset starts with the unknown author.
+		// Prior overrides and identity-bound matches require an existing asset.
+		if newRegularScan && len(matches) == 0 {
+			return nil
 		}
 		for _, match := range matches {
 			if _, e = q.ExecContext(ctx, "INSERT OR IGNORE INTO author_list_matches(list_id,asset_id,author_id,work) VALUES(?,?,?,?)", match.ListID, match.AssetID, match.AuthorID, match.Work); e != nil {

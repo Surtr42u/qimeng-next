@@ -42,7 +42,7 @@ func (s *Service) finalizeAuthorTextForFile(ctx context.Context, q store.Querier
 		}
 	}
 	if j.Kind != "trash" {
-		return s.matchAuthorListsForAsset(ctx, q, a)
+		return s.matchAuthorListsForAsset(ctx, q, a, false)
 	}
 	return nil
 }

@@ -1,6 +1,11 @@
 name: Installed and Next scan comparison
 on:
   workflow_dispatch:
+    inputs:
+      before_next:
+        description: Optional full SHA of an earlier Next server to time on the same machine
+        type: string
+        required: false
   push:
     branches: [main, codex/scan-comparison]
     paths:
@@ -24,6 +29,12 @@ jobs:
           ref: ${{ env.REFERENCE_SHA }}
           path: installed
           persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        if: inputs.before_next
+        with:
+          ref: ${{ inputs.before_next }}
+          path: before
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: next/server/go.mod
@@ -38,7 +49,16 @@ jobs:
           (cd installed/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/installed-server" ./cmd/qimeng)
           (cd next/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/next-server" ./cmd/qimeng)
       - name: Submit and observe manual scans
-        run: python3 next/tools/scan-comparison/compare.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence
+        env:
+          BEFORE_NEXT: ${{ inputs.before_next }}
+        run: |
+          extra=()
+          if [[ -n "$BEFORE_NEXT" ]]; then
+            test "$(git -C before rev-parse HEAD)" = "$BEFORE_NEXT"
+            (cd before/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/before-server" ./cmd/qimeng)
+            extra+=("$RUNNER_TEMP/before-server")
+          fi
+          python3 next/tools/scan-comparison/compare.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence "${extra[@]}"
       - name: Sample the scan functions after the timing trials
         working-directory: next/server
         run: |

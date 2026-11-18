@@ -369,12 +369,20 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 		return s.skipScannedEntry(ctx, run)
 	}
 	full := path.Join("libraries", libraryID, relative)
-	if e := s.safe(full); e != nil {
+	if !domain.ValidRelative(full) {
 		return s.scanProgress(ctx, jobID, relative, "symlink_denied", true)
 	}
-	initial, e := s.Root.Stat(full)
+	// The registered storage root checks every physical component on this
+	// lookup. Lstat also observes a link swapped into the final component.
+	initial, e := s.Root.Lstat(full)
 	if e != nil {
+		if !errors.Is(e, os.ErrNotExist) {
+			return s.scanProgress(ctx, jobID, relative, "symlink_denied", true)
+		}
 		return s.scanProgress(ctx, jobID, relative, "stat_failed", true)
+	}
+	if syncPathLink(initial) {
+		return s.scanProgress(ctx, jobID, relative, "symlink_denied", true)
 	}
 	if !initial.Mode().IsRegular() {
 		return s.scanProgress(ctx, jobID, relative, "not_regular_file", true)
@@ -514,7 +522,12 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 			return e
 		}
 	}
-	if e = store.SaveAsset(ctx, tx, a); e != nil {
+	if isNew {
+		e = store.InsertAsset(ctx, tx, a)
+	} else {
+		e = store.SaveAsset(ctx, tx, a)
+	}
+	if e != nil {
 		return e
 	}
 	if moved {
@@ -522,7 +535,7 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 			return e
 		}
 	}
-	if e = s.matchAuthorListsForAsset(ctx, tx, &a); e != nil {
+	if e = s.matchAuthorListsForAsset(ctx, tx, &a, isNew && library.Kind == "regular"); e != nil {
 		return e
 	}
 	j.Processed++

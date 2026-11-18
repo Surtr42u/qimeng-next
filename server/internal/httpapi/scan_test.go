@@ -137,3 +137,43 @@ func TestScanSkipsUnchangedContentAndPrivateTrash(t *testing.T) {
 		t.Fatal("private trash was indexed as a new asset")
 	}
 }
+
+func TestScanningNewAuthorRuleMatchAndLaterManualRemoval(t *testing.T) {
+	f := setup(t)
+	importList(t, f, "rule-before-first-scan", "synthetic.txt", "1  Scanner author\n作品\nmatch.png\n", 0)
+	root, err := f.s.Root.LibraryPath(f.library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "match.png")
+	if err = os.WriteFile(file, pngBytes(t, 35), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if job := f.scan("first-scan-with-rule"); job.Added != 1 || job.IssueCount != 0 {
+		t.Fatal(job)
+	}
+	var page model.Page[model.Asset]
+	decode(t, f.json("GET", "/assets", "", nil, 200), &page)
+	if len(page.Items) != 1 || page.Items[0].AuthorName != "Scanner author" {
+		t.Fatal("new scan asset did not receive its declared author", page)
+	}
+	asset := page.Items[0]
+	url := "/assets/" + asset.ID
+	decode(t, f.json("PATCH", url, "remove-scanned-author", map[string]any{
+		"expectedRevision": asset.Revision, "expectedAuthorsRevision": asset.AuthorsRevision, "authorIds": []string{},
+	}, 200), &asset)
+	if err = os.WriteFile(file, pngBytes(t, 71), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chtimes(file, time.Unix(1700000000, 0), time.Unix(1700000000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if job := f.scan("rescan-manually-detached-author"); job.Changed != 1 || job.IssueCount != 0 {
+		t.Fatal(job)
+	}
+	var updated model.Asset
+	decode(t, f.json("GET", url, "", nil, 200), &updated)
+	if updated.AuthorID != "unknown" || updated.AuthorsRevision != asset.AuthorsRevision || updated.ContentVersion != asset.ContentVersion+1 {
+		t.Fatal("content change rewrote manual author decisions", updated)
+	}
+}

@@ -80,12 +80,18 @@ func List[T any](ctx context.Context, q Querier, query string, args ...any) ([]T
 	return values, rows.Err()
 }
 func SaveAsset(ctx context.Context, q Querier, a model.Asset) error {
+	return writeAsset(ctx, q, a, false)
+}
+
+// InsertAsset requires a fresh identity. A collision fails before any relations
+// are written. Foreign keys guarantee that a new asset has no old relations.
+func InsertAsset(ctx context.Context, q Querier, a model.Asset) error {
+	return writeAsset(ctx, q, a, true)
+}
+
+func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) error {
 	a.FileDate = a.EffectiveFileDate()
 	raw, err := Encode(a)
-	if err != nil {
-		return err
-	}
-	_, err = q.ExecContext(ctx, `INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,created_at,updated_at,favorite,liked,trashed,data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,file_name=excluded.file_name,media_type=excluded.media_type,author_id=excluded.author_id,collection_id=excluded.collection_id,hash=excluded.hash,size=excluded.size,revision=excluded.revision,updated_at=excluded.updated_at,favorite=excluded.favorite,liked=excluded.liked,trashed=excluded.trashed,data=excluded.data`, a.ID, a.LibraryID, a.RelativePath, a.FileName, a.MediaType, a.AuthorID, a.CollectionID, a.Hash, a.Size, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, a.Liked, a.Trashed, raw)
 	if err != nil {
 		return err
 	}
@@ -96,19 +102,32 @@ func SaveAsset(ctx context.Context, q Querier, a model.Asset) error {
 	if a.Favorite && a.FavoritedAt != nil {
 		favoritedAt = a.FavoritedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	}
-	if _, err = q.ExecContext(ctx, "UPDATE assets SET file_date=?,favorited_at=?,cos_work_id=? WHERE id=?", fileDate, favoritedAt, a.CosWorkID, a.ID); err != nil {
+	query := `INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,
+		created_at,updated_at,favorite,liked,trashed,data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	if !insertOnly {
+		query += ` ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,file_name=excluded.file_name,
+			media_type=excluded.media_type,author_id=excluded.author_id,collection_id=excluded.collection_id,hash=excluded.hash,
+			size=excluded.size,revision=excluded.revision,updated_at=excluded.updated_at,favorite=excluded.favorite,
+			liked=excluded.liked,trashed=excluded.trashed,data=excluded.data,file_date=excluded.file_date,
+			favorited_at=excluded.favorited_at,cos_work_id=excluded.cos_work_id`
+	}
+	_, err = q.ExecContext(ctx, query, a.ID, a.LibraryID, a.RelativePath, a.FileName, a.MediaType, a.AuthorID,
+		a.CollectionID, a.Hash, a.Size, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
+		a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, a.Liked, a.Trashed, raw, fileDate, favoritedAt, a.CosWorkID)
+	if err != nil {
 		return err
 	}
-	if _, err = q.ExecContext(ctx, "DELETE FROM asset_authors WHERE asset_id=?", a.ID); err != nil {
-		return err
+	if !insertOnly {
+		for _, table := range []string{"asset_authors", "asset_tags", "asset_sources", "asset_characters"} {
+			if _, err = q.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=?", a.ID); err != nil {
+				return err
+			}
+		}
 	}
 	for _, authorID := range a.AuthorIDs {
 		if _, err = q.ExecContext(ctx, "INSERT INTO asset_authors(asset_id,author_id) VALUES(?,?)", a.ID, authorID); err != nil {
 			return err
 		}
-	}
-	if _, err = q.ExecContext(ctx, "DELETE FROM asset_tags WHERE asset_id=?", a.ID); err != nil {
-		return err
 	}
 	for _, tag := range a.Tags {
 		if _, err = q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO NOTHING", tag, a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z")); err != nil {
@@ -118,16 +137,10 @@ func SaveAsset(ctx context.Context, q Querier, a model.Asset) error {
 			return err
 		}
 	}
-	if _, err = q.ExecContext(ctx, "DELETE FROM asset_sources WHERE asset_id=?", a.ID); err != nil {
-		return err
-	}
 	for _, sourceID := range a.SourceIDs {
 		if _, err = q.ExecContext(ctx, "INSERT INTO asset_sources(asset_id,source_id) VALUES(?,?)", a.ID, sourceID); err != nil {
 			return err
 		}
-	}
-	if _, err = q.ExecContext(ctx, "DELETE FROM asset_characters WHERE asset_id=?", a.ID); err != nil {
-		return err
 	}
 	for _, characterID := range a.CharacterIDs {
 		if _, err = q.ExecContext(ctx, "INSERT INTO asset_characters(asset_id,character_id) VALUES(?,?)", a.ID, characterID); err != nil {

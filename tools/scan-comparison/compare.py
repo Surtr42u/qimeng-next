@@ -166,7 +166,7 @@ def server(binary, version, data, media):
                 spec = {"kind": "regular", "storageId": "fixture", "rootRelativePath": media.name}
             library = api.call("POST", "/api/v1/libraries", {"name": "Synthetic", **spec},
                                key="register-synthetic-library")
-            if version == "next":
+            if version != "installed":
                 def registration_finished():
                     jobs = api.call("GET", "/api/v1/scans?libraryId=" + library["id"])["items"]
                     return jobs and all(j["state"] == "completed" and j["processed"] == 0 for j in jobs)
@@ -208,7 +208,7 @@ def snapshot(version, data, library_id, manifest):
         expected_size, expected_stamp, expected_hash = manifest[path]
         require((size, datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
                 == (expected_size, expected_stamp), f"catalog metadata differs at {path}")
-        if version == "next":
+        if version != "installed":
             require(digest == expected_hash, f"catalog hash differs at {path}")
         identities[path] = asset_id
     require(set(identities) == set(manifest) and len(set(identities.values())) == len(manifest),
@@ -246,7 +246,7 @@ def measure(api, version, library, phase, pid):
     total = FILES + (ADDITIONS if phase == "sparse" else 0)
     added, updated, moved = {"first": (FILES, 0, 0), "unchanged": (0, 0, 0),
                              "sparse": (ADDITIONS, REWRITES, MOVES)}[phase]
-    if version == "next":
+    if version != "installed":
         require((item["processed"], item["added"], item["changed"], item["moved"], item["skipped"],
                  item["missing"], item["issueCount"]) ==
                 (total, added, updated, moved, total - added - updated - moved, 0, 0),
@@ -310,8 +310,10 @@ def report(evidence, metadata, rows):
              f"少量变动包含 {REWRITES} 张原位改写、{MOVES} 张移动、{ADDITIONS} 张新增。每轮核对全部路径、大小、mtime 和已有 ID，Next 同时核对全部内容 SHA-256。",
              "", "| 阶段 | 版本 | HTTP 毫秒（3 次） | HTTP 中位数 ms | 后端中位数 ms | 进程写入中位数 MiB | 截至该阶段 RSS 高水位中位数 MiB | 入库总数 |",
              "|---|---|---|---:|---:|---:|---:|---:|"]
+    if metadata.get("before_next_sha"):
+        lines.insert(3, f"同机附测优化前 Next 提交 {metadata['before_next_sha']}，表中记为 before。")
     for phase in PHASES:
-        for version in ("installed", "next"):
+        for version in dict.fromkeys(row["version"] for row in rows):
             samples = [row for row in rows if row["phase"] == phase and row["version"] == version]
             if not samples:
                 continue
@@ -334,7 +336,7 @@ def report(evidence, metadata, rows):
 
 
 def main():
-    old, new, evidence = map(lambda p: Path(p).resolve(), sys.argv[1:])
+    old, new, evidence, *previous = [Path(p).resolve() for p in sys.argv[1:]]
     evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as work:
         temp = Path(work)
@@ -350,12 +352,14 @@ def main():
                     "manifest_sha256": hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
                     "media_tools_on_path": {name: bool(shutil.which(name)) for name in ("ffmpeg", "ffprobe")}}
         rows = []
-        for index in range(1, 4):
-            order = [("installed", old), ("next", new)]
-            if index == 2:
-                order.reverse()
-            for version, binary in order:
-                rows.extend(trial(version, binary, index, corpus, manifest, temp))
+        versions = [("installed", old), ("next", new)]
+        if previous:
+            metadata["before_next_sha"] = os.environ["BEFORE_NEXT"]
+            versions.insert(1, ("before", previous[0]))
+        for index in range(3):
+            offset = index % len(versions)
+            for version, binary in versions[offset:] + versions[:offset]:
+                rows.extend(trial(version, binary, index + 1, corpus, manifest, temp))
         report(evidence, metadata, rows)
 
 
