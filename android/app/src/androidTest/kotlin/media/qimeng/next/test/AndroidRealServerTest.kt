@@ -233,15 +233,6 @@ class AndroidRealServerTest {
         compose.onNodeWithContentDescription("退出全屏").performClick()
     }
 
-    private fun copyCloudVideo(uri: Uri) {
-        val instrument = InstrumentationRegistry.getInstrumentation()
-        ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
-            requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
-                assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
-            }
-        }
-    }
-
     @Test(timeout = 240_000)
     fun readOnlyArchivePreservesOriginalAfterIndependentBackup() = runBlocking {
         archiveRoundTrip(isolatedServerGraph())
@@ -289,6 +280,7 @@ class AndroidRealServerTest {
         compose.onNodeWithText("设备领取").performClick()
         compose.onNodeWithText("设备结果包").assertExists()
         compose.onNodeWithContentDescription("复制本机影库标识").assertDoesNotExist()
+        compose.onNodeWithText("选择本机目标视频").assertDoesNotExist()
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {
@@ -365,5 +357,14 @@ class AndroidRealServerTest {
     }
     private fun saveScreenshot(name: String) {
         media.qimeng.next.testsupport.captureCloudScreenshot(name)
+    }
+}
+
+internal fun copyCloudVideo(uri: Uri) {
+    val instrument = InstrumentationRegistry.getInstrumentation()
+    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
+        requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
+            assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
+        }
     }
 }

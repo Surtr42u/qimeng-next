@@ -137,32 +137,48 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
         val identity = auth()?.takeIf { it.credentialId != null } ?: return@withContext emptyList()
         val remote = connection(identity).listDeviceApplyTasks(targetDeviceId = identity.device, limit = 20).bodyOrThrow().items.map { task ->
             DevicePackage(task.id, task.state.value, task.createdAt, task.results.orEmpty().map { outcome ->
-                val binding = task.segments.singleOrNull { it.kind == outcome.kind && it.kind == DeviceSegmentKind.nativeSelection }?.let { native ->
+                val segment = task.segments.singleOrNull { it.kind == outcome.kind }
+                val binding = segment?.takeIf { it.kind == DeviceSegmentKind.nativeSelection }?.let { native ->
                     val destination = requireNotNull(native.targetInstanceId) { "原生设备记录缺少目标实例" }
                     DeviceSegments.nativeBinding(task, identity.publisher, destination)
                 }
-                DeviceSegmentResult(outcome.kind.value, outcome.state.value, outcome.code, outcome.receiptId, binding)
+                val legacy = segment?.takeIf { it.kind == DeviceSegmentKind.v2Backup }?.let { LegacyReceiptBinding(it.sourceId, it.sha256, null) }
+                DeviceSegmentResult(outcome.kind.value, outcome.state.value, outcome.code, outcome.receiptId, binding, legacy)
             })
         }
         val old = prefs.getString("run", null)?.let { gson.fromJson(it, DeliveryRun::class.java) }
         if (old == null || old.publisher != identity.publisher || old.device != identity.device || old.destination != settings.session.value?.instanceId) return@withContext remote
         // A protocol-1 import may have completed locally before the old app sent its result. Display that receipt without reopening the job.
         val reported = remote.firstOrNull { it.id == old.task }?.results.orEmpty().mapNotNull { it.receipt }.toSet()
-        val retained = old.results.filter { it.receipt != null && it.receipt !in reported }.map { DeviceSegmentResult(it.kind, it.state, it.code, it.receipt) }
+        val retained = old.results.filter { it.receipt != null && it.receipt !in reported }.map {
+            val legacy = if (it.kind == "v2Backup") LegacyReceiptBinding(null, it.hash, old.destination) else null
+            DeviceSegmentResult(it.kind, it.state, it.code, it.receipt, legacy = legacy)
+        }
         if (retained.isEmpty()) remote else listOf(DevicePackage(old.task, "legacy_local", "", retained)) + remote
     }
-    suspend fun receiptItems(target: Session, result: DeviceSegmentResult): List<DeviceReceiptItem> = withContext(Dispatchers.IO) {
-        val binding = requireNotNull(result.native) { "此记录没有原生包身份" }
-        check(local(target) && binding.target == target.instanceId) { "请连接原收件影库查看本机回执" }
+    suspend fun receipt(target: Session, result: DeviceSegmentResult): DeviceReceipt = withContext(Dispatchers.IO) {
+        check(local(target)) { "请连接原收件影库查看本机回执" }
+        val api = provider.api(target)
         val id = requireNotNull(result.receipt)
-        val receipt = provider.api(target).getNativeDelivery(id).bodyOrThrow()
+        result.legacy?.let { binding ->
+            check(binding.target == null || binding.target == target.instanceId) { "此回执属于其他本机影库" }
+            val plan = api.getV2MigrationPlan(id).bodyOrThrow()
+            val input = api.getV2Import(plan.importId).bodyOrThrow()
+            check(plan.id == id && input.id == plan.importId && (binding.source == null || input.sourceId == binding.source) &&
+                (binding.sha256 == null || input.sha256 == binding.sha256)) { "本机历史计划与此设备回执不符" }
+            return@withContext DeviceReceipt.Legacy(id, plan.state.value, plan.matchedCount, plan.mediaCount,
+                plan.skippedCount, plan.issueCount, plan.fingerprint, plan.checkpointId)
+        }
+        val binding = requireNotNull(result.native) { "此记录没有原生包身份" }
+        check(binding.target == target.instanceId) { "请连接原收件影库查看本机回执" }
+        val receipt = api.getNativeDelivery(id).bodyOrThrow()
         check(receipt.id == id) { "本机返回了其他回执" }
         DeviceSegments.checkBinding(receipt, binding)
-        receipt.items.map { item ->
+        DeviceReceipt.Native(id, receipt.items.map { item ->
             val video = if (item.kind == NativeDeliveryKind.timelineMark) DeviceVideoBinding(item.sourceAssetId, item.sourceContentVersion,
                 item.targetAssetId, item.targetContentVersion, item.contentSha256, item.contentBytes) else null
             DeviceReceiptItem(item.label, item.kind.value, item.block?.value, item.state.value, item.code, item.receiptId, video)
-        }
+        })
     }
     suspend fun clear() = withContext(Dispatchers.IO) { lock.withLock {
         check(prefs.edit().remove("auth").putBoolean("background", false).remove("destination").commit()) { "未能清除设备授权" }

@@ -18,8 +18,6 @@ import java.util.UUID
 data class MaintenanceState(val target: Session? = null, val folder: MaintenanceFolder = MaintenanceFolder(),
     val fragments: List<AuthorFragment> = emptyList(), val cursor: String? = null, val mirror: AuthorMirror? = null,
     val draft: AuthorImportDraft? = null, val missing: MissingAuthorWorks? = null, val summary: AuthorImportSummary? = null,
-    val document: LegacyDocument? = null, val plan: MigrationPreview? = null, val mediaRows: List<MigrationRow> = emptyList(),
-    val authorRows: List<MigrationRow> = emptyList(), val mediaCursor: String? = null, val authorCursor: String? = null,
     val busy: Boolean = false, val error: String? = null)
 
 class MaintenanceViewModel(application: Application) : AndroidViewModel(application) {
@@ -90,27 +88,4 @@ class MaintenanceViewModel(application: Application) : AndroidViewModel(applicat
         val result = graph.authorLists.saveMirror(target, initial, path, fragment, listId, key)
         if (current(target)) mutable.update { it.copy(mirror = result) }
     }
-    fun preview(uri: Uri?, source: String, media: Map<String,String>, authors: Map<String,String>) = act { target ->
-        val document = if (uri == null) requireNotNull(mutable.value.document) else graph.legacyBackups.stage(target, uri, source)
-        if (!current(target)) return@act
-        mutable.update { it.copy(document = document, plan = null, mediaRows = emptyList(), authorRows = emptyList()) }
-        val plan = graph.legacyBackups.prepare(target, document, media, authors, UUID.randomUUID().toString())
-        val items = graph.legacyBackups.rows(target, plan, false)
-        val identities = graph.legacyBackups.rows(target, plan, true)
-        if (current(target)) mutable.update { it.copy(plan = plan, mediaRows = items.items, mediaCursor = items.nextCursor, authorRows = identities.items, authorCursor = identities.nextCursor) }
-    }
-    fun nextRows(authors: Boolean) = act { target ->
-        val original = mutable.value
-        val plan = original.plan ?: return@act
-        val cursor = (if (authors) original.authorCursor else original.mediaCursor) ?: return@act
-        val result = graph.legacyBackups.rows(target, plan, authors, cursor)
-        if (current(target) && mutable.value.plan == plan) mutable.update { if (authors) it.copy(authorRows = it.authorRows + result.items, authorCursor = result.nextCursor)
-            else it.copy(mediaRows = it.mediaRows + result.items, mediaCursor = result.nextCursor) }
-    }
-    fun commit(plan: MigrationPreview, skipped: Boolean) = act { target ->
-        check(mutable.value.plan == plan) { "请重新核对导入预检" }
-        val result = graph.legacyBackups.commit(target, plan, skipped)
-        if (current(target)) mutable.update { it.copy(plan = result) }
-    }
-    fun resetPreview() { if (!mutable.value.busy) mutable.update { it.copy(document = null, plan = null, mediaRows = emptyList(), authorRows = emptyList(), error = null) } }
 }

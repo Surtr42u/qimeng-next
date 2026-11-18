@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import media.qimeng.next.DeviceDeliveryViewModel
+import media.qimeng.next.model.DeviceReceipt
 import media.qimeng.next.model.DeviceSegmentResult
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.component.QimengCapsuleTextField
@@ -88,10 +89,20 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
                 Text(listOf(state, item.createdAt).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.labelMedium)
                 item.results.forEach { result ->
                     Text(segmentDescription(result), style = MaterialTheme.typography.bodySmall)
-                    if (local && result.native?.let { it.target == session?.instanceId } == true && result.receipt != null) {
-                        val items = receipt?.takeIf { it.first == result.receipt }?.second
-                        TextButton(onClick = { model.showReceipt(result) }, enabled = !busy) { Text(if (items == null) "查看逐项回执" else "收起回执") }
-                        items.orEmpty().forEach { entry ->
+                    val canRead = result.native?.let { it.target == session?.instanceId }
+                        ?: result.legacy?.let { it.target == null || it.target == session?.instanceId } ?: false
+                    if (local && canRead && result.receipt != null) {
+                        val current = receipt?.takeIf { it.id == result.receipt }
+                        TextButton(onClick = { model.showReceipt(result) }, enabled = !busy) {
+                            Text(if (current != null) "收起回执" else if (result.legacy != null) "查看历史回执" else "查看逐项回执")
+                        }
+                        if (current is DeviceReceipt.Legacy) {
+                            val status = when (current.state) { "prepared" -> "已预检"; "committed" -> "已提交"; "partial" -> "部分完成"; else -> current.state }
+                            Text("${status} · 匹配 ${current.matched} / ${current.media} · 跳过 ${current.skipped} · 问题 ${current.issues}", style = MaterialTheme.typography.bodySmall)
+                            SelectionContainer { Text("计划指纹 ${current.fingerprint}", style = MaterialTheme.typography.bodySmall) }
+                            current.checkpoint?.let { Text("导入前检查点 $it", style = MaterialTheme.typography.bodySmall) }
+                        }
+                        (current as? DeviceReceipt.Native)?.items.orEmpty().forEach { entry ->
                             val block = when (entry.block) { "x" -> "X 资料"; "basic" -> "基本资料"; "accounts" -> "其他账号"; else -> null }
                             val state = when (entry.state) { "applied" -> "已应用"; "preserved" -> "已保留"; "conflict" -> "冲突"; else -> "待提交" }
                             val kind = when (entry.kind) { "timelineMark" -> "时间轴标记"; "authorList" -> "TXT 片段"; else -> block }
@@ -124,6 +135,10 @@ private fun deliveryReason(code: String?): String? = when (code) {
         "human_protected" -> "保留人工编辑或清空的资料"
         "identity_conflict" -> "目标身份未能明确匹配"
         "target_changed" -> "预检后本机资料已变化"
+        "target_content_changed" -> "指定目标视频的内容或版本已变化"
+        "target_asset_missing" -> "指定的目标视频不存在"
+        "target_content_unverified" -> "无法核实指定视频的原件"
+        "target_binding_conflict" -> "此前回执对应其他视频或版本"
         "source_revision_conflict" -> "来源资料修订冲突"
         "native_partial" -> "请查看逐项处理结果"
         "native_policy_changed" -> "已暂存的原生包使用不同的冲突处理选择"

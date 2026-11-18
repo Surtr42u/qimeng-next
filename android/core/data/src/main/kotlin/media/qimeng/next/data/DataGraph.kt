@@ -21,7 +21,6 @@ class DataGraph private constructor(context: Context) {
     val archives = ArchiveRepository(context, provider, settings)
     val backups = MaintenanceBackupRepository(context, provider, settings, archives).also { archives.retainedByMaintenance = it::referenced }
     val authorLists = AuthorListRepository(context, provider)
-    val legacyBackups = LegacyBackupRepository(context, provider)
     val deviceDelivery = DeviceDeliveryRepository(context, settings, provider, backups)
     internal val archiveProtection = ArchiveProtection(context, archives.store, provider, queue)
     val uploads = UploadRepository(context, queue, settings)

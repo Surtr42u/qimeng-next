@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import media.qimeng.next.model.DevicePackage
-import media.qimeng.next.model.DeviceReceiptItem
+import media.qimeng.next.model.DeviceReceipt
 import media.qimeng.next.model.DeviceSegmentResult
 import media.qimeng.next.model.Session
 import media.qimeng.next.model.Asset
@@ -27,7 +27,7 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
     val settings = current.asStateFlow()
     private val results = MutableStateFlow<List<DevicePackage>?>(null)
     val recent = results.asStateFlow()
-    private val detail = MutableStateFlow<Pair<String, List<DeviceReceiptItem>>?>(null)
+    private val detail = MutableStateFlow<DeviceReceipt?>(null)
     val receipt = detail.asStateFlow()
     private val targetPage = MutableStateFlow<TargetVideoPage?>(null)
     val videos = targetPage.asStateFlow()
@@ -60,9 +60,9 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
     fun refresh() = act { target -> val page = repo.recent(); if (session.value == target) results.value = page }
     fun showReceipt(result: DeviceSegmentResult) = act { target ->
         val id = requireNotNull(result.receipt)
-        if (detail.value?.first == id) detail.value = null else {
-            val items = repo.receiptItems(target, result)
-            if (session.value == target) detail.value = id to items
+        if (detail.value?.id == id) detail.value = null else {
+            val fetched = repo.receipt(target, result)
+            if (session.value == target) detail.value = fetched
         }
     }
     fun searchVideos(query: String, next: Boolean = false) = act { target ->
