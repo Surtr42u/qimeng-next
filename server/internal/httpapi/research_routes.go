@@ -35,6 +35,23 @@ func (a *API) QueryResearchProvider(w http.ResponseWriter, r *http.Request, prov
 	result(w, out)
 }
 
+func (a *API) LookupResearchImage(w http.ResponseWriter, r *http.Request, params generated.LookupResearchImageParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	in, _, e := decode[service.ResearchImageLookup](w, r)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	out, e := a.s.LookupResearchImage(r.Context(), principal(r), r.Header.Get("Idempotency-Key"), in)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	result(w, out)
+}
+
 func (a *API) GetAssetMaintenanceTask(w http.ResponseWriter, r *http.Request, id generated.Id) {
 	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		return a.s.AssetTaskContext(r.Context(), principal(r), id)

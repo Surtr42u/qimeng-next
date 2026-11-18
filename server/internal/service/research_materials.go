@@ -337,7 +337,7 @@ func (s *Service) ResearchArtifact(ctx context.Context, p model.Principal, id st
 	defer cache.Close()
 	var raw string
 	var content []byte
-	e = cache.QueryRowContext(ctx, "SELECT data,content FROM frames WHERE id=? AND expires>?", id, time.Now().Unix()).Scan(&raw, &content)
+	e = cache.QueryRowContext(ctx, "SELECT data,content FROM frames WHERE id=? AND expires>? AND length(content) BETWEEN 1 AND ?", id, time.Now().Unix(), 2<<20).Scan(&raw, &content)
 	if e != nil {
 		return artifact, nil, Normalize(e)
 	}

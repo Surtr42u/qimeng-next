@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from qimeng_ai.config import Config
 from qimeng_ai.errors import ToolError
@@ -15,10 +16,18 @@ from qimeng_ai.state import State
 class RecordingTransport:
     def __init__(self):
         self.calls = []
+        self.inputs = []
 
     def call(self, operation, arguments):
         self.calls.append((operation, arguments))
-        return {"id": arguments["id"], "manifestState": "sealed", "expectedInputs": len(arguments["body"]["inputs"])}
+        if operation == "setBatchInputs":
+            self.inputs = arguments["body"]["inputs"]
+            return {"id": arguments["id"], "manifestState": "sealed", "manifestFingerprint": "fixture",
+                    "expectedInputs": len(self.inputs)}
+        if operation == "getBatch":
+            return {"batch": {"manifestFingerprint": "fixture"},
+                    "inputs": [{"id": row["id"], "state": "pending"} for row in self.inputs]}
+        raise AssertionError(operation)
 
 
 def runtime(root: Path):
@@ -45,7 +54,7 @@ class OriginalInputManifest(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first["inputCount"], 2)
             self.assertEqual([item["sourceRelativePath"] for item in first["inputs"]], ["b.png", "nested/a.png"])
-            self.assertEqual(value.transport.calls[0], value.transport.calls[1])
+            self.assertEqual(value.transport.calls[:2], value.transport.calls[2:])
             self.assertEqual(value.transport.calls[0][0], "setBatchInputs")
             self.assertEqual(value.transport.calls[0][1]["body"]["expectedManifestRevision"], 1)
 
@@ -58,6 +67,25 @@ class OriginalInputManifest(unittest.TestCase):
                 register(value, {"storage": "input", "batchId": "batch-synthetic", "operationId": "too-many-inputs"})
             self.assertEqual(error.exception.code, "INTAKE_LIMIT")
             self.assertEqual(value.transport.calls, [])
+
+    def test_successful_seal_preserves_its_receipt_when_status_cannot_be_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value, source = runtime(Path(directory))
+            (source / "selected.txt").write_bytes(b"synthetic text")
+            original_call = value.transport.call
+
+            for error in (ToolError("NETWORK_ERROR", "response interrupted"), ToolError("scope_denied", "read scope unavailable", status=403)):
+                with self.subTest(code=error.code):
+                    def call(operation, arguments):
+                        if operation == "getBatch":
+                            raise error
+                        return original_call(operation, arguments)
+
+                    with patch.object(value.transport, "call", call):
+                        result = register(value, {"storage": "input", "batchId": "batch-synthetic", "operationId": "known-seal-result"})
+                    self.assertEqual(result["batch"]["manifestFingerprint"], "fixture")
+                    self.assertEqual(result["reportReadError"]["code"], error.code)
+                    self.assertNotIn("state", result["inputs"][0])
 
     def test_changed_source_reference_cannot_redefine_the_selection(self):
         with tempfile.TemporaryDirectory() as directory:

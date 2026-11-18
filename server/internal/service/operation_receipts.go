@@ -54,13 +54,17 @@ func (s *Service) matchingReceipt(ctx context.Context, principalID, operation, k
 // distinct operations; callers must select the operation rather than guess.
 func (s *Service) Operation(ctx context.Context, p model.Principal, key, operation string) (map[string]any, error) {
 	var research *PublicResearchResult
-	if operation == publicResearchOperation || operation == "" && p.ParentDelegationID != "" && p.Has("research") && activeProviderTaskID(p) != "" {
+	providerOperation := operation == publicResearchOperation || operation == imageResearchOperation
+	if providerOperation || operation == "" && p.ParentDelegationID != "" && p.Has("research") && activeProviderTaskID(p) != "" {
 		var err error
 		research, err = s.researchOperationByKey(ctx, p, key)
 		if err != nil {
 			return nil, err
 		}
-		if operation == publicResearchOperation {
+		if providerOperation {
+			if research != nil && research.receiptOperation() != operation {
+				research = nil
+			}
 			return researchOperationResult(key, research)
 		}
 	}

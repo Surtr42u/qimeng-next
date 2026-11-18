@@ -326,7 +326,7 @@ func (s *Service) sourceRulePage(ctx context.Context, tx *sql.Tx) (bool, error) 
 		if changed {
 			a.Revision++
 			a.UpdatedAt = time.Now().UTC()
-			if e = store.SaveAsset(ctx, tx, a); e != nil {
+			if e = store.SaveAssetEdits(ctx, tx, a, false, store.CompleteTaxonomy(a)); e != nil {
 				return false, e
 			}
 		}

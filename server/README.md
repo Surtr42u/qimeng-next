@@ -20,6 +20,7 @@
 - `QIMENG_AI_TOKEN`：独立只读凭据，不能通过工具可见性取得写权限。
 - `QIMENG_AI_CONFIGURED=true`：可信执行器已接线的运行配置声明；不代表服务内含模型。
 - `QIMENG_RESEARCH_ENABLED=true` 开启固定端点的公开文本查证，缺省关闭。AI 任务另须获得具体来源、对象和预算授权。部署状态、来源矩阵及剩余额度由 `GET /research/context` 提供。本地取证与预览可独立使用。外发字段、限流和回执规则见 [API 使用约定](../docs/api.md#公开资料查证)。
+- `QIMENG_RESEARCH_LENS_ENDPOINT` 为可选的单帧反向查证服务地址，例如 `http://127.0.0.1:18421`。须使用同一网络命名空间里的数字回环地址、明确端口和与伴随服务一致的 `QIMENG_RESEARCH_SIDECAR_TOKEN`。服务固定请求 `/lens`，只传一张授权的研究 JPEG。省略地址即关闭。程序读入密钥后会从自身的进程环境移除。启动原生服务包的示例见[快速开始](../docs/quickstart.md#接入已有的单帧查证服务)。
 - `QIMENG_FFMPEG` / `QIMENG_FFPROBE`：可选可信媒体工具可执行文件。未配置时从 PATH 查找；缺少工具时明确报告格式预览/探测能力缺失。
 - `QIMENG_STARTUP_RECEIPT` 与 `QIMENG_LAUNCH_ID`：可选宿主启动回执，必须同时设置；私有绝对文件路径与本次随机启动身份。成功绑定监听器后原子写入实例ID和实际地址，不写凭据。
 - `QIMENG_EPHEMERAL_TLS=true`：仅供受监督回环实例；为本次进程生成TLS证书，在私有回执中提供公开DER。宿主必须只信该证书并保留正常主机名校验。默认关闭，PC/NAS原运行方式不变。
@@ -52,7 +53,7 @@ Android 普通应用在私有数据目录也会遇到硬链接被拒绝。文件
 
 ## 模块与验证
 
-云端使用 oapi-codegen v2.8.2 从 `api/openapi.yaml` 生成 Go 类型、客户端、基于标准库的服务端接口和内嵌协议。`internal/httpapi.API` 在编译时实现全部接口，真实请求使用生成的路由。JSON 请求结构通过 kin-openapi v0.142.0（MIT）解析；流上传和 Range 下载保留各自的字节流处理。服务包会使用同一提交生成的代码。[生成器](https://github.com/oapi-codegen/oapi-codegen/tree/v2.8.2) · [kin-openapi 许可证](https://github.com/getkin/kin-openapi/blob/v0.142.0/LICENSE)
+云端使用 oapi-codegen v2.8.2 从 `api/openapi.yaml` 生成 Go 类型、客户端、标准库服务端接口和内嵌协议。`internal/httpapi.API` 在编译时实现全部接口，运行服务使用生成的路由。kin-openapi v0.153.0 校验 JSON 请求。文件上传与 Range 下载保留流式读写，由真实入口的契约测试覆盖。[生成器](https://github.com/oapi-codegen/oapi-codegen/tree/v2.8.2) · [kin-openapi 版本与 MIT 许可证](https://github.com/getkin/kin-openapi/tree/v0.153.0)
 
 `internal/sourcerules` 从独立 JSON 读取经用户审定的 133 个出处组和 1,394 行角色检索词。原词条来自旧版本 d0215962 的 `server/internal/sourcematcher/source_groups_data.go` 纯数据表。仅转录规范名、变体和角色别名。新匹配代码按归一化最长前缀定位出处，优先采用出处内的角色别名，表未命中时再按文件名和停用词提取。遇到多个同等匹配候选时保留候选名称，并允许以后人工核对。
 

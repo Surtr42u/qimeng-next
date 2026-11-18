@@ -22,6 +22,7 @@ type DelegationPolicy struct {
 	AllowClear        bool     `json:"allowClear"`
 	CanIngest         bool     `json:"canIngest"`
 	CanResearch       bool     `json:"canResearch"`
+	CanLookupImages   bool     `json:"canLookupImages,omitempty"`
 	ResearchProviders []string `json:"researchProviders,omitempty"`
 	CanResearchAssets bool     `json:"canResearchAssets,omitempty"`
 	AssetFields       []string `json:"assetFields,omitempty"`
@@ -53,6 +54,7 @@ type DelegatedTaskStart struct {
 	Mode                   string   `json:"mode"`
 	MaxResearchCalls       *int     `json:"maxResearchCalls"`
 	ResearchProviders      []string `json:"researchProviders,omitzero"`
+	AllowImageLookup       bool     `json:"allowImageLookup,omitempty"`
 	AuthorID               string   `json:"authorId"`
 	AssetID                string   `json:"assetId"`
 	ExpectedContentVersion int64    `json:"expectedContentVersion"`
@@ -201,6 +203,9 @@ func (s *Service) CreateDelegation(ctx context.Context, w *Write, in DelegationP
 	}
 	if e = validateResearchProviders(in.ResearchProviders, in.CanResearch, in.MaxResearchCalls); e != nil {
 		return result, e
+	}
+	if in.CanLookupImages && (!in.CanResearch || in.MaxResearchCalls < 1 || !in.CanIngest && !in.CanResearchAssets) {
+		return result, Fail(400, "image_lookup_permission_invalid", "单帧外发须授权接收或作品预览，并授予研究权限与正数预算。")
 	}
 	if len(in.LibraryIDs) == 0 && (in.CanIngest || in.CanOrganize) {
 		return result, Fail(400, "library_required", "入库整理须明确选择允许的库。")
@@ -353,8 +358,19 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 			if e != nil {
 				return result, e
 			}
-			if b.LibraryID != in.LibraryID || b.Mode != mode || b.MaxResearchCalls > budget || b.State != "waiting_executor" && b.State != "receiving" {
+			if b.LibraryID != in.LibraryID || b.Mode != mode || b.MaxResearchCalls > budget {
 				return result, Fail(409, "batch_not_claimable", "批次范围、预算或状态不符合本授权。")
+			}
+			claimable := b.State == "waiting_executor" || b.State == "receiving"
+			if b.State == "partial" {
+				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id
+ WHERE i.batch_id=? AND i.cancelled=0 AND i.rejection_code='' AND (i.upload_id IS NULL OR u.state IN ('receiving','staged')))`, b.ID).Scan(&claimable)
+				if e != nil {
+					return result, e
+				}
+			}
+			if !claimable {
+				return result, Fail(409, "batch_not_claimable", "批次没有可接手的待处理输入。")
 			}
 			var exists int
 			e = s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM delegated_tasks WHERE task_id=?", b.ID).Scan(&exists)
@@ -470,6 +486,9 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 	if !p.Has("research") || researchLimit == 0 {
 		providers = []string{}
 	}
+	if in.AllowImageLookup && (!d.CanLookupImages || in.Kind == "author" || !p.Has("research") || researchLimit <= 0) {
+		return result, Fail(403, "image_lookup_denied", "单帧外发须属于获准的媒体任务，并具有研究预算。")
+	}
 	if providers == nil {
 		providers = []string{}
 	}
@@ -477,7 +496,7 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 	if e != nil {
 		return result, e
 	}
-	if _, e = q.ExecContext(ctx, "INSERT INTO delegated_tasks(task_id,delegation_id,credential_id,kind,created_day,max_calls,deadline,research_providers,provider_limit) VALUES(?,?,?,?,?,?,?,?,?)", result.TaskID, d.ID, p.ID, result.Kind, today, d.MaxCallsPerTask, limitExpiry(d, time.Duration(d.TaskSeconds)*time.Second).Format(time.RFC3339Nano), encoded, researchLimit); e != nil {
+	if _, e = q.ExecContext(ctx, "INSERT INTO delegated_tasks(task_id,delegation_id,credential_id,kind,created_day,max_calls,deadline,research_providers,provider_limit,allow_image_lookup) VALUES(?,?,?,?,?,?,?,?,?,?)", result.TaskID, d.ID, p.ID, result.Kind, today, d.MaxCallsPerTask, limitExpiry(d, time.Duration(d.TaskSeconds)*time.Second).Format(time.RFC3339Nano), encoded, researchLimit, in.AllowImageLookup); e != nil {
 		return result, e
 	}
 	result.Credential = p

@@ -1,19 +1,18 @@
 """云端同提交Go服务+真正stdio MCP子进程，只有显式隔离地址才执行。"""
 import asyncio
 import base64
-import json
 import os
 from pathlib import Path
-import sys
 import tempfile
 import unittest
-import urllib.request
 
-from mcp import Client, StdioServerParameters
+from mcp import Client
+
+from live_fixture import CloudGoFixture
 
 
 @unittest.skipUnless(os.environ.get("QIMENG_TEST_BASE") == "http://127.0.0.1:18481", "requires cloud isolated Go service")
-class LiveMCP(unittest.IsolatedAsyncioTestCase):
+class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
     async def test_read_only_alias_lookup_preserves_each_candidate_identity(self):
         self.assertEqual(os.environ.get("CI"), "true")
         library = self.request("POST", "/libraries", {"name": "Alias lookup", "kind": "regular"}, key="mcp-alias-library")
@@ -129,32 +128,6 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(context.structured_content["batch"]["id"], task["taskId"])
         self.request("DELETE", "/ai/delegations/" + grant["delegation"]["id"])
 
-    def request(self, method, path, body=None, *, key=None):
-        headers = {"Authorization": "Bearer " + os.environ["QIMENG_E2E_TOKEN"]}
-        data = None
-        if body is not None:
-            data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
-        if key:
-            headers["Idempotency-Key"] = key
-        request = urllib.request.Request(os.environ["QIMENG_TEST_BASE"] + "/api/v1" + path, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read()
-            return json.loads(raw) if raw else None
-
-    def process(self, root, token, permissions, extra_environment=None):
-        source = root / "input"
-        source.mkdir(exist_ok=True)
-        return StdioServerParameters(command=sys.executable, args=["-m", "qimeng_ai.cli", "mcp"], env={
-            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
-            "QIMENG_API_BASE": os.environ["QIMENG_TEST_BASE"], "QIMENG_API_TOKEN": token,
-            "QIMENG_AI_STATE_DIR": str(root / "state"), "QIMENG_AI_TASK_ID": "cloud-live",
-            "QIMENG_AI_STORAGES": json.dumps({"input": str(source)}),
-            "QIMENG_AI_PERMISSIONS": permissions, "QIMENG_AI_MAX_SECONDS": "900",
-            "QIMENG_AI_ALLOW_MEDIA_TO_MODEL": "true",
-            **(extra_environment or {}),
-        })
-
     async def test_protected_original_goes_to_the_native_trash_only_once(self):
         self.assertEqual(os.environ.get("CI"), "true")
         import subprocess
@@ -200,6 +173,109 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(trashed.read_bytes(), expected)
                 result = await call("task.read", {"id":batch["id"]})
                 self.assertEqual(result["batch"]["cleanupState"], "recycled")
+
+    async def test_mixed_selection_survives_executor_rotation_and_protects_only_published_media(self):
+        import hashlib
+        import subprocess
+        from urllib.error import HTTPError
+
+        self.assertEqual(os.environ.get("CI"), "true")
+        library = self.request("POST", "/libraries", {"name": "Mixed intake fixture", "kind": "regular"}, key="mixed-intake-library")
+        grant = self.request("POST", "/ai/delegations", {
+            "label": "Mixed selection", "libraryIds": [library["id"]], "authorIds": [], "allAuthors": False,
+            "allowedFields": [], "candidateBlocks": [], "allowClear": False, "canIngest": True,
+            "canResearch": False, "canOrganize": False, "canRecycleSources": True, "maxResearchCalls": 0,
+            "maxUpdates": 1, "maxTasksPerDay": 2, "validDays": 1, "maxCallsPerTask": 100, "taskSeconds": 3600,
+        })
+        self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "originals"
+            source.mkdir()
+            (source / "empty.png").touch()
+            (source / "notes.TXT").write_bytes(b"Synthetic accompanying text")
+            for name, options in [("picture.png", ["-frames:v", "1"]), ("video.mp4", ["-t", "0.5", "-c:v", "libx264", "-pix_fmt", "yuv420p"])]:
+                subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=48x32", *options,
+                                "-threads", "1", str(source / name)], check=True)
+            originals = {p.name: p.read_bytes() for p in source.iterdir()}
+            env = {"QIMENG_AI_STORAGES": json.dumps({"input": str(source)}), "QIMENG_AI_RECYCLE_STORAGES": '["input"]',
+                   "XDG_DATA_HOME": str(root / "xdg")}
+            permissions = "read,delegate,ingest,local.read,source.cleanup,local.recycle"
+            token = grant["credential"]["token"]
+            (root / "first").mkdir()
+            (root / "next").mkdir()
+
+            async def call(client, name, **args):
+                result = await client.call_tool(name, args)
+                self.assertFalse(result.is_error, result.content)
+                return result.structured_content
+
+            async with Client(self.process(root / "first", token, permissions, env)) as first:
+                started = await call(first, "task.start", operationId="mixed-intake-start", body={
+                    "kind": "intake", "libraryId": library["id"], "label": "All four selections", "mode": "ordinary"})
+                task = started["taskId"]
+                registration = {"taskId": task, "batchId": task, "operationId": "mixed-intake-manifest", "storage": "input"}
+                sealed = await call(first, "intake.register", **registration)
+                entries = {entry["originalFileName"]: entry for entry in sealed["inputs"]}
+                self.assertEqual(set(entries), originals.keys())
+                self.assertEqual({k: (v["state"], v.get("errorCode")) for k, v in entries.items()}, {
+                    "empty.png": ("failed", "empty_input"), "notes.TXT": ("failed", "unsupported_media"),
+                    "picture.png": ("pending", None), "video.mp4": ("pending", None)})
+
+                def transfer(name, entry):
+                    return {"taskId": task, "batchId": task, "libraryId": library["id"], "mode": "ordinary",
+                            "operationId": "mixed-upload-" + name, "fileName": name,
+                            "fileRef": entry["fileRef"], "inputId": entry["inputId"]}
+
+                published = await call(first, "upload.file", **transfer("picture.png", entries["picture.png"]))
+                self.assertEqual(published["status"], "ingested")
+                async with Client(self.process(root / "next", token, permissions, env)) as other:
+                    await call(other, "task.resume", operationId="mixed-intake-resume", id=task)
+                    stale = await first.call_tool("task.context", {"taskId": task, "id": task})
+                    self.assertTrue(stale.is_error)
+                    replay = await call(other, "intake.register", **registration)
+                    self.assertEqual(replay["batch"], sealed["batch"])
+                    fresh = {entry["originalFileName"]: entry for entry in replay["inputs"]}
+                    self.assertEqual({k: v["inputId"] for k, v in fresh.items()}, {k: v["inputId"] for k, v in entries.items()})
+                    again = await call(other, "upload.file", **transfer("picture.png", fresh["picture.png"]))
+                    self.assertEqual((again["upload"]["id"], again["asset"]["id"]), (published["upload"]["id"], published["asset"]["id"]))
+                    video = await call(other, "upload.file", **transfer("video.mp4", fresh["video.mp4"]))
+                    self.assertEqual(video["status"], "ingested")
+                    report = await call(other, "task.context", taskId=task, id=task)
+                    self.assertEqual((report["batch"]["expectedInputs"], report["batch"]["state"], len(report["inputs"]), len(report["items"])), (4, "partial", 4, 2))
+                    self.assertNotIn("upload.file", report["nextActions"])
+                    assets = await call(other, "asset.query", taskId=task, libraryId=library["id"])
+                    self.assertEqual({a["id"]: a["hash"] for a in assets["items"]}, {
+                        published["asset"]["id"]: hashlib.sha256(originals["picture.png"]).hexdigest(),
+                        video["asset"]["id"]: hashlib.sha256(originals["video.mp4"]).hexdigest()})
+
+                    protection = await call(other, "backup.protect", taskId=task, id=task, **{"Idempotency-Key": "mixed-input-protection"})
+                    for _ in range(60):
+                        observed = self.request("GET", f"/batches/{task}/protections/{protection['id']}")
+                        if observed["state"] not in {"queued", "running"}:
+                            break
+                        await asyncio.sleep(.25)
+                    protection = await call(other, "backup.protection.read", taskId=task, id=task, protectionId=protection["id"])
+                    self.assertEqual(protection["state"], "completed")
+                    covered = {item["inputId"]: item for item in protection["items"]}
+                    self.assertEqual(set(covered), {v["inputId"] for v in entries.values()})
+                    for name in ("picture.png", "video.mp4"):
+                        self.assertEqual(covered[fresh[name]["inputId"]]["state"], "protected")
+                    for name, reason in (("empty.png", "empty_input"), ("notes.TXT", "unsupported_media")):
+                        input_id = fresh[name]["inputId"]
+                        self.assertEqual((covered[input_id]["state"], covered[input_id]["reason"]), ("retained", reason))
+                        self.assertFalse(covered[input_id].get("assetId") or covered[input_id].get("uploadId"))
+                        denied = await other.call_tool("source.recycle", {"taskId": task, "batchId": task, "inputId": input_id,
+                            "fileRef": fresh[name]["fileRef"], "protectionId": protection["id"], "operationId": "mixed-deny-" + name})
+                        self.assertTrue(denied.is_error)
+                        self.assertEqual(denied.structured_content["code"], "INPUT_NOT_INGESTED")
+                        with self.assertRaises(HTTPError) as denied_permit:
+                            self.request("POST", f"/batches/{task}/protections/{protection['id']}/cleanup-permits",
+                                {"inputId": input_id, "expectedHash": published["sha256"],
+                                 "sourceSize": len(originals["picture.png"])}, key="mixed-permit-" + name)
+                        with denied_permit.exception as error:
+                            self.assertEqual((error.code, json.load(error)["code"]), (409, "input_not_protected"))
+                    self.assertEqual({p.name: p.read_bytes() for p in source.iterdir()}, originals)
 
     async def test_stdio_intake_and_author_maintenance(self):
         if os.environ.get("CI") != "true":
