@@ -24,6 +24,14 @@
 
 若实例关闭公开查证，返回 HTTP 403 和 `research_provider_disabled`，请求尚未发出，本地整理可继续。遇到查询应答丢失，可用当前任务凭据读取 `GET /operations/{key}?operation=queryResearchProvider`。原查询仍在进行时返回 HTTP 409 和 `research_query_pending`。终态回执含原键、查询 ID、任务 ID 及结果状态。同一任务续接后可核销原回执。隔离恢复后重新授权的执行器只能核销自身签发的查询。旧开发版本缺少签发记录时，管理员仍可按查询 ID 阅读留存的证据。
 
+### 单帧反向查证
+
+`GET /research/context` 的 `imageLookupEnabled` 表示部署者已配置受信 Lens 伴随服务，`imageLookupAllowed` 表示当前授权或任务允许外发。本人创建长期授权时须指定 `canLookupImages=true`、研究权限、正数预算与媒体范围。接收或作品任务还须主动指定 `allowImageLookup=true`。旧授权、旧任务与省略字段的任务均保持单帧外发关闭。七个文本来源的名单与执行器向模型展示预览的许可分别配置。
+
+从当前任务的研究材料取 `artifacts[i].id` 和 `artifacts[i].sha256`。调用 `POST /research/image-lookup` 时将两者传作 `frameId` 和 `frameSha256`，接收任务另传 `uploadId` 与 `expectedHash`，已有作品另传 `assetId` 与 `contentVersion`。本地预览缓存有效期为 24 小时，过期后可重新读取当前任务的材料。Go 在入账前核实任务、源版本及帧摘要，只向配置好的 `/lens` 发送一个名为 `frame.jpg` 的 multipart 文件，最长边 640 像素、最多 2 MiB。上传名、路径、作品或任务 ID 均留在本机。伴随服务收到的字节摘要须与所选帧一致。
+
+请求与文本查证共享任务调用和研究预算。单次最长 95 秒，并受任务截止时间约束；响应上限 256 KiB。同一幂等键重复提交只取得原回执，处理中为 202。应答丢失可按 `GET /operations/{key}?operation=lookupResearchImage` 或查询 ID 核销。成功回执的 `items` 只收录真实候选链接，`imageHints` 单列无链接的域名与标题，二者最多各 20 项。空结果为 `not_found`。伴随服务的 `BUSY` 为 `rate_limited`，`BLOCKED_BOT` 为 `blocked`；浏览器未就绪、未到结果页、超时或摘要不符均为 `unavailable`。已中断的任务保留 `interrupted`。所有 Lens 线索的 `evidenceKind` 都是 `lead`，确认作品归属仍须独立核实。
+
 ## 显式设备维护包
 
 PC 或 NAS 的管理员在 `POST /device/credentials` 登记目标设备及客户端生成的 32 字节独立随机凭据（无填充 base64url）。服务只返回凭据 ID、设备标签、显示名和到期时间。轮换须提供当前凭据 ID。设备可用 `GET /sessions/current` 核对本人的设备身份与 `device.apply` 权限，登记端的媒体目录和管理接口另需本人会话。
@@ -74,6 +82,8 @@ COS 分区由实际关联的 COS 作者决定，不按库类型猜测。COS 库�
 
 文件提供器连名称也读取失败时，清单保留`id`并设置`nameState=unavailable`、省略原名，界面按选择序号显示读取失败，不能保存伪造文件名。默认`known`必须提供真实原名。后来来源恢复可沿原inputId上传，已知原名由Upload保留；原清单的未知状态不会改写成当时已知。
 
+已知来源长度可以是零。Go 在封存时给每个空文件记下 `failed / empty_input`，给已知后缀不受支持的文件记下 `failed / unsupported_media`。结果保存在原输入 ID 下，可从批次详情或任务上下文回读。这些项没有上传或资产 ID，来源保持原状。其余待接收项继续上传，整批状态显示 `partial`。不知道名称或长度时仍可等待实际媒体，后续上传照常核实命名、长度、魔数和内容。换宿主后沿用原批次、输入与幂等键，已完成的上传返回原回执。
+
 `BatchDetail.inputs`及分页任务上下文按原选择顺序报告，包括从未收到的`pending`项。完成条件为封存数量、输入映射、实际上传及入库逐项一致；只完成已经上传的子集不能标整批完成。旧开发批次不能反推真实意图，追加迁移标记`legacy_unverified`并保留旧明细，不伪造清单证据。原始选择与业务修订分别使用`manifestRevision`与`revision`。
 
 取消尚未收到的项用`POST /batches/{id}/inputs/{inputId}/cancel`，提交原`manifestFingerprint`与稳定幂等键。清单行不删除，只记录`cancelled`；如已绑定未发布上传，同一用例取消该上传。已入库或有待恢复发布意图时拒绝倒退。取消项不算成功入库，整批保留partial和原始数量，来源继续保留。
@@ -117,6 +127,8 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 标签整组另有 `tagSetUpdatedAt` 与 `tagSetSource`。只有真正标签编辑、词表改名/删除造成的关联变化及明确迁入整组会修改它们，喜欢、改名或移动不会充当标签时钟。未知/相同时间的不同整组保持冲突；迁移不取并集来掩盖先后不明。词表墓碑也适用于迁入关系，不因旧候选重新关联而复活词条。
 
 管理接口提供库启停、目录创建和分页目录读取、标签词表维护、单条标签移除、作者删除和明确合并。全局词表改名/删除与资产关联在一个事务内收敛。`sourceIds` 与 `characterIds` 是原作与角色的稳定关联；`source`/`characters` 为兼容展示。`acquisitionSources` 是单独的用户获取渠道。
+
+`PATCH /assets/{id}` 只需发送改动的维度。ID 数组按传入顺序保存，空数组表示解除这一维的明确选择。保留角色时，作品仍会显示该角色当前所属的出处。在没有关联词条的维度，兼容文字按原文保存。已有词条时只提交不同的展示文字会得到 `409 taxonomy_ids_required`，本次其他修改也会回滚。使用稳定 ID 更换词条，或先明确清空这组 ID 并在同一请求提供文字线索。详情、列表、回执及单件作品的分面引用按同一套关系回读。
 
 作者也有单独的 `acquisitionSources` 全量集合，以作者修订保护清空/替换。`/acquisition-vocabulary` 保存用户维护的组合渠道词表，`sources` 保留组合项与顺序，`suggestions` 由 Go 按空白拆词并保序去重。公开主页和作品出处不会被当作获取渠道；当前资料任务 scope 未授权此字段，AI 不能通过夹带新字段修改它。
 

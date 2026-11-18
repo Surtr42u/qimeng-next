@@ -9,6 +9,9 @@ export QIMENG_DEFAULT_BACKUP_TARGET=proof
 export QIMENG_LISTEN='127.0.0.1:18481'
 export QIMENG_TIMEZONE='Asia/Shanghai'
 export QIMENG_AI_CONFIGURED='true'
+export QIMENG_RESEARCH_LENS_ENDPOINT='http://127.0.0.1:18483'
+export QIMENG_RESEARCH_SIDECAR_TOKEN
+QIMENG_RESEARCH_SIDECAR_TOKEN=$(openssl rand -hex 32)
 export QIMENG_ADMIN_TOKEN='synthetic-cloud-only-owner-credential-18481'
 export QIMENG_AI_TOKEN='synthetic-cloud-only-readonly-credential-18481'
 export QIMENG_E2E_TOKEN="$QIMENG_ADMIN_TOKEN"
@@ -25,5 +28,5 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'Isolated MCP server did not become ready'; exit 1; fi
-python -m unittest discover -s ai/tests -p test_live.py -v
+python -m unittest discover -s ai/tests -p 'test_live*.py' -v
 npm --prefix tools/mcp-compat test

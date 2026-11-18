@@ -23,3 +23,5 @@
 初期三个实现子代理为 GPT-6 Astra / max，分别负责 Go/API、Web/桌面、Android。2026-11-18 用户将主会话切换到 GPT-6.2 Astra 并要求更换子代理。原三个代理已停止，新三个均以 GPT-6.2 Astra / max 启动，沿用对应分工，接续代码并复查实际用户流程。云端结果按具体提交列在[当前状态](status.md)。
 
 公开仓库后，后端进一步分工。Go/API 子代理负责备份恢复、研究回执和 v2 作者资料的受控覆盖，另派的同型号子代理在同台云机器上测量两个版本的实际扫描。Android 子代理核验手机消费端，主代理收取同提交生成的协议锁，复核云端结果并整合。
+
+2026-11-19 起，维护者按所有者要求继续在桌面会话协调开发，编译、测试、依赖核对和性能测量都由 GitHub Actions 执行。三位 GPT-6.2 Astra / max 子代理分别复核并实现协议与混合文件清单、数据库和研究网关、Android 数据层与 MCP 消费。维护者整合改动，用云端生成物和实际用户操作核对每一批。该阶段暂停界面改版。[原生数据与多端验收](https://github.com/Surtr42u/qimeng-next/pull/1) · [别名与稳定身份](https://github.com/Surtr42u/qimeng-next/pull/2) · [出处角色、清单、图片查证](https://github.com/Surtr42u/qimeng-next/pull/3)

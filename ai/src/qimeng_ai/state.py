@@ -14,6 +14,10 @@ from .errors import ToolError
 MAX_CACHE_BYTES = 256 * 1024 * 1024
 MAX_RESULT_BYTES = 32 * 1024 * 1024
 RESULT_TTL = 24 * 3600
+RESEARCH_QUERY_OPERATIONS = {
+    "research.provider.query": "queryResearchProvider",
+    "research.image.search": "lookupResearchImage",
+}
 
 
 def encode(value) -> str:
@@ -174,8 +178,7 @@ class State:
         if row is None:
             raise ToolError("PENDING_NOT_FOUND", "没有该任务的未决操作")
         suffix = {"upload.file": ":complete", "source.recycle": ":receipt"}.get(row["tool"], "")
-        operation = "queryResearchProvider" if row["tool"] == "research.provider.query" else None
-        return key + suffix, operation
+        return key + suffix, RESEARCH_QUERY_OPERATIONS.get(row["tool"])
 
     def receipt_key(self, key: str) -> str:
         return self.receipt_target(key)[0]

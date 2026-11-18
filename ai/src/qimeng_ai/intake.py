@@ -12,7 +12,7 @@ from .files import guarded_path, identity, open_reference, MAX_DIRECTORY_ENTRIES
 
 def tool_definitions() -> list[dict]:
     return [{"name": "intake.register", "scope": "ingest", "readOnly": False,
-             "description": "传输前完整登记原始选择。提供逻辑storage/directory自动盘点全部文件，或明确的完整fileRefs数组；最多100项，超额明确拒绝而不截断。返回每项稳定inputId，上传必须沿用。不会删来源。",
+             "description": "传输前登记所选目录或完整fileRefs，最多100项。返回每项稳定inputId；有read许可时附Go认定的当前状态和原因。仅上传pending项，失败项留在原处。",
              "inputSchema": {"type": "object", "properties": {
                  "batchId": {"type": "string"},
                  "operationId": {"type": "string", "minLength": 8, "maxLength": 100},
@@ -105,4 +105,18 @@ def register(runtime, arguments: dict) -> dict:
     # GET response; retry of a lost seal response must replay the exact request.
     batch = runtime.transport.call("setBatchInputs", {"id": arguments["batchId"],
         "Idempotency-Key": arguments["operationId"], "body": {"expectedManifestRevision": 1, "inputs": inputs}})
-    return {"batch": batch, "inputs": bindings, "inputCount": len(inputs), "sourceRetained": True}
+    result = {"batch": batch, "inputs": bindings, "inputCount": len(inputs), "sourceRetained": True, "next": "task.context"}
+    if "read" in runtime.config.permissions:
+        try:
+            report = runtime.transport.call("getBatch", {"id": arguments["batchId"]})
+        except ToolError as exc:
+            result["reportReadError"] = exc.as_dict()
+            return result
+        rows = report["inputs"]
+        if (report["batch"]["manifestFingerprint"] != batch["manifestFingerprint"]
+                or [row["id"] for row in rows] != [item["inputId"] for item in bindings]):
+            result["reportReadError"] = ToolError("MANIFEST_MISMATCH", "回读的输入与封存回执不一致，请沿原任务核对").as_dict()
+            return result
+        for item, row in zip(bindings, rows):
+            item.update({field: row[field] for field in ("state", "errorCode", "uploadId", "assetId") if field in row})
+    return result

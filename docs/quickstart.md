@@ -69,6 +69,20 @@ ffprobe -version
 
 NAS 在同一持久目录设置下运行 `bash start.sh nas-media`。它从包内配方安装固定版本的 FFmpeg/ffprobe 并启动同一 Compose 项目。原先用基础容器启动过的影库会继续使用原持久卷。以后使用 `nas-media` 启动，`nas-stop` 停止。可在新注册的合成库上传一段短视频，打开详情查看时长、分辨率与缩略图。`linux-amd64` 制品中的 `linux-amd64-compose-media-smoke.json` 记录这次检查的预览字节数和逐张核验的研究帧数量。[Alpine FFmpeg 软件包](https://pkgs.alpinelinux.org/package/v3.24/community/aarch64/ffmpeg)。
 
+## 接入已有的单帧查证服务
+
+已经部署 Lens 伴随服务的管理员可将它接入同机的 Next 原生服务包。伴随服务使用自己的运行环境和凭据。安装版的 `GET /healthz` 返回 `ready: true` 后，再启动 Next。伴随服务的 Node、浏览器及启动指引见[已安装版协议与启动示例](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/tools/research_sidecar/README.md)。
+
+Windows 在 Next 包目录打开 PowerShell，输入伴随服务所用私有密钥文件的位置后启动。密钥只通过环境传入。
+
+```powershell
+$env:QIMENG_RESEARCH_SIDECAR_TOKEN = (Get-Content -Raw -LiteralPath (Read-Host '伴随服务密钥文件')).Trim()
+$env:QIMENG_RESEARCH_LENS_ENDPOINT = 'http://127.0.0.1:18421'
+.\start.cmd
+```
+
+Linux 的原生包可从服务账号专用的权限为 0600 的配置文件加载相同的两个变量，再运行 `bash start.sh`。容器中的 `127.0.0.1` 指本容器的网络命名空间。有独立容器部署需求时，须让已安装的伴随服务与 Go 服务共享网络命名空间，并向 Go 服务单独注入这两个变量。默认 NAS Compose 包未包含伴随服务。执行器在获得研究权限后，可读 `GET /research/context` 查看现有配置以及单个任务的外发授权。任务提交方法见[单帧反向查证](api.md#单帧反向查证)。
+
 ## 更新、备份和核验
 
 升级前，在正在运行的 Next 影库中打开「数据管理 → 资料备份与归档」，生成并下载完整 `.qnext`，保留页面显示的 SHA-256。用版本配套的离线工具核验。做恢复演练时，以尚不存在的目录为目标。下面以 Linux 为例，Windows 使用同目录的 `.\qimeng-backup.exe`。

@@ -35,6 +35,17 @@ type fileIntent struct {
 	SourceStamp                                 string                `json:"sourceStamp,omitempty"`
 	SpellingOnly                                bool                  `json:"spellingOnly,omitempty"`
 	MaintenanceTask                             *AssetMaintenanceTask `json:"assetMaintenanceTask,omitempty"`
+	DeclaredSourceIDs                           *[]string             `json:"declaredSourceIds,omitempty"`
+}
+
+func storeFileAsset(ctx context.Context, q store.Querier, j fileIntent) error {
+	if j.Kind == "ingest" && j.DeclaredSourceIDs != nil {
+		initial := j.After
+		initial.Source = ""
+		initial.SourceIDs = *j.DeclaredSourceIDs
+		return store.InsertAsset(ctx, q, initial)
+	}
+	return store.SaveAsset(ctx, q, j.After)
 }
 
 func assetPath(a model.Asset) string {
@@ -215,7 +226,7 @@ func (s *Service) prepareFile(ctx context.Context, w *Write, j fileIntent) (file
 			if e == nil && j.Kind == "purge" {
 				e = removeAssetAuthorWorks(ctx, tx, j.After)
 			} else if e == nil {
-				e = store.SaveAsset(ctx, tx, j.After)
+				e = storeFileAsset(ctx, tx, j)
 				if e == nil {
 					e = s.finalizeAuthorTextForFile(ctx, tx, &preview)
 				}
@@ -360,7 +371,7 @@ func (s *Service) commitFile(ctx context.Context, q store.Querier, j *fileIntent
 			return e
 		}
 	} else {
-		if e := store.SaveAsset(ctx, q, j.After); e != nil {
+		if e := storeFileAsset(ctx, q, *j); e != nil {
 			return e
 		}
 		if j.Kind != "trash" {
@@ -380,7 +391,7 @@ func (s *Service) commitFile(ctx context.Context, q store.Querier, j *fileIntent
 				return e
 			}
 			if changed {
-				if e = store.SaveAsset(ctx, q, j.After); e != nil {
+				if e = store.SaveAssetEdits(ctx, q, j.After, false, store.CompleteTaxonomy(j.After)); e != nil {
 					return e
 				}
 			}
@@ -395,6 +406,12 @@ func (s *Service) commitFile(ctx context.Context, q store.Querier, j *fileIntent
 				return e
 			}
 		} else if e := protectHumanField(ctx, q, j.After.ID, "rename"); e != nil {
+			return e
+		}
+	}
+	if j.Kind != "purge" {
+		j.After, e = readAssetOnDay(ctx, q, j.After.ID, time.Now().Format(time.DateOnly))
+		if e != nil {
 			return e
 		}
 	}
