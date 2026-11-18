@@ -1,6 +1,8 @@
 """Bind model intent to the worker's observed, sealed Go input and plan identities."""
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 from .errors import ToolError
 from .state import encode
 
@@ -43,6 +45,9 @@ class WorkerIntake:
         self.entities = {query: set() for _, query in ENTITY_FIELDS.values()}
         self.entity_refs = {}
         self.shown_inputs = set()
+        self.page_inputs = []
+        self.excluded = []
+        self.plan_exclusions = {}
         self.groups = set()
         self.update(full_result(runtime, report))
 
@@ -107,18 +112,22 @@ class WorkerIntake:
                 entry["reason"] = row["errorCode"]
             rows.append(entry)
         visible, next_offset = self.page(rows, offset)
+        self.page_inputs = [row["input"] for row in visible]
         self.shown_inputs.update(row["input"] for row in visible)
         result = {"request": batch["label"], "state": batch["state"], "inputs": visible,
+                  "readyInputs": [row["input"] for row in visible if row.get("canPrepare")],
                   "totalInputs": len(rows), "plans": [{"plan": key, "state": plan["state"], "requiresNewPlan": key in self.stale} for key, plan in self.plans.items()],
                   "remainingResearchCalls": batch["maxResearchCalls"] - batch["researchCalls"]}
         if next_offset is not None:
             result["nextOffset"] = next_offset
         return result
 
-    def preview(self, plan, offset=0):
+    def preview(self, plan, offset=0, excluded=None):
         if plan["batchId"] != self.batch_id:
             raise ToolError("PLAN_SCOPE_DENIED", "预览不属于当前任务")
         key = self.remember(plan)
+        if excluded:
+            self.plan_exclusions[key] = excluded
         rows = []
         for item in plan["items"]:
             number = self.by_upload.get(item["uploadId"])
@@ -133,6 +142,8 @@ class WorkerIntake:
         viewed = self.views.setdefault(key, set())
         viewed.update(range(offset, offset + len(visible)))
         result = {"plan": key, "state": plan["state"], "items": visible, "totalItems": len(rows), "previewComplete": len(viewed) == len(rows)}
+        if key in self.plan_exclusions:
+            result["notPlanned"] = self.plan_exclusions[key]
         if next_offset is not None:
             result["nextOffset"] = next_offset
         return result
@@ -171,28 +182,69 @@ class WorkerIntake:
                     raise ToolError("WORKER_ENTITY_LOOKUP_REQUIRED", f"{field} 须使用此项原选择或 {query} 已返回的稳定 ID。无需改变归属时请省略该字段。",
                                     details={"field": field, "group": group, "lookup": query})
 
-    def staged(self, number, shown, *, for_plan=True):
-        row = self.by_number.get(number) if type(number) is int else None
-        if row is None or number not in shown or row["state"] != "staged":
-            raise ToolError("WORKER_INPUT_NOT_STAGED", "只可选择当前页或已读清单中的待整理输入序号")
+    def ready(self, shown):
+        return [number for number, row in self.by_number.items() if number in shown and row["state"] == "staged" and
+                self.uploads.get(row.get("uploadId"), {}).get("researchOutcome") != "conflict" and
+                not self.uploads.get(row.get("uploadId"), {}).get("upload", {}).get("replaceAssetId")]
+
+    def selected(self, number, shown):
+        allowed = {"readyInputs": self.ready(shown)}
+        if isinstance(number, str) and number.isascii() and number.isdecimal() and 1 <= len(number) <= 3 and number == str(int(number)):
+            number = int(number)
+        if type(number) is not int:
+            raise ToolError("WORKER_INPUT_SELECTOR_TYPE", "input 需要已展示的清单序号。", details=allowed)
+        if number not in self.by_number:
+            raise ToolError("WORKER_INPUT_OUT_OF_RANGE", "这个序号不在本批清单内。", details=allowed)
+        if number not in shown:
+            raise ToolError("WORKER_INPUT_NOT_DISPLAYED", "先用 task_context 的 nextOffset 读取该项。", details=allowed)
+        return number, self.by_number[number]
+
+    def staged(self, number, shown):
+        _, row = self.selected(number, shown)
+        if row["state"] != "staged":
+            raise ToolError("WORKER_INPUT_NOT_STAGED", "这项输入不能进行研究。", details={"state": row["state"], "readyInputs": self.ready(shown)})
         item = self.uploads.get(row.get("uploadId"))
-        if not item or for_plan and (item.get("researchOutcome") == "conflict" or item["upload"].get("replaceAssetId")):
-            raise ToolError("WORKER_INPUT_NOT_READY", "此项存在冲突或另有替换约束，请保留该项并处理其他输入")
+        if not item:
+            raise ToolError("TASK_RESPONSE_INVALID", "现有清单缺少对应的已接收上传")
         return item["upload"]
 
-    def bind(self, name, args, reviewed, revision, shown):
+    def bind(self, name, args, reviewed, revision, shown, page):
         # Existing full Go parameters still reach the same runtime validation.
         # Never overwrite an explicitly supplied revision, subject or fingerprint.
-        if name == "plan.prepare" and "items" in args:
+        self.excluded = []
+        originals = name == "plan.prepare.originals"
+        if originals:
+            if args:
+                raise ToolError("INVALID_INPUT", "保留本页原名的预览无需参数；自选项目或名称用 plan_prepare")
+            args = {"items": [{"input": number} for number in page]}
+        if originals or name == "plan.prepare" and "items" in args:
             if set(args) != {"items"} or not isinstance(args["items"], list):
                 raise ToolError("INVALID_INPUT", "计划需要明确的逐项意图")
             items = []
+            selected = set()
+            ready = self.ready(shown)
             for intent in args["items"]:
                 if not isinstance(intent, dict) or "input" not in intent or "uploadId" in intent:
                     raise ToolError("INVALID_INPUT", "逐项给出 input 序号和 family 基名")
-                upload = self.staged(intent["input"], shown)
+                number, row = self.selected(intent["input"], shown)
+                if number in selected:
+                    raise ToolError("WORKER_DUPLICATE_SELECTION", "同一输入在一次命名意图中重复出现", details={"readyInputs": ready})
+                selected.add(number)
+                if number not in ready:
+                    self.excluded.append({"input": number, "state": row["state"],
+                                          "reason": row.get("errorCode") or ("requires_review" if row["state"] == "staged" else row["state"])})
+                    continue
+                upload = self.uploads[row["uploadId"]]["upload"]
+                if originals:
+                    family = upload.get("family") or PurePosixPath(row.get("originalFileName", "")).stem
+                    if not family:
+                        self.excluded.append({"input": number, "state": row["state"], "reason": "explicit_family_required"})
+                        continue
+                    intent = {"input": number, "family": family}
                 self.check_choices(intent, upload)
                 items.append({**{k: v for k, v in intent.items() if k != "input"}, "uploadId": upload["id"]})
+            if not items:
+                raise ToolError("WORKER_NO_READY_INPUT", "这次选择都不能准备计划。其他输入未被加入。", details={"readyInputs": ready, "notPlanned": self.excluded})
             return {"body": {"expectedRevision": revision, "items": items}}
         if name == "plan.prepare" and isinstance(args.get("body"), dict) and isinstance(args["body"].get("items"), list):
             for item in args["body"]["items"]:
@@ -209,13 +261,32 @@ class WorkerIntake:
                 raise ToolError("WORKER_PLAN_REVIEW_REQUIRED", "请先读取所选计划的完整预览，再明确提交该计划")
             plan = self.plans[key]
             return {"planId": plan["id"], **({"body": {"fingerprint": plan["fingerprint"]}} if name == "plan.commit" else {})}
+        if name in {"naming.context", "naming.suggest", "naming.preview", "collection.query"}:
+            library_key = "libraryId" if name == "collection.query" else "id"
+            library = self.report["batch"]["libraryId"]
+            if args.get(library_key, library) != library:
+                raise ToolError("WORKER_NAMING_LIBRARY_MISMATCH", "此 worker 的查询限于本批目标库，省略库参数即可。")
+            args = {**args, library_key: library}
+            if name == "collection.query":
+                return args
+            scope = args if name != "naming.preview" else args.get("body")
+            if isinstance(scope, dict):
+                scope = dict(scope)
+                directories = {self.uploads[self.by_number[n]["uploadId"]]["upload"].get("relativeDirectory", "") for n in self.ready(shown)}
+                if "directory" in scope and (not isinstance(scope["directory"], str) or scope["directory"] not in directories):
+                    raise ToolError("WORKER_NAMING_DIRECTORY_MISMATCH", "指定目录与已展示的待整理输入不一致。请按清单选择目录。")
+                if "directory" not in scope:
+                    if len(directories) != 1:
+                        raise ToolError("WORKER_NAMING_DIRECTORY_REQUIRED", "本批目录不唯一，请从已展示输入中明确选择目录。")
+                    scope["directory"] = next(iter(directories))
+                return {**args, "body": scope} if name == "naming.preview" else scope
         if name == "research.materials" and set(args) == {"input"}:
-            upload = self.staged(args["input"], shown, for_plan=False)
+            upload = self.staged(args["input"], shown)
             return {"id": upload["id"], "expectedHash": upload["hash"]}
         if name == "research.submit" and "input" in args:
             if set(args) != {"input", "body"} or not isinstance(args["body"], dict) or args["body"].keys() & {"uploadId", "expectedHash", "expectedRevision"}:
                 raise ToolError("INVALID_INPUT", "研究结论须绑定当前输入，不能替换其版本")
-            upload = self.staged(args["input"], shown, for_plan=False)
+            upload = self.staged(args["input"], shown)
             return {"body": {**args["body"], "uploadId": upload["id"], "expectedHash": upload["hash"],
                              "expectedRevision": revision}}
         return args
@@ -223,10 +294,11 @@ class WorkerIntake:
     def tools(self, definitions):
         groups = {group for group, names in GROUPS.items() if names & definitions.keys()}
         active_plans = {key: plan for key, plan in self.plans.items() if key not in self.stale and plan["state"] in {"prepared", "partial"}}
+        ready = self.ready(self.shown_inputs)
         planned = {item["uploadId"] for plan in active_plans.values() for item in plan.get("items", [])}
-        pending = any(row["state"] == "staged" and row.get("uploadId") not in planned for row in self.by_number.values())
+        pending = any(self.by_number[n].get("uploadId") not in planned for n in ready)
         active = {"task.context"}
-        if pending or "planning" in self.groups:
+        if ready and (pending or "planning" in self.groups):
             active.add("plan.prepare")
         if active_plans:
             active.add("plan.read")
@@ -237,6 +309,9 @@ class WorkerIntake:
         if "plan.prepare" in definitions:
             groups.add("planning")
         menu = []
+        if "plan.prepare" in active and "plan.prepare" in definitions and set(ready).intersection(self.page_inputs):
+            menu.append({"type": "function", "function": {"name": "plan_prepare_originals",
+                         "description": "保留本页待整理项各自的原名基名、已有选择和未知归属，分别准备 Go 入库预览。其他项列出原因。不会发布；预览后再决定是否采用。", "parameters": obj({})}})
         for name, definition in definitions.items():
             if name not in active:
                 continue
@@ -247,7 +322,9 @@ class WorkerIntake:
                 selected = {"input", "family"} | {field for field, (group, _) in ENTITY_FIELDS.items() if group in self.groups}
                 if "planning" in self.groups:
                     selected.update(("groupKey", "page"))
-                row = obj({field: value for field, value in fields.items() if field in selected}, ["input", "family"])
+                selected_fields = {field: value for field, value in fields.items() if field in selected}
+                selected_fields["input"] = {"type": "integer", "enum": ready, "description": "选自本轮可处理的原输入序号"}
+                row = obj(selected_fields, ["input", "family"])
                 definition = {"type": "function", "function": {**function,
                     "parameters": obj({"items": {**items, "items": row}}, ["items"])}}
             menu.append(definition)
@@ -261,6 +338,11 @@ def model_schema(name, schema):
     number = {"type": "integer", "minimum": 1, "maximum": 100, "description": "清单里原输入的 input 序号"}
     offset = {"type": "integer", "minimum": 0, "default": 0}
     plan = {"type": "string", "description": "本批清单或预览中返回的计划引用"}
+    if name in {"naming.context", "naming.suggest", "naming.preview", "collection.query"}:
+        bound = "libraryId" if name == "collection.query" else "id"
+        schema["properties"].pop(bound, None)
+        schema["required"] = [field for field in schema.get("required", []) if field != bound]
+        return None
     if name == "plan.prepare":
         items = schema["properties"]["body"]["properties"]["items"]
         fields = dict(items["items"]["properties"])

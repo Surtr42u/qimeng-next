@@ -263,7 +263,7 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         result, = (await self.worker())["batches"]
         self.assertEqual(result["state"], "partial")
         self.assertEqual([event["code"] for event in result["modelUsage"]["toolResults"]],
-                         ["WORKER_INPUT_NOT_STAGED", "ok", "revision_conflict", "revision_conflict", "ok", "ok", "plan_fingerprint_conflict", "ok"])
+                         ["WORKER_NO_READY_INPUT", "ok", "revision_conflict", "revision_conflict", "ok", "ok", "plan_fingerprint_conflict", "ok"])
         final = self.request("GET", path)
         self.assertEqual(final["inputs"][1]["errorCode"], "unsupported_media")
         self.assertEqual(len(final["plans"]), 2)
@@ -311,3 +311,48 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(actual["plans"]), 1)
         asset = self.request("GET", "/assets/" + actual["inputs"][0]["assetId"])
         self.assertEqual((asset["authorIds"], asset["hash"]), ([author["id"]], upload["hash"]))
+
+    async def test_original_name_preview_and_mixed_intent_require_a_separate_plan_choice(self):
+        batch = self.submit("worker-original-intents", mixed=True)
+        captured = []
+        def script(results):
+            captured[:] = results
+            step = len(results)
+            if step == 0:
+                return "plan_prepare", {"items": [{"input": 1, "family": "Must not apply"}, {"input": 99, "family": "Outside"}]}
+            if step == 1:
+                return "plan_prepare", {"items": [{"input": ["attachment"], "family": "Wrong selector"}]}
+            if step == 2:
+                return "worker_tools", {"group": "naming"}
+            if step == 3:
+                return "naming_suggest", {"q": "原图", "mediaType": "image"}
+            if step == 4:
+                return "naming_context", {"id": "another-library", "family": "原图", "mediaType": "image"}
+            if step == 5:
+                return "plan_prepare", {"items": [{"input": 1, "family": "Proposed"}, {"input": 2, "family": "Unusable"}]}
+            if step == 6:
+                return "worker_tools", {"group": "planning"}
+            if step == 7:
+                return "plan_prepare_originals", {}
+            if step == 8:
+                return "plan_commit", {}
+            return "plan_commit", {"plan": results[7]["plan"]}
+
+        self.host.scripts[batch] = script
+        outcome, = (await self.worker())["batches"]
+        self.assertEqual(outcome["state"], "partial")
+        self.assertEqual([event["code"] for event in outcome["modelUsage"]["toolResults"]],
+            ["WORKER_INPUT_OUT_OF_RANGE", "WORKER_INPUT_SELECTOR_TYPE", "ok", "ok", "WORKER_NAMING_LIBRARY_MISMATCH",
+             "ok", "ok", "ok", "WORKER_PLAN_REVIEW_REQUIRED", "ok"])
+        self.assertEqual(captured[0]["details"]["readyInputs"], [1])
+        for index in (5, 7):
+            self.assertEqual([row["input"] for row in captured[index]["items"]], [1])
+            self.assertEqual(captured[index]["notPlanned"], [{"input": 2, "state": "failed", "reason": "unsupported_media"}])
+        first = next(tool for tool in self.host.requests[0]["tools"] if tool["function"]["name"] == "plan_prepare")
+        self.assertEqual(first["function"]["parameters"]["properties"]["items"]["items"]["properties"]["input"]["enum"], [1])
+        detail = self.request("GET", "/batches/" + batch)
+        self.assertEqual(sum(p["state"] == "completed" for p in detail["plans"]), 1)
+        self.assertEqual(len(detail["plans"]), 2)
+        asset = self.request("GET", "/assets/" + detail["inputs"][0]["assetId"])
+        self.assertEqual(asset["hash"], self.source_sha)
+        self.assertTrue(asset["fileName"].startswith("worker-original-intents"))
