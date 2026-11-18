@@ -1,0 +1,48 @@
+name: Installed and Next scan comparison
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/scan-comparison]
+    paths:
+      - '.github/workflows/scan-comparison.yml'
+      - 'tools/scan-comparison/**'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      REFERENCE_SHA: 745974081716a9d69a95002a41220e35e743d764
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {path: next, persist-credentials: false}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Surtr42u/qimeng-media
+          ref: ${{ env.REFERENCE_SHA }}
+          path: installed
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: next/server/go.mod
+          cache-dependency-path: |
+            installed/server/go.sum
+            next/server/go.sum
+      - name: Build both production servers
+        run: |
+          test "$(git -C installed rev-parse HEAD)" = "$REFERENCE_SHA"
+          test "$(git -C next rev-parse HEAD)" = "$GITHUB_SHA"
+          make -C installed sdk-go
+          (cd installed/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/installed-server" ./cmd/qimeng)
+          (cd next/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/next-server" ./cmd/qimeng)
+      - name: Submit and observe manual scans
+        run: python3 next/tools/scan-comparison/compare.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: installed-next-scan-comparison
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: warn
