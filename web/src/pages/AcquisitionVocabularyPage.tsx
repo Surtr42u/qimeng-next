@@ -8,6 +8,7 @@ import { ManagePageHeader } from "../components/LegacyManageHeader";
 import { ErrorNotice, Loading } from "../components/Feedback";
 import { UnsavedGuard } from "../lib/navigation";
 import { newId } from "../lib/id";
+import { AuthorMirrorCard } from "./AuthorMirrorCard";
 
 export function AcquisitionVocabularyPage() {
   const query = useAcquisitionVocabulary();
@@ -35,10 +36,7 @@ export function AcquisitionVocabularyPage() {
           />
         )
       )}
-      <div className="settings-card">
-        <h3>作者总表镜像</h3>
-        <p>当前服务版本尚未提供作者清单镜像配置与导出状态，未执行任何导出。</p>
-      </div>
+      <AuthorMirrorCard />
     </div>
   );
 }

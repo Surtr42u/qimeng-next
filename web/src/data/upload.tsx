@@ -10,11 +10,13 @@ import { useBeforeUnload } from "react-router-dom";
 import { UploadQueue } from "./upload-queue";
 import { useSession } from "./session";
 import { useSettings } from "./manage";
+import { useUploadArchive } from "./maintenance-folder";
 
 const Context = createContext<UploadQueue | null>(null);
 export function UploadProvider({ children }: { children: ReactNode }) {
   const { instance, session } = useSession();
   const settings = useSettings();
+  const archive = useUploadArchive();
   const scope = `${instance.id}:${session.id}`;
   const [queue, setQueue] = useState<UploadQueue | null>(null);
   const snapshot = useSyncExternalStore(
@@ -36,10 +38,10 @@ export function UploadProvider({ children }: { children: ReactNode }) {
   const concurrency = Math.min(2, settings.data?.maxActiveUploads ?? 1);
   useEffect(() => {
     if (!chunkSize || !maxItems) return;
-    const owner = new UploadQueue(scope, chunkSize, maxItems, concurrency);
+    const owner = new UploadQueue(scope, chunkSize, maxItems, concurrency, archive);
     setQueue(owner);
     return () => owner.dispose();
-  }, [scope, chunkSize, maxItems, concurrency]);
+  }, [scope, chunkSize, maxItems, concurrency, archive]);
   return (
     <Context.Provider value={queue?.scope === scope ? queue : null}>
       {children}

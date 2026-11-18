@@ -6,7 +6,6 @@ import {
   useCreateCollection,
   useTrash,
   useTrashAction,
-  useCreateBackup,
 } from "../data/manage";
 import type { Schema } from "../data/client";
 import {
@@ -271,63 +270,5 @@ export function TrashPage() {
   );
 }
 
-export function BackupPage() {
-  const mutation = useCreateBackup();
-  const key = useRef(newId());
-  return (
-    <>
-      <PageHeading
-        title="资料备份与归档"
-        subtitle="先保留可核对的快照与版本清单，再确认独立备份。"
-      />
-      <section className="panel form-stack">
-        <h2>创建一致快照</h2>
-        <p>
-          生成服务器数据库快照与原件版本清单。单独创建清单不代表原件已有独立备份，也不授权删除来源。
-        </p>
-        <button
-          className="button button--primary"
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate(key.current)}
-        >
-          {mutation.isPending
-            ? "正在保存快照…"
-            : mutation.isError
-              ? "重试创建快照"
-              : "创建快照与清单"}
-        </button>
-        <ErrorNotice error={mutation.error} />
-        {mutation.data && (
-          <div className="notice">
-            <strong>快照已创建，等待独立备份</strong>
-            <dl className="facts">
-              <div>
-                <dt>媒体数量</dt>
-                <dd>{mutation.data.assetCount}</dd>
-              </div>
-              <div>
-                <dt>时间</dt>
-                <dd>{dateTime(mutation.data.createdAt)}</dd>
-              </div>
-              <div>
-                <dt>快照摘要</dt>
-                <dd>
-                  <code>{mutation.data.snapshotHash}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>清单摘要</dt>
-                <dd>
-                  <code>{mutation.data.manifestHash}</code>
-                </dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </section>
-      <p className="muted">
-        浏览器不会据此删除电脑中的源文件。真实迁移与旧备份导入需要通过隔离演练后开放。
-      </p>
-    </>
-  );
-}
+
+export { BackupPage } from "./BackupPage";

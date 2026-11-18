@@ -296,9 +296,3 @@ export function useTrashAction() {
     onSuccess: invalidateLibrary,
   });
 }
-export function useCreateBackup() {
-  return useMutation({
-    mutationFn: (key: string) =>
-      read(api.POST("/backups", { params: { header: operationHeaders(key) } })),
-  });
-}

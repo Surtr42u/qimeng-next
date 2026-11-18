@@ -14,6 +14,7 @@ import { RouteSurface } from "@ui/RouteSurface";
 import { SelectionLens } from "@ui/SelectionLens";
 import { SessionGate } from "../data/session";
 import { UploadProvider } from "../data/upload";
+import { MaintenanceFolderProvider } from "../data/maintenance-folder";
 import { EventsProvider, EventSyncStatus } from "../data/events";
 import { useRefreshLibrary } from "../data/refresh";
 import { usePageRestoration, UnsavedProvider } from "../lib/navigation";
@@ -48,9 +49,7 @@ export function App() {
     <SessionGate>
       <UnsavedProvider>
         <EventsProvider>
-          <UploadProvider>
-            <Shell />
-          </UploadProvider>
+          <MaintenanceFolderProvider><UploadProvider><Shell /></UploadProvider></MaintenanceFolderProvider>
         </EventsProvider>
       </UnsavedProvider>
     </SessionGate>

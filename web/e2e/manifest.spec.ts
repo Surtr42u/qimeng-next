@@ -59,5 +59,5 @@ test('device storage upgrade preserves existing metadata and adds the batch stor
       const found = transaction.objectStore('uploads').get('preserved-other-scope');
       transaction.oncomplete = () => { resolve({ version: database.version, stores: [...database.objectStoreNames], record: !!found.result }); database.close(); };
     };
-  }))).toEqual({ version: 2, stores: ['events', 'upload_batches', 'uploads'], record: true });
+  }))).toEqual({ version: 3, stores: ['events', 'maintenance_folders', 'upload_batches', 'uploads'], record: true });
 });

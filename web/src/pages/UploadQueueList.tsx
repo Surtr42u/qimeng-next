@@ -33,7 +33,9 @@ export function UploadRow({ entry }: { entry: QueueEntry }) {
       {entry.phase === "waiting_file" && <p className="rank-note">{entry.offset > 0 ? "页面刷新中断——重新选择同名文件并核对内容后从断点续传" : "页面刷新中断——重新选择同名文件后恢复上传"}</p>}
       {entry.waitingFor && <p className="rank-note">保持命名顺序，等待前项“{entry.waitingFor}”完成。前项失败或暂停时，请先重试或明确取消前项。</p>}
       {entry.error && <p className="upload-err" role="alert">{entry.error}</p>}
+      {entry.archiveNote && <p className={entry.archiveState === "failed" ? "upload-err" : "rank-note"} role="status">{entry.archiveNote}</p>}
       <div className="upload-queue-actions">
+        {entry.archiveState === "failed" && <button className="pill" type="button" onClick={() => reselect.current?.click()}>重选原件并重试归档</button>}
         {entry.assetId && <Link className="pill" to={`/asset/${encodeURIComponent(entry.assetId)}`}>查看入库内容</Link>}
         {entry.request.batchId && <Link className="pill" to={`/manage/tasks/${encodeURIComponent(entry.request.batchId)}`}>本批报告</Link>}
         {active && <button className="pill" type="button" onClick={() => queue?.pause(entry.id)}>暂停</button>}
@@ -43,7 +45,7 @@ export function UploadRow({ entry }: { entry: QueueEntry }) {
             <button className="pill" type="button" onClick={() => void queue?.cancel(entry.id)}>取消此项</button>
           </>
         )}
-        <input ref={reselect} type="file" hidden aria-label={`重新选择 ${entry.name}`} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) queue?.retry(entry.id, file); }} />
+        <input ref={reselect} type="file" hidden aria-label={`重新选择 ${entry.name}`} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) { if (entry.archiveState === "failed") queue?.startArchive(entry.id, file); else queue?.retry(entry.id, file); } }} />
       </div>
     </li>
   );

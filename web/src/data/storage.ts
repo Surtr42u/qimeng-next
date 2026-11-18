@@ -1,12 +1,12 @@
 let database: Promise<IDBDatabase> | undefined;
-export type DeviceStore = 'uploads' | 'events' | 'upload_batches';
+export type DeviceStore = 'uploads' | 'events' | 'upload_batches' | 'maintenance_folders';
 function open() {
   if (!database)
     database = new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("qimeng-device-state", 2);
+      const request = indexedDB.open("qimeng-device-state", 3);
       let abandoned = false;
       request.onupgradeneeded = () => {
-        for (const store of ['uploads', 'events', 'upload_batches']) {
+        for (const store of ['uploads', 'events', 'upload_batches', 'maintenance_folders']) {
           if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store, { keyPath: 'id' });
         }
       };
@@ -29,6 +29,16 @@ function open() {
       };
     });
   return database;
+}
+export async function localRead<T>(store: DeviceStore, id: string): Promise<T | undefined> {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(store, "readonly");
+    const request = transaction.objectStore(store).get(id);
+    transaction.oncomplete = () => resolve(request.result as T | undefined);
+    transaction.onabort = () => reject(transaction.error ?? new Error("本地读取被中止"));
+    transaction.onerror = () => reject(transaction.error);
+  });
 }
 export async function localReadAll<T>(
   store: DeviceStore,

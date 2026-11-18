@@ -36,12 +36,13 @@ export async function read<T>(
   }
   if (!result.response.ok) {
     const body = result.error as
-      { code?: string; message?: string; currentRevision?: number } | undefined;
+      { code?: string; message?: string; currentRevision?: number; details?: Record<string, unknown> } | undefined;
     throw new ApiError(
       result.response.status,
       body?.code ?? "http_error",
       body?.message ?? `服务器返回 ${result.response.status}`,
       body?.currentRevision,
+      body?.details,
     );
   }
   return result.data as T;

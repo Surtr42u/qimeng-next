@@ -14,6 +14,13 @@ export type QueueEntry = {
   batchPlanId?: string;
   preparationFailed?: boolean;
   authorName?: string;
+  archiveBinding?: string;
+  archiveState?: 'waiting' | 'writing' | 'complete' | 'failed';
+  archiveNote?: string;
+};
+export type UploadArchive = {
+  capture(): Promise<string | undefined>;
+  write(token: string, entry: QueueEntry, file: File, signal: AbortSignal): Promise<string>;
 };
 export type UploadBatchPreparation = {
   id: string; scope: string; input: Schema<'BatchCreate'>; inputs: Schema<'IntakeInput'>[];
@@ -42,7 +49,8 @@ export class UploadQueue {
   private batchControllers = new Map<string, AbortController>();
   private cancellingAll?: Promise<void>;
   private cancellationControllers = new Set<AbortController>();
-  constructor(readonly scope: string, private maxChunkBytes: number, private maxItems: number, private concurrency = 2) { void this.restore(); }
+  private archiveControllers = new Map<string, AbortController>();
+  constructor(readonly scope: string, private maxChunkBytes: number, private maxItems: number, private concurrency = 2, private archive?: UploadArchive) { void this.restore(); }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
   private publish(patch: Partial<Snapshot> = {}) {
@@ -70,7 +78,7 @@ export class UploadQueue {
       const [stored, batches] = await Promise.all([localReadAll<QueueEntry>('uploads'), localReadAll<UploadBatchPreparation>('upload_batches')]);
       if (this.disposed) return;
       for (const item of stored.filter(item => item.scope === this.scope)) {
-        if (!this.entries.has(item.id)) this.entries.set(item.id, { ...item, phase: terminal(item.phase) ? item.phase : 'waiting_file' });
+        if (!this.entries.has(item.id)) this.entries.set(item.id, this.restored(item));
       }
       for (const batch of batches.filter(batch => batch.scope === this.scope)) this.batches.set(batch.id, batch);
       this.sortEntries();
@@ -82,6 +90,10 @@ export class UploadQueue {
     this.writes = this.writes.then(() => localWrite('uploads', snapshot)).catch(() => {
       this.publish({ persistenceError: '本地任务保存失败。服务器已接收的内容不会因此重传；刷新前请核对任务报告，并保留源文件。' });
     });
+  }
+  private restored(entry: QueueEntry): QueueEntry {
+    const interrupted = entry.archiveState === 'writing' || entry.archiveState === 'waiting' && ['ingested', 'staged'].includes(entry.phase);
+    return { ...entry, phase: terminal(entry.phase) ? entry.phase : 'waiting_file', ...(interrupted ? { archiveState: 'failed' as const, archiveNote: '服务器已接收，重选原文件可继续核对本地归档。' } : {}) };
   }
   private persistBatch(batch: UploadBatchPreparation) {
     const snapshot = structuredClone(batch);
@@ -137,7 +149,7 @@ export class UploadQueue {
       const previous = await localReadAll<QueueEntry>('uploads');
       const batches = await localReadAll<UploadBatchPreparation>('upload_batches');
       for (const batch of batches) if (batch.scope === this.scope && !this.batches.has(batch.id)) this.batches.set(batch.id, batch);
-      for (const entry of previous) if (entry.scope === this.scope && !this.entries.has(entry.id)) this.entries.set(entry.id, { ...entry, phase: terminal(entry.phase) ? entry.phase : 'waiting_file' });
+      for (const entry of previous) if (entry.scope === this.scope && !this.entries.has(entry.id)) this.entries.set(entry.id, this.restored(entry));
       this.sortEntries();
       for (const entry of this.entries.values()) await localWrite('uploads', entry);
       for (const batch of this.batches.values()) await localWrite('upload_batches', batch);
@@ -178,6 +190,13 @@ export class UploadQueue {
     this.batches.set(plan.id, plan);
     try {
       await this.writes;
+      if (this.archive && !target.replaceAssetId) {
+        try {
+          const token = await this.archive.capture();
+          if (token) for (const entry of prepared) { entry.archiveBinding = token; entry.archiveState = 'waiting'; }
+        } catch { for (const entry of prepared) entry.archiveNote = '本地维护目录记录无法读取，本批没有保存原件副本。'; }
+        if (this.disposed) throw new DOMException('设备会话已离开。', 'AbortError');
+      }
       try {
         await localWriteGroup([{ store: 'upload_batches', item: structuredClone(plan) }, ...prepared.map(entry => ({ store: 'uploads' as const, item: structuredClone(entry) }))]);
       } catch {
@@ -246,7 +265,20 @@ export class UploadQueue {
   private finish(id: string, upload: Schema<'Upload'>) {
     const phase: UploadPhase = upload.state === 'ingested' ? 'ingested' : upload.state === 'staged' ? 'staged' : upload.state === 'duplicate' ? 'duplicate' : 'failed';
     this.change(id, { phase, offset: upload.offset, assetId: upload.assetId, error: upload.errorMessage });
+    if (phase === 'ingested' || phase === 'staged') this.startArchive(id, this.files.get(id));
     if (terminal(phase)) this.files.delete(id);
+  }
+  startArchive(id: string, file?: File) {
+    const entry = this.entries.get(id);
+    if (!entry?.archiveBinding || !this.archive || this.disposed || this.archiveControllers.has(id) || entry.archiveState === 'complete' || !['ingested', 'staged'].includes(entry.phase)) return;
+    if (!file || file.name !== entry.name || file.size !== entry.size) { this.change(id, { archiveState: 'failed', archiveNote: '请重选入队时的同名原文件以核验并归档。' }); return; }
+    const controller = new AbortController();
+    this.archiveControllers.set(id, controller);
+    this.change(id, { archiveState: 'writing', archiveNote: '正在保存原件副本…' });
+    void this.archive.write(entry.archiveBinding, entry, file, controller.signal)
+      .then(note => this.change(id, { archiveState: 'complete', archiveNote: note }))
+      .catch(error => { if (!controller.signal.aborted) this.change(id, { archiveState: 'failed', archiveNote: '原件副本归档失败：' + (error instanceof Error ? error.message : '维护目录不可写') }); })
+      .finally(() => this.archiveControllers.delete(id));
   }
   retry(id: string, file?: File) {
     if (this.disposed) return;
@@ -261,7 +293,7 @@ export class UploadQueue {
     if (!this.files.has(id)) { this.change(id, { phase: 'waiting_file' }); return; }
     this.change(id, { phase: 'queued', error: undefined }); this.pump();
   }
-  pause(id: string) { this.active.get(id)?.abort(); this.change(id, { phase: 'paused' }); }
+  pause(id: string) { const entry = this.entries.get(id); if (!entry || terminal(entry.phase)) return; this.active.get(id)?.abort(); this.change(id, { phase: 'paused' }); }
   async cancel(id: string) {
     const entry = this.entries.get(id);
     if (this.disposed || !entry || terminal(entry.phase)) return;
@@ -295,7 +327,7 @@ export class UploadQueue {
         try {
           const report = await read(api.GET('/batches/{id}', { params: { path: { id: latest.request.batchId } }, signal: controller.signal }));
           const input = report.inputs.find(input => input.id === latest.request.inputId);
-          if (input?.state === 'ingested' && input.assetId) { this.change(id, { phase: 'ingested', assetId: input.assetId, offset: latest.size, error: undefined }); this.files.delete(id); return; }
+          if (input?.state === 'ingested' && input.assetId) { this.change(id, { phase: 'ingested', assetId: input.assetId, offset: latest.size, error: undefined }); this.startArchive(id, this.files.get(id)); this.files.delete(id); return; }
           if (input?.state === 'cancelled') { this.change(id, { phase: 'cancelled', error: undefined }); this.files.delete(id); return; }
         } catch (failure) { reconciliationError = failure; }
       }
@@ -314,7 +346,7 @@ export class UploadQueue {
     return this.cancellingAll;
   }
   async clearFinished() {
-    const finished = [...this.entries.values()].filter(entry => terminal(entry.phase)).map(entry => entry.id);
+    const finished = [...this.entries.values()].filter(entry => terminal(entry.phase) && entry.archiveState !== 'writing').map(entry => entry.id);
     const batchIds = new Set(finished.map(id => this.entries.get(id)?.batchPlanId).filter((id): id is string => !!id));
     const cleanup = this.writes.then(async () => {
       for (const id of finished) {
@@ -330,5 +362,5 @@ export class UploadQueue {
     this.writes = cleanup;
     await cleanup;
   }
-  dispose() { this.disposed = true; for (const active of this.active.values()) active.abort(); for (const controller of this.batchControllers.values()) controller.abort(); for (const controller of this.cancellationControllers) controller.abort(); this.files.clear(); }
+  dispose() { this.disposed = true; for (const active of this.active.values()) active.abort(); for (const controller of this.batchControllers.values()) controller.abort(); for (const controller of this.cancellationControllers) controller.abort(); for (const controller of this.archiveControllers.values()) controller.abort(); this.files.clear(); }
 }
