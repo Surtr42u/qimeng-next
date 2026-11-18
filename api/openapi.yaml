@@ -50,12 +50,52 @@ paths:
       responses:
         '200': {description: Current credential for the device label, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceCredential'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /device/native-deliveries:
+    post:
+      operationId: publishNativeDelivery
+      description: Owner publishes selected current objects from this Next instance for one device and one target instance.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPublish'}}}}
+      responses:
+        '201': {description: Device task with one validated nativeSelection segment, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /native-deliveries/imports:
+    post:
+      operationId: stageNativeDelivery
+      description: Owner stages the original nativeSelection bytes on the intended target. Repeated transport tasks resolve to the same local plan.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {name: sourceInstanceId, in: query, required: true, schema: {type: string}}
+        - {name: targetInstanceId, in: query, required: true, schema: {type: string}}
+        - {name: packageId, in: query, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+        - {name: conflictPolicy, in: query, required: true, schema: {$ref: '#/components/schemas/NativeDeliveryConflictPolicy'}}
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+      responses:
+        '200': {description: Frozen local preview or existing terminal receipt, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /native-deliveries/imports/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getNativeDelivery
+      responses:
+        '200': {description: Local durable per-item results, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /native-deliveries/imports/{id}/commit:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: commitNativeDelivery
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryCommit'}}}}
+      responses:
+        '200': {description: Original durable receipt and per-item decisions, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /device/apply-tasks:
     get:
       operationId: listDeviceApplyTasks
       parameters:
         - {name: targetDeviceId, in: query, required: true, schema: {type: string}}
         - {name: state, in: query, schema: {$ref: '#/components/schemas/DeviceApplyState'}}
+        - {name: protocolVersion, in: query, schema: {type: integer, minimum: 1, maximum: 2}}
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
       responses:
@@ -75,7 +115,6 @@ paths:
               properties:
                 manifest: {type: string, description: JSON encoding of DeviceApplyManifest}
                 masterTxt: {type: string, format: binary}
-                v2Backup: {type: string, format: binary}
       responses:
         '201': {description: Published package, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -1855,7 +1894,62 @@ components:
         deviceId: {type: string}
         label: {type: string}
         expiresAt: {type: string, format: date-time}
-    DeviceSegmentKind: {type: string, enum: [masterTxt, v2Backup]}
+    DeviceSegmentKind: {type: string, enum: [masterTxt, v2Backup, nativeSelection], description: v2Backup is a read-only historical segment kind}
+    NativeDeliveryKind: {type: string, enum: [authorProfileBlock, authorList]}
+    NativeDeliveryBlock: {type: string, enum: [x, basic, accounts]}
+    NativeDeliveryConflictPolicy: {type: string, enum: [keep, replace]}
+    NativeDeliveryItemState: {type: string, enum: [ready, applied, preserved, conflict]}
+    NativeDeliveryPlanState: {type: string, enum: [prepared, applied, partial]}
+    NativeDeliverySelection:
+      type: object
+      additionalProperties: false
+      required: [kind, sourceObjectId, expectedRevision]
+      properties:
+        kind: {$ref: '#/components/schemas/NativeDeliveryKind'}
+        sourceObjectId: {type: string, minLength: 1, maxLength: 128}
+        block: {$ref: '#/components/schemas/NativeDeliveryBlock'}
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+    NativeDeliveryPublish:
+      type: object
+      additionalProperties: false
+      required: [targetDeviceId, targetInstanceId, items]
+      properties:
+        targetDeviceId: {type: string, minLength: 1, maxLength: 100}
+        targetInstanceId: {type: string, minLength: 1, maxLength: 128}
+        ttlSeconds: {type: integer, minimum: 300, maximum: 604800}
+        items: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/NativeDeliverySelection'}}
+    NativeDeliveryItemResult:
+      type: object
+      required: [kind, sourceObjectId, sourceRevision, label, state]
+      properties:
+        kind: {$ref: '#/components/schemas/NativeDeliveryKind'}
+        sourceObjectId: {type: string}
+        sourceRevision: {type: integer, format: int64, minimum: 1}
+        label: {type: string}
+        block: {$ref: '#/components/schemas/NativeDeliveryBlock'}
+        targetObjectId: {type: string}
+        targetRevision: {type: integer, format: int64, minimum: 0}
+        state: {$ref: '#/components/schemas/NativeDeliveryItemState'}
+        code: {type: string}
+        receiptId: {type: string, description: Stable per-source-object receipt after commit}
+    NativeDeliveryPlan:
+      type: object
+      required: [id, packageId, sourceInstanceId, targetInstanceId, conflictPolicy, fingerprint, state, items]
+      properties:
+        id: {type: string}
+        packageId: {type: string, pattern: '^[0-9a-f]{64}$'}
+        sourceInstanceId: {type: string}
+        targetInstanceId: {type: string}
+        conflictPolicy: {$ref: '#/components/schemas/NativeDeliveryConflictPolicy'}
+        fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
+        state: {$ref: '#/components/schemas/NativeDeliveryPlanState'}
+        items: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/NativeDeliveryItemResult'}}
+    NativeDeliveryCommit:
+      type: object
+      additionalProperties: false
+      required: [fingerprint]
+      properties:
+        fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
     DeviceApplyState: {type: string, enum: [pending, claimed, applied, partial, failed, cancelled, expired]}
     DeviceApplySegment:
       type: object
@@ -1866,6 +1960,9 @@ components:
         sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
         expectedLocalRevision: {type: integer, format: int64, minimum: 0, description: Required for masterTxt. Zero creates a previously absent device fragment}
         sourceId: {type: string, pattern: '^[A-Za-z0-9._-]{8,128}$', description: Required for v2Backup. Stable identity of the installation whose portable backup was exported}
+        packageId: {type: string, pattern: '^[0-9a-f]{64}$', description: Required for nativeSelection. SHA-256 of the complete native payload}
+        sourceInstanceId: {type: string, description: Native source installation from its authenticated instance endpoint}
+        targetInstanceId: {type: string, description: Receiving installation authorized by this native selection}
     DeviceApplyManifest:
       type: object
       required: [targetDeviceId, protocolVersion, segments]
