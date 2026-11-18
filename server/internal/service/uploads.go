@@ -665,14 +665,20 @@ func (s *Service) CancelUpload(ctx context.Context, w *Write, id string) error {
 	}
 	return s.refreshBatch(ctx, q, u.BatchID)
 }
+
+const directoryNamesSQL = "SELECT file_name FROM assets WHERE library_id=? AND trashed=0 AND " + assetParentDir + "=?"
+
 func (s *Service) directoryNames(ctx context.Context, library, dir string) ([]string, error) {
-	rows, e := s.DB.DB.QueryContext(ctx, "SELECT relative_path FROM assets WHERE library_id=? AND trashed=0 ORDER BY relative_path", library)
+	parent := path.Clean(dir)
+	if parent == "." {
+		parent = ""
+	}
+	rows, e := s.DB.DB.QueryContext(ctx, directoryNamesSQL, library, parent)
 	if e != nil {
 		return nil, e
 	}
 	names := []string{}
 	seen := map[string]bool{}
-	normalized := path.Clean(dir)
 	add := func(name string) error {
 		if !seen[name] {
 			seen[name] = true
@@ -684,16 +690,14 @@ func (s *Service) directoryNames(ctx context.Context, library, dir string) ([]st
 		return nil
 	}
 	for rows.Next() {
-		var p string
-		if e = rows.Scan(&p); e != nil {
+		var name string
+		if e = rows.Scan(&name); e != nil {
 			rows.Close()
 			return nil, e
 		}
-		if path.Dir(p) == normalized {
-			if e = add(path.Base(p)); e != nil {
-				rows.Close()
-				return nil, e
-			}
+		if e = add(name); e != nil {
+			rows.Close()
+			return nil, e
 		}
 	}
 	e = rows.Err()

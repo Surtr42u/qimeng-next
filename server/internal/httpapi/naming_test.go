@@ -1,6 +1,8 @@
 package httpapi_test
 
 import (
+	"context"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -8,7 +10,62 @@ import (
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/store"
 )
+
+func TestNamingUsesOnlyDirectEntriesFromTheIndexAndPhysicalDirectory(t *testing.T) {
+	f := setup(t)
+	const target = "书架/插画"
+	root := "libraries/" + f.library
+	if err := f.s.Root.MkdirAll(path.Join(root, target), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// The catalog still reserves missing original names. A real file which has
+	// not been indexed yet independently occupies one slot in this directory.
+	for _, row := range []struct{ id, dir, name string }{
+		{"root", "", "系列 01.png"},
+		{"target", target, "系列 02.png"},
+		{"below", target + "/内页", "系列 03.png"},
+		{"sibling", "书架/插画收藏", "别处作品 01.png"},
+	} {
+		a := model.Asset{ID: row.id, LibraryID: f.library, FileName: row.name, RelativePath: path.Join(row.dir, row.name),
+			MediaType: "image", AuthorID: "unknown", AuthorIDs: []string{"unknown"}, Revision: 1, ContentVersion: 1}
+		if err := store.SaveAsset(context.Background(), f.s.DB.DB, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := f.s.Root.OpenFile(path.Join(root, target, "系列 01.png"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []struct {
+		directory string
+		next      int
+	}{{"", 2}, {target, 3}, {"未建目录", 1}} {
+		query := url.Values{"directory": {scope.directory}, "family": {"系列"}, "mediaType": {"image"}}
+		var got service.NamingContext
+		decode(t, f.json("GET", "/libraries/"+f.library+"/naming/context?"+query.Encode(), "", nil, 200), &got)
+		if got.NextWorkNumber != scope.next {
+			t.Fatalf("directory %q got %d, want %d", scope.directory, got.NextWorkNumber, scope.next)
+		}
+	}
+	for _, search := range []struct {
+		family string
+		count  int
+	}{{"系列", 1}, {"别处作品", 0}} {
+		query := url.Values{"directory": {target}, "q": {search.family}, "mediaType": {"image"}}
+		var result struct {
+			Items []service.NameSuggestion `json:"items"`
+		}
+		decode(t, f.json("GET", "/libraries/"+f.library+"/naming/suggestions?"+query.Encode(), "", nil, 200), &result)
+		if len(result.Items) != search.count || search.count == 1 && result.Items[0].WorkNumber != 3 {
+			t.Fatalf("directory suggestion for %q included names outside its scope: %+v", search.family, result.Items)
+		}
+	}
+}
 
 func TestNamingPreviewUsesPhysicalOccupancyAndSharedWorkAllocator(t *testing.T) {
 	f := setup(t)
