@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import random
+import re
 import secrets
 import shutil
 import socket
@@ -85,8 +86,9 @@ def warm_files(root, manifest):
 
 
 class API:
-    def __init__(self, port):
+    def __init__(self, port, version):
         self.base = f"http://127.0.0.1:{port}"
+        self.version = version
         self.token = ""
 
     def call(self, method, path, payload=None, key=None, text=False):
@@ -100,8 +102,18 @@ class API:
             body = json.dumps(payload).encode()
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(self.base + path, body, headers, method=method)
-        with urllib.request.urlopen(request, timeout=10) as response:
-            raw = response.read()
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as error:
+            try:
+                problem = json.loads(error.read(4096))
+                code = problem.get("code") if isinstance(problem, dict) else None
+            except (ValueError, UnicodeError):
+                code = None
+            if not isinstance(code, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", code):
+                code = "unclassified"
+            raise RuntimeError(f"{self.version} {method} {path} returned HTTP {error.code} ({code})") from None
         if text:
             return raw.decode()
         return json.loads(raw) if raw else None
@@ -122,7 +134,7 @@ def server(binary, version, data, media):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    api = API(port)
+    api = API(port, version)
     secret = secrets.token_urlsafe(40)
     env = {**os.environ, "QIMENG_DATA_DIR": str(data), "QIMENG_LISTEN": f"127.0.0.1:{port}",
            "QIMENG_TIMEZONE": "UTC", "QIMENG_SCANNER_WATCH_ENABLED": "false",
@@ -132,7 +144,7 @@ def server(binary, version, data, media):
                    QIMENG_THUMBNAIL_WARMUP_DELAY="30s", QIMENG_BACKUP_ENABLED="false",
                    QIMENG_MAINTENANCE_WORKER_ENABLED="false")
     else:
-        env.update(QIMENG_STORAGE_ROOTS=json.dumps({"fixture": str(media)}), QIMENG_ADMIN_TOKEN=secret)
+        env.update(QIMENG_STORAGE_ROOTS=json.dumps({"fixture": str(media.parent)}), QIMENG_ADMIN_TOKEN=secret)
     started = time.monotonic()
     with subprocess.Popen([binary], env=env, cwd=data.parent, stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL) as proc:
@@ -151,7 +163,7 @@ def server(binary, version, data, media):
                 spec = {"kind": "normal", "rootPath": str(media)}
             else:
                 api.token = secret
-                spec = {"kind": "regular", "storageId": "fixture", "rootRelativePath": ""}
+                spec = {"kind": "regular", "storageId": "fixture", "rootRelativePath": media.name}
             library = api.call("POST", "/api/v1/libraries", {"name": "Synthetic", **spec},
                                key="register-synthetic-library")
             if version == "next":
@@ -254,9 +266,9 @@ def measure(api, version, library, phase, pid):
 def trial(version, binary, index, corpus, original, temp):
     with tempfile.TemporaryDirectory(dir=temp) as work:
         root = Path(work)
-        data, media = root / "data", root / "media"
+        data, media = root / "data", root / "storage" / "media"
         data.mkdir()
-        media.mkdir()
+        media.mkdir(parents=True)
         stage = Path(shutil.copytree(corpus, root / "staged"))
         manifest = original.copy()
         results = []
