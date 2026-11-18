@@ -133,12 +133,14 @@ private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewMod
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = model::export, enabled = state.folder.tree != null && !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("导出备份") }
-                OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !state.busy,
-                    modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("导入恢复") }
+                OutlinedButton(onClick = { restoreInfo = !restoreInfo }, enabled = !state.busy,
+                    modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("恢复说明") }
             }
             TextButton(onClick = { restoreInfo = true }, enabled = state.folder.tree != null) { Icon(HistoryRecentIcon, null, Modifier.size(18.dp)); Text("恢复上次") }
-            if (restoreInfo) Text("完整 .qnext 位于「上次 / 备份 / 影库备份.qnext」，相邻 .sha256 是完整性摘要。请用服务包的离线恢复命令还原到新的空目录。旧版 v2 JSON 可从上方导入合并。",
-                style = MaterialTheme.typography.bodySmall)
+            if (restoreInfo) {
+                Text("每代备份中的「备份 / 影库备份.qnext」配有独立 .sha256 摘要。请用配套离线恢复命令还原到新的空目录。PC 或 NAS 选定的资料可通过「设备领取」接收。", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { pick.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !state.busy) { Text("旧版 v2 导入") }
+            }
         } }
         item { QimengSettingsCard { Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("自动备份", style = MaterialTheme.typography.titleSmall); Text("每天一次，打开影库时保存", style = MaterialTheme.typography.bodySmall) }

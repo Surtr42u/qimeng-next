@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +29,7 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
     val settings by model.settings.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
     val list by model.recent.collectAsStateWithLifecycle()
+    val receipt by model.receipt.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val error by model.error.collectAsStateWithLifecycle()
     var device by rememberSaveable(settings.deviceId) { mutableStateOf(settings.deviceId) }
@@ -39,7 +41,8 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         MaintenanceCard(BackupRestoreIcon,"设备结果包") {
-            Text("PC 登记、手机领取，将本次发布的作者主表与 v2 资料归入本机影库。",style = MaterialTheme.typography.bodySmall)
+            Text("PC 或 NAS 选择要交付的作者资料、TXT 片段和目标设备；手机领取后将它们归入指定的 Next 本机影库。",style = MaterialTheme.typography.bodySmall)
+            if (local) SelectionContainer { Text("本机影库标识 ${session?.instanceId}", style = MaterialTheme.typography.bodySmall) }
             Text("设备标签",style = MaterialTheme.typography.labelMedium)
             QimengCapsuleTextField(device,{ device = it },Modifier.fillMaxWidth(),placeholder = "如 phone-main",singleLine = true,enabled = !busy)
             Text("设备 AI 令牌",style = MaterialTheme.typography.labelMedium)
@@ -58,7 +61,7 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("应用时覆盖作者资料", style = MaterialTheme.typography.titleSmall)
-                    Text("开启后按 v2 预检替换作者资料。人工编辑的资料保留，修订冲突可在领取记录中查看。默认保留本机资料。",
+                    Text("默认保留已有资料。开启后可更新从同一 Next 来源导入、且在本机没有修改的资料。人工编辑或清空的内容受保护。",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = replaceProfiles, onCheckedChange = { replaceProfiles = it }, enabled = !busy, modifier = Modifier.testTag("device-replace-author-profiles"))
@@ -78,28 +81,49 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
                 TextButton(onClick = model::refresh,enabled = !busy && settings.configured) { Text("刷新") } }
             if (list.isNullOrEmpty()) Text(if (list == null) "可读取此设备最近的领取记录。" else "暂无设备任务。",style = MaterialTheme.typography.bodySmall)
             list.orEmpty().forEach { item ->
-                val state = when(item.state) { "pending" -> "待领取"; "claimed" -> "已领取"; "applied" -> "已应用"; "partial" -> "部分完成"; "cancelled" -> "已取消"; "expired" -> "已过期"; else -> "失败" }
-                Text("$state · ${item.createdAt}",style = MaterialTheme.typography.labelMedium)
-                item.results.forEach { Text(segmentDescription(it), style = MaterialTheme.typography.bodySmall) }
+                val state = when(item.state) { "pending" -> "待领取"; "claimed" -> "已领取"; "applied" -> "已应用"; "partial" -> "部分完成"; "cancelled" -> "已取消"; "expired" -> "已过期"; "legacy_local" -> "旧版任务的本机留存回执"; else -> "失败" }
+                Text(listOf(state, item.createdAt).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.labelMedium)
+                item.results.forEach { result ->
+                    Text(segmentDescription(result), style = MaterialTheme.typography.bodySmall)
+                    if (local && result.native?.let { it.target == session?.instanceId } == true && result.receipt != null) {
+                        val items = receipt?.takeIf { it.first == result.receipt }?.second
+                        TextButton(onClick = { model.showReceipt(result) }, enabled = !busy) { Text(if (items == null) "查看逐项回执" else "收起回执") }
+                        items.orEmpty().forEach { entry ->
+                            val block = when (entry.block) { "x" -> "X 资料"; "basic" -> "基本资料"; "accounts" -> "其他账号"; else -> null }
+                            val state = when (entry.state) { "applied" -> "已应用"; "preserved" -> "已保留"; "conflict" -> "冲突"; else -> "待提交" }
+                            Text(listOfNotNull(entry.label, block, state, deliveryReason(entry.reason), entry.receipt).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
         } }
         QimengSettingsCard { Column(Modifier.padding(16.dp),verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("应用前提",style = MaterialTheme.typography.titleSmall)
-            Text("请先连接本机影库并配置可写维护目录。设备只领取发给自己的资料包。作者资料修订冲突和 v2 未能明确匹配的项保留在报告中。",style = MaterialTheme.typography.bodySmall)
+            Text("请先连接本机影库并配置可写维护目录。设备只领取发给本设备和本机影库的原生包。最近设备任务可查看每项资料的处理结果。",style = MaterialTheme.typography.bodySmall)
         } }
     }
 }
 
 private fun segmentDescription(result: DeviceSegmentResult): String {
-    val kind = if (result.kind == "v2Backup") "v2 资料" else "作者主表"
+    val kind = when (result.kind) { "nativeSelection" -> "Next 原生资料"; "v2Backup" -> "旧版 v2 资料"; "masterTxt" -> "旧版作者主表"; else -> result.kind }
     val state = when (result.state) { "applied" -> "已应用"; "partial" -> "部分应用"; "skipped" -> "已跳过"; else -> "失败" }
-    val reason = when (result.reason) {
+    return listOfNotNull(kind, state, deliveryReason(result.reason), result.receipt?.let { "本机回执 $it" }).joinToString(" · ")
+}
+
+private fun deliveryReason(code: String?): String? = when (code) {
+        "keep_existing" -> "按选择保留已有资料"
+        "already_current" -> "与已收资料相同"
+        "human_protected" -> "保留人工编辑或清空的资料"
+        "identity_conflict" -> "目标身份未能明确匹配"
+        "target_changed" -> "预检后本机资料已变化"
+        "source_revision_conflict" -> "来源资料修订冲突"
+        "native_partial" -> "请查看逐项处理结果"
+        "native_policy_changed" -> "已暂存的原生包使用不同的冲突处理选择"
+        "native_policy_frozen" -> "原生包已按此前的选择暂存"
         "v2_review_required" -> "请核对本机预检的匹配和冲突"
         "migration_profile_changed" -> "预检后的作者资料已变更"
         "v2_profiles_protected" -> "已保留受保护的本机资料"
         "v2_profiles_candidate" -> "部分资料仅作为候选保留"
         "v2_profiles_protected_and_candidate" -> "已保留受保护的本机资料和待核对的候选"
-        else -> result.reason
+        else -> code
     }
-    return listOfNotNull(kind, state, reason, result.receipt?.let { "本机回执 $it" }).joinToString(" · ")
-}

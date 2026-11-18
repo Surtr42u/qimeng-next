@@ -11,6 +11,7 @@ fi
 adb -s emulator-5556 shell wm size 320x640
 adb -s emulator-5556 shell wm density 160
 adb -s emulator-5556 shell settings put system font_scale 1.0
+adb -s emulator-5556 shell settings put secure immersive_mode_confirmations confirmed
 adb -s emulator-5556 shell cmd uimode night no
 export QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-android"
 independent_target=$(mktemp -d /dev/shm/qimeng-android-proof-XXXXXXXX)
@@ -23,6 +24,11 @@ export QIMENG_ADMIN_TOKEN='synthetic-cloud-only-owner-credential-18481'
 chmod +x "$RUNNER_TEMP/server-artifact/build/qimeng-next"
 "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-android.log" 2>&1 &
 service_pid=$!
+source_token='synthetic-cloud-only-owner-credential-18482'
+QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-source" QIMENG_LISTEN='127.0.0.1:18482' \
+  QIMENG_ADMIN_TOKEN="$source_token" QIMENG_BACKUP_TARGETS='{}' QIMENG_DEFAULT_BACKUP_TARGET='' \
+  "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-source.log" 2>&1 &
+source_pid=$!
 finish() {
   result=$?
   trap - EXIT
@@ -30,23 +36,29 @@ finish() {
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next.ui.test/files android/build/cloud-screenshots/core-ui > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next/files/screenshots android/build/cloud-screenshots/app > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Pictures/QimengNextCloudTests android/build/cloud-screenshots/retained > /dev/null 2>&1 || true
-  kill "$service_pid" 2>/dev/null || true
+  kill "$service_pid" "$source_pid" 2>/dev/null || true
   wait "$service_pid" 2>/dev/null || true
+  wait "$source_pid" 2>/dev/null || true
   exit "$result"
 }
 trap finish EXIT
 ready=false
 for attempt in $(seq 1 30); do
-  if curl --fail --silent http://127.0.0.1:18481/healthz > /dev/null; then ready=true; break; fi
+  if curl --fail --silent http://127.0.0.1:18481/healthz > /dev/null &&
+     curl --fail --silent http://127.0.0.1:18482/healthz > /dev/null; then ready=true; break; fi
   if ! kill -0 "$service_pid" 2>/dev/null; then cat "$RUNNER_TEMP/qimeng-next-android.log"; exit 1; fi
+  if ! kill -0 "$source_pid" 2>/dev/null; then cat "$RUNNER_TEMP/qimeng-next-source.log"; exit 1; fi
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'Isolated Android server did not become ready'; exit 1; fi
 ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
 adb -s emulator-5556 reverse tcp:18481 tcp:18481
+adb -s emulator-5556 reverse tcp:18482 tcp:18482
 adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test.mp4" /data/local/tmp/qimeng-next-test.mp4
 checks=0
 gradle --no-daemon -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.qimengSourceUrl=http://127.0.0.1:18482/ \
+  -Pandroid.testInstrumentationRunnerArguments.qimengSourceToken="$source_token" \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
 gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugAndroidTest \

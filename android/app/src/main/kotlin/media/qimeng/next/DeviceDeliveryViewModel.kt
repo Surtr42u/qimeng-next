@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import media.qimeng.next.model.DevicePackage
+import media.qimeng.next.model.DeviceReceiptItem
+import media.qimeng.next.model.DeviceSegmentResult
 import media.qimeng.next.model.Session
 
 class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(application) {
@@ -20,6 +22,8 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
     val settings = current.asStateFlow()
     private val results = MutableStateFlow<List<DevicePackage>?>(null)
     val recent = results.asStateFlow()
+    private val detail = MutableStateFlow<Pair<String, List<DeviceReceiptItem>>?>(null)
+    val receipt = detail.asStateFlow()
     private val working = MutableStateFlow(false)
     val busy = working.asStateFlow()
     private val errorState = MutableStateFlow<String?>(null)
@@ -28,7 +32,7 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
     init { viewModelScope.launch {
         var previous: Session? = null
         combine(session, repo.revision) { target, _ -> target }.collect { target ->
-            if (previous != target) { operation?.cancel(); results.value = null; working.value = false; errorState.value = null; previous = target }
+            if (previous != target) { operation?.cancel(); results.value = null; detail.value = null; working.value = false; errorState.value = null; previous = target }
             current.value = repo.view()
         }
     } }
@@ -45,8 +49,15 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
         }
     }
     fun issue(device: String) = act { repo.generate(it, device, device); results.value = repo.recent() }
-    fun clear() = act { repo.clear(); results.value = null }
+    fun clear() = act { repo.clear(); results.value = null; detail.value = null }
     fun refresh() = act { target -> val page = repo.recent(); if (session.value == target) results.value = page }
+    fun showReceipt(result: DeviceSegmentResult) = act { target ->
+        val id = requireNotNull(result.receipt)
+        if (detail.value?.first == id) detail.value = null else {
+            val items = repo.receiptItems(target, result)
+            if (session.value == target) detail.value = id to items
+        }
+    }
     private fun act(block: suspend (Session) -> Unit) {
         val target = session.value ?: return
         if (working.value) return

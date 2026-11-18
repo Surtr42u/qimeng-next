@@ -194,5 +194,5 @@ private fun EvidenceText(evidence: ProfileEvidence) {
 }
 
 internal fun profileBlockName(value: String) = mapOf("x" to "X 资料", "basic" to "基本资料", "accounts" to "其他账号")[value] ?: value
-private fun sourceName(value: String) = mapOf("empty" to "尚未完善", "human" to "人工保存", "merged" to "合并保留", "imported" to "导入资料")[value] ?: value
+private fun sourceName(value: String) = mapOf("empty" to "尚未完善", "human" to "人工保存", "merged" to "合并保留", "imported" to "导入资料", "native_delivery" to "原生交付")[value] ?: value
 private fun candidateState(value: String) = mapOf("pending" to "待确认候选", "applied" to "已采用", "dismissed" to "未采用")[value] ?: value

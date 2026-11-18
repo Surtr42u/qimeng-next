@@ -14,4 +14,6 @@ data class MigrationRow(val key: String, val name: String, val targetId: String?
 data class DeviceDeliverySettings(val deviceId: String, val label: String = "", val address: String = "", val configured: Boolean = false,
     val background: Boolean = false, val destination: String? = null, val notice: String? = null, val replaceAuthorProfiles: Boolean = false)
 data class DevicePackage(val id: String, val state: String, val createdAt: String, val results: List<DeviceSegmentResult>)
-data class DeviceSegmentResult(val kind: String, val state: String, val reason: String?, val receipt: String?)
+data class DeviceSegmentResult(val kind: String, val state: String, val reason: String?, val receipt: String?, val native: DevicePackageBinding? = null)
+data class DevicePackageBinding(val source: String, val target: String, val packageId: String)
+data class DeviceReceiptItem(val label: String, val kind: String, val block: String?, val state: String, val reason: String?, val receipt: String?)

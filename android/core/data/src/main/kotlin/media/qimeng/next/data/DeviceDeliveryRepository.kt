@@ -26,6 +26,8 @@ private class WaitingForDeviceBackup : Exception()
 private data class DeliveryAuth(val publisher: String, val address: String, val device: String, val label: String,
     val encrypted: String, val credentialId: String?, val pendingKey: String? = null, val previous: String? = null)
 internal data class ReceivedSegment(val kind: String, val state: String, val hash: String? = null, val receipt: String? = null, val code: String? = null)
+internal fun ReceivedSegment.toOutcome() = DeviceApplyOutcome(kind = DeviceSegmentKind.entries.first { it.value == kind },
+    state = DeviceApplyOutcome.State.entries.first { it.value == state }, sha256 = hash, receiptId = receipt, code = code)
 private data class DeliveryRun(val task: String, val publisher: String, val device: String, val destination: String,
     val results: List<ReceivedSegment> = emptyList(), val replaceAuthorProfiles: Boolean = false)
 
@@ -38,11 +40,12 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
     val revision = changed.asStateFlow()
     private val staging = File(context.filesDir, "device-delivery")
     private fun auth(): DeliveryAuth? = prefs.getString("auth", null)?.let { gson.fromJson(it, DeliveryAuth::class.java) }
-    private fun run(): DeliveryRun? = prefs.getString("run", null)?.let { gson.fromJson(it, DeliveryRun::class.java) }
+    // An unfinished protocol-1 journal remains historical. Only native tasks can resume writes.
+    private fun run(): DeliveryRun? = prefs.getString("nativeRun", null)?.let { gson.fromJson(it, DeliveryRun::class.java) }
     private fun save(key: String, value: Any?) {
         check(prefs.edit().putString(key, value?.let { gson.toJson(it) }).commit()) { "设备领取状态未能保存" }; changed.update { it + 1 }
     }
-    private fun saveRun(value: DeliveryRun?) = save("run", value)
+    private fun saveRun(value: DeliveryRun?) = save("nativeRun", value)
     private fun notice(value: String) { check(prefs.edit().putString("notice", value).commit()); changed.update { it + 1 } }
 
     @Synchronized private fun installation(): String {
@@ -132,11 +135,30 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
     } }
     suspend fun recent(): List<DevicePackage> = withContext(Dispatchers.IO) {
         val identity = auth()?.takeIf { it.credentialId != null } ?: return@withContext emptyList()
-        connection(identity).listDeviceApplyTasks(targetDeviceId = identity.device, limit = 20).bodyOrThrow().items.map {
-            DevicePackage(it.id, it.state.value, it.createdAt, it.results.orEmpty().map { outcome ->
-                DeviceSegmentResult(outcome.kind.value, outcome.state.value, outcome.code, outcome.receiptId)
+        val remote = connection(identity).listDeviceApplyTasks(targetDeviceId = identity.device, limit = 20).bodyOrThrow().items.map { task ->
+            DevicePackage(task.id, task.state.value, task.createdAt, task.results.orEmpty().map { outcome ->
+                val binding = task.segments.singleOrNull { it.kind == outcome.kind && it.kind == DeviceSegmentKind.nativeSelection }?.let { native ->
+                    val destination = requireNotNull(native.targetInstanceId) { "原生设备记录缺少目标实例" }
+                    DeviceSegments.nativeBinding(task, identity.publisher, destination)
+                }
+                DeviceSegmentResult(outcome.kind.value, outcome.state.value, outcome.code, outcome.receiptId, binding)
             })
         }
+        val old = prefs.getString("run", null)?.let { gson.fromJson(it, DeliveryRun::class.java) }
+        if (old == null || old.publisher != identity.publisher || old.device != identity.device || old.destination != settings.session.value?.instanceId) return@withContext remote
+        // A protocol-1 import may have completed locally before the old app sent its result. Display that receipt without reopening the job.
+        val reported = remote.firstOrNull { it.id == old.task }?.results.orEmpty().mapNotNull { it.receipt }.toSet()
+        val retained = old.results.filter { it.receipt != null && it.receipt !in reported }.map { DeviceSegmentResult(it.kind, it.state, it.code, it.receipt) }
+        if (retained.isEmpty()) remote else listOf(DevicePackage(old.task, "legacy_local", "", retained)) + remote
+    }
+    suspend fun receiptItems(target: Session, result: DeviceSegmentResult): List<DeviceReceiptItem> = withContext(Dispatchers.IO) {
+        val binding = requireNotNull(result.native) { "此记录没有原生包身份" }
+        check(local(target) && binding.target == target.instanceId) { "请连接原收件影库查看本机回执" }
+        val id = requireNotNull(result.receipt)
+        val receipt = provider.api(target).getNativeDelivery(id).bodyOrThrow()
+        check(receipt.id == id) { "本机返回了其他回执" }
+        DeviceSegments.checkBinding(receipt, binding)
+        receipt.items.map { DeviceReceiptItem(it.label, it.kind.value, it.block?.value, it.state.value, it.code, it.receiptId) }
     }
     suspend fun clear() = withContext(Dispatchers.IO) { lock.withLock {
         check(prefs.edit().remove("auth").putBoolean("background", false).remove("destination").commit()) { "未能清除设备授权" }
@@ -170,10 +192,16 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
             return@withLock
         }
         val source = connection(authorization)
+        val localApi = provider.api(target)
+        val localId = localApi.getInstance().bodyOrThrow().id
+        check(localId == target.instanceId) { "本机服务身份已改变，请重新核对设备目标" }
         var active = run()
         if (active == null) {
-            val first = source.listDeviceApplyTasks(targetDeviceId = authorization.device, state = DeviceApplyState.pending, limit = 1).bodyOrThrow().items.firstOrNull()
-                ?: run { if (manual) notice("目前没有待领取的资料包"); return@withLock }
+            // The service allows up to 32 live tasks per device; a package for another installation must stay pending there.
+            val first = source.listDeviceApplyTasks(targetDeviceId = authorization.device, state = DeviceApplyState.pending, protocolVersion = 2, limit = 32)
+                .bodyOrThrow().items.firstOrNull { it.segments.singleOrNull()?.targetInstanceId == target.instanceId }
+                ?: run { if (manual) notice("目前没有发给本机影库的 Next 资料包"); return@withLock }
+            DeviceSegments.nativeBinding(first, authorization.publisher, target.instanceId)
             check(backups.folder(target).tree != null) { "请先选择可写的维护目录，再领取资料包" }
             if (!backups.advance(target, manual)) { notice("正在准备本机两代备份，完成后领取"); throw WaitingForDeviceBackup() }
             val replaceProfiles = if (manual) request.getBoolean("replaceAuthorProfiles", false) else prefs.getBoolean("replaceAuthorProfiles", false)
@@ -183,7 +211,8 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
         var work = requireNotNull(active)
         check(work.destination == target.instanceId && work.device == authorization.device && work.publisher == authorization.publisher) { "未完成的领取属于原设备或实例" }
         var task = source.getDeviceApplyTask(work.task).bodyOrThrow()
-        check(task.targetDeviceId == work.device && task.protocolVersion == 1) { "服务端包与已登记的设备不一致" }
+        check(task.targetDeviceId == work.device) { "服务端包与已登记的设备不一致" }
+        val binding = DeviceSegments.nativeBinding(task, work.publisher, work.destination)
         if (task.state.value == "pending") {
             task = source.claimDeviceApplyTask(task.id, operationKey("claim", work.publisher, task.id, work.device), RevisionRequest(task.revision)).bodyOrThrow()
         }
@@ -193,20 +222,20 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
             if (task.state.value in setOf("expired","cancelled")) { discardSegments(work); saveRun(null) }
             return@withLock
         }
-        val localApi = provider.api(target)
-        for (segment in task.segments) {
-            if (work.results.any { it.kind == segment.kind.value }) continue
+        if (work.results.isEmpty()) {
+            check(DeviceSegments.nativeBinding(task, work.publisher, work.destination) == binding) { "领取回执与原任务不一致" }
+            val segment = task.segments.single()
             check(local(target) && sameTarget(target, settings.session.value)) { "本机实例已改变，待处理段保留" }
             val file = DeviceSegments.fetch(staging, work.publisher, task, segment, source)
             val latest = source.getDeviceApplyTask(task.id).bodyOrThrow()
             check(latest.state == task.state && latest.revision == task.revision && latest.segments == task.segments) { "领取已失效，停止应用后续段" }
-            val result = try { DeviceSegments.apply(localApi, file, segment, operationKey("device",work.publisher,work.task,work.destination,segment.kind.value), work.replaceAuthorProfiles) }
+            val result = try { DeviceSegments.applyNative(localApi, file, binding, work.replaceAuthorProfiles) }
             catch (failure: ApiFailure) {
                 if (failure.status in setOf(400, 404, 409, 413, 415, 422))
                     ReceivedSegment(segment.kind.value,"skipped", code = failure.code?.takeIf { it.matches(Regex("[a-z0-9_]{1,80}")) } ?: "local_import_conflict")
                 else throw failure
             }
-            work = work.copy(results = work.results + result)
+            work = work.copy(results = listOf(result))
             saveRun(work)
         }
         val wroteLocally = work.results.any { it.state == "applied" || it.state == "partial" }
@@ -221,18 +250,14 @@ class DeviceDeliveryRepository internal constructor(private val context: Context
             DeviceApplyReport(expectedRevision = task.revision, state = state, results = outcomes)).bodyOrThrow()
         cleanup(result, work)
     } }
-    private fun ReceivedSegment.toOutcome() = DeviceApplyOutcome(kind = DeviceSegmentKind.entries.first { it.value == kind },
-        state = DeviceApplyOutcome.State.entries.first { it.value == state }, sha256 = hash, receiptId = receipt, code = code)
     private fun cleanup(task: DeviceApplyTask, work: DeliveryRun) {
         check(task.id == work.task && task.results.orEmpty() == work.results.map { it.toOutcome() }) { "服务器尚未确认本机各段结果" }
         discardSegments(work); saveRun(null)
         notice(when (task.state.value) { "applied" -> "资料包已应用并取得服务端回执"; "partial" -> "资料包部分应用，未应用段请核对冲突"; else -> "资料包未应用，详情见最近任务" })
     }
     private fun discardSegments(work: DeliveryRun) {
-        listOf("masterTxt","v2Backup").forEach { kind ->
-            val file = File(staging, operationKey("segment",work.publisher,work.task,kind))
-            check(!file.exists() || file.delete()) { "已取得回执，设备暂存尚未清理" }
-        }
+        val file = File(staging, operationKey("segment",work.publisher,work.task,DeviceSegmentKind.nativeSelection.value))
+        check(!file.exists() || file.delete()) { "已取得回执，设备暂存尚未清理" }
     }
     internal fun showFailure(failure: Exception) = notice(safeFailure(failure))
 }

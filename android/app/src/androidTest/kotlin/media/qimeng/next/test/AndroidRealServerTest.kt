@@ -307,7 +307,7 @@ class AndroidRealServerTest {
         assertEquals(TabBarMaterial.LIQUID, original.material)
         try {
             compose.onNodeWithTag("navigation:me").performClick()
-            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("外观"))
+            compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("外观"))
             compose.onNodeWithText("外观").performClick()
             compose.onNodeWithText("经典").performScrollTo().performClick()
             compose.waitUntil(10_000) { graph.settings.preferences.value.material == TabBarMaterial.CLASSIC }
