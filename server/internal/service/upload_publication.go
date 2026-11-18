@@ -37,7 +37,11 @@ func (s *Service) applyReservedUpload(ctx context.Context, w *Write, j *fileInte
 	if err != nil {
 		return err
 	}
-	principal, err := s.currentWritePrincipal(ctx, w.Principal)
+	return s.validateReservedUpload(ctx, w.Principal, j, verified)
+}
+
+func (s *Service) validateReservedUpload(ctx context.Context, p model.Principal, j *fileIntent, verified string) error {
+	principal, err := s.currentWritePrincipal(ctx, p)
 	if err != nil {
 		return err
 	}

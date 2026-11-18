@@ -110,3 +110,61 @@ func TestUploadInspectionDoesNotPublishReservedDuplicateBytes(t *testing.T) {
 		t.Fatal(err, rows)
 	}
 }
+
+func TestUploadInspectionCommitRejectsReboundSourceDespiteVerifiedTarget(t *testing.T) {
+	if !syncPlatformSupported {
+		t.Skip("native object identity is unavailable")
+	}
+	ctx := context.Background()
+	s, err := New(Config{DataDir: t.TempDir(), AdminToken: "synthetic-reserved-original-owner-credential", ReserveBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	r := testMutation(t, s, "rebound-source-library", func(w *Write) (any, int, error) {
+		lib, e := s.CreateLibrary(ctx, w, "Rebind", "regular")
+		return lib, 201, e
+	})
+	var lib model.Library
+	if err = json.Unmarshal(r.Body, &lib); err != nil {
+		t.Fatal(err)
+	}
+	u := stagedUpload(t, s, lib.ID, 56, "new.png")
+	owner := model.Principal{ID: "owner", Scopes: []string{"admin"}}
+	write := &Write{s: s, ctx: ctx, Principal: owner, operation: "rebound", key: "source-object-key", inputHash: digest(nil)}
+	j, err := s.prepareFile(ctx, write, fileIntent{ID: ID(), Kind: "ingest", Source: uploadPath(u.ID), UploadID: u.ID,
+		Target: "libraries/" + lib.ID + "/new.png", After: model.Asset{ID: ID(), LibraryID: lib.ID,
+			RelativePath: "new.png", Size: u.Size, Hash: u.Hash, AuthorIDs: []string{"unknown"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.applyFile(ctx, &j); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Root.Remove(j.Source); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := s.Root.OpenFile(j.Source, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = replacement.Write(syntheticPNG(t, 56))
+	closeErr := replacement.Close()
+	if err != nil || closeErr != nil {
+		t.Fatal(err, closeErr)
+	}
+	// The bytes and native stamp for the installed target are still correct.
+	verified, err := s.verifiedUploadTarget(ctx, j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.validateReservedUpload(ctx, owner, &j, verified)
+	var problem *Error
+	if !errors.As(err, &problem) || problem.Code != "original_object_changed" {
+		t.Fatal("rebound source was accepted with an otherwise valid target", err)
+	}
+	var assets, pending int
+	if err = s.DB.DB.QueryRow("SELECT (SELECT count(*) FROM assets),(SELECT count(*) FROM file_intents WHERE state='prepared')").Scan(&assets, &pending); err != nil || assets != 0 || pending != 1 {
+		t.Fatal("failed publication lost its recovery evidence", assets, pending, err)
+	}
+}
