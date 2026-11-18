@@ -2,12 +2,13 @@ package media.qimeng.next.data
 
 import media.qimeng.next.model.Library
 import media.qimeng.next.model.LibraryScan
+import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.model.RevisionRequest
 import media.qimeng.next.sdk.model.ScanJob
 
 class ScanRepository internal constructor(private val settings: SecureSettings, private val provider: ApiProvider) {
     private fun api() = provider.api(settings.session.value ?: error("请先登录服务器"))
-    suspend fun start(library: Library, operationId: String): LibraryScan = api().startLibraryScan(id = library.id,
+    suspend fun start(target: Session, library: Library, operationId: String): LibraryScan = provider.api(target).startLibraryScan(id = library.id,
         idempotencyKey = operationId, revisionRequest = RevisionRequest(library.revision)).bodyOrThrow().model()
     suspend fun get(id: String): LibraryScan = api().getLibraryScan(id).bodyOrThrow().model()
 

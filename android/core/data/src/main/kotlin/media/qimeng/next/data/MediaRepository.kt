@@ -11,6 +11,8 @@ import media.qimeng.next.sdk.model.SessionCreate
 import media.qimeng.next.sdk.model.TagsUpdate
 import media.qimeng.next.sdk.model.LibraryCreate
 import media.qimeng.next.sdk.model.LibraryUpdate
+import media.qimeng.next.sdk.model.ResolveLibraryRootRequest
+import media.qimeng.next.sdk.model.Library as ApiLibrary
 import media.qimeng.next.sdk.model.CreateDirectoryRequest
 import media.qimeng.next.sdk.model.AuthorCreate
 import media.qimeng.next.sdk.model.AuthorMergeInput
@@ -90,20 +92,37 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return ServerCapabilities(instance.capabilities.aiConfigured, instance.capabilities.recommendations, instance.capabilities.rankings)
     }
 
-    suspend fun libraries(): List<Library> = provider.api(target()).listLibraries().bodyOrThrow().items.map { Library(it.id, it.name, it.kind.value, it.enabled, it.revision) }
+    suspend fun libraryPage(cursor: String? = null): Page<Library> {
+        val page = provider.api(target()).listLibraries(cursor = cursor, limit = 50).bodyOrThrow()
+        return Page(page.items.map(ApiLibrary::toModel), page.nextCursor, page.totalMatched)
+    }
+    suspend fun library(target: Session, id: String): Library = provider.api(target).getLibrary(id).bodyOrThrow().toModel()
     suspend fun createLibrary(name: String, cos: Boolean): Library {
         val value = provider.api(target()).createLibrary(idempotencyKey = UUID.randomUUID().toString(),
             libraryCreate = LibraryCreate(name = name, kind = LibraryCreate.Kind.entries.first { it.value == if (cos) "cos" else "regular" })).bodyOrThrow()
-        return Library(value.id, value.name, value.kind.value, value.enabled, value.revision)
+        return value.toModel()
+    }
+    suspend fun libraryRoot(target: Session, id: String): String = provider.api(target).getLibraryLocation(id).bodyOrThrow().rootPath
+    suspend fun registerLibrary(target: Session, name: String, rootPath: String, cos: Boolean, key: String): Library {
+        val api = provider.api(target)
+        val resolved = api.resolveLibraryRoot(ResolveLibraryRootRequest(rootPath)).bodyOrThrow()
+        val input = LibraryCreate(name = name, kind = LibraryCreate.Kind.entries.first { it.value == if (cos) "cos" else "regular" },
+            storageId = resolved.storageId, rootRelativePath = resolved.rootRelativePath)
+        return api.createLibrary(idempotencyKey = key, libraryCreate = input).bodyOrThrow().toModel()
+    }
+    suspend fun unregisterLibrary(target: Session, library: Library) {
+        val reply = provider.api(target).deleteLibrary(id = library.id, expectedRevision = library.revision,
+            idempotencyKey = "unregister-${library.id}-${library.revision}")
+        if (!reply.isSuccessful) reply.bodyOrThrow()
     }
     suspend fun updateLibrary(library: Library, name: String, enabled: Boolean): Library {
         val value = provider.api(target()).updateLibrary(id = library.id, idempotencyKey = UUID.randomUUID().toString(),
             libraryUpdate = LibraryUpdate(expectedRevision = library.revision, name = name, enabled = enabled)).bodyOrThrow()
-        return Library(value.id, value.name, value.kind.value, value.enabled, value.revision)
+        return value.toModel()
     }
-    suspend fun directories(libraryId: String, parent: String, cursor: String?): Page<Directory> {
-        val page = provider.api(target()).listDirectories(id = libraryId, parent = parent, cursor = cursor, limit = 50).bodyOrThrow()
-        return Page(page.items.map { Directory(it.relativePath, it.name) }, page.nextCursor)
+    suspend fun directories(target: Session, libraryId: String, parent: String, cursor: String?): DirectoryListing {
+        val page = provider.api(target).listDirectories(id = libraryId, parent = parent, cursor = cursor, limit = 50).bodyOrThrow()
+        return DirectoryListing(page.items.map { Directory(it.relativePath, it.name, it.fileCount, it.hasChildren) }, page.nextCursor, page.directFileCount)
     }
     suspend fun createDirectory(libraryId: String, path: String) {
         provider.api(target()).createDirectory(id = libraryId, idempotencyKey = UUID.randomUUID().toString(),
@@ -191,10 +210,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision, note = note))
             .bodyOrThrow().toModel(target)
     }
-    suspend fun updateAuthors(asset: Asset, ids: List<String>): Asset {
-        val target = target()
-        return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
-            authorIds = ids, expectedAuthorsRevision = asset.authorsRevision)).bodyOrThrow().toModel(target)
+    suspend fun updateAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long): Asset {
+        val input = AssetUpdate(expectedRevision = revision, authorIds = ids, newAuthorNames = names, expectedAuthorsRevision = authorsRevision)
+        val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf("asset-authors", asset.target.instanceId, asset.id, input)).toByteArray()).toString()
+        return provider.api(asset.target).updateAsset(id = asset.id, idempotencyKey = key, assetUpdate = input).bodyOrThrow().toModel(asset.target)
     }
     suspend fun updateRelations(asset: Asset, sources: List<String>, characters: List<String>): Asset {
         val target = target()
@@ -316,6 +335,8 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
 
     fun mediaClient(target: Session) = provider.client(target)
 }
+
+private fun ApiLibrary.toModel() = Library(id, name, kind.value, enabled, revision, fileCount, scanState.value, latestScanId)
 
 private fun ApiAsset.toModel(target: Session): Asset {
     val root = target.baseUrl.toHttpUrl()

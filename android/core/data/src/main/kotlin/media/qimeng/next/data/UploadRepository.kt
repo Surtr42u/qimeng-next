@@ -133,7 +133,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
     suspend fun enqueue(libraryId: String, directory: String, mode: UploadMode, options: UploadOptions = UploadOptions(),
                         target: Session = settings.session.value ?: error("请先登录服务器"),
                         inputIds: List<String> = queue.state.value?.pendingInputs.orEmpty().map { it.id },
-                        reviewed: List<UploadDraft>? = null) {
+                        reviewed: List<UploadDraft>? = null, editedStems: Map<String, String> = emptyMap()) {
         intakeLock.withLock {
         require(libraryId.isNotBlank()) { "请选择上传影库" }
         val batchKey = UUID.randomUUID().toString()
@@ -141,7 +141,11 @@ class UploadRepository internal constructor(private val context: Context, val qu
             check(sameTarget(target, settings.session.value)) { "服务器已改变，请重新确认上传位置" }
             val selectedIds = inputIds.toSet()
             val inputs = previous.pendingInputs.filter { it.id in selectedIds }
-            val drafts = previous.drafts.filter { it.id in selectedIds }
+            val drafts = previous.drafts.filter { it.id in selectedIds }.map { draft ->
+                val stem = editedStems[draft.id]
+                require(stem == null || draft.validStem(stem)) { "请输入有效的作品名" }
+                draft.withEditedStem(stem)
+            }
             require(inputIds.size in 1..100 && inputs.map { it.id } == inputIds) { "原始输入清单已改变，请核对本批后重试" }
             check(drafts.isNotEmpty()) { "本批没有可读取的文件，请查看读取结果" }
             check(reviewed == null || reviewed == drafts) { "待传文件已改变，请核对本批后重试" }

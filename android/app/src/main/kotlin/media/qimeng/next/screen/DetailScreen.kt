@@ -166,15 +166,18 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
 @Composable
 private fun AuthorsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Unit) {
     val state by model.authors.collectAsStateWithLifecycle()
-    val libraries by model.libraries.collectAsStateWithLifecycle()
+    val associated by model.assetAuthors.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
-    val kind = libraries.find { it.id == asset.libraryId }?.kind
+    val revision = rememberSaveable(asset.id) { asset.revision }
+    val authorRevision = rememberSaveable(asset.id) { asset.authorsRevision }
     var selected by rememberSaveable(asset.id) { mutableStateOf(asset.authorIds) }
+    var names by rememberSaveable(asset.id) { mutableStateOf("") }
     AlertDialog(onDismissRequest = { if (!busy) onClose() }, title = { Text("关联作者 · ${selected.size}") },
         text = { Column(Modifier.heightIn(max = 460.dp)) {
             LazyColumn(Modifier.weight(1f, fill = false)) {
-                items(state.items.filter { kind == null || it.kind == kind }, key = { it.id }) { author ->
+                items(associated.filter { it.kind == "cos" }, key = { it.id }) { author -> Text("${author.name} · COS 目录作者") }
+                items(state.items.filter { it.kind == "regular" && it.id != "unknown" }, key = { it.id }) { author ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(author.id in selected, { checked -> selected = if (checked) selected + author.id else selected - author.id })
                         Text(author.name)
@@ -182,9 +185,12 @@ private fun AuthorsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> 
                 }
                 if (state.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !state.loading) { Text("加载更多作者") } }
             }
+            OutlinedTextField(names, { names = it }, label = { Text("新增作者名称（每行一个）") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
             state.error?.let { ErrorNotice(it) { model.loadAuthors() } }
             message?.let { ErrorNotice(it) }
-        } }, confirmButton = { TextButton(onClick = { model.saveAuthors(selected, onClose) }, enabled = !busy && !state.loading) { Text("保存") } },
+        } }, confirmButton = { TextButton(onClick = { model.saveAuthors(asset, selected.filterNot { it == "unknown" },
+            names.lines().map(String::trim).filter(String::isNotEmpty).distinct(), revision, authorRevision, onClose) },
+            enabled = !busy && !state.loading) { Text("保存") } },
         dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("取消") } })
 }
 

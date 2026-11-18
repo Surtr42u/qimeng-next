@@ -105,6 +105,11 @@ class AndroidRealServerTest {
         assertNull(batch.inputs[1].originalFileName)
         assertEquals(batch.key, graph.queue.state.value!!.intakeFailures.single().batchKey)
         screenshot("real-server-shared-upload.png")
+        compose.onNodeWithTag("upload-list").performScrollToNode(hasText("锁定"))
+        compose.onNodeWithTag("draft-name:$manualDraft").performTextReplacement("手选保留")
+        await("independent-edited-stem", graph) { graph.queue.state.value?.drafts?.singleOrNull()?.name == "手选保留.png" }
+        assertEquals("android-synthetic.png", graph.queue.state.value!!.drafts.single().originalName)
+        screenshot("real-server-upload-locked-extension.png")
         assertEquals(64, batch.manifestFingerprint!!.length)
         val originalReport = runBlocking { graph.media.report(batch.serverId!!) }
         assertEquals(3, originalReport.items.size)

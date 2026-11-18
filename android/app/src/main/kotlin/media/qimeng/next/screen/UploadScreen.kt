@@ -3,6 +3,7 @@ package media.qimeng.next.screen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -22,6 +24,7 @@ import media.qimeng.next.NamingViewModel
 import media.qimeng.next.model.*
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.component.*
 
 @Composable
 fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel()) {
@@ -38,55 +41,60 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val collectionId by model.uploadCollectionId.collectAsStateWithLifecycle()
     val note by model.uploadNote.collectAsStateWithLifecycle()
     val namingState by naming.state.collectAsStateWithLifecycle()
+    val stems by model.editedStems.collectAsStateWithLifecycle()
+    val drafts = queue?.drafts.orEmpty()
     var numberClass by rememberSaveable { mutableStateOf("image") }
     val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null)
     val namingRequest = if (needsNaming && selected.isNotEmpty()) NamingRequest(selected, directory, family.trim(), collectionId, numberClass, note,
-        queue?.drafts.orEmpty().map { NamingFile(it.id, it.name) }) else null
+        drafts.map { NamingFile(it.id, it.withEditedStem(stems[it.id]).name) }) else null
     LaunchedEffect(namingRequest) { naming.inspect(namingRequest) }
-    var renameId by rememberSaveable { mutableStateOf<String?>(null) }
-    var chooseDirectory by rememberSaveable { mutableStateOf(false) }
+    var showGuide by rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) model.receiveFiles(it) }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { ContentCard {
-            Text("上传位置", style = MaterialTheme.typography.titleMedium)
-            if (libraries.isEmpty()) {
-                Text("尚未读取到影库。请检查连接或在服务器创建影库。")
-                TextButton(onClick = model::refreshConnection, enabled = !busy) { Text("刷新影库") }
-            } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                libraries.forEach { library -> FilterChip(selected == library.id, { model.setUploadLibrary(library.id) }, label = { Text(library.name) }, enabled = library.enabled && !busy) }
-            }
-            OutlinedTextField(directory, model::setUploadDirectory, enabled = !busy, label = { Text("库内目录（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            TextButton(onClick = { chooseDirectory = true }, enabled = libraries.any { it.id == selected && it.enabled }) { Text("浏览 / 创建目录") }
-        } }
-        item { ContentCard {
-            Text("入库方式", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(mode == UploadMode.ORDINARY.name, { model.setUploadMode(UploadMode.ORDINARY) }, label = { Text("普通上传") })
-                FilterChip(mode == UploadMode.INTELLIGENT.name, { model.setUploadMode(UploadMode.INTELLIGENT) }, label = { Text("智能整理") })
-            }
-            Text(if (mode == UploadMode.ORDINARY.name) "按所选目录与名称入库，不依赖 AI。" else if (capabilities?.aiConfigured == false)
-                "当前服务器尚未配置 AI 执行器。文件可传输并进入等待，任务中心会保留原因。" else "提交本批后开始智能整理，逐项结果会保存在任务中心。")
-            Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy && queue != null) { Icon(Icons.Outlined.Add, null); Text("选择文件") }
-            Text("文件选择后可预览名称再开始；来源原件保留。", style = MaterialTheme.typography.bodySmall)
-        } }
+    LaunchedEffect(Unit) { model.loadLibraries() }
+    Column(Modifier.fillMaxSize()) {
+        QimengTopBar("上传", onBack = model::back)
+        LazyColumn(Modifier.fillMaxSize().imePadding().testTag("upload-list"), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { QimengPageIntro("选好上传位置，再添加你想收藏的作品。") }
+        item { UploadDestinationSection(model) }
         item { UploadAssociations(model) }
-        if (mode == UploadMode.ORDINARY.name) item { UploadNamingCard(autoName, family, collectionId, numberClass, namingRequest, namingState,
-            busy, model::setUploadAutoName, model::setUploadFamily, { numberClass = it }, { naming.inspect(namingRequest) }) }
+        item { UploadPanel("添加文件", "选择后可修改文件名，确认后点「开始上传」。作者与来源可稍后整理。") {
+            Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy && queue != null, modifier = Modifier.fillMaxWidth()) { Text("系统文件") }
+            TextButton(onClick = { showGuide = !showGuide }) { Text(if (showGuide) "收起选择说明" else "权限与格式说明") }
+            if (showGuide) Text("「系统文件」用系统文档选择器：可直接选到点前缀隐藏目录里的媒体，无需「所有文件访问」授权。支持的图片和视频格式由服务器核验。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } }
         queueError?.let { item { ErrorNotice(it, model::reloadQueue) } }
-        items(queue?.drafts.orEmpty(), key = { "draft:${it.id}" }) { draft ->
-            ContentCard {
-                Text(draft.name, style = MaterialTheme.typography.titleMedium)
-                Text("${draft.mimeType} · ${formatBytes(draft.bytes)}", style = MaterialTheme.typography.bodySmall)
-                Row {
-                    TextButton(onClick = { renameId = draft.id }, enabled = !busy) { Text("改名") }
-                    TextButton(onClick = { model.removeDraft(draft.id) }, enabled = !busy) { Text("移除待传项") }
+        if (drafts.isNotEmpty()) item {
+            QimengSettingsCard {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("待上传文件（${drafts.size} 项）", style = MaterialTheme.typography.titleSmall)
+                    drafts.forEach { draft -> key(draft.id) {
+                        val extension = draft.lockedExtension()
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            QimengCapsuleTextField(stems[draft.id] ?: draft.name.removeSuffix(extension), { model.editStem(draft, it) },
+                                modifier = Modifier.weight(1f).testTag("draft-name:${draft.id}"), placeholder = "作品名", singleLine = true, enabled = !busy)
+                            if (extension.isNotEmpty()) {
+                                Text(extension, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("锁定", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            TextButton(onClick = { model.removeDraft(draft.id) }, enabled = !busy) { Text("移除") }
+                        }
+                    } }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        QimengSegPill("普通上传", mode == UploadMode.ORDINARY.name, { model.setUploadMode(UploadMode.ORDINARY) }, enabled = !busy)
+                        QimengSegPill("智能整理", mode == UploadMode.INTELLIGENT.name, { model.setUploadMode(UploadMode.INTELLIGENT) }, enabled = !busy)
+                    }
+                    if (mode == UploadMode.INTELLIGENT.name && capabilities?.aiConfigured == false)
+                        Text("尚未配置 AI 执行器。服务器接收后会保留等待原因。", style = MaterialTheme.typography.bodySmall)
+                    if (mode == UploadMode.ORDINARY.name) UploadNamingCard(autoName, family, collectionId, numberClass, namingRequest, namingState, busy,
+                        model::setUploadAutoName, model::setUploadFamily, { numberClass = it }, { naming.inspect(namingRequest) })
+                    Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled } &&
+                        drafts.all { draft -> stems[draft.id]?.let(draft::validStem) != false } &&
+                        (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.preview != null)),
+                        modifier = Modifier.fillMaxWidth()) { Text(if (busy) "上传中…" else "开始上传（${drafts.size} 项）") }
                 }
             }
-        }
-        if (queue?.drafts?.isNotEmpty() == true) item {
-            Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled } &&
-                (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.preview != null)),
-                modifier = Modifier.fillMaxWidth()) { Text("开始上传 ${queue!!.drafts.size} 个文件") }
         }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("任务结果", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -123,10 +131,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
         }
         item { Spacer(Modifier.navigationBarsPadding()) }
     }
-    queue?.drafts?.find { it.id == renameId }?.let { draft ->
-        TextEditDialog("上传文件名", draft.name, busy, { renameId = null }) { model.renameDraft(draft.id, it) { renameId = null } }
     }
-    if (chooseDirectory) DirectoryDialog(model, selected, directory) { chooseDirectory = false }
 }
 
 @Composable
@@ -139,27 +144,37 @@ private fun UploadAssociations(model: LibraryViewModel) {
     val collectionId by model.uploadCollectionId.collectAsStateWithLifecycle()
     val note by model.uploadNote.collectAsStateWithLifecycle()
     val acquisitionSources by model.uploadSources.collectAsStateWithLifecycle()
+    val authorSources by model.uploadAuthorSources.collectAsStateWithLifecycle()
     val libraryId by model.uploadLibrary.collectAsStateWithLifecycle()
-    val libraries by model.libraries.collectAsStateWithLifecycle()
     val authors by model.authors.collectAsStateWithLifecycle()
     val collections by model.collections.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
-    val libraryKind = libraries.find { it.id == libraryId }?.kind
-    ContentCard {
-        TextButton(onClick = { expanded = !expanded }) { Text("可选关联 · ${authorIds.size} 位作者${if (collectionId == null) "" else " · 已选集合"}") }
+    QimengSettingsCard {
+      Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("作者与来源", style = MaterialTheme.typography.titleSmall)
+                Text(if (authorIds.isEmpty()) "可选 · 同一作者的作品可预设，散图可跳过。" else "已选 ${authorIds.size} 位作者",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(if (expanded) "收起" else "展开", style = MaterialTheme.typography.labelMedium)
+        }
         if (expanded) {
             Text("仅对这次提交的全部待传文件应用所选关联；混合内容可保持未指定。", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = { model.loadAuthors(); chooseAuthors = true }, enabled = !busy) { Text("选择作者") }
+            if (authorIds.isNotEmpty()) OutlinedTextField(authorSources, model::setUploadAuthorSources, enabled = !busy,
+                label = { Text("追加到所选作者的来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(acquisitionSources, model::setUploadSources, label = { Text("获取渠道 / 来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
             OutlinedButton(onClick = { model.loadCollections(); chooseCollection = true }, enabled = libraryId.isNotEmpty() && !busy) { Text("组图 / 短剧集合") }
             OutlinedTextField(note, model::setUploadNote, label = { Text("本批备注（原样保存）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
         }
+      }
     }
     if (chooseAuthors) {
         var selected by rememberSaveable { mutableStateOf(authorIds) }
         AlertDialog(onDismissRequest = { chooseAuthors = false }, title = { Text("本批关联作者") }, text = {
             LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                items(authors.items.filter { libraryKind == null || it.kind == libraryKind }, key = { it.id }) { author -> Row(verticalAlignment = Alignment.CenterVertically) {
+                items(authors.items.filter { it.kind == "regular" && it.id != "unknown" }, key = { it.id }) { author -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(author.id in selected, { checked -> selected = if (checked) selected + author.id else selected - author.id }); Text(author.name)
                 } }
                 if (authors.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") } }
@@ -193,32 +208,6 @@ private fun UploadAssociations(model: LibraryViewModel) {
         }, confirmButton = { TextButton(onClick = { model.createCollection(name.trim(), kind) { newCollection = false } }, enabled = !busy && name.isNotBlank()) { Text("创建") } },
             dismissButton = { TextButton(onClick = { newCollection = false }, enabled = !busy) { Text("取消") } })
     }
-}
-
-@Composable
-private fun DirectoryDialog(model: LibraryViewModel, libraryId: String, initial: String, close: () -> Unit) {
-    var parent by rememberSaveable(libraryId) { mutableStateOf(initial) }
-    var create by rememberSaveable { mutableStateOf(false) }
-    val state by model.directories.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
-    LaunchedEffect(libraryId, parent) { model.loadDirectories(libraryId, parent) }
-    AlertDialog(onDismissRequest = close, title = { Text("选择库内目录") }, text = {
-        Column(Modifier.heightIn(max = 420.dp)) {
-            Text(parent.ifEmpty { "影库根目录" })
-            Row {
-                TextButton(onClick = { parent = parent.substringBeforeLast('/', "") }, enabled = parent.isNotEmpty()) { Text("上一级") }
-                TextButton(onClick = { create = true }, enabled = !busy) { Text("新建目录") }
-            }
-            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            state.error?.let { ErrorNotice(it) { model.loadDirectories(libraryId, parent) } }
-            LazyColumn(Modifier.weight(1f, fill = false)) {
-                items(state.items, key = { it.path }) { directory -> TextButton(onClick = { parent = directory.path }) { Icon(Icons.Outlined.Folder, null); Text(directory.name) } }
-                if (state.cursor != null) item { TextButton(onClick = { model.loadDirectories(libraryId, parent, true) }, enabled = !state.loading) { Text("加载更多目录") } }
-            }
-        }
-    }, confirmButton = { TextButton(onClick = { model.setUploadDirectory(parent); close() }, enabled = state.loaded) { Text("选择当前目录") } },
-        dismissButton = { TextButton(onClick = close) { Text("取消") } })
-    if (create) TextEditDialog("新建目录名称", "", busy, { create = false }) { model.createDirectory(libraryId, parent, it) { create = false } }
 }
 
 @Composable

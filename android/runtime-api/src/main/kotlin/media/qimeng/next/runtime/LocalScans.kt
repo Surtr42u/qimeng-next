@@ -12,6 +12,7 @@ interface LocalScans {
     val state: StateFlow<LocalScanState>
     suspend fun setChargeOnly(enabled: Boolean)
     suspend fun request(instanceId: String, libraryId: String, expectedRevision: Long)
+    suspend fun forget(instanceId: String, libraryId: String)
     fun resume()
 }
 
@@ -26,5 +27,6 @@ object UnavailableLocalScans : LocalScans {
     override val state = MutableStateFlow(LocalScanState(error = "此安装包未包含本机扫描调度"))
     override suspend fun setChargeOnly(enabled: Boolean) = error("此安装包未包含本机扫描调度")
     override suspend fun request(instanceId: String, libraryId: String, expectedRevision: Long) = error("此安装包未包含本机扫描调度")
+    override suspend fun forget(instanceId: String, libraryId: String) = Unit
     override fun resume() = Unit
 }

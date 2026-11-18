@@ -66,10 +66,22 @@ internal class EmbeddedScans(private val context: Context) : LocalScans {
             val previous = current.requests.find { it.instanceId == instanceId && it.libraryId == libraryId }
             request = previous?.takeIf { it.state in setOf("queued", "waiting") }
                 ?: LocalScanRequest(UUID.randomUUID().toString(), instanceId, libraryId, expectedRevision)
-            check(previous != null || current.requests.size < 100) { "本机待扫影库已达上限，请先处理现有记录" }
-            current.copy(requests = current.requests.filterNot { it.instanceId == instanceId && it.libraryId == libraryId } + request!!)
+            val remaining = current.requests.filterNot { it == previous }.toMutableList()
+            // Accepted scans are already durable in Go. An old receipt must never fill the host queue forever.
+            if (remaining.size == 100) remaining.firstOrNull { it.state == "submitted" }?.let(remaining::remove)
+            check(remaining.size < 100) { "本机待扫影库已达上限，请先处理现有待扫任务" }
+            current.copy(requests = remaining + request!!)
         }
         schedule(request!!, state.value.chargeOnly)
+    }
+
+    override suspend fun forget(instanceId: String, libraryId: String) {
+        var removed: LocalScanRequest? = null
+        update { state ->
+            removed = state.requests.find { it.instanceId == instanceId && it.libraryId == libraryId }
+            state.copy(requests = state.requests.filterNot { it == removed })
+        }
+        removed?.let { WorkManager.getInstance(context).cancelUniqueWork("qimeng-local-scan-${it.id}") }
     }
 
     override suspend fun setChargeOnly(enabled: Boolean) {

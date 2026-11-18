@@ -5,6 +5,9 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -37,8 +40,11 @@ class EmbeddedRuntimeTest {
             assertEquals("https://127.0.0.1:18431/", first.baseUrl)
             assertTrue(first.certificateDerBase64.isNotBlank())
             application.localConnection.connect(forceLogin = true)
-            val library = graph.media.createLibrary("Embedded synthetic cloud library", false)
-            assertTrue(graph.media.libraries().any { it.id == library.id })
+            val root = java.io.File(application.filesDir, "embedded-v1/media/synthetic-registration")
+            val library = graph.media.registerLibrary(graph.settings.session.value!!, "Embedded synthetic cloud library",
+                root.absolutePath, false, "synthetic-cloud-register-library")
+            assertTrue(graph.media.libraryPage().items.any { it.id == library.id })
+            assertTrue("Owner root must round trip", graph.media.libraryRoot(graph.settings.session.value!!, library.id) == root.absolutePath)
 
             runtime.stop()
             assertEquals(RuntimePhase.STOPPED, runtime.status.value.phase)
@@ -51,12 +57,12 @@ class EmbeddedRuntimeTest {
             // Share the app coordinator with automatic pin refresh, so the test cannot race two logins.
             application.localConnection.connect(forceLogin = false)
             assertEquals(second.certificateDerBase64, graph.settings.certificateFor(graph.settings.session.value!!))
-            assertTrue("Server persistence must survive process restart", graph.media.libraries().any { it.id == library.id })
+            assertTrue("Server persistence must survive process restart", graph.media.libraryPage().items.any { it.id == library.id })
             runtime.configureAddress("http://127.0.0.1:18432")
             application.localConnection.connect(forceLogin = true)
             assertEquals("https://127.0.0.1:18432/", graph.settings.session.value!!.baseUrl)
             assertEquals(first.instanceId, graph.settings.session.value!!.instanceId)
-            assertTrue("An owned port change preserves the same database", graph.media.libraries().any { it.id == library.id })
+            assertTrue("An owned port change preserves the same database", graph.media.libraryPage().items.any { it.id == library.id })
 
             val source = Uri.parse("content://media.qimeng.next.test.fixture/android-synthetic.png")
             val bitmap = Bitmap.createBitmap(40, 30, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(72, 112, 190)) }
@@ -70,7 +76,7 @@ class EmbeddedRuntimeTest {
                     delay(300)
                 }
             }
-            assertEquals(1, graph.media.assets(AssetQuery(libraryId = library.id)).items.size)
+            val asset = graph.media.assets(AssetQuery(libraryId = library.id)).items.single()
 
             shell("dumpsys battery unplug")
             runtime.scans.setChargeOnly(true)
@@ -91,6 +97,16 @@ class EmbeddedRuntimeTest {
                 while (graph.scans.get(scanId).state in setOf("queued", "running")) delay(300)
             }
             assertEquals("Unplugging does not cancel a scan already accepted by Go", "completed", graph.scans.get(scanId).state)
+            compose.activityRule.scenario.onActivity {
+                androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].navigate("libraries")
+            }
+            compose.waitUntil(30_000) { compose.onAllNodesWithText("1 个文件").fetchSemanticsNodes().isNotEmpty() }
+            media.qimeng.next.testsupport.captureCloudScreenshot("embedded-library-registration.png")
+            compose.onNodeWithText("删除").performClick()
+            compose.onNodeWithText("该库 1 个文件的索引将被清除，磁盘文件不受影响。").assertExists()
+            compose.onAllNodesWithText("删除").let { it[it.fetchSemanticsNodes().lastIndex].performClick() }
+            withTimeout(20_000) { while (graph.media.libraryPage().items.any { it.id == library.id }) delay(200) }
+            assertTrue("Unregister keeps the original on disk", java.io.File(root, asset.relativePath).isFile)
         } catch (failure: Throwable) {
             throw AssertionError("Synthetic native runtime failure: ${runtime.status.value}; native output:\n${EmbeddedDebugDiagnostics.snapshot()}", failure)
         } finally {

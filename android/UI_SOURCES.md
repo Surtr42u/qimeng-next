@@ -35,3 +35,7 @@
 旧 `feature/settings/ServerSettingsScreen.kt` 的服务器 / 本机 / 默认登录 / 仅充电扫描 / 存储权限卡顺序、文案、16dp 圆角与 16×12dp 内边距现用于新 `ServerSettingsScreen`；纯 `QimengScaffold.kt` 的 TopAppBar 进入 `core/ui/component/QimengTopBar.kt`。登录的发现状态、重新寻找与候选行恢复自旧 `LoginScreen` 的纯展示。未复制旧设置 ViewModel、地址推断、权限启动或扫描实现；新默认端持久化、NsdManager 发现、权限模块和充电待扫队列均独立编写。
 
 首页与相册的万能筛选采用旧 `core/ui/component/QimengFilterSheet*.kt` 的布局、标签按钮和资源，接入新草稿、分页词表与带修订的删除动作。相册和收藏直接使用旧 `QimengTitleRow`、`QimengChipRow`、`QimengValuePillBlock`。计数、过滤和 COS 推荐来自新 Go 查询。
+
+库管理的列表、注册卡、类型胶囊与注销确认来自旧 `feature/manage/LibraryManageScreen.kt` 和 `RegisterLibraryCard.kt` 的纯展示。注册的授权根解析、分页、充电调度与注销检查接入新模块。
+
+上传使用旧 `feature/upload/UploadDestinationSection.kt`、`UploadPanels.kt`、`UploadPendingSection.kt` 与 `UploadScreen.kt` 的顶栏、目录树、表单节距、默认收起的作者区及锁定后缀的待传行。分支读取、私有输入快照、来源字段、名称预览与幂等写入均由新客户端和 Go 处理。

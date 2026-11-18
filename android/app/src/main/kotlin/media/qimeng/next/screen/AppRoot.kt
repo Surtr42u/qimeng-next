@@ -72,9 +72,9 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = rememberGlassBackdrop()
                 val detailRoute = route.startsWith("asset:")
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route == "server") Modifier else Modifier.statusBarsPadding())) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route in setOf("server", "libraries", "upload")) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites", "libraries", "upload")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -106,7 +106,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(model)
                                 route == "server" -> ServerSettingsScreen(model)
-                                route == "libraries" -> ServerScreen(model, librariesOnly = true)
+                                route == "libraries" -> LibraryManagementScreen(model::back)
                                 route == "data-manage" -> DataManageScreen(model)
                                 route == "vocabulary-manage" -> VocabularyManageScreen(model)
                                 route == "trash" -> TrashScreen(model)

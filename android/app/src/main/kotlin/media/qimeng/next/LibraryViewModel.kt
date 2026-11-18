@@ -48,14 +48,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val uploadCollectionId = saved.getStateFlow<String?>("uploadCollectionId", null)
     val uploadNote = saved.getStateFlow("uploadNote", "")
     val uploadSources = saved.getStateFlow("uploadSources", "")
+    val uploadAuthorSources = saved.getStateFlow("uploadAuthorSources", "")
     val uploadFamily = saved.getStateFlow("uploadFamily", "")
     val uploadAutoName = saved.getStateFlow("uploadAutoName", false)
+    val editedStems = saved.getStateFlow("uploadStems", HashMap<String, String>())
+    private val nameWrites = mutableMapOf<String, Job>()
     private val mutableMessage = MutableStateFlow<String?>(null)
     val message = mutableMessage.asStateFlow()
     private val mutableBusy = MutableStateFlow(false)
     val busy = mutableBusy.asStateFlow()
-    private val mutableLibraries = MutableStateFlow<List<Library>>(emptyList())
-    val libraries = mutableLibraries.asStateFlow()
+    private val libraryState = MutableStateFlow(ListState<Library>())
+    val libraryPage = libraryState.asStateFlow()
+    val libraries = libraryState.map { it.items }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val mutableCapabilities = MutableStateFlow<ServerCapabilities?>(null)
     val capabilities = mutableCapabilities.asStateFlow()
     private val mutableAsset = MutableStateFlow<Asset?>(null)
@@ -98,13 +102,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val authorTasks = authorTaskState.asStateFlow()
     private val trashState = MutableStateFlow(ListState<Asset>())
     val trash = trashState.asStateFlow()
-    private val directoryState = MutableStateFlow(ListState<Directory>())
-    val directories = directoryState.asStateFlow()
     private val collectionState = MutableStateFlow(ListState<MediaCollection>())
     val collections = collectionState.asStateFlow()
-    private var directoryJob: Job? = null
     private var collectionJob: Job? = null
-    private var directoryLocation = ""
     private var detailJob: Job? = null
     private var detailGeneration = RequestGeneration()
     private var connectionGeneration = 0L
@@ -125,14 +125,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
                 mutableAssetAuthors.value = emptyList()
                 mutableTags.value = emptyList(); mutableTagCursor.value = null
-                mutableLibraries.value = emptyList(); mutableCapabilities.value = null
-                analyticsJob?.cancel(); reviewJob?.cancel(); directoryJob?.cancel(); collectionJob?.cancel(); rankingJob?.cancel()
+                libraryState.value = ListState(); mutableCapabilities.value = null
+                analyticsJob?.cancel(); reviewJob?.cancel(); collectionJob?.cancel(); rankingJob?.cancel()
                 rankingState.value = ListState(); rankingQuery = null
-                directoryState.value = ListState()
                 collectionState.value = ListState()
                 if (saved.get<String>("uploadInstance") != connection?.instanceId) {
                     saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""; saved["uploadFamily"] = ""; saved["uploadAutoName"] = false
-                    saved["uploadDirectory"] = ""; saved["uploadNote"] = ""
+                    saved["uploadDirectory"] = ""; saved["uploadNote"] = ""; saved["uploadAuthorSources"] = ""
                 }
                 saved["uploadInstance"] = connection?.instanceId
                 analyticsState.value = LoadState(); reviewState.value = LoadState(); recommendationState.value = null
@@ -211,11 +210,29 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     fun refreshConnection() = action(blocking = false) {
         val caps = repository.capabilities()
-        val libraries = repository.libraries()
         mutableCapabilities.value = caps
-        mutableLibraries.value = libraries
+        loadLibraries()
         graph.uploads.schedule()
-        if (uploadLibrary.value.isEmpty() && libraries.count { it.enabled } == 1) persistUploadLibrary(libraries.single { it.enabled }.id)
+    }
+    fun loadLibraries(next: Boolean = false) = loadPage(libraryState, next) { cursor ->
+        val page = repository.libraryPage(cursor)
+        if (cursor != null) {
+            val visible = libraryState.value.items.mapTo(mutableSetOf(), Library::id)
+            return@loadPage page.copy(items = page.items.filterNot { it.id in visible })
+        }
+        if (uploadLibrary.value.isEmpty() && page.nextCursor == null && page.items.count { it.enabled } == 1) {
+            persistUploadLibrary(page.items.single { it.enabled }.id)
+        }
+        val target = session.value
+        val selected = uploadLibrary.value
+        if (target != null && selected.isNotEmpty() && page.nextCursor != null && page.items.none { it.id == selected }) {
+            val savedLibrary = try { repository.library(target, selected) } catch (failure: ApiFailure) {
+                if (failure.status != 404) throw failure
+                null
+            }
+            if (savedLibrary != null) return@loadPage page.copy(items = listOf(savedLibrary) + page.items)
+        }
+        page
     }
 
     fun login(address: String, password: String, expectedInstanceId: String? = null) = action {
@@ -308,9 +325,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val current = mutableAsset.value ?: return@action
         publishAsset(repository.updateNote(current, note)); onSaved()
     }
-    fun saveAuthors(ids: List<String>, onSaved: () -> Unit) = action {
-        val current = mutableAsset.value ?: return@action
-        val result = repository.updateAuthors(current, ids)
+    fun saveAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long, onSaved: () -> Unit) = action {
+        val result = repository.updateAuthors(asset, ids, names, revision, authorsRevision)
         publishAsset(result)
         mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
         onSaved()
@@ -379,36 +395,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             onSaved(); loadAuthors()
         }
     }
-    fun createLibrary(name: String, cos: Boolean, onSaved: () -> Unit) = action {
-        repository.createLibrary(name, cos)
-        mutableLibraries.value = repository.libraries()
-        onSaved()
-    }
-    fun updateLibrary(library: Library, name: String = library.name, enabled: Boolean = library.enabled) = action {
-        val updated = repository.updateLibrary(library, name, enabled)
-        mutableLibraries.value = mutableLibraries.value.map { if (it.id == updated.id) updated else it }
-    }
-    fun loadDirectories(libraryId: String, parent: String, next: Boolean = false) {
-        if (next && (directoryState.value.loading || directoryState.value.cursor == null)) return
-        val location = "$libraryId:$parent"
-        val previous = directoryState.value
-        directoryLocation = location
-        directoryJob?.cancel()
-        directoryState.value = if (next) previous.copy(loading = true, error = null) else ListState(loading = true)
-        val connection = connectionGeneration
-        directoryJob = viewModelScope.launch {
-            try {
-                val page = repository.directories(libraryId, parent, if (next) previous.cursor else null)
-                if (connection == connectionGeneration && directoryLocation == location)
-                    directoryState.value = ListState(if (next) previous.items + page.items else page.items, page.nextCursor, loaded = true)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (connection == connectionGeneration && directoryLocation == location) directoryState.value = ListState(error = explain(failure)) }
-        }
-    }
     fun createDirectory(libraryId: String, parent: String, name: String, onSaved: () -> Unit) = action {
         require(name.isNotBlank() && '/' !in name && '\\' !in name) { "请输入单个目录名称" }
         repository.createDirectory(libraryId, listOf(parent, name.trim()).filter(String::isNotEmpty).joinToString("/"))
-        onSaved(); loadDirectories(libraryId, parent)
+        onSaved()
     }
     fun trashCurrentAsset() = action {
         mutableAsset.value?.let { current ->
@@ -484,17 +474,21 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         session.value?.let { target -> withContext(Dispatchers.IO) { graph.settings.saveUploadLibrary(target, id) } }
         if (id != uploadLibrary.value) {
             saved["uploadAuthorIds"] = emptyList<String>(); saved["uploadCollectionId"] = null; saved["uploadSources"] = ""; saved["uploadFamily"] = ""; saved["uploadAutoName"] = false
-            saved["uploadDirectory"] = ""
+            saved["uploadDirectory"] = ""; saved["uploadAuthorSources"] = ""
             collectionJob?.cancel(); collectionState.value = ListState()
         }
         saved["uploadLibrary"] = id
     }
     fun setUploadDirectory(directory: String) { saved["uploadDirectory"] = directory }
     fun setUploadMode(mode: UploadMode) { saved["uploadMode"] = mode.name }
-    fun setUploadAuthors(ids: List<String>) { saved["uploadAuthorIds"] = ids }
+    fun setUploadAuthors(ids: List<String>) {
+        if (ids != uploadAuthorIds.value) saved["uploadAuthorSources"] = ""
+        saved["uploadAuthorIds"] = ids
+    }
     fun setUploadCollection(id: String?) { saved["uploadCollectionId"] = id }
     fun setUploadNote(note: String) { saved["uploadNote"] = note }
     fun setUploadSources(sources: String) { saved["uploadSources"] = sources }
+    fun setUploadAuthorSources(sources: String) { saved["uploadAuthorSources"] = sources }
     fun setUploadFamily(family: String) { saved["uploadFamily"] = family }
     fun setUploadAutoName(enabled: Boolean) { saved["uploadAutoName"] = enabled }
     fun loadCollections(next: Boolean = false) {
@@ -528,9 +522,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             try {
                 if (queue.value == null) graph.queue.load()
                 val inputs = graph.uploads.receive(uris)
-                if (target != null && !destination.isNullOrEmpty() && sameTarget(target, session.value) &&
-                    repository.libraries().any { it.id == destination && it.enabled }) {
-                    graph.uploads.enqueue(destination, directory, UploadMode.ORDINARY, target = target, inputIds = inputs)
+                if (target != null && !destination.isNullOrEmpty() && sameTarget(target, session.value)) {
+                    if (repository.library(target, destination).enabled) graph.uploads.enqueue(destination, directory, UploadMode.ORDINARY, target = target, inputIds = inputs)
+                    else mutableMessage.value = "原上传库已停用，本次分享已保留，请选择上传位置"
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableMessage.value = explain(failure) }
@@ -542,12 +536,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val directory = uploadDirectory.value
         val mode = UploadMode.valueOf(uploadMode.value)
         val snapshot = queue.value ?: error("请先恢复传输记录")
-        val draftFiles = snapshot.drafts
+        val stems = editedStems.value.toMap()
+        val draftFiles = snapshot.drafts.map { draft ->
+            val stem = stems[draft.id]
+            require(stem == null || draft.validStem(stem)) { "请输入有效的作品名" }
+            draft.withEditedStem(stem)
+        }
         val inputs = snapshot.pendingInputs.map { it.id }
         check(draftFiles.all { it.id in inputs }) { "旧待传项缺少原始输入身份，请重新选择" }
         check(libraries.value.any { it.id == libraryId && it.enabled }) { "请选择正在接收上传的影库" }
         val family = uploadFamily.value.trim().takeIf { mode == UploadMode.ORDINARY && (uploadAutoName.value || uploadCollectionId.value != null) }?.takeIf(String::isNotBlank)
-        val options = UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank), family)
+        val options = UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank), family,
+            if (uploadAuthorIds.value.isEmpty()) emptyList() else uploadAuthorSources.value.lines().map(String::trim).filter(String::isNotEmpty))
         if (mode == UploadMode.ORDINARY && (uploadAutoName.value || options.collectionId != null)) {
             val inspection = graph.naming.inspect(NamingRequest(libraryId, directory, family.orEmpty(), options.collectionId,
                 if (draftFiles.isNotEmpty() && draftFiles.all { it.mimeType.startsWith("video/") }) "video" else "image",
@@ -555,10 +555,25 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             check(inspection.preview != null) { "请先填写作品基名并选择文件" }
         }
         check(sameTarget(target, session.value)) { "服务器已改变，请重新确认上传位置" }
-        graph.uploads.enqueue(libraryId, directory, mode, options, target, inputs, reviewed = draftFiles)
+        graph.uploads.enqueue(libraryId, directory, mode, options, target, inputs, reviewed = draftFiles, editedStems = stems)
+        saved["uploadStems"] = HashMap(editedStems.value.filterKeys { it !in inputs })
     }
-    fun renameDraft(id: String, name: String, onSaved: () -> Unit) = action { graph.uploads.renameDraft(id, name); onSaved() }
-    fun removeDraft(id: String) = action { graph.uploads.discardDraft(id) }
+    fun editStem(draft: UploadDraft, stem: String) {
+        saved["uploadStems"] = HashMap(editedStems.value).apply { put(draft.id, stem) }
+        nameWrites.remove(draft.id)?.cancel()
+        if (!draft.validStem(stem)) return
+        nameWrites[draft.id] = viewModelScope.launch {
+            try { delay(350); graph.uploads.renameDraft(draft.id, draft.withEditedStem(stem).name) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { mutableMessage.value = explain(failure) }
+            finally { if (nameWrites[draft.id] == coroutineContext[Job]) nameWrites.remove(draft.id) }
+        }
+    }
+    fun removeDraft(id: String) = action {
+        nameWrites.remove(id)?.cancel()
+        graph.uploads.discardDraft(id)
+        saved["uploadStems"] = HashMap(editedStems.value).apply { remove(id) }
+    }
     fun retryUpload(id: String) = action { graph.uploads.retry(id) }
     fun cancelUpload(id: String) = action { graph.uploads.cancel(id) }
     fun clearUploads() = action { graph.uploads.clearFinished() }

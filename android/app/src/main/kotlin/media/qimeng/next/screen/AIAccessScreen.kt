@@ -89,6 +89,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
 @Composable
 private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, close: () -> Unit) {
     val libraries by library.libraries.collectAsStateWithLifecycle()
+    val libraryPage by library.libraryPage.collectAsStateWithLifecycle()
     val authors by library.authors.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val error by model.creationError.collectAsStateWithLifecycle()
@@ -137,6 +138,8 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
                     libraryIds = if (selected) libraryIds + item.id else libraryIds - item.id
                     if (libraryIds.isEmpty()) canRecycle = false
                 } }
+                if (libraryPage.cursor != null) TextButton(onClick = { library.loadLibraries(next = true) }, enabled = !libraryPage.loading) { Text("更多媒体库") }
+                libraryPage.error?.let { ErrorNotice(it) { library.loadLibraries(next = libraryPage.cursor != null) } }
             }
             Text("作者资料权限", style = MaterialTheme.typography.titleSmall)
             listOf("name", "biography", "homepage", "aliases").forEach { field -> PermissionRow(fieldName(field), field in fields, !busy) {

@@ -4,10 +4,13 @@ data class Session(val baseUrl: String, val instanceId: String, val label: Strin
 enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 data class Preferences(val theme: ThemeChoice = ThemeChoice.SYSTEM, val reducedMotion: Boolean = false, val glass: Boolean = true)
 
-data class Library(val id: String, val name: String, val kind: String, val enabled: Boolean, val revision: Long)
-data class Directory(val path: String, val name: String)
+data class Library(val id: String, val name: String, val kind: String, val enabled: Boolean, val revision: Long,
+    val fileCount: Long, val scanState: String, val latestScanId: String?)
+data class Directory(val path: String, val name: String, val fileCount: Long, val hasChildren: Boolean?)
+data class DirectoryListing(val items: List<Directory>, val cursor: String?, val directFileCount: Long)
 data class MediaCollection(val id: String, val name: String, val kind: String)
-data class UploadOptions(val authorIds: List<String> = emptyList(), val collectionId: String? = null, val note: String = "", val acquisitionSources: List<String> = emptyList(), val family: String? = null)
+data class UploadOptions(val authorIds: List<String> = emptyList(), val collectionId: String? = null, val note: String = "",
+    val acquisitionSources: List<String> = emptyList(), val family: String? = null, val authorAcquisitionSources: List<String> = emptyList())
 data class Asset(
     val id: String,
     val libraryId: String,

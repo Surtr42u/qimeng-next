@@ -157,58 +157,6 @@ fun AppearanceScreen(model: LibraryViewModel) {
 }
 
 @Composable
-fun ServerScreen(model: LibraryViewModel, librariesOnly: Boolean = false) {
-    val session by model.session.collectAsStateWithLifecycle()
-    var confirm by rememberSaveable { mutableStateOf(false) }
-    var create by rememberSaveable { mutableStateOf(false) }
-    var disconnect by rememberSaveable { mutableStateOf(false) }
-    val libraries by model.libraries.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        if (!librariesOnly) ContentCard {
-            Text("当前连接", style = MaterialTheme.typography.titleMedium)
-            Text(session?.label.orEmpty()); Text(session?.baseUrl.orEmpty())
-            Text("切换服务器前，现有传输始终保留原来的目标。", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = model::refreshConnection) { Text("检查连接") }
-        }
-        if (librariesOnly) ContentCard {
-            Text("影库", style = MaterialTheme.typography.titleMedium)
-            libraries.forEach { library ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(library.name, Modifier.weight(1f))
-                    Text(if (library.enabled) "接收上传" else "已暂停", style = MaterialTheme.typography.bodySmall)
-                    Switch(library.enabled, { model.updateLibrary(library, enabled = it) }, enabled = !busy)
-                }
-            }
-            TextButton(onClick = { create = true }) { Text("创建影库") }
-        }
-        if (!librariesOnly) {
-            OutlinedButton(onClick = { confirm = true }) { Text("退出并切换服务器") }
-            TextButton(onClick = { disconnect = true }) { Text("服务器离线时，仅断开本机") }
-        }
-    }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("退出当前登录？") },
-        text = { Text("将撤销当前会话。尚未发送的传输保留，重新连接原服务器后可重试。") },
-        confirmButton = { TextButton(onClick = { confirm = false; model.logout() }) { Text("退出登录") } },
-        dismissButton = { TextButton(onClick = { confirm = false }) { Text("取消") } })
-    if (disconnect) AlertDialog(onDismissRequest = { disconnect = false }, title = { Text("仅断开本机连接？") },
-        text = { Text("清除本机凭据后可以登录其他服务器。此操作无法撤销离线服务器上的会话，服务器恢复后可在服务端撤销。") },
-        confirmButton = { TextButton(onClick = { disconnect = false; model.disconnect() }) { Text("断开本机") } },
-        dismissButton = { TextButton(onClick = { disconnect = false }) { Text("取消") } })
-    if (create) {
-        var name by rememberSaveable { mutableStateOf("") }
-        var cos by rememberSaveable { mutableStateOf(false) }
-        AlertDialog(onDismissRequest = { if (!busy) create = false }, title = { Text("创建影库") }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("影库名称") })
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(cos, { cos = it }); Text("COS 影库") }
-            }
-        }, confirmButton = { TextButton(onClick = { model.createLibrary(name.trim(), cos) { create = false } }, enabled = !busy && name.isNotBlank()) { Text("创建") } },
-            dismissButton = { TextButton(onClick = { create = false }, enabled = !busy) { Text("取消") } })
-    }
-}
-
-@Composable
 fun AuthorsScreen(model: LibraryViewModel) {
     val state by model.authors.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()

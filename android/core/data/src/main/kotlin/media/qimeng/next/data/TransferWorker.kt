@@ -121,6 +121,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 mode = UploadCreate.Mode.entries.first { it.value == task.mode.name.lowercase() }, batchId = task.batchId,
                 sourceMtime = task.sourceMtime, relativeDirectory = task.relativeDirectory, authorIds = task.options.authorIds,
                 collectionId = task.options.collectionId, note = task.options.note, acquisitionSources = task.options.acquisitionSources,
+                authorAcquisitionSources = task.options.authorAcquisitionSources.takeIf { it.isNotEmpty() },
                 family = task.options.family,
                 expectedHash = task.sourceHash, originalFileName = task.originalName, inputId = task.id)).bodyOrThrow()
         } else api.getUpload(task.uploadId!!).bodyOrThrow()

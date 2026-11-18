@@ -30,6 +30,13 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
             code() == 409 && errorCode == "tag_deleted" -> "标签已被删除。请刷新并移除草稿中的旧标签；确需恢复时，使用“添加”明确新建。"
             code() == 409 && errorCode == "source_hash_mismatch" -> "传输字节与入队摘要不一致，未入库。请保留原件并重新选择文件。"
             code() == 409 && errorCode == "publication_pending" -> "服务器正在完成提交，当前不能取消；请保留来源并等待结果核对。"
+            errorCode == "library_root_denied" -> "目录必须位于服务端已授权的媒体根内，请核对路径与文件访问权限。"
+            errorCode == "library_has_trash" -> "库中仍有可恢复的回收站项目，请先恢复或在回收站处理。"
+            errorCode == "library_scan_active" -> "扫描正在执行，请等待扫描结束。"
+            errorCode == "library_upload_active" || errorCode == "library_batch_active" -> "此库有未结束的上传或接收批次，请先完成或取消。"
+            errorCode == "library_publication_pending" -> "有文件正在发布，请先完成或恢复原操作。"
+            errorCode == "library_protection_active" || errorCode == "library_backup_active" -> "正在备份此库，请等待备份结束。"
+            errorCode == "library_cleanup_active" -> "已有来源回收许可，请等待回执或许可过期。"
             else -> when (code()) {
             401 -> "登录已失效，请重新登录"
             403 -> "当前连接没有执行此操作的权限"
