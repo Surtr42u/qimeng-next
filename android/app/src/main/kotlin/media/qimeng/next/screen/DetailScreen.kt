@@ -88,8 +88,8 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
         if (item.mediaType == "video") VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
         else ImageStage(item, model::adjacentAsset, { model.openAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
         DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))
-        DetailBottomChrome(visible, item, busy || item.liked, busy, { model.changeReaction(item.favorite, true) },
-            { model.changeReaction(!item.favorite, item.liked) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))
+        DetailBottomChrome(visible, item, busy, busy, { model.setTodayLike(item, !item.liked) },
+            { model.setFavorite(item, !item.favorite) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))
     }
     if (showAuthorSheet) DetailAuthorSheet(assetAuthors, busy,
         { id -> assetAuthors.find { it.id == id }?.let(model::followAssetAuthor) }, { author, _ -> model.openAuthor(author) },

@@ -158,6 +158,12 @@ class AndroidRealServerTest {
         await("save-tags", graph) { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }
         compose.onNodeWithContentDescription("收藏").performClick()
         await("favorite", graph) { graph.media.asset(picture.id).favorite }
+        compose.waitUntil(20_000) { model.asset.value?.favorite == true && !model.busy.value }
+        compose.onNodeWithContentDescription("点赞").assertIsEnabled().performClick()
+        await("today-like", graph) { graph.media.asset(picture.id).let { it.favorite && it.liked && it.likeCount == picture.likeCount + 1 } }
+        compose.waitUntil(20_000) { model.asset.value?.liked == true && !model.busy.value }
+        compose.onNodeWithContentDescription("点赞").assertIsEnabled().performClick()
+        await("cancel-today-like", graph) { graph.media.asset(picture.id).let { it.favorite && !it.liked && it.likeCount == picture.likeCount } }
         screenshot("real-server-detail.png")
 
         compose.onNodeWithContentDescription("返回").performClick()

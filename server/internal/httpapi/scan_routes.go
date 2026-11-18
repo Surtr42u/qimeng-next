@@ -3,13 +3,17 @@ package httpapi
 import (
 	"net/http"
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
-func (a *API) scanRoutes() {
-	a.get("/libraries/{id}/monitoring", func(r *http.Request) (any, error) {
-		return a.s.LibraryMonitoring(r.Context(), principal(r), r.PathValue("id"))
+func (a *API) GetLibraryMonitoring(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.LibraryMonitoring(r.Context(), principal(r), id)
 	})
-	a.get("/scans", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListLibraryScans(w http.ResponseWriter, r *http.Request, params generated.ListLibraryScansParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
@@ -17,13 +21,22 @@ func (a *API) scanRoutes() {
 		q := r.URL.Query()
 		return a.s.Scans(r.Context(), q.Get("libraryId"), q.Get("state"), q.Get("cursor"), n)
 	})
-	write[revisionBody](a, "POST", "/libraries/{id}/scans", true, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
-		v, e := a.s.StartScan(r.Context(), w, r.PathValue("id"), in.ExpectedRevision)
+}
+
+func (a *API) StartLibraryScan(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.StartLibraryScanParams) {
+	write[revisionBody](a, w, r, true, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
+		v, e := a.s.StartScan(r.Context(), w, id, in.ExpectedRevision)
 		return v, 202, e
 	})
-	a.get("/scans/{id}", func(r *http.Request) (any, error) { return a.s.Scan(r.Context(), r.PathValue("id")) })
-	write[struct{}](a, "DELETE", "/scans/{id}", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
-		v, e := a.s.CancelScan(r.Context(), w, r.PathValue("id"))
+}
+
+func (a *API) GetLibraryScan(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Scan(r.Context(), id) })
+}
+
+func (a *API) CancelLibraryScan(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.CancelLibraryScanParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+		v, e := a.s.CancelScan(r.Context(), w, id)
 		return v, 200, e
 	})
 }

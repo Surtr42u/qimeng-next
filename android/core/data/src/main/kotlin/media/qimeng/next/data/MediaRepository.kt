@@ -6,7 +6,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import media.qimeng.next.model.*
 import media.qimeng.next.sdk.model.AssetUpdate
 import media.qimeng.next.sdk.model.AuthorUpdate
-import media.qimeng.next.sdk.model.ReactionUpdate
+import media.qimeng.next.sdk.model.AssetFavoriteUpdate
+import media.qimeng.next.sdk.model.AssetTodayLikeUpdate
 import media.qimeng.next.sdk.model.SessionCreate
 import media.qimeng.next.sdk.model.TagsUpdate
 import media.qimeng.next.sdk.model.LibraryCreate
@@ -198,11 +199,11 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(target).getAsset(id).bodyOrThrow().toModel(target)
     }
 
-    suspend fun reaction(asset: Asset, favorite: Boolean, liked: Boolean): Asset {
-        val target = asset.target
-        return provider.api(target).updateReaction(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
-            reactionUpdate = ReactionUpdate(favorite = favorite, liked = liked)).bodyOrThrow().toModel(target)
-    }
+    suspend fun setFavorite(asset: Asset, favorite: Boolean, key: String): Asset = provider.api(asset.target)
+        .setAssetFavorite(asset.id, key, AssetFavoriteUpdate(favorite)).bodyOrThrow().toModel(asset.target)
+
+    suspend fun setTodayLike(asset: Asset, liked: Boolean, key: String): Asset = provider.api(asset.target)
+        .setAssetTodayLike(asset.id, key, AssetTodayLikeUpdate(liked)).bodyOrThrow().toModel(asset.target)
 
     suspend fun tags(asset: Asset, tags: List<String>): Asset {
         val target = asset.target

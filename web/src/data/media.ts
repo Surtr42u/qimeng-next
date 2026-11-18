@@ -72,13 +72,12 @@ export function useAsset(id: string, enabled = true, retainPrevious = false) {
 }
 export function useAssetActions(id: string) {
   const reaction = useMutation({
-    mutationFn: (body: Schema<"ReactionUpdate">) =>
-      read(
-        api.PUT("/assets/{id}/reaction", {
-          params: { path: { id }, header: operationHeaders() },
-          body,
-        }),
-      ),
+    mutationFn: (intent: { kind: "favorite" | "todayLike"; value: boolean; key: string }) => {
+      const params = { path: { id }, header: operationHeaders(intent.key) };
+      return intent.kind === "favorite"
+        ? read(api.PUT("/assets/{id}/favorite", { params, body: { favorite: intent.value } }))
+        : read(api.PUT("/assets/{id}/like/today", { params, body: { liked: intent.value } }));
+    },
     onSuccess: invalidateLibrary,
   });
   const tags = useMutation({

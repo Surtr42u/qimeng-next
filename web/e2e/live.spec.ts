@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
 test("same-commit service: login, upload, edit, recommend and play persist through reload", async ({
-  page,
+  page, browser,
 }, testInfo) => {
   test.setTimeout(120_000);
   // This suite is allowed to mutate only its cloud loopback fixture instance.
@@ -139,11 +139,39 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     await page.screenshot({ path: testInfo.outputPath("live-synthetic-author-edit.png") });
     throw failure;
   }
-  await page.getByRole("button", { name: "收藏", exact: true }).click();
-  await page.getByRole("button", { name: "点赞 · 0", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "今日已赞 · 1", exact: true }),
-  ).toBeDisabled();
+  const base = new URL(page.url()).origin;
+  const secondSession = await browser.newContext({ baseURL: base });
+  try {
+    const second = await secondSession.newPage();
+    await second.goto("/");
+    await second.getByLabel("管理密码", { exact: true }).fill(token!);
+    await second.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(second.getByRole("heading", { name: "为你推荐" })).toBeVisible();
+    await second.goto(page.url());
+    await expect(second.getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+    const favoriteResponse = page.waitForResponse(r => r.request().method() === "PUT" && r.url().endsWith("/favorite"));
+    await page.getByRole("button", { name: "收藏", exact: true }).click();
+    expect((await favoriteResponse).request().postDataJSON()).toEqual({ favorite: true });
+    // This second browser context still has its original view of the asset.
+    await expect(second.getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+    const likeResponse = second.waitForResponse(r => r.request().method() === "PUT" && r.url().endsWith("/like/today"));
+    await second.getByRole("button", { name: "点赞 · 0", exact: true }).click();
+    const like = await likeResponse;
+    expect(like.request().postDataJSON()).toEqual({ liked: true });
+    expect(await like.json()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
+    const key = await like.request().headerValue("idempotency-key");
+    expect(key).toBeTruthy();
+    const replay = () => second.request.put(like.url(), { headers: { "Idempotency-Key": key! }, data: { liked: true } });
+    expect(await (await replay()).json()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
+    const readBack = async () => (await page.request.get("/api/v1/assets/" + encodeURIComponent(assetId))).json();
+    expect(await readBack()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
+    await second.getByRole("button", { name: "取消今日赞 · 1", exact: true }).click();
+    await expect(second.getByRole("button", { name: "点赞 · 0", exact: true })).toBeEnabled();
+    expect((await replay()).ok()).toBe(true);
+    expect(await readBack()).toMatchObject({ favorite: true, liked: false, likeCount: 0 });
+  } finally {
+    await secondSession.close();
+  }
   await page.reload();
   await expect(
     page.getByRole("button", { name: "已收藏", exact: true }),

@@ -75,7 +75,11 @@ func (s *Service) library(ctx context.Context, id string) (model.Library, error)
 const assetCoreJSON = "json_set(a.data,'$.authorName',au.name,'$.liked',json(CASE WHEN EXISTS(SELECT 1 FROM likes lk WHERE lk.asset_id=a.id AND lk.day=?) THEN 'true' ELSE 'false' END),'$.likeCount',(SELECT count(*) FROM likes lk WHERE lk.asset_id=a.id)+COALESCE((SELECT unattributed_count FROM like_baselines WHERE asset_id=a.id),0),'$.unattributedLikeCount',COALESCE((SELECT unattributed_count FROM like_baselines WHERE asset_id=a.id),0),'$.source',CASE WHEN json_array_length(json_extract(a.data,'$.sourceIds'))>0 THEN (SELECT group_concat(name,'+') FROM (SELECT s.name FROM json_each(a.data,'$.sourceIds') j JOIN sources s ON s.id=j.value ORDER BY j.key)) ELSE json_extract(a.data,'$.source') END,'$.characters',json(CASE WHEN json_array_length(json_extract(a.data,'$.characterIds'))>0 THEN (SELECT json_group_array(name) FROM (SELECT c.name FROM json_each(a.data,'$.characterIds') j JOIN characters c ON c.id=j.value ORDER BY j.key)) ELSE COALESCE(json_extract(a.data,'$.characters'),'[]') END))"
 
 func (s *Service) Asset(ctx context.Context, id string) (model.Asset, error) {
-	a, e := store.Get[model.Asset](ctx, s.DB.DB, "SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id WHERE a.id=?", time.Now().Format("2006-01-02"), id)
+	return readAssetOnDay(ctx, s.DB.DB, id, time.Now().Format(time.DateOnly))
+}
+
+func readAssetOnDay(ctx context.Context, q store.Querier, id, day string) (model.Asset, error) {
+	a, e := store.Get[model.Asset](ctx, q, "SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id WHERE a.id=?", day, id)
 	return a, Normalize(e)
 }
 
@@ -313,60 +317,6 @@ func (s *Service) validateAssetTags(ctx context.Context, tags []string) ([]strin
 		}
 	}
 	return values, nil
-}
-func (s *Service) Reaction(ctx context.Context, w *Write, id string, favorite, liked bool) (model.Asset, error) {
-	if e := Authorize(w.Principal, "admin", ""); e != nil {
-		return model.Asset{}, e
-	}
-	a, e := s.Asset(ctx, id)
-	if e != nil {
-		return a, e
-	}
-	if a.Trashed {
-		return a, Fail(409, "asset_trashed", "请先恢复媒体。")
-	}
-	if liked && !a.Liked {
-		if a.LikeCount == int64(1<<63-1) {
-			return a, Fail(409, "like_count_capacity", "累计计数超出可表达范围，未增加票数。")
-		}
-		var unknown int
-		today := time.Now().Format("2006-01-02")
-		if e = s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM like_baselines WHERE asset_id=? AND ((last_day='' AND observed_day>=?) OR last_day>?)", a.ID, today, today).Scan(&unknown); e != nil {
-			return a, e
-		}
-		if unknown > 0 {
-			return a, Fail(409, "legacy_like_day_unknown", "旧累计没有可核实的当日去重边界，暂不增加可能重复的票数；原累计已保留。")
-		}
-	}
-	now := time.Now().UTC()
-	if a.Favorite != favorite {
-		a.FavoriteUpdatedAt = &now
-		if favorite {
-			a.FavoritedAt = &now
-		} else {
-			a.FavoritedAt = nil
-		}
-	}
-	a.Favorite = favorite
-	a.Revision++
-	a.UpdatedAt = now
-	q, e := w.Q()
-	if e != nil {
-		return a, e
-	}
-	if liked {
-		r, e := q.ExecContext(ctx, "INSERT OR IGNORE INTO likes(asset_id,day,created_at) VALUES(?,?,?)", a.ID, time.Now().Format("2006-01-02"), time.Now().UTC().Format(time.RFC3339Nano))
-		if e != nil {
-			return a, e
-		}
-		n, e := r.RowsAffected()
-		if e != nil {
-			return a, e
-		}
-		a.LikeCount += n
-		a.Liked = true
-	}
-	return a, store.SaveAsset(ctx, q, a)
 }
 func (s *Service) Author(ctx context.Context, id string) (model.Author, error) {
 	a, e := store.Get[model.Author](ctx, s.DB.DB, authorCountsCTE+" SELECT "+authorJSON+authorFrom+"WHERE au.id=?", id)

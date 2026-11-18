@@ -1,6 +1,6 @@
 # API 使用约定
 
-唯一协议正文是 `api/openapi.yaml`（OpenAPI 3.0.3）。路径前缀 `/api/v1`，实例 API 版本 `0.1.0`。生成的 TypeScript/Kotlin/Python 契约和来源锁由云端输出，不手写 SDK 或修改生成物。
+唯一协议正文是 `api/openapi.yaml`（OpenAPI 3.0.3）。路径前缀 `/api/v1`，实例 API 版本 `0.1.0`。云端从该协议生成 Go 客户端与标准库服务端路由、TypeScript/Kotlin/Python 契约及来源锁。`httpapi.API` 必须实现全部生成操作才能编译。受保护的请求先验凭据，再绑定路径、查询和请求头。JSON 请求校验必填字段；上传分片和支持 Range 的响应直接使用 HTTP 正文流。
 
 ## 公开资料查证
 
@@ -94,7 +94,11 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 创建、文件动作、上传完成和 AI 提交使用稳定 `Idempotency-Key`（8–128 字符）。同凭据、同操作、同键且输入不变回放原响应；输入改变返回冲突。业务数据与回执同事务保存。`GET /operations/{key}` 只读取当前凭据的回执；键用于多个操作时加 `operation`。`not_recorded` 不证明文件副作用从未开始，应使用原输入与原键重试或读取上传/资产状态。
 
-普通元数据使用 `expectedRevision`；标签集合写入使用 `Asset.tagsRevision`，空数组是明确清空。作者编辑集合为 `authorIds`，可附 `expectedAuthorsRevision`；COS 的固定目录作者由后端保留，用户编辑替换普通作者集合，清空普通作者不会删除目录身份。有真实作者就解除未知占位。点赞 `liked=true` 请求当天一次累计，`false` 不撤销已存点赞；`liked` 响应指有明确当天记录，`likeCount` 包含已迁入的真实累计基线。无日期基线不编造日事件，只影响累计推荐输入及全时排行，不塞进日/周/月排行。
+普通元数据使用 `expectedRevision`。标签集合写入使用 `Asset.tagsRevision`，空数组是明确清空。作者编辑集合为 `authorIds`，可以附带 `expectedAuthorsRevision`。Go 保留 COS 固定目录作者，并在关联真实作者时解除未知占位。
+
+**收藏和当天的赞分别写入。** `PUT /assets/{id}/favorite` 只接受 `{"favorite":true}` 或 `{"favorite":false}`。`PUT /assets/{id}/like/today` 只接受 `{"liked":true}` 或 `{"liked":false}`。两个入口均使用 `Idempotency-Key`，返回当前资产。对同一次操作重发时使用原键。回读旧回执后，查 `GET /assets/{id}` 可看到其后其他设备的修改。
+
+日界线取服务器配置的时区。当日已赞时再次点击会撤销当天这一票，收藏、此前的票和迁入的未分日累计保留。`liked` 表示当天有一条已知投票记录，`likeCount` 包含真实历史基线。无日期的基线只参与累计推荐和全时排行。旧版 Next 的组合接口 `/reaction` 已弃用；旧格式的点赞请求附带与当前值冲突的收藏时返回 409，升级客户端后可单独提交本次操作。
 
 标签整组另有 `tagSetUpdatedAt` 与 `tagSetSource`。只有真正标签编辑、词表改名/删除造成的关联变化及明确迁入整组会修改它们，喜欢、改名或移动不会充当标签时钟。未知/相同时间的不同整组保持冲突；迁移不取并集来掩盖先后不明。词表墓碑也适用于迁入关系，不因旧候选重新关联而复活词条。
 

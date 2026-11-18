@@ -162,8 +162,9 @@ func TestOrdinaryUploadReplayTagDeletionAndFileLifecycle(t *testing.T) {
 		t.Fatal("explicit empty set was not saved")
 	}
 	f.json("PUT", "/assets/"+a.ID+"/tags", "tag-stale-3", map[string]any{"expectedRevision": 1, "tags": []string{"resurrect"}}, 409)
-	f.json("PUT", "/assets/"+a.ID+"/reaction", "like-once-1", map[string]any{"favorite": true, "liked": true}, 200)
-	r = f.json("PUT", "/assets/"+a.ID+"/reaction", "like-once-2", map[string]any{"favorite": true, "liked": true}, 200)
+	f.json("PUT", "/assets/"+a.ID+"/favorite", "set-favorite-first", map[string]any{"favorite": true}, 200)
+	f.json("PUT", "/assets/"+a.ID+"/like/today", "like-once-1", map[string]any{"liked": true}, 200)
+	r = f.json("PUT", "/assets/"+a.ID+"/like/today", "like-once-2", map[string]any{"liked": true}, 200)
 	decode(t, r, &a)
 	if a.LikeCount != 1 || !a.Liked {
 		t.Fatalf("daily likes: %+v", a)

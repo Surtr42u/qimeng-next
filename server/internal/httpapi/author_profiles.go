@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
 func profileRevision(r *http.Request) (int64, error) {
@@ -17,114 +18,160 @@ func profileRevision(r *http.Request) (int64, error) {
 	return value, nil
 }
 
-func (a *API) authorProfileRoutes() {
-	a.get("/authors/{id}/updates", func(r *http.Request) (any, error) { return a.s.AuthorUpdates(r.Context(), r.PathValue("id")) })
-	write[service.AuthorUpdatesInput](a, "PUT", "/authors/{id}/updates", true, func(r *http.Request, w *service.Write, in service.AuthorUpdatesInput) (any, int, error) {
-		v, e := a.s.SetAuthorUpdates(r.Context(), w, r.PathValue("id"), in)
+func (a *API) GetAuthorUpdates(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.AuthorUpdates(r.Context(), id) })
+}
+
+func (a *API) SetAuthorUpdates(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SetAuthorUpdatesParams) {
+	write[service.AuthorUpdatesInput](a, w, r, true, func(r *http.Request, w *service.Write, in service.AuthorUpdatesInput) (any, int, error) {
+		v, e := a.s.SetAuthorUpdates(r.Context(), w, id, in)
 		return v, 200, e
 	})
-	a.mux.HandleFunc("POST /api/v1/authors/{id}/updates/check", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		in, raw, e := decode[service.AuthorUpdateCheck](w, r)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		v, e := a.s.CheckAuthorUpdates(r.Context(), principal(r), r.PathValue("id"), r.Header.Get("Idempotency-Key"), raw, in)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		result(w, v)
-	}))
-	a.get("/authors/{id}/profile", func(r *http.Request) (any, error) {
-		return a.s.AuthorProfile(r.Context(), principal(r), r.PathValue("id"))
+}
+
+func (a *API) CheckAuthorUpdates(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.CheckAuthorUpdatesParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	in, raw, e := decode[service.AuthorUpdateCheck](w, r)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	v, e := a.s.CheckAuthorUpdates(r.Context(), principal(r), id, r.Header.Get("Idempotency-Key"), raw, in)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	result(w, v)
+}
+
+func (a *API) GetAuthorProfile(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.AuthorProfile(r.Context(), principal(r), id)
 	})
-	a.get("/authors/{id}/profile-summary", func(r *http.Request) (any, error) {
-		return a.s.AuthorProfileSummary(r.Context(), principal(r), r.PathValue("id"))
+}
+
+func (a *API) GetAuthorProfileSummary(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.AuthorProfileSummary(r.Context(), principal(r), id)
 	})
-	write[service.ProfileWrite](a, "PATCH", "/authors/{id}/profile/{block}", true, func(r *http.Request, w *service.Write, in service.ProfileWrite) (any, int, error) {
-		value, err := a.s.UpdateAuthorProfile(r.Context(), w, r.PathValue("id"), r.PathValue("block"), in)
+}
+
+func (a *API) UpdateAuthorProfileBlock(w http.ResponseWriter, r *http.Request, id generated.Id, block generated.ProfileBlockName, params generated.UpdateAuthorProfileBlockParams) {
+	write[service.ProfileWrite](a, w, r, true, func(r *http.Request, w *service.Write, in service.ProfileWrite) (any, int, error) {
+		value, err := a.s.UpdateAuthorProfile(r.Context(), w, id, string(block), in)
 		return value, 200, err
 	})
-	a.get("/authors/{id}/profile/candidates", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListAuthorProfileCandidates(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ListAuthorProfileCandidatesParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, err := limit(r)
 		if err != nil {
 			return nil, err
 		}
-		return a.s.AuthorProfileCandidates(r.Context(), r.PathValue("id"), r.URL.Query().Get("archiveId"), r.URL.Query().Get("cursor"), n)
+		return a.s.AuthorProfileCandidates(r.Context(), id, r.URL.Query().Get("archiveId"), r.URL.Query().Get("cursor"), n)
 	})
-	write[service.ProfileCandidateCreate](a, "POST", "/authors/{id}/profile/candidates", true, func(r *http.Request, w *service.Write, in service.ProfileCandidateCreate) (any, int, error) {
-		value, err := a.s.SubmitAuthorProfileCandidate(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) SubmitAuthorProfileCandidate(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SubmitAuthorProfileCandidateParams) {
+	write[service.ProfileCandidateCreate](a, w, r, true, func(r *http.Request, w *service.Write, in service.ProfileCandidateCreate) (any, int, error) {
+		value, err := a.s.SubmitAuthorProfileCandidate(r.Context(), w, id, in)
 		return value, 201, err
 	})
-	write[struct{}](a, "POST", "/authors/{id}/profile/candidates/{candidateId}/dismiss", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
-		value, err := a.s.DismissAuthorProfileCandidate(r.Context(), w, r.PathValue("id"), r.PathValue("candidateId"))
+}
+
+func (a *API) DismissAuthorProfileCandidate(w http.ResponseWriter, r *http.Request, id generated.Id, candidateId string, params generated.DismissAuthorProfileCandidateParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+		value, err := a.s.DismissAuthorProfileCandidate(r.Context(), w, id, candidateId)
 		return value, 200, err
 	})
-	a.mux.HandleFunc("POST /api/v1/authors/{id}/profile/avatar-from-url", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		in, raw, err := decode[service.ProfileAvatarFetch](w, r)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
-		value, err := a.s.FetchAuthorProfileAvatar(r.Context(), principal(r), r.PathValue("id"), r.Header.Get("Idempotency-Key"), raw, in)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		result(w, value)
-	}))
-	a.mux.HandleFunc("PUT /api/v1/authors/{id}/profile/avatar", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		if err := service.Authorize(principal(r), "admin", ""); err != nil {
-			fail(w, err)
-			return
-		}
-		revision, err := profileRevision(r)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
-		if err != nil {
-			fail(w, service.Fail(413, "avatar_too_large", "头像原图最多 4 MiB。"))
-			return
-		}
-		value, err := a.s.UploadAuthorProfileAvatar(r.Context(), principal(r), r.PathValue("id"), r.Header.Get("Idempotency-Key"), revision, body)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		result(w, value)
-	}))
-	write[struct{}](a, "DELETE", "/authors/{id}/profile/avatar", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+}
+
+func (a *API) FetchAuthorProfileAvatar(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.FetchAuthorProfileAvatarParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	in, raw, err := decode[service.ProfileAvatarFetch](w, r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
+	value, err := a.s.FetchAuthorProfileAvatar(r.Context(), principal(r), id, r.Header.Get("Idempotency-Key"), raw, in)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	result(w, value)
+}
+
+func (a *API) UploadAuthorProfileAvatar(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.UploadAuthorProfileAvatarParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	if err := service.Authorize(principal(r), "admin", ""); err != nil {
+		fail(w, err)
+		return
+	}
+	revision, err := profileRevision(r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+	if err != nil {
+		fail(w, service.Fail(413, "avatar_too_large", "头像原图最多 4 MiB。"))
+		return
+	}
+	value, err := a.s.UploadAuthorProfileAvatar(r.Context(), principal(r), id, r.Header.Get("Idempotency-Key"), revision, body)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	result(w, value)
+}
+
+func (a *API) ClearAuthorProfileAvatar(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ClearAuthorProfileAvatarParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		revision, err := profileRevision(r)
 		if err != nil {
 			return nil, 0, err
 		}
-		value, err := a.s.ClearAuthorProfileAvatar(r.Context(), w, r.PathValue("id"), revision)
+		value, err := a.s.ClearAuthorProfileAvatar(r.Context(), w, id, revision)
 		return value, 200, err
 	})
-	a.mux.HandleFunc("GET /api/v1/profile-avatars/{id}", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		body, modified, err := a.s.AuthorProfileAvatar(r.Context(), r.PathValue("id"))
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "private, no-cache")
-		w.Header().Set("ETag", `"`+r.PathValue("id")+`"`)
-		http.ServeContent(w, r, "avatar.png", modified, bytes.NewReader(body))
-	}))
-	a.get("/authors/{id}/profile/archives", func(r *http.Request) (any, error) {
+}
+
+func (a *API) GetAuthorProfileAvatar(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	body, modified, err := a.s.AuthorProfileAvatar(r.Context(), id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("ETag", `"`+id+`"`)
+	http.ServeContent(w, r, "avatar.png", modified, bytes.NewReader(body))
+}
+
+func (a *API) ListAuthorProfileArchives(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ListAuthorProfileArchivesParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, err := limit(r)
 		if err != nil {
 			return nil, err
 		}
-		return a.s.AuthorProfileArchives(r.Context(), r.PathValue("id"), r.URL.Query().Get("cursor"), n)
+		return a.s.AuthorProfileArchives(r.Context(), id, r.URL.Query().Get("cursor"), n)
 	})
-	a.get("/authors/{id}/profile/archives/{archiveId}", func(r *http.Request) (any, error) {
-		return a.s.AuthorProfileArchive(r.Context(), r.PathValue("id"), r.PathValue("archiveId"))
+}
+
+func (a *API) GetAuthorProfileArchive(w http.ResponseWriter, r *http.Request, id generated.Id, archiveId string) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.AuthorProfileArchive(r.Context(), id, archiveId)
 	})
 }

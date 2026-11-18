@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
 type credentialRequest struct {
@@ -12,8 +13,8 @@ type credentialRequest struct {
 	Scopes       []string `json:"scopes"`
 }
 
-func (a *API) authorTaskRoutes() {
-	a.get("/author-tasks", func(r *http.Request) (any, error) {
+func (a *API) ListAuthorTasks(w http.ResponseWriter, r *http.Request, params generated.ListAuthorTasksParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
@@ -21,14 +22,23 @@ func (a *API) authorTaskRoutes() {
 		q := r.URL.Query()
 		return a.s.AuthorTasks(r.Context(), principal(r), q.Get("authorId"), q.Get("state"), q.Get("cursor"), n)
 	})
-	write[service.AuthorTaskCreate](a, "POST", "/author-tasks", true, func(r *http.Request, w *service.Write, in service.AuthorTaskCreate) (any, int, error) {
+}
+
+func (a *API) CreateAuthorTask(w http.ResponseWriter, r *http.Request, params generated.CreateAuthorTaskParams) {
+	write[service.AuthorTaskCreate](a, w, r, true, func(r *http.Request, w *service.Write, in service.AuthorTaskCreate) (any, int, error) {
 		value, e := a.s.CreateAuthorTask(r.Context(), w, in)
 		return value, 201, e
 	})
-	a.get("/author-tasks/{id}", func(r *http.Request) (any, error) {
-		return a.s.AuthorTaskContext(r.Context(), principal(r), r.PathValue("id"))
+}
+
+func (a *API) GetAuthorTask(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.AuthorTaskContext(r.Context(), principal(r), id)
 	})
-	write[struct{}](a, "DELETE", "/author-tasks/{id}", false, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
-		return nil, 204, a.s.CancelAuthorTask(r.Context(), w, r.PathValue("id"))
+}
+
+func (a *API) CancelAuthorTask(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	write[struct{}](a, w, r, false, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+		return nil, 204, a.s.CancelAuthorTask(r.Context(), w, id)
 	})
 }
