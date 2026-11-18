@@ -28,28 +28,29 @@ class ChatHost(BaseHTTPRequestHandler):
         self.server.requests.append(request)
         first = request["messages"][1]["content"]
         report = json.loads(first[first.index("{"):])
-        batch = report["batch"]
-        if self.server.behavior.get(batch["id"]) == "offline":
+        batch_id = self.server.batches[report["request"]]
+        behavior = self.server.behavior.get(batch_id)
+        if behavior == "offline":
             self.send_error(503)
             return
         calls = []
-        if self.server.behavior.get(batch["id"]) != "wait":
-            if report["plans"]:
-                plan = report["plans"][0]
-            else:
-                tools = [json.loads(m["content"]) for m in request["messages"] if m["role"] == "tool"]
-                plan = next((r for r in tools if "fingerprint" in r), None)
-            if plan is None:
-                staged = [u["upload"] for u in report["items"] if u["upload"]["state"] == "staged"]
+        if behavior != "wait":
+            tools = [json.loads(m["content"]) for m in request["messages"] if m["role"] == "tool"]
+            preview = next((r for r in reversed(tools) if r.get("previewComplete")), None)
+            if batch_id in self.server.scripts:
+                name, args = self.server.scripts[batch_id](tools)
+            elif preview is None and report["plans"]:
+                name, args = "plan_read", {"plan": report["plans"][0]["plan"]}
+            elif preview is None:
+                staged = [row for row in report["inputs"] if row.get("canPrepare")]
                 name = "plan_prepare"
-                args = {"body": {"expectedRevision": batch["revision"], "items": [
-                    {"uploadId": u["id"], "family": Path(u["fileName"]).stem} for u in staged]}}
+                args = {"items": [{"input": u["input"], "family": Path(u["name"]).stem} for u in staged]}
             else:
-                if self.server.behavior.get(batch["id"]) == "hold_after_plan":
+                if behavior == "hold_after_plan":
                     self.server.plan_ready.set()
                     self.server.release.wait(40)
                 name = "plan_commit"
-                args = {"planId": plan["id"], "body": {"fingerprint": plan["fingerprint"]}}
+                args = {"plan": preview["plan"]}
             calls = [{"id": "call_" + str(len(self.server.requests)), "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args)}}]
         reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}],
@@ -73,7 +74,7 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.host = ThreadingHTTPServer(("127.0.0.1", 0), ChatHost)
         self.host.host_key = secrets.token_hex(20)
-        self.host.requests, self.host.behavior = [], {}
+        self.host.requests, self.host.behavior, self.host.batches, self.host.scripts = [], {}, {}, {}
         self.host.plan_ready, self.host.release = threading.Event(), threading.Event()
         thread = threading.Thread(target=self.host.serve_forever, daemon=True)
         thread.start()
@@ -98,9 +99,9 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                     "QIMENG_AI_WORKER_MODEL": "fixture", "QIMENG_AI_WORKER_TOKEN": self.host.host_key,
                     "QIMENG_AI_WORKER_POLL_SECONDS": "1", "QIMENG_AI_WORKER_IMAGE_LOOKUP": "true"}
 
-    def submit(self, name, *, mixed=False, mode="intelligent"):
+    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=0):
         batch = self.request("POST", "/batches", {"libraryId": self.library["id"], "label": name,
-                             "mode": mode, "maxResearchCalls": 0}, key=name + "-batch")
+                             "mode": mode, "maxResearchCalls": research_calls}, key=name + "-batch")
         source = self.root / (name + ".png")
         color = hashlib.sha256(name.encode()).hexdigest()[:6]
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
@@ -123,6 +124,7 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         with urllib.request.urlopen(chunk, timeout=15) as response:
             self.assertEqual(json.load(response)["offset"], len(raw))
         self.request("POST", "/uploads/" + upload["id"] + "/complete", key=name + "-complete")
+        self.host.batches[name] = batch["id"]
         return batch["id"]
 
     def launch(self, *args, env=None):
@@ -167,6 +169,8 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         info = result["modelUsage"]
         self.assertEqual((info["promptTokens"], info["completionTokens"]), (17 * info["turns"], 6 * info["turns"]))
         self.assertGreaterEqual(info["toolCalls"], 1)
+        self.assertEqual(info["toolResults"], [{"tool": "plan.read", "code": "ok"}, {"tool": "plan.commit", "code": "ok"}])
+        self.assertEqual(info["omittedToolResults"], 0)
         self.assertGreater(info["requestBytes"], info["toolSchemaBytes"])
         self.assertGreater(info["toolSchemaBytes"], 0)
         self.assertGreater(info["responseBytes"], 0)
@@ -218,3 +222,53 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         completed, = (await self.worker())["batches"]
         self.assertEqual(completed["state"], "completed")
         self.assertEqual(len(self.request("GET", "/batches/" + batch)["plans"]), 1)
+
+    async def test_worker_rechecks_frozen_intent_and_original_plan_on_real_go(self):
+        batch = self.submit("worker-intent-race", mixed=True, research_calls=1)
+        path = "/batches/" + batch
+        original = self.request("GET", path)
+        upload = original["items"][0]["upload"]
+
+        def intent(number, family):
+            return {"items": [{"input": number, "family": family}]}
+
+        def script(results):
+            step = len(results)
+            if step == 0:
+                return "plan_prepare", intent(2, "Unreceived")
+            if step == 1:
+                return "plan_prepare", intent(1, "Original")
+            if step == 2:
+                current = self.request("GET", path)
+                self.request("POST", path + "/research", {"expectedRevision": current["batch"]["revision"],
+                    "uploadId": upload["id"], "expectedHash": upload["hash"], "outcome": "unknown", "candidates": [], "callsUsed": 1},
+                    key="real-concurrent-intake-update")
+                return "plan_commit", {"plan": results[-1]["plan"]}
+            if step == 3:
+                return "plan_prepare", intent(1, "Reviewed")
+            if step == 4:
+                return "task_context", {}
+            if step == 5:
+                return "plan_prepare", intent(1, "Reviewed")
+            # Compatibility presenter supplies the exact older Go parameters.
+            # The fixture can inspect the owner report; the genuine model never has this access.
+            pending = self.request("GET", path)
+            plans = [self.request("GET", path + "/plans/" + p["id"]) for p in pending["plans"]]
+            chosen, = [p for p in plans if p["items"][0]["namingFamily"] == "Reviewed"]
+            if step == 6:
+                return "plan_commit", {"planId": chosen["id"], "body": {"fingerprint": "0" * 64}}
+            return "plan_commit", {"planId": chosen["id"], "body": {"fingerprint": chosen["fingerprint"]}}
+
+        self.host.scripts[batch] = script
+        result, = (await self.worker())["batches"]
+        self.assertEqual(result["state"], "partial")
+        self.assertEqual([event["code"] for event in result["modelUsage"]["toolResults"]],
+                         ["WORKER_INPUT_NOT_STAGED", "ok", "revision_conflict", "revision_conflict", "ok", "ok", "plan_fingerprint_conflict", "ok"])
+        final = self.request("GET", path)
+        self.assertEqual(final["inputs"][1]["errorCode"], "unsupported_media")
+        self.assertEqual(len(final["plans"]), 2)
+        self.assertEqual(sum(plan["state"] == "completed" for plan in final["plans"]), 1)
+        asset = self.request("GET", "/assets/" + final["inputs"][0]["assetId"])
+        self.assertEqual((asset["hash"], asset["authorStatus"]), (upload["hash"], "unknown"))
+        self.assertTrue(asset["fileName"].startswith("Reviewed"))
+        self.assertEqual((await self.worker())["state"], "idle")
