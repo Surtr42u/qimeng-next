@@ -23,6 +23,8 @@ App 主动提交后，`b4371fa` 的正式 worker 通过真实 HTTP 认领混合�
 
 `2e35913` 的 Go 竞态测试还覆盖了两名执行器同时认领同一批、响应丢失后重启、人工操作后拒绝旧状态，以及研究结论为未知时仍可用占位作者入库。缺少对应证据的实名归属会被拒绝，旧计划中的其他合格项继续发布。[Go 事务与恢复验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44395254646/job/135124150263)
 
+真实 Qwen3‑4B 通过 Pi MCP，用领域目录和完整目录各做了一遍共享别名查询、一次受限作者简介修改并回读。四场均通过。两次简介都只写入一次，执行器独立向 Go 读取同一作者并把读数交还模型。Windows 和 Linux 已从 `0046221` 的下载包在新 Python 环境中安装并启动 `qai`，再核对内置 API 摘要。[模型逐轮数据](mcp-compatibility.md#标准-cpu-上的真实模型任务) · [安装步骤](../ai/README.md#安装到运行-ai-的电脑) · [Windows 安装验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44396206955/job/135128653990) · [Linux 安装验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44396206955/job/135128653894)
+
 Web 的 `8df9cd4` 在 Chromium、移动 Chromium 和 WebKit 共通过 107 项浏览器用例。浏览器目录写入演练只在支持所需 OPFS 接口的 Chromium 执行，WebKit 跳过这一项。设备配对、跨实例资料交付和用户实际拖动视频使用独立的真实服务作业验收。[浏览器回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44356165266/job/134985901182)
 
 维护者从[开发与维护](../CONTRIBUTING.md)进入。公开后的主分支 `89edb6a` 通过 Go 格式、模块引用、文档、迁移历史及密钥扫描。Web 的展示层依赖检查、浏览器测试和真实服务联调也在该提交通过。[工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305960995) · [Web 检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058447) · [真实服务联调](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134821281600)

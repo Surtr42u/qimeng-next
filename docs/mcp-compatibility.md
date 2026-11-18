@@ -51,6 +51,17 @@ mcp_servers:
 
 ### 标准 CPU 上的真实模型任务
 
+`289d173` 的 Pi 宿主使用 Qwen3‑4B 实际完成下表四场。每场模型只发起一次业务工具调用，并收到两轮推理应答。耗时和 token 只对应这台云机、这两项任务及该模型。[作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44399206761/job/135137285836) · [逐轮测量和 HTTP 观测](https://github.com/Surtr42u/qimeng-next/actions/runs/44399206761/artifacts/14473398185)
+
+| 首轮工具目录 | 用户任务 | 输入 token | 输出 token | 耗时 |
+|---|---|---:|---:|---:|
+| 领域目录 | 用共享别名查所有词条并给出正式名和 ID | 4,600 | 160 | 93 秒 |
+| 领域目录 | 只改获准的作者简介并回读原文 | 4,242 | 94 | 73 秒 |
+| 完整目录 | 同一别名查询 | 24,627 | 184 | 764 秒 |
+| 完整目录 | 同一作者修改 | 24,267 | 92 | 595 秒 |
+
+两场别名查询都返回了两条正确的名称和稳定 ID。两场作者任务都只写入一次。执行器在写成功后独立读取 Go，观察器验证同一作者的 PATCH 和 GET 均返回 200，修订均为 3，还核对了模型实际收到的读数摘要。报告中 `verifiedByExecutor=true`、`modelIssuedRead=false`。同提交的正式 stdio 检查另覆盖写后断线、人工修改、同键重放、越权和达到服务端预算上限。[MCP 与故障回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44399220924/job/135138942408)
+
 手动运行 GitHub Actions 的 `Real CPU model and MCP task proof`。公开仓的 `ubuntu-24.04` 标准机提供 4 个 vCPU 和 16 GB 内存。工作流在联网准备阶段校验官方 Qwen3‑4B Q4_K_M 权重和 llama.cpp b12521 CPU 发行件的 SHA‑256。随后新建仅有回环接口的网络命名空间，运行本地推理、同提交 Go 服务、正式 stdio 执行器和 Pi MCP 客户端。模型只接收简短用户任务、当前可见的工具 Schema 和工具返回的合成数据。[运行器规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) · [权重与许可证](https://huggingface.co/Qwen/Qwen3-4B-GGUF/tree/bc640142c66e1fdd12af0bd68f40445458f3869b) · [推理器发行件](https://github.com/ggml-org/llama.cpp/releases/tag/b12521)
 
 查标签时，两条合成词条共享同一别名，模型需要给出所有匹配的正式名及稳定 ID。维护作者时，凭据只允许补一次指定作者的简介，核对正式回读、候选状态、原别名和人工清空的主页。每场都以空对话开始，宿主转交 MCP 初始化说明，推理器自行决定工具与参数。每场上限是七轮生成、十二次工具调用，每次最多生成 512 个 token。领域配置单题十二分钟，首轮最多 660 秒。完整目录的 CPU 冷启动单独分配二十五分钟，首轮最多 1,200 秒。
