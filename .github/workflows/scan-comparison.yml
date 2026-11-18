@@ -59,6 +59,8 @@ jobs:
             extra+=("$RUNNER_TEMP/before-server")
           fi
           python3 next/tools/scan-comparison/compare.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence "${extra[@]}"
+      - name: Compare identity when file timestamps and content disagree
+        run: python3 next/tools/scan-comparison/identity_check.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence
       - name: Sample the scan functions after the timing trials
         working-directory: next/server
         run: |
