@@ -51,6 +51,7 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
  // reports remain, but no previous session or delegated writer can claim them.
  for _,statement:=range []string{
   "DELETE FROM credentials","DELETE FROM idempotency","DELETE FROM file_intents","DELETE FROM delegated_tasks",
+  "DELETE FROM author_list_mirror",
   "UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
   "UPDATE author_tasks SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='authorized'",
   "UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",

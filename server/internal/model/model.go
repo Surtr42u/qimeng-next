@@ -131,6 +131,7 @@ type UploadInput struct {
  CosWorkID string `json:"cosWorkId,omitempty"`
  Note string `json:"note,omitempty"`
  AcquisitionSources []string `json:"acquisitionSources,omitempty"`
+ AuthorAcquisitionSources []string `json:"authorAcquisitionSources,omitempty"`
  SourceIDs []string `json:"sourceIds,omitempty"`
  CharacterIDs []string `json:"characterIds,omitempty"`
  Family string `json:"family,omitempty"`

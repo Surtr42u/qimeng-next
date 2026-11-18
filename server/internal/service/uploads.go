@@ -36,6 +36,10 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  _,mime,supported:=domain.MediaType(in.FileName);if !supported{return model.Upload{},Fail(415,"unsupported_media","不支持该文件类型；不自动解压文件。")};if !domain.CompatibleMediaDeclaration(in.MimeType,mime){return model.Upload{},Fail(415,"mime_mismatch","声明的 MIME 与文件扩展名不一致。")};in.MimeType=mime
  if in.ExpectedHash!=""{if _,e:=hex.DecodeString(in.ExpectedHash);e!=nil||len(in.ExpectedHash)!=64{return model.Upload{},Fail(400,"invalid_hash","源摘要必须是完整 SHA-256。")};in.ExpectedHash=strings.ToLower(in.ExpectedHash)}
  if in.Family!=""&&!domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","自动命名基名无效。")}
+ if len(in.AuthorAcquisitionSources)>0{
+  if !w.Principal.Has("admin"){return model.Upload{},Fail(403,"scope_denied","接收任务不能改写已有作者的获取渠道。")}
+  in.AuthorAcquisitionSources,e=authorSourceTerms(in.AuthorAcquisitionSources);if e!=nil{return model.Upload{},e}
+ }
  if in.AcquisitionSources==nil{in.AcquisitionSources=[]string{}};in.AcquisitionSources,e=cleanStrings(in.AcquisitionSources,100,2000);if e!=nil{return model.Upload{},e};taxonomy:=model.Asset{};if e=s.resolveTaxonomy(ctx,&taxonomy,in.SourceIDs,in.CharacterIDs);e!=nil{return model.Upload{},e};in.SourceIDs=taxonomy.SourceIDs;in.CharacterIDs=taxonomy.CharacterIDs
  if in.Family!=""{in.Family=domain.NamingFamily(taxonomy.Source,taxonomy.Characters,in.Family);if !domain.ValidName(in.Family){return model.Upload{},Fail(400,"invalid_name","规范出处与角色不能生成合法目标基名。")}}
  if in.SourceMtime!=nil&&(in.SourceMtime.Year()<1970||in.SourceMtime.After(time.Now().Add(24*time.Hour))){return model.Upload{},Fail(400,"invalid_time","源文件时间无效。")}

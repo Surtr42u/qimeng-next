@@ -92,6 +92,13 @@ paths:
       responses:
         '200': {description: Library, content: {application/json: {schema: {$ref: '#/components/schemas/Library'}}}}
         default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteLibrary
+      description: Unregister this library and remove its media index. Original files, event identities and completed intake receipts are preserved. Resolve trash and active operations before detaching.
+      parameters: [{$ref: '#/components/parameters/ExpectedRevision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Library index removed}
+        default: {$ref: '#/components/responses/Error'}
   /libraries/{id}/directories:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
@@ -307,6 +314,8 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateAsset
+      parameters:
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 8, maxLength: 128}, description: Required when newAuthorNames is non-empty so author creation and relationship replacement share one replay identity}
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetUpdate'}}}}
       responses:
         '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
@@ -828,6 +837,81 @@ paths:
       responses:
         '200': {description: Complete qnext archive, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         '206': {description: Requested archive byte range, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /author-lists:
+    get:
+      operationId: listAuthorLists
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Active author text lists in stable name order, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorListPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: importAuthorList
+      description: Administrator import with a revision for the named list. Numbered formats preserve author/work declarations; plain names only create or reuse authors. Cross-list work matches form a union. Missing explicitly added work entries require keep or remove; read the conflict before choosing remove. Original input is archived independently of the current projection.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, content, expectedRevision]
+              properties:
+                name: {type: string, maxLength: 240}
+                content: {type: string, maxLength: 1048576}
+                expectedRevision: {type: integer, format: int64, minimum: 0, description: Zero for a new list; otherwise use the current list revision}
+                conflictResolution: {type: string, enum: [keep, remove]}
+      responses:
+        '200': {description: Atomic import and association results, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorListResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /author-lists/rebuild:
+    post:
+      operationId: rebuildAuthorListMatches
+      description: Reconcile all current declarations and explicit relation decisions. Rebuild never resurrects manually removed relations or deletes media or author rows.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Idempotent reconciliation result, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorListResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /author-lists/master:
+    get:
+      operationId: exportMasterAuthorList
+      description: Combined current author declarations, live relationships and verified profile sources in one consistent read.
+      responses:
+        '200': {description: UTF-8 master author list, content: {text/plain: {schema: {type: string}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /author-lists/mirror:
+    get:
+      operationId: getAuthorListMirror
+      responses:
+        '200': {description: Owner mirror configuration and latest publication status, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorListMirror'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateAuthorListMirror
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorListMirrorUpdate'}}}}
+      responses:
+        '200': {description: Saved owner configuration, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorListMirror'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /author-lists/{id}:
+    get:
+      operationId: getAuthorList
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Current list metadata, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorList'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteAuthorList
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/ExpectedRevision'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: List and its owned relationships removed; author rows and all media retained}
+        default: {$ref: '#/components/responses/Error'}
+  /author-lists/{id}/content:
+    get:
+      operationId: exportAuthorList
+      description: Current server projection with stable author bindings and current filenames. Verified profile links may supplement acquisition sources; candidate identities never become confirmed sources. SHA-256 ETag identifies the exact export bytes.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: UTF-8 author text, content: {text/plain: {schema: {type: string}}}}
         default: {$ref: '#/components/responses/Error'}
   /backup-targets:
     get:
@@ -1693,6 +1777,7 @@ components:
         code: {type: string}
         message: {type: string}
         currentRevision: {type: integer, format: int64}
+        details: {type: object, additionalProperties: true, description: Bounded structured conflict evidence; includes explicit truncation when applicable}
     Instance:
       type: object
       required: [id, name, apiVersion, capabilities]
@@ -1757,7 +1842,16 @@ components:
     Library:
       allOf:
         - {$ref: '#/components/schemas/LibraryCreate'}
-        - {type: object, required: [id, enabled, revision, createdAt], properties: {id: {type: string}, enabled: {type: boolean}, revision: {type: integer, format: int64}, createdAt: {type: string, format: date-time}}}
+        - type: object
+          required: [id, enabled, revision, createdAt, fileCount, scanState]
+          properties:
+            id: {type: string}
+            enabled: {type: boolean}
+            revision: {type: integer, format: int64}
+            createdAt: {type: string, format: date-time}
+            fileCount: {type: integer, format: int64, minimum: 0, description: Indexed assets outside trash, including disabled libraries}
+            scanState: {type: string, enum: [idle, scanning, error]}
+            latestScanId: {type: string}
     NamingContext:
       type: object
       required: [policyVersion, libraryId, directory, family, numberClass, nextWorkNumber, width, separator, namespaceFingerprint, reserved]
@@ -1922,6 +2016,7 @@ components:
         authorId: {type: string}
         authorIds: {type: array, maxItems: 20, items: {type: string}}
         expectedAuthorsRevision: {type: integer, format: int64}
+        newAuthorNames: {type: array, maxItems: 20, items: {type: string, maxLength: 200}, description: Regular creator names resolved or created atomically with the complete editable author set; fixed COS identities remain}
         note: {type: string, maxLength: 10000}
         source: {type: string, maxLength: 200}
         sourceIds: {type: array, maxItems: 20, items: {type: string}}
@@ -2052,6 +2147,7 @@ components:
         cosWorkId: {type: string, description: Existing COS directory work; determines its registered directory and primary directory author}
         note: {type: string, maxLength: 10000}
         acquisitionSources: {type: array, maxItems: 100, items: {type: string, maxLength: 2000}}
+        authorAcquisitionSources: {type: array, maxItems: 100, items: {type: string, maxLength: 2000}, description: Administrator input only. Append to explicitly selected regular creators in the same ingestion transaction; omitted or empty never clears. Separate from asset acquisition clues.}
         sourceIds: {type: array, maxItems: 20, items: {type: string}}
         characterIds: {type: array, maxItems: 50, items: {type: string}}
         family: {type: string, maxLength: 200, description: Optional automatic work numbering requested by the user}
@@ -2365,6 +2461,64 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Backup'}}
         nextCursor: {type: string}
+    AuthorList:
+      type: object
+      required: [id, name, revision, position, createdAt, updatedAt, authorCount, workCount, inputHash]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        revision: {type: integer, format: int64}
+        position: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        authorCount: {type: integer}
+        workCount: {type: integer}
+        inputHash: {type: string}
+    AuthorListPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AuthorList'}}
+        nextCursor: {type: string}
+    AuthorListMirrorUpdate:
+      type: object
+      required: [expectedRevision, path, mode]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        path: {type: string, maxLength: 4096, description: Owner-entered absolute TXT path within a configured storage root. Empty disables mirroring.}
+        mode: {type: string, enum: [master, fragment]}
+        listId: {type: string, description: Selected author list for fragment mode}
+    AuthorListMirror:
+      type: object
+      required: [revision, path, mode, state]
+      properties:
+        revision: {type: integer, format: int64}
+        path: {type: string}
+        mode: {type: string, enum: [master, fragment]}
+        listId: {type: string}
+        state: {type: string, enum: [disabled, pending, current, error]}
+        contentHash: {type: string}
+        errorCode: {type: string}
+        publishedAt: {type: string, format: date-time}
+    AuthorListResult:
+      type: object
+      required: [format, authorsCreated, matchedAssets, changedAssets, preservedSources, issues]
+      properties:
+        format: {type: string, enum: [blocks, names]}
+        list: {$ref: '#/components/schemas/AuthorList'}
+        authorsCreated: {type: integer}
+        matchedAssets: {type: integer}
+        changedAssets: {type: integer}
+        preservedSources: {type: array, items: {type: string}}
+        issues:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [line, code]
+            properties:
+              line: {type: integer}
+              code: {type: string}
     BackupTarget:
       type: object
       required: [id, failureDomain, available, distinctVolume]

@@ -54,6 +54,19 @@ func(s *Service)prepareFile(ctx context.Context,w *Write,j fileIntent)(fileInten
  if w.tx!=nil{return j,errors.New("file intent must precede transaction")}
  old,e:=store.Get[fileIntent](ctx,s.DB.DB,"SELECT data FROM file_intents WHERE id=?",j.ID)
  if e==nil{if old.Kind!=j.Kind||old.UploadID!=j.UploadID||old.Operation!=w.operation{return j,Fail(409,"publication_pending","此输入已有不同发布操作，须先回读原操作并恢复，不能用新计划覆盖。")};return old,nil};if !errors.Is(e,sql.ErrNoRows){return j,e}
+ // Validate the exact author/list transaction before the first external write.
+ // A malformed declaration or a 21st matching creator must not leave a file
+ // intent that can never be recovered on restart.
+ if j.Kind!="trash"{
+  var applies bool
+  if e=s.DB.DB.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM author_lists)").Scan(&applies);e!=nil{return j,e}
+  if applies||j.After.AuthorID!="unknown"{
+   tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return j,e}
+   preview:=j;e=saveCOSPlacement(ctx,tx,j.COSAuthor,j.COSWork)
+   if e==nil&&j.Kind=="purge"{e=removeAssetAuthorWorks(ctx,tx,j.After)}else if e==nil{e=store.SaveAsset(ctx,tx,j.After);if e==nil{e=s.finalizeAuthorTextForFile(ctx,tx,&preview)}}
+   rollbackErr:=tx.Rollback();if e!=nil{return j,e};if rollbackErr!=nil{return j,rollbackErr}
+  }
+ }
  if j.Kind=="move" {j.SpellingOnly,e=s.classifyMove(j.Source,j.Target);if e!=nil{return j,e}}
  j.State="prepared";j.PrincipalID=w.Principal.ID;j.Operation=w.operation;j.Key=w.key;j.InputHash=w.inputHash;return j,s.saveIntent(ctx,j)
 }
@@ -77,7 +90,13 @@ func(s *Service)applyFile(j fileIntent)error{
 func(s *Service)commitFile(ctx context.Context,q store.Querier,j *fileIntent)error{
  status:=200
  if e:=saveCOSPlacement(ctx,q,j.COSAuthor,j.COSWork);e!=nil{return e}
- if j.Kind=="purge"{if _,e:=q.ExecContext(ctx,"DELETE FROM assets WHERE id=?",j.After.ID);e!=nil{return e}}else if e:=store.SaveAsset(ctx,q,j.After);e!=nil{return e}
+ if j.Kind=="purge"{
+  if e:=removeAssetAuthorWorks(ctx,q,j.After);e!=nil{return e}
+  if _,e:=q.ExecContext(ctx,"DELETE FROM assets WHERE id=?",j.After.ID);e!=nil{return e}
+ }else{
+  if e:=store.SaveAsset(ctx,q,j.After);e!=nil{return e}
+  if e:=s.finalizeAuthorTextForFile(ctx,q,j);e!=nil{return e}
+ }
  var receipt any=j.After
  if j.UploadID!=""{
   u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};u.AssetID=j.After.ID;u.State="ingested";u.ErrorCode="";u.ErrorMessage="";if e=store.SaveUpload(ctx,q,u);e!=nil{return e}

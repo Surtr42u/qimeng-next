@@ -58,10 +58,14 @@ func(s *Service)scanFile(ctx context.Context,jobID,libraryID,relative string)err
   if len(missing)==1{a=missing[0];isNew=false;moved=true}else if len(missing)>1||len(candidates)>100{j.Processed++;j.Skipped++;scanIssue(&j,relative,"ambiguous_move");return saveScan(ctx,s.DB.DB,j)}
  }
  now:=time.Now().UTC();if isNew{a=model.Asset{ID:ID(),LibraryID:libraryID,OriginalFileName:path.Base(relative),AuthorID:"unknown",AuthorIDs:[]string{"unknown"},AuthorsRevision:1,AuthorStatus:"unknown",TagsRevision:1,Revision:1,ContentVersion:1,Tags:[]string{},SourceIDs:[]string{},CharacterIDs:[]string{},Characters:[]string{},AcquisitionSources:[]string{},MetadataSource:"scanner",CreatedAt:now}}
+ previousName:=a.FileName
  if !isNew{a.Revision++;if a.Hash!=hash{a.ContentVersion++}};a.RelativePath=relative;a.FileName=path.Base(relative);a.Size=size;a.Hash=hash;a.MediaType=kind;a.MimeType=mime;a.UpdatedAt=now;modified:=nowInfo.ModTime().UTC();a.ContentMtime=&modified;a.Width=probe.Width;a.Height=probe.Height;a.DurationMs=probe.DurationMs;a.ProbeState=probe.ProbeState;a.ContentURL="/api/v1/assets/"+a.ID+"/content";a.ThumbnailURL="";if probe.ThumbnailURL!=""{a.ThumbnailURL="/api/v1/assets/"+a.ID+"/thumbnail"}
  tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e};defer tx.Rollback()
  if library.Kind=="cos"{if e=s.scanCOSAuthor(ctx,tx,&a);e!=nil{return e}}
- if e=store.SaveAsset(ctx,tx,a);e!=nil{return e};j.Processed++;if isNew{j.Added++}else if moved{j.Moved++}else{j.Changed++};j.UpdatedAt=now;if e=saveScan(ctx,tx,j);e!=nil{return e};return tx.Commit()
+ if e=store.SaveAsset(ctx,tx,a);e!=nil{return e}
+ if moved{if e=s.renameAuthorListWorks(ctx,tx,a,previousName);e!=nil{return e}}
+ if e=s.matchAuthorListsForAsset(ctx,tx,&a);e!=nil{return e}
+ j.Processed++;if isNew{j.Added++}else if moved{j.Moved++}else{j.Changed++};j.UpdatedAt=now;if e=saveScan(ctx,tx,j);e!=nil{return e};if e=tx.Commit();e!=nil{return e};s.wakeAuthorMirror();return nil
 }
 func(s *Service)scanCOSAuthor(ctx context.Context,q store.Querier,a *model.Asset)error{
  author,work,e:=s.planCOSPlacement(ctx,q,a);if e!=nil{return e};return saveCOSPlacement(ctx,q,author,work)

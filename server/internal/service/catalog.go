@@ -8,6 +8,7 @@ import (
  "strings"
  "time"
 
+ "qimeng.local/next/server/internal/authorlist"
  "qimeng.local/next/server/internal/domain"
  "qimeng.local/next/server/internal/model"
  "qimeng.local/next/server/internal/store"
@@ -37,16 +38,24 @@ func nextCursor(offset int,filter string)string{b,_:=json.Marshal(cursorValue{of
 func limited(n,defaultN int)(int,error){if n==0{return defaultN,nil};if n<1||n>100{return 0,Fail(400,"invalid_limit","每页须为 1–100 项。")};return n,nil}
 func paged[T any](items []T,limit,offset int,filter string)model.Page[T]{p:=model.Page[T]{Items:items};if len(items)>limit{p.Items=items[:limit];p.NextCursor=nextCursor(offset+limit,filter)};return p}
 func like(v string)string{return "%"+strings.NewReplacer("\\","\\\\","%","\\%","_","\\_").Replace(v)+"%"}
-type AssetUpdate struct { ExpectedRevision int64 `json:"expectedRevision"`; ExpectedAuthorsRevision int64 `json:"expectedAuthorsRevision,omitempty"`; AuthorID,Note,Source *string; AuthorIDs *[]string `json:"authorIds"`; Characters *[]string `json:"characters"`; SourceIDs *[]string `json:"sourceIds"`;CharacterIDs *[]string `json:"characterIds"`;AcquisitionSources *[]string `json:"acquisitionSources"` }
+type AssetUpdate struct { ExpectedRevision int64 `json:"expectedRevision"`; ExpectedAuthorsRevision int64 `json:"expectedAuthorsRevision,omitempty"`; AuthorID,Note,Source *string; AuthorIDs *[]string `json:"authorIds"`; NewAuthorNames []string `json:"newAuthorNames,omitempty"`; Characters *[]string `json:"characters"`; SourceIDs *[]string `json:"sourceIds"`;CharacterIDs *[]string `json:"characterIds"`;AcquisitionSources *[]string `json:"acquisitionSources"` }
 func(s *Service)UpdateAsset(ctx context.Context,w *Write,id string,in AssetUpdate)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)}
  if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")}
- if in.AuthorID!=nil||in.AuthorIDs!=nil{if in.ExpectedAuthorsRevision>0&&in.ExpectedAuthorsRevision!=a.AuthorsRevision{return a,Conflict(a.AuthorsRevision)};ids:=[]string{};if in.AuthorIDs!=nil{ids=*in.AuthorIDs}else{ids=[]string{*in.AuthorID}};authors,e:=s.authorsForAssetEdit(ctx,a,ids);if e!=nil{return a,e};setAuthors(&a,authors);a.AuthorsRevision++}
+ editAuthors:=in.AuthorID!=nil||in.AuthorIDs!=nil||len(in.NewAuthorNames)>0
+ before:=a.AuthorIDs
  if in.Note!=nil{if len(*in.Note)>10000{return a,Fail(400,"invalid_note","备注过长。")};a.Note=*in.Note};if in.Source!=nil{if len(*in.Source)>200{return a,Fail(400,"invalid_source","出处名称过长。")};a.Source=*in.Source}
  if in.Characters!=nil{v,e:=cleanStrings(*in.Characters,50,200);if e!=nil{return a,e};a.Characters=v}
  if in.SourceIDs!=nil||in.CharacterIDs!=nil{sources:=a.SourceIDs;characters:=a.CharacterIDs;if in.SourceIDs!=nil{sources=*in.SourceIDs};if in.CharacterIDs!=nil{characters=*in.CharacterIDs};if e=s.resolveTaxonomy(ctx,&a,sources,characters);e!=nil{return a,e}}
  if in.AcquisitionSources!=nil{a.AcquisitionSources,e=cleanStrings(*in.AcquisitionSources,100,2000);if e!=nil{return a,e}}
- a.MetadataSource="human";a.Revision++;a.UpdatedAt=time.Now().UTC();q,e:=w.Q();if e!=nil{return a,e};return a,store.SaveAsset(ctx,q,a)
+ q,e:=w.Q();if e!=nil{return a,e}
+ if editAuthors {
+  if e=s.replaceAssetAuthors(ctx,w,q,&a,in);e!=nil{return a,e}
+ }
+ a.MetadataSource="human";a.Revision++;a.UpdatedAt=time.Now().UTC()
+ if e=store.SaveAsset(ctx,q,a);e!=nil{return a,e}
+ if editAuthors {e=s.recordExplicitAuthorSet(ctx,q,before,a)}
+ return a,e
 }
 func cleanStrings(values []string,maxCount,maxLen int)([]string,error){if values==nil{return nil,Fail(400,"missing_array","必须显式提供数组；清空时提供空数组。")};if len(values)>maxCount{return nil,Fail(400,"too_many_values","项目数量超出限制。")};out:=[]string{};seen:=map[string]bool{};for _,v:=range values{v=strings.TrimSpace(v);if v==""||len(v)>maxLen||strings.ContainsRune(v,'\x00'){return nil,Fail(400,"invalid_value","名称为空或过长。")};if !seen[v]{seen[v]=true;out=append(out,v)}};return out,nil}
 func(s *Service)Tags(ctx context.Context,cursor string,limit int)(model.Page[string],error){page,e:=s.TagVocabulary(ctx,cursor,limit);if e!=nil{return model.Page[string]{},e};out:=[]string{};for _,tag:=range page.Items{out=append(out,tag.Name)};return model.Page[string]{Items:out,NextCursor:page.NextCursor},nil}
@@ -70,7 +79,16 @@ func(s *Service)CreateAuthor(ctx context.Context,w *Write,in AuthorInput)(model.
  if in.Kind==""{in.Kind="regular"};if in.Kind!="regular"&&in.Kind!="cos"{return model.Author{},Fail(400,"invalid_author_kind","作者分区无效。")}
  in.Name=strings.TrimSpace(in.Name);if in.Name==""||len(in.Name)>200||len(in.Biography)>20000||!validURL(in.Homepage)||len(in.Homepage)>2000{return model.Author{},Fail(400,"invalid_author","作者名称或资料无效。")}
  if in.Aliases==nil{in.Aliases=[]string{}};aliases,e:=cleanStrings(in.Aliases,100,200);if e!=nil{return model.Author{},e}
- channels,e:=cleanStrings(append([]string{},in.AcquisitionSources...),100,2000);if e!=nil{return model.Author{},e}
+ channels,e:=authorSourceTerms(in.AcquisitionSources);if e!=nil{return model.Author{},e}
+ if in.Kind=="regular"{
+  names,e:=authorlist.Names(in.Name);if e!=nil{return model.Author{},Fail(400,"invalid_author_name","作者名称不能写入清单。")}
+  found,ok,e:=lookupRegularAuthor(ctx,s.DB.DB,authorlist.IdentityKey(names[0]));if e!=nil{return model.Author{},e}
+  if ok{
+   if found.Placeholder||!w.Principal.Has("admin")||len(aliases)>0||len(channels)>0||in.Homepage!=""||in.Biography!=""{return model.Author{},Fail(409,"ambiguous_author","已有同一作者身份，请选择该作者。")}
+   return s.Author(ctx,found.ID)
+  }
+  in.Name=strings.Join(names," / ")
+ }
  var exists int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM authors WHERE name=? AND (json_extract(data,'$.kind')=? OR id='unknown')",in.Name,in.Kind).Scan(&exists);e!=nil{return model.Author{},e};if exists>0{return model.Author{},Fail(409,"ambiguous_author","已存在同名作者或受保护的未知占位，请选择稳定身份，不自动创建。")}
  if in.Kind=="cos"{if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM file_intents WHERE state='prepared' AND json_extract(data,'$.cosAuthor.name')=?",in.Name).Scan(&exists);e!=nil{return model.Author{},e};if exists>0{return model.Author{},Fail(409,"publication_pending","此目录作者已被未决文件操作引用，请先恢复该操作。")}}
  if !w.Principal.Has("admin"){
@@ -82,19 +100,31 @@ func(s *Service)CreateAuthor(ctx context.Context,w *Write,in AuthorInput)(model.
  now:=time.Now().UTC();a:=model.Author{ID:w.ID("author"),Kind:in.Kind,Name:in.Name,Biography:in.Biography,Aliases:aliases,Homepage:in.Homepage,Revision:1,CreatedAt:now,UpdatedAt:now,FieldStatus:map[string]string{"identity":"confirmed","biography":"missing","homepage":"missing"}}
  if in.Biography!=""{a.FieldStatus["biography"]="confirmed"};if in.Homepage!=""{a.FieldStatus["homepage"]="confirmed"}
  a.AcquisitionSources=channels
- raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e};_,e=q.ExecContext(ctx,"INSERT INTO authors(id,name,following,data) VALUES(?,?,0,json_set(?,'$.originBatchId',?))",a.ID,a.Name,raw,in.BatchID);return a,e
+ raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e}
+ if _,e=q.ExecContext(ctx,"INSERT INTO authors(id,name,following,data) VALUES(?,?,0,json_set(?,'$.originBatchId',?))",a.ID,a.Name,raw,in.BatchID);e!=nil{return a,e}
+ if e=refreshAuthorKeys(ctx,q,a);e!=nil{return a,e}
+ if len(channels)>0{e=s.projectAuthorSources(ctx,q,a)}
+ return a,e
 }
 type AuthorUpdate struct{ExpectedRevision int64 `json:"expectedRevision"`;Name,Biography,Homepage *string;Aliases *[]string;Following *bool;AcquisitionSources *[]string `json:"acquisitionSources"`}
 func(s *Service)UpdateAuthor(ctx context.Context,w *Write,id string,in AuthorUpdate)(model.Author,error){
  if in.AcquisitionSources!=nil&&!w.Principal.Has("admin"){return model.Author{},Fail(403,"scope_denied","资料维护任务未授权获取渠道字段。")}
  task,e:=s.authorizeAuthorUpdate(ctx,w.Principal,id,in);if e!=nil{return model.Author{},e};a,e:=s.Author(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)};if a.Placeholder{return a,Fail(409,"placeholder_protected","未知作者占位不能改为真实作者。请修改媒体关联。")}
+ previousName:=a.Name
  if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>200{return a,Fail(400,"invalid_author","作者名称无效。")};if a.Kind=="cos"&&v!=a.Name{return a,Fail(409,"cos_directory_managed","COS 作者名称来自目录；公开档案显示名可在资料块单独维护。")};var exists int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM authors WHERE name=? AND id!=? AND (json_extract(data,'$.kind')=? OR id='unknown')",v,a.ID,a.Kind).Scan(&exists);e!=nil{return a,e};if exists>0{return a,Fail(409,"ambiguous_author","名称与现有作者或未知占位冲突，请保留稳定身份。")};a.Name=v}
  if in.Biography!=nil{if len(*in.Biography)>20000{return a,Fail(400,"invalid_author","简介过长。")};a.Biography=*in.Biography;a.FieldStatus["biography"]="confirmed"}
  if in.Homepage!=nil{if !validURL(*in.Homepage)||len(*in.Homepage)>2000{return a,Fail(400,"invalid_author","主页地址无效。")};a.Homepage=*in.Homepage;a.FieldStatus["homepage"]="confirmed"}
  if in.Aliases!=nil{a.Aliases,e=cleanStrings(*in.Aliases,100,200);if e!=nil{return a,e}};if in.Following!=nil{now:=time.Now().UTC();a.FollowingUpdatedAt=&now;a.Following=*in.Following}
- if in.AcquisitionSources!=nil{a.AcquisitionSources,e=cleanStrings(*in.AcquisitionSources,100,2000);if e!=nil{return a,e}}
+ if in.AcquisitionSources!=nil{a.AcquisitionSources,e=authorSourceTerms(*in.AcquisitionSources);if e!=nil{return a,e}}
+ if a.Kind=="regular"&&a.Name!=previousName{
+  names,e:=authorlist.Names(a.Name);if e!=nil{return a,Fail(400,"invalid_author_name","作者名称不能写入清单。")}
+  found,ok,e:=lookupRegularAuthor(ctx,s.DB.DB,authorlist.IdentityKey(names[0]));if e!=nil{return a,e};if ok&&found.ID!=a.ID{return a,Fail(409,"ambiguous_author","新名称会与已有作者身份冲突。")};a.Name=strings.Join(names," / ")
+ }
  if task!=nil{if in.Biography!=nil{a.FieldStatus["biography"]="candidate"};if in.Homepage!=nil{a.FieldStatus["homepage"]="candidate"}}
- a.Revision++;a.UpdatedAt=time.Now().UTC();raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e};if _,e=q.ExecContext(ctx,"UPDATE authors SET name=?,following=?,data=? WHERE id=?",a.Name,a.Following,raw,a.ID);e!=nil{return a,e};return a,finishAuthorTask(ctx,q,task,a.Revision)
+ a.Revision++;a.UpdatedAt=time.Now().UTC();raw,e:=store.Encode(a);if e!=nil{return a,e};q,e:=w.Q();if e!=nil{return a,e};if _,e=q.ExecContext(ctx,"UPDATE authors SET name=?,following=?,data=json_patch(?,json_object('originBatchId',json_extract(data,'$.originBatchId'))) WHERE id=?",a.Name,a.Following,raw,a.ID);e!=nil{return a,e}
+ if a.Name!=previousName{if e=refreshAuthorKeys(ctx,q,a);e!=nil{return a,e};if e=touchAuthorListMetadata(ctx,q,a,true,false);e!=nil{return a,e}}
+ if in.AcquisitionSources!=nil{if e=s.projectAuthorSources(ctx,q,a);e!=nil{return a,e}}
+ return a,finishAuthorTask(ctx,q,task,a.Revision)
 }
 func(s *Service)Collections(ctx context.Context,libraryID,query,cursor string,limit int)(model.Page[model.Collection],error){n,e:=limited(limit,50);if e!=nil{return model.Page[model.Collection]{},e};key:="collections:"+libraryID+":"+query;o,e:=pageOffset(cursor,key);if e!=nil{return model.Page[model.Collection]{},e};a,e:=store.List[model.Collection](ctx,s.DB.DB,"SELECT data FROM collections WHERE (?='' OR library_id=?) AND (name LIKE ? ESCAPE '\\' OR json_extract(data,'$.aliases') LIKE ? ESCAPE '\\') ORDER BY name,id LIMIT ? OFFSET ?",libraryID,libraryID,like(query),like(query),n+1,o);return paged(a,n,o,key),e}
 func(s *Service)CreateCollection(ctx context.Context,w *Write,in model.Collection)(model.Collection,error){

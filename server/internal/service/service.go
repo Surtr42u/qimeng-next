@@ -23,13 +23,13 @@ import (
  "qimeng.local/next/server/internal/storage"
 )
 
-type Error struct { Code string `json:"code"`; Message string `json:"message"`; CurrentRevision int64 `json:"currentRevision,omitempty"`; Status int `json:"-"` }
+type Error struct { Code string `json:"code"`; Message string `json:"message"`; CurrentRevision int64 `json:"currentRevision,omitempty"`; Details map[string]any `json:"details,omitempty"`; Status int `json:"-"` }
 func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
 type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
-type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; password *passwordLogin; loginLimit loginBudget }
+type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; password *passwordLogin; loginLimit loginBudget }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -62,10 +62,13 @@ func New(config Config)(*Service,error){
   a:=model.Author{ID:"unknown",Name:"其他搁置",Aliases:[]string{},Revision:1,Placeholder:true,FieldStatus:map[string]string{"identity":"missing","biography":"missing","homepage":"missing"},CreatedAt:time.Now().UTC(),UpdatedAt:time.Now().UTC()}
   raw,_:=store.Encode(a);if _,err=db.DB.Exec("INSERT INTO authors(id,name,data) VALUES(?,?,?)",a.ID,a.Name,raw);err!=nil{s.Close();return nil,err}
  }
+ if err=s.initializeAuthorKeys(ctx);err!=nil{s.Close();return nil,err}
+ if err=s.initializeAuthorTextLinks(ctx);err!=nil{s.Close();return nil,err}
  if err=s.recoverIntents(ctx);err!=nil{s.Close();return nil,fmt.Errorf("file recovery requires attention: %w",err)}
  if _,err=db.DB.ExecContext(ctx,"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted') WHERE json_extract(data,'$.exportState') IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE batch_protections SET state='interrupted',data=json_set(data,'$.state','interrupted','$.errorCode','protection_interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
+ s.mirrorWake=make(chan struct{},1);s.workers.Add(1);go s.authorMirrorWorker();s.wakeAuthorMirror()
  return s,nil
 }
 func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
@@ -121,7 +124,7 @@ func(s *Service)Run(ctx context.Context,p model.Principal,operation,key string,i
  if status!=204{body,err=json.Marshal(value);if err!=nil{return result,err}}
  q,err:=w.Q();if err!=nil{return result,err}
  if key!=""{if _,err=q.ExecContext(ctx,"INSERT OR IGNORE INTO idempotency(principal_id,operation,key,input_hash,response,status) VALUES(?,?,?,?,?,?)",p.ID,operation,key,hash,body,status);err!=nil{return result,err}}
- if err=w.tx.Commit();err!=nil{return result,err};w.tx=nil;committed=true
+ if err=w.tx.Commit();err!=nil{return result,err};w.tx=nil;committed=true;s.wakeAuthorMirror()
  for _,after:=range w.after{if err=after();err!=nil{return result,Fail(500,"cleanup_pending","业务已提交，文件后处理待恢复；请用同一操作身份回读，勿重新入库。")}}
  return Result{body,status},nil
 }

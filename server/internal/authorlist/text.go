@@ -54,7 +54,7 @@ func Parse(text string)(Document,error){
 }
 func normalized(value string)string{return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value)," ",""))}
 func Matches(work,fileName string)bool{
- work=strings.TrimSpace(work);if work==""{return false};workExtension:=mediaExtension(work);fileExtension:=strings.ToLower(path.Ext(fileName));fileStem:=strings.TrimSuffix(fileName,path.Ext(fileName));workStem:=work;if workExtension!=""{if workExtension!=fileExtension{return false};workStem=strings.TrimSuffix(work,path.Ext(work))};key:=normalized(workStem);candidate:=normalized(fileStem);if key==candidate{return true};if workExtension!=""||numericPage.MatchString(workStem){return false};return trailingPage.ReplaceAllString(candidate,"")==key
+ rule:=CompileWork(work);if rule.Key==""{return false};file:=Keys(fileName);if rule.Key==file.Stem&&(rule.Extension==""||rule.Extension==file.Extension){return true};return rule.Pages&&file.PageBase!=""&&rule.Key==file.PageBase
 }
 // Render writes the user-confirmed block layout: three empty lines between
 // blocks and one source marker with source terms separated by two spaces.
