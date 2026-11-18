@@ -8,8 +8,9 @@ AUTHOR_TOOLS = {"author.task.context", "author.read", "author.profile.update"}
 
 
 class BoundTask:
-    def __init__(self, kind, identifier):
+    def __init__(self, kind, identifier, delegated):
         self.kind, self.id = kind, identifier
+        self.delegated = delegated
         self.author_id = None
         self.fields = ()
 
@@ -24,7 +25,7 @@ class BoundTask:
                     if isinstance(session.get(field), str) and session[field]]
         if len(bindings) > 1:
             raise ToolError("SESSION_INVALID", "凭据同时指向多个任务，无法确认工作范围")
-        return cls(*bindings[0]) if bindings else None
+        return cls(*bindings[0], bool(session.get("parentDelegationId"))) if bindings else None
 
     def author_task(self, transport):
         context = transport.call("getAuthorTask", {"id": self.id})
@@ -58,7 +59,8 @@ class BoundTask:
             body["minProperties"] = 1
             body["additionalProperties"] = False
             tool["description"] = ("修改本任务作者的获准字段。body 仅传要改的资料，稳定操作键用于重放。"
-                                   "执行器从 Go 取任务目标和授权基线，提交后用 author.read 回读。")
+                                   "执行器提交后另向 Go 读取当前作者。writeReceipt 是原写回执，"
+                                   "readback.author 是本次独立读取的结果，按 readback.state 说明核对情况。")
 
     def bind(self, runtime, name, args):
         if "taskId" in args and args.pop("taskId") != self.id:
@@ -84,3 +86,30 @@ class BoundTask:
                     baseline = self.author_task(runtime.transport)["expectedRevision"]
                 body["expectedRevision"] = baseline
             args["body"] = body
+
+    def readback(self, transport, key, body, receipt):
+        result = {"state": "committed", "id": self.author_id, "operationKey": key, "writeReceipt": receipt}
+        next_read = {"tool": "author.read", "arguments": {}}
+        try:
+            current = transport.call("getAuthor", {"id": self.author_id})
+        except ToolError as exc:
+            result["readback"] = {"state": "unavailable", "code": exc.code, "nextAction": next_read}
+            return result
+        if (not isinstance(current, dict) or not isinstance(receipt, dict) or current.get("id") != self.author_id
+                or receipt.get("id") != self.author_id or type(current.get("revision")) is not int
+                or type(receipt.get("revision")) is not int):
+            result["readback"] = {"state": "unavailable", "code": "AUTHOR_READBACK_INVALID", "nextAction": next_read}
+            return result
+        fields = set(body) - {"expectedRevision"}
+        snapshot = {name: current[name] for name in ("id", "revision", *sorted(fields)) if name in current}
+        same_fields = all((name in current, current.get(name)) == (name in receipt, receipt.get(name)) for name in fields)
+        if current["revision"] == receipt["revision"] and same_fields:
+            state = "verified"
+        elif current["revision"] > receipt["revision"]:
+            state = "changed"
+        else:
+            state = "mismatch"
+        result["readback"] = {"state": state, "author": snapshot}
+        if state != "verified":
+            result["readback"]["nextAction"] = next_read
+        return result

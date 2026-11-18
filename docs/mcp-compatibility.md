@@ -67,6 +67,10 @@ mcp_servers:
 
 第二轮 `f2baba8` 转交了 MCP 初始化说明。领域配置呈现 16 个工具、9,410 字节。两个任务各调用一次工具，却都额外传入了本机并未持有的 `taskId`，返回 `TASK_NOT_BOUND`。标签检索共用 6,034 个输入、54 个输出 token，作者维护为 6,130 个输入、141 个输出 token。完整目录呈现 63 个工具、49,191 字节。标签题首轮在 660 秒超时，用量未测。作者题收到了应答，却把显示名填入稳定 ID 字段并给出与授权基线不符的修订，Go 返回 `author_task_stale`。该题共用 30,719 个输入、126 个输出 token。四场的独立回读均未通过任务判定，作者资料和词表保持原值。[第二轮作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44388930776/job/135100958217) · [逐轮报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44388930776/artifacts/14467952143)
 
+第三轮 `c0dffcc` 按单任务凭据收敛输入。两种目录下，模型都在一次词表查询后答全两个名称和稳定 ID。领域配置输入/输出 4,601/182 token，完整配置为 24,633/190，完整配置首轮实际耗时 421 秒。两场作者题各执行一次有效更新，只传稳定操作键和简介。Go 最终读数确认作者修订只前进一次、简介按候选保存，其他字段保持原值。但模型都从写入响应引用了原文并声称已经回读，没有再调用读取工具，两场作者任务均未通过回读判定。两种配置的作者题输入/输出分别为 4,093/98 和 24,126/91 token。[第三轮作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44394371554/job/135120193150) · [逐轮报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44394371554/artifacts/14471262088)
+
+此后的同题验收分别记录 `modelIssuedRead`、`verifiedByExecutor`。前者要求模型自己追加读取工具。后者由回环观察器核对同一工具调用内，成功的作者 PATCH 后确有独立 GET，且对象、修订与简介摘要相符。宿主发给模型的下一次推理请求须实际包含这份读数并收到推理应答。观察器原样转发 Go 的响应，仅保存方法、状态、修订及摘要。模型自行声称回读、单独的写回显或验收者事后读取都不足以满足条件。[独立观察器](../tools/model-proof/author-observer.mjs)
+
 云端`mcp-compat`作业使用真实Go服务、Python官方SDK和相互独立的Pi/TypeScript客户端。测试脚本只访问临时服务与合成图片。最新通过的提交和未验证项见[当前状态](status.md)。仅源码或配置示例存在不构成通过证据。
 
 协议依据：[MCP工具规范](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)。新SDK的旧协议协商能力必须用独立客户端实测，不凭相同SDK自测推定广泛兼容。

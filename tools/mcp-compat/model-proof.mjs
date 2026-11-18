@@ -6,6 +6,7 @@ import { request as httpRequest } from 'node:http';
 import { join, resolve } from 'node:path';
 import { McpClient, StdioTransport, toLlmContent } from '@earendil-works/pi-mcp';
 import { openFixture, grade, goOrigin, modelInfo } from '../model-proof/fixtures.mjs';
+import { authorDigest, observeAuthorTraffic } from '../model-proof/author-observer.mjs';
 
 const modelEndpoint = 'http://127.0.0.1:18580/v1/chat/completions';
 const system = '你是绮梦资料库助手。依据用户要求和实际工具结果作答。保留未授权资料，无法完成的事如实说明。用中文回复。';
@@ -46,12 +47,13 @@ async function runCase(fixture, scenario, profile) {
   const record = { discovery: profile, scenario: scenario.name, userPrompt: scenario.prompt, turns: [], calls: [],
     stop: 'not_started', tokenTotals: { prompt: null, completion: null }, limits };
   const observed = { events: [] };
+  const observer = scenario.name === 'author' ? await observeAuthorTraffic(scenario.token, fixture.author.id) : null;
   const started = Date.now();
   const stateDir = join(fixture.root, 'executor-' + scenario.name);
   const transport = new StdioTransport({ command: 'python', args: ['-m', 'qimeng_ai.cli', 'mcp'],
     cwd: process.cwd(), stderr: 'inherit', env: {
       PATH: process.env.PATH, HOME: fixture.root, LANG: 'C.UTF-8', PYTHONPATH: resolve('ai/src'),
-      QIMENG_AI_STATE_DIR: stateDir, QIMENG_API_BASE: goOrigin, QIMENG_API_TOKEN: scenario.token,
+      QIMENG_AI_STATE_DIR: stateDir, QIMENG_API_BASE: observer?.origin || goOrigin, QIMENG_API_TOKEN: scenario.token,
       QIMENG_AI_PERMISSIONS: scenario.permissions, QIMENG_AI_MAX_CALLS: '25',
       QIMENG_AI_MAX_SECONDS: String(Math.max(900, limits.wallSeconds + 30)),
     } });
@@ -94,6 +96,10 @@ async function runCase(fixture, scenario, profile) {
         try { measurement.error = JSON.parse(raw).error?.type || 'model_http_error'; } catch { measurement.error = 'invalid_model_response'; }
         break;
       }
+      for (const event of observed.events) {
+        if (!event.forwarded && request.messages.some(m => m.role === 'tool' &&
+            m.tool_call_id === event.callId && m.content === event.text)) event.forwarded = true;
+      }
       const reply = JSON.parse(raw);
       const { prompt_tokens: prompt, completion_tokens: completion } = reply.usage || {};
       if (!Number.isSafeInteger(prompt) || !Number.isSafeInteger(completion)) {
@@ -112,6 +118,7 @@ async function runCase(fixture, scenario, profile) {
       for (const call of calls) {
         if (record.calls.length >= limits.toolCalls) { record.stop = 'tool_budget'; break; }
         let text, errorCode = null, args = null;
+        const firstExchange = observer?.events.length ?? 0;
         const definition = byWire.get(call.function.name);
         try { args = JSON.parse(call.function.arguments); } catch { errorCode = 'INVALID_MODEL_ARGUMENTS'; }
         if (!definition || !active.has(definition)) errorCode = 'TOOL_NOT_OFFERED';
@@ -135,7 +142,16 @@ async function runCase(fixture, scenario, profile) {
           ...(name === 'author.profile.update' ? { target: args?.id === fixture.author.id ? 'selected_stable_id' :
             args?.id === fixture.author.name ? 'display_name' : 'other_or_missing', revisionMatchesInitial: args?.body?.expectedRevision === fixture.author.revision } : {}),
           repeatedInput: record.calls.some(past => past.signature === signature), signature });
-        observed.events.push({ name, success: !errorCode, readOnly: definition?.annotations?.readOnlyHint === true, text: safe });
+        const exchanges = observer?.events.slice(firstExchange) || [];
+        let returnedDigest = null;
+        if (name === 'author.profile.update' && !errorCode) {
+          try {
+            const visible = JSON.parse(safe);
+            if (visible.readback?.state === 'verified') returnedDigest = authorDigest(visible.readback.author);
+          } catch { /* Only count a readback actually visible in the model's tool content. */ }
+        }
+        observed.events.push({ name, success: !errorCode, readOnly: definition?.annotations?.readOnlyHint === true,
+          callId: call.id, text: safe, exchanges, returnedDigest, forwarded: false });
         messages.push({ role: 'tool', tool_call_id: call.id, content: safe });
       }
       if (record.stop === 'tool_budget') break;
@@ -143,7 +159,9 @@ async function runCase(fixture, scenario, profile) {
   } catch (error) {
     record.stop = error.name === 'TimeoutError' || error.name === 'AbortError' ? 'inference_timeout' : 'host_error';
     record.error = redact(error.message, scenario.token).slice(0, 300);
-  } finally { await client.close(); }
+  } finally {
+    try { await client.close(); } finally { if (observer) await observer.close(); }
+  }
   record.elapsedSeconds = Math.round((Date.now() - started) / 10) / 100;
   const metered = record.turns.filter(turn => Number.isSafeInteger(turn.promptTokens) && Number.isSafeInteger(turn.completionTokens));
   record.usageCoverage = { returned: metered.length, requested: record.turns.length };
