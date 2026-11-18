@@ -644,9 +644,10 @@ paths:
   /tags:
     get:
       operationId: listTags
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      description: 按正名或单个别名搜索标签，结果沿用正式名称列表。需要稳定 ID、别名和修订时使用 listTagVocabulary。
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}, {$ref: '#/components/parameters/AliasQuery'}]
       responses:
-        '200': {description: Active tag vocabulary, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {type: string}}, nextCursor: {type: string}}}}}}
+        '200': {description: Canonical names of matching active tags, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {type: string}}, nextCursor: {type: string}}}}}}
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createTag
@@ -658,9 +659,21 @@ paths:
   /tag-vocabulary:
     get:
       operationId: listTagVocabulary
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      description: 按正名或单个别名读取标签的稳定 ID、正式名称、别名和修订。多个标签共用一种叫法时返回每个候选，可继续分页。
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}, {$ref: '#/components/parameters/AliasQuery'}]
       responses:
-        '200': {description: Versioned active vocabulary, content: {application/json: {schema: {$ref: '#/components/schemas/TagPage'}}}}
+        '200': {description: Every matching active tag identified by stable ID and revision, content: {application/json: {schema: {$ref: '#/components/schemas/TagPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /tag-vocabulary/{id}/aliases:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setTagAliases
+      description: Replace the aliases of the tag with this stable ID at its current revision. An empty list clears its aliases.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AliasSetUpdate'}}}}
+      responses:
+        '200': {description: Updated tag with its canonical name and complete alias list, content: {application/json: {schema: {$ref: '#/components/schemas/Tag'}}}}
+        '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /tags/{tag}:
     parameters: [{name: tag, in: path, required: true, schema: {type: string}}]
@@ -882,10 +895,11 @@ paths:
   /collections:
     get:
       operationId: listCollections
+      description: 在指定媒体库内按作品集合的正名或单个别名查询。重名时分别返回候选的库、稳定 ID 和修订，后续操作引用选定的 ID。
       parameters:
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
-        - {name: q, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/AliasQuery'}
         - {name: libraryId, in: query, schema: {type: string}}
       responses:
         '200': {description: Collections, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionPage'}}}}
@@ -905,6 +919,17 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionRename'}}}}
       responses:
         '200': {description: Renamed collection with the same stable ID, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections/{id}/aliases:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setCollectionAliases
+      description: Replace the aliases of the collection with this stable ID at its current revision. An empty list clears its aliases.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AliasSetUpdate'}}}}
+      responses:
+        '200': {description: Updated collection with its complete alias list, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
+        '409': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /collections/{id}/members:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1836,6 +1861,7 @@ components:
     Id: {name: id, in: path, required: true, schema: {type: string}}
     PlanId: {name: planId, in: path, required: true, schema: {type: string}}
     Cursor: {name: cursor, in: query, schema: {type: string}}
+    AliasQuery: {name: q, in: query, schema: {type: string}, description: Literal substring of the canonical name or an individual alias. Each matching owner appears once. A shared spelling may match multiple owners.}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8, maxLength: 128}}
   responses:
@@ -3263,12 +3289,24 @@ components:
       type: object
       required: [items, directFileCount]
       properties: {items: {type: array, items: {$ref: '#/components/schemas/Directory'}}, nextCursor: {type: string}, directFileCount: {type: integer, format: int64, minimum: 0, description: Directly indexed files in the queried parent including the library root}}
+    AliasSetUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, aliases]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        aliases:
+          type: array
+          description: Complete alias list. Explicitly supply an empty list to clear it.
+          maxItems: 100
+          items: {type: string, minLength: 1, maxLength: 200, description: Up to 200 UTF-8 bytes after trimming surrounding space}
     Tag:
       type: object
-      required: [id, name, revision, createdAt, updatedAt]
+      required: [id, name, aliases, revision, createdAt, updatedAt]
       properties:
         id: {type: string, minLength: 1, readOnly: true, description: Stable identity preserved across tag renames}
         name: {type: string}
+        aliases: {type: array, items: {type: string}, default: []}
         revision: {type: integer, format: int64}
         createdAt: {type: string}
         updatedAt: {type: string}
