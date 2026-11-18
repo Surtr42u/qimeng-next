@@ -19,6 +19,10 @@ type ReadyIntakeBatches struct {
 	Items []ReadyIntakeBatch `json:"items"`
 }
 
+const readyIntakeList = `SELECT b.batch_id,b.library_id,b.manifest_fingerprint,b.max_research_calls
+ FROM json_each(?) allowed CROSS JOIN ready_intake_batches b
+ WHERE b.library_id=allowed.value AND b.max_research_calls<=? ORDER BY b.created_at,b.batch_id LIMIT 16`
+
 func (s *Service) checkDailyTaskLimit(ctx context.Context, d Delegation, day string) error {
 	var count int
 	if err := s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM delegated_tasks WHERE delegation_id=? AND created_day=?", d.ID, day).Scan(&count); err != nil {
@@ -46,8 +50,7 @@ func (s *Service) ReadyIntakeBatches(ctx context.Context, p model.Principal) (Re
 	if err != nil {
 		return page, err
 	}
-	rows, err := s.DB.DB.QueryContext(ctx, `SELECT batch_id,library_id,manifest_fingerprint,max_research_calls FROM ready_intake_batches
-	 WHERE library_id IN (SELECT value FROM json_each(?)) AND max_research_calls<=? ORDER BY created_at,batch_id LIMIT 16`, libs, d.MaxResearchCalls)
+	rows, err := s.DB.DB.QueryContext(ctx, readyIntakeList, libs, d.MaxResearchCalls)
 	if err != nil {
 		return page, err
 	}
