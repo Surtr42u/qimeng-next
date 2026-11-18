@@ -516,7 +516,8 @@ func (a *API) ListTags(w http.ResponseWriter, r *http.Request, params generated.
 		if e != nil {
 			return nil, e
 		}
-		return a.s.Tags(r.Context(), r.URL.Query().Get("cursor"), n)
+		q := r.URL.Query()
+		return a.s.Tags(r.Context(), q.Get("q"), q.Get("cursor"), n)
 	})
 }
 

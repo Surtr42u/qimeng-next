@@ -50,7 +50,7 @@ func (s *Service) RenameCollection(ctx context.Context, w *Write, id, name strin
 	if err != nil {
 		return model.Collection{}, err
 	}
-	c, err := store.Get[model.Collection](ctx, q, "SELECT data FROM collections WHERE id=?", id)
+	c, err := store.Get[model.Collection](ctx, q, "SELECT data FROM collection_details WHERE id=?", id)
 	if err != nil {
 		return c, Normalize(err)
 	}
@@ -61,7 +61,7 @@ func (s *Service) RenameCollection(ctx context.Context, w *Write, id, name strin
 		return c, nil
 	}
 	c.Name, c.Revision = name, c.Revision+1
-	_, err = q.ExecContext(ctx, "UPDATE collections SET name=?,data=json_set(data,'$.name',?,'$.revision',?) WHERE id=?", name, name, c.Revision, id)
+	_, err = q.ExecContext(ctx, "UPDATE collections SET name=?,naming_revision=naming_revision+1,data=json_set(data,'$.name',?,'$.revision',?) WHERE id=?", name, name, c.Revision, id)
 	return c, err
 }
 

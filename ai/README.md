@@ -70,6 +70,8 @@
 3. `asset.metadata.apply` 只补全授权的缺失项。每个字段附自己的来源和观察，主动清空的标签与作者关系受保护。人工编辑使旧修订失效，需要重新核对。
 4. `naming.suggest`、`naming.preview` 由 Go 读当前目录计算续号。将同一计划、目标和目录指纹交给 `asset.rename.apply`；期间占号会返回冲突。文件身份、内容版本和作者关系随改名保留。
 
+按用户提供的简称查资料时，`tag.vocabulary.query` 接受 `q`，返回标签的稳定 ID、正式名称、别名和修订。只需要名称的任务可继续使用 `tag.query`。`collection.query` 同时接受 `libraryId` 和 `q`。多个对象使用同一叫法时，读完需要的候选页，再用库、正式名称和用户给的线索确定对象。管理员清空别名后，下次查询立即采用新词表。三个查询均可用只读凭据执行。[接口与修订](../docs/api.md)
+
 ## 可信端维护
 
 配置独立备份目标并取得本人授权后，`backup.protect` 保护本批已经入库的输入。用 `backup.protection.read` 核对目标、原始清单、内容版本和读回结果。要回收来源，还需给该任务单独授予 `source.cleanup`，在执行器配置 `local.read,local.recycle` 并选中允许回收的来源存储。`source.recycle` 接收原批次、输入、`fileRef` 和保护记录，校验登记时的实体文件、SHA‑256 和当前租约。文件内容相同、来源目录不同的另一文件会被拒绝。回执丢失时沿用原操作键重试。

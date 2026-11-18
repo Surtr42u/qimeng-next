@@ -100,6 +100,14 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 每个标签有稳定 `Tag.id`。改词条名后，同一资产的关联 ID 和显示顺序保留。组图与短剧通过 `GET /collections/{id}/members` 分页读取成员。改集合名称使用 `PATCH /collections/{id}` 并提交集合修订。调整一页或一集使用 `PUT /collections/{id}/members/{assetId}/position`，提交成员修订和正整数位置。实际位置已有成员或已被在途发布占用时返回 409 和 `collection_position_occupied`。早期 Next 库里冲突的旧编号作为 `reportedPosition` 展示，便于核对。
 
+管理员用 `PUT /tag-vocabulary/{id}/aliases` 或 `PUT /collections/{id}/aliases` 修改指定标签或集合的全部别名。请求须有 `Idempotency-Key`，正文包含对象的 `expectedRevision` 和完整 `aliases` 数组。传 `[]` 明确清空。服务按输入顺序保留清理后的别名，同一组值按同样顺序再次保存沿用当前修订。过期修订返回 409 和当前修订号。同一键、同一输入可回读原回执。编辑别名只写所选对象。
+
+`GET /tag-vocabulary?q=...` 返回标签的稳定 ID、正式名、别名和修订，`GET /tags?q=...` 延用正式名字符串分页。`GET /collections?libraryId=...&q=...` 在指定库中搜索，省略 `libraryId` 可以跨库查询。三个查询都把 `q` 当作字面子串，分别匹配正式名和每个别名。一个对象即使命中多次也只出现一次。同一拼法可对应多个对象，客户端应保留各候选的稳定 ID，按用户选定的对象保存。
+
+媒体浏览的 `GET /assets?q=...` 也会匹配资产所用标签的别名、所属集合名称和别名，沿用资产搜索的数字边界与分页。多个标签或集合同时命中时，每项资产只计一次。移除某个别名后，其他对象使用的同一拼法仍可命中。
+
+使用原幂等键重试 `POST /tags` 或 `PATCH /tags/{tag}` 会取得当时保存的 `TagWriteReceipt`。历史回执可能只有正式名、修订和两个时间戳。后续需要按 ID 编辑时，从当前标签词表重新选择对象；当前词表和编辑别名的响应都带稳定 ID 和完整别名数组。
+
 普通播放与拖动分开上报到 `POST /assets/{id}/events`。`play` 增加该会话的播放事实，`progress` 随 `contentVersion` 和 `positionMs` 写入续播行。位置为 0 表示回到开头。旧版本的标记和位置始终带原版本号，换版后播放器只对当前版本自动续播。[事件口径](analytics.md#事件与排行)
 
 **收藏和当天的赞分别写入。** `PUT /assets/{id}/favorite` 只接受 `{"favorite":true}` 或 `{"favorite":false}`。`PUT /assets/{id}/like/today` 只接受 `{"liked":true}` 或 `{"liked":false}`。两个入口均使用 `Idempotency-Key`，返回当前资产。对同一次操作重发时使用原键。回读旧回执后，查 `GET /assets/{id}` 可看到其后其他设备的修改。

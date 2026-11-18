@@ -9,10 +9,12 @@ import java.util.UUID
 
 class ManagementRepository internal constructor(private val settings: SecureSettings, private val provider: ApiProvider) {
     private fun api() = provider.api(settings.session.value ?: error("请先登录服务器"))
-    suspend fun vocabulary(kind: String, cursor: String?): Page<VocabularyEntry> = when (kind) {
-        "tags" -> api().listTagVocabulary(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items.map { t -> VocabularyEntry(t.name, t.name, emptyList(), t.revision) }, it.nextCursor) }
-        "sources" -> api().listSources(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items.map { t -> VocabularyEntry(t.id, t.name, t.aliases, t.revision) }, it.nextCursor) }
-        "characters" -> api().listCharacters(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items.map { t -> VocabularyEntry(t.id, t.name, t.aliases, t.revision, t.sourceId) }, it.nextCursor) }
+    suspend fun vocabulary(kind: String, cursor: String?, q: String? = null): Page<VocabularyEntry> = when (kind) {
+        "tags" -> api().listTagVocabulary(cursor = cursor, limit = 50, q = q).bodyOrThrow().let {
+            Page(it.items.map { tag -> VocabularyEntry(tag.id, tag.name, tag.aliases, tag.revision) }, it.nextCursor)
+        }
+        "sources" -> api().listSources(cursor = cursor, limit = 50, q = q).bodyOrThrow().let { Page(it.items.map { t -> VocabularyEntry(t.id, t.name, t.aliases, t.revision) }, it.nextCursor) }
+        "characters" -> api().listCharacters(cursor = cursor, limit = 50, q = q).bodyOrThrow().let { Page(it.items.map { t -> VocabularyEntry(t.id, t.name, t.aliases, t.revision, t.sourceId) }, it.nextCursor) }
         else -> error("未知词表")
     }
 

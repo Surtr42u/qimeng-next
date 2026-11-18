@@ -7,7 +7,8 @@ import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.api.DefaultApi
 import java.util.UUID
 
-internal class CloudClient(val media: MediaRepository, val profiles: AuthorProfileRepository, val provider: ApiProvider, val session: Session) {
+internal class CloudClient(val media: MediaRepository, val profiles: AuthorProfileRepository,
+    val management: ManagementRepository, val provider: ApiProvider, val session: Session) {
     val api: DefaultApi = provider.api(session)
 }
 
@@ -24,5 +25,6 @@ internal suspend fun signInToCloud(source: Boolean = false): CloudClient {
     val provider = ApiProvider(settings)
     val media = MediaRepository(settings, provider)
     media.login(address, requireNotNull(args.getString(if (source) "qimengSourceToken" else "qimengToken")))
-    return CloudClient(media, AuthorProfileRepository(context, settings, provider), provider, requireNotNull(settings.session.value))
+    return CloudClient(media, AuthorProfileRepository(context, settings, provider), ManagementRepository(settings, provider),
+        provider, requireNotNull(settings.session.value))
 }

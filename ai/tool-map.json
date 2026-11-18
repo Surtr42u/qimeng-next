@@ -21,6 +21,7 @@
   "createAuthor": {"tool": "author.create", "scope": "organize"},
   "listCollections": {"tool": "collection.query", "scope": "read"},
   "listTags": {"tool": "tag.query", "scope": "read"},
+  "listTagVocabulary": {"tool": "tag.vocabulary.query", "scope": "read"},
   "getStats": {"tool": "statistics.read", "scope": "read"},
   "getUpload": {"tool": "upload.status", "scope": "read"},
   "getUploadResearchMaterials": {"tool": "research.materials", "scope": "research"},

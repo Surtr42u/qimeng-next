@@ -48,6 +48,8 @@ Android 普通应用在私有数据目录也会遇到硬链接被拒绝。文件
 
 命名续号和自动补全按媒体库与所在目录查询活动文件索引，再盘点该目录中实际存在的文件和目录。尚未扫描的同名项也占用名称，最终发布时再次核对目标路径。
 
+编辑标签或集合的别名仅写对应词条。搜索可以按别名找回关联媒体。改别名后，既有文件名、组内序号和已按集合 ID 准备的命名计划仍然有效。数据表、迁移和冲突处理见[原生数据架构](../docs/architecture.md#next-原生数据与恢复)。
+
 ## 模块与验证
 
 云端使用 oapi-codegen v2.8.2 从 `api/openapi.yaml` 生成 Go 类型、客户端、标准库服务端接口和内嵌协议。`internal/httpapi.API` 在编译时实现全部接口，运行服务使用生成的路由。kin-openapi v0.153.0 校验 JSON 请求。文件上传与 Range 下载保留流式读写，由真实入口的契约测试覆盖。[生成器](https://github.com/oapi-codegen/oapi-codegen/tree/v2.8.2) · [kin-openapi 版本与 MIT 许可证](https://github.com/getkin/kin-openapi/tree/v0.153.0)
