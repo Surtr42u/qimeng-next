@@ -46,6 +46,7 @@ class AndroidRealServerTest {
         compose.onNodeWithText("手动填写地址").performClick()
         compose.onNodeWithTag("login-address").performTextInput(server)
         compose.onNodeWithTag("login-password").performTextInput(token)
+        compose.waitUntil(30_000) { compose.onAllNodes(hasText("连接影库") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("连接影库").performClick()
         await("login", graph) {
             val errors = compose.onAllNodesWithTag("login-error").fetchSemanticsNodes()

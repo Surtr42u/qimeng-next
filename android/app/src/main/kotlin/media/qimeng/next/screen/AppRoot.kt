@@ -72,16 +72,16 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = rememberGlassBackdrop()
                 val detailRoute = route.startsWith("asset:")
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute) Modifier else Modifier.statusBarsPadding())) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route == "server") Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search")) PageHeader(routeTitle(route), model::back)
-                        if (!detailRoute && message != null) {
+                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
                                 IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
                             }
                         }
-                        if (!detailRoute && queueError != null && route != "upload") Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (!detailRoute && queueError != null && route !in setOf("upload", "server")) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(queueError!!, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                             TextButton(onClick = { model.navigate("upload") }) { Text("查看传输") }
                         }
@@ -105,7 +105,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "upload" -> UploadScreen(model)
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(model)
-                                route == "server" -> ServerScreen(model)
+                                route == "server" -> ServerSettingsScreen(model)
                                 route == "libraries" -> ServerScreen(model, librariesOnly = true)
                                 route == "data-manage" -> DataManageScreen(model)
                                 route == "vocabulary-manage" -> VocabularyManageScreen(model)

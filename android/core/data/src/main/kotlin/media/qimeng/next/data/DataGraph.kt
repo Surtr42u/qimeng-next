@@ -16,6 +16,8 @@ class DataGraph private constructor(context: Context) {
     val aiAccess = AIAccessRepository(settings, provider)
     val authorProfiles = AuthorProfileRepository(context, settings, provider)
     val naming = NamingRepository(settings, provider)
+    val discovery = ServerDiscovery(context, media::discoverRemembered)
+    val scans = ScanRepository(settings, provider)
     val uploads = UploadRepository(context, queue, settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

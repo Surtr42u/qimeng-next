@@ -2,6 +2,7 @@ package media.qimeng.next.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import media.qimeng.next.model.*
 import media.qimeng.next.sdk.model.AssetUpdate
 import media.qimeng.next.sdk.model.AuthorUpdate
@@ -33,17 +34,29 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     private val authenticationLock = Any()
     private fun target() = session.value ?: error("请先登录服务器")
 
-    suspend fun login(address: String, token: String, certificateDerBase64: String? = null, expectedInstanceId: String? = null, rememberAddress: Boolean = false) =
-        authenticate(address, SessionCreate(token = token, label = "Android 客户端"), certificateDerBase64, expectedInstanceId, rememberAddress)
+    /** Remembered endpoints are checked without bearer, cookies, password or a trust bypass. */
+    suspend fun discoverRemembered(address: String): ServerCandidate? = withTimeoutOrNull(2_000) {
+        try {
+            val root = normalizedServer(address)
+            val instance = provider.anonymous(root).getInstance().bodyOrThrow()
+            if (instance.apiVersion == "0.1.0" && !instance.id.isNullOrBlank() && instance.id.length <= 128) ServerCandidate(root, instance.id) else null
+        } catch (_: IOException) { null }
+        catch (_: IllegalArgumentException) { null }
+        catch (_: com.google.gson.JsonParseException) { null }
+    }
+
+    suspend fun login(address: String, token: String, certificateDerBase64: String? = null, expectedInstanceId: String? = null, rememberAddress: Boolean = false,
+                      loginEndpoint: String? = null) =
+        authenticate(address, SessionCreate(token = token, label = "Android 客户端"), certificateDerBase64, expectedInstanceId, rememberAddress, loginEndpoint)
 
     suspend fun loginWithPassword(address: String, password: String, certificateDerBase64: String? = null,
-                                  expectedInstanceId: String? = null, rememberAddress: Boolean = true) {
+                                  expectedInstanceId: String? = null, rememberAddress: Boolean = true, loginEndpoint: String? = null) {
         require(password.isNotEmpty()) { "请输入服务器密码" }
-        authenticate(address, SessionCreate(password = password, label = "Android 客户端"), certificateDerBase64, expectedInstanceId, rememberAddress)
+        authenticate(address, SessionCreate(password = password, label = "Android 客户端"), certificateDerBase64, expectedInstanceId, rememberAddress, loginEndpoint)
     }
 
     private suspend fun authenticate(address: String, credentials: SessionCreate, certificateDerBase64: String? = null,
-                                     expectedInstanceId: String? = null, rememberAddress: Boolean = false) = withContext(Dispatchers.IO) {
+                                     expectedInstanceId: String? = null, rememberAddress: Boolean = false, loginEndpoint: String? = null) = withContext(Dispatchers.IO) {
         val (attempt, connection) = synchronized(authenticationLock) { authenticationGeneration.incrementAndGet() to settings.transportRevision.value }
         val root = normalizedServer(address)
         val api = provider.anonymous(root, certificateDerBase64)
@@ -58,7 +71,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         val secret = created.token ?: throw IOException("服务器未返回登录凭据")
         synchronized(authenticationLock) {
             check(attempt == authenticationGeneration.get() && connection == settings.transportRevision.value) { "登录期间连接已改变，已保留较新的选择" }
-            settings.saveSession(Session(root, instance.id, instance.name), secret, certificateDerBase64, rememberAddress)
+            settings.saveSession(Session(root, instance.id, instance.name), secret, certificateDerBase64, rememberAddress, loginEndpoint)
         }
     }
 

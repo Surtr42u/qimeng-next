@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":core:transport"))
     implementation(libs.core)
     implementation(libs.coroutines)
+    implementation(libs.work)
     testImplementation(libs.junit)
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

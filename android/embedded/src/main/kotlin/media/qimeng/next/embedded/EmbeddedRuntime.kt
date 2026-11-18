@@ -37,6 +37,7 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     override val baseUrl: String get() = endpoint.value
     override val status = HostState.status.asStateFlow()
     override val files = EmbeddedFileAccess(app)
+    override val scans: LocalScans = EmbeddedScans(app)
 
     override suspend fun start(): LocalConnection = mutex.withLock {
         repeat(2) {
@@ -67,6 +68,7 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
         }
         val instance = requireNotNull(ready.instanceId)
         val token = withContext(Dispatchers.IO) { secrets.token(allowCreate = false) }
+        scans.resume()
         return@withLock LocalConnection(requireNotNull(HostState.activeBaseUrl), instance, token, requireNotNull(HostState.certificateDerBase64) { "本机TLS启动凭据缺失" })
         }
         error("本机权限或地址仍在变化，请稍后重新连接")
@@ -85,11 +87,17 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     override suspend fun confirmInstance(instanceId: String) = withContext(Dispatchers.IO) { secrets.confirm(instanceId) }
 
     override suspend fun configureAddress(address: String) = mutex.withLock {
+        val normalized = validateAddress(address)
+        withContext(Dispatchers.IO) { secrets.port = URI(normalized).port }
+        endpoint.value = normalized
+    }
+
+    override fun validateAddress(address: String): String {
         val uri = try { URI(address.trim()) } catch (_: Exception) { throw IllegalArgumentException("请输入完整的本机回环地址和端口") }
         require(uri.scheme in setOf("http", "https") && uri.host?.lowercase(Locale.ROOT) in setOf("localhost", "127.0.0.1") &&
             uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null && uri.path.orEmpty() in setOf("", "/")) { "本机地址必须是回环根地址，不能包含凭据或路径" }
-        withContext(Dispatchers.IO) { secrets.port = uri.port }
-        endpoint.value = addressForPort(uri.port)
+        require(uri.port in 1024..65535) { "本机端口需要在 1024–65535 之间" }
+        return addressForPort(uri.port)
     }
     override fun ownedEndpoints(instanceId: String): Set<String> = if (secrets.confirmedInstance == instanceId) secrets.confirmedPorts().map(::addressForPort).toSet() else emptySet()
 }

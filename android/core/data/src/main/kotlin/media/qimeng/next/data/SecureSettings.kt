@@ -26,12 +26,14 @@ class SecureSettings(context: Context) {
     private val mutableRecentServers = MutableStateFlow<List<String>>(emptyList())
     private val mutableTransportRevision = MutableStateFlow(0L)
     private val mutableSearchHistory = MutableStateFlow<List<String>>(emptyList())
+    private val mutableDefaultEndpoint = MutableStateFlow<String?>(null)
     val session = mutableSession.asStateFlow()
     val preferences = mutablePreferences.asStateFlow()
     val error = mutableError.asStateFlow()
     val recentServers = mutableRecentServers.asStateFlow()
     val transportRevision = mutableTransportRevision.asStateFlow()
     val searchHistory = mutableSearchHistory.asStateFlow()
+    val defaultEndpoint = mutableDefaultEndpoint.asStateFlow()
 
     init {
         try {
@@ -39,6 +41,7 @@ class SecureSettings(context: Context) {
             storage.getString("preferences", null)?.let { mutablePreferences.value = gson.fromJson(it, Preferences::class.java) }
             storage.getString("recent-servers", null)?.let { mutableRecentServers.value = gson.fromJson(it, Array<String>::class.java).toList() }
             storage.getString("search-history", null)?.let { mutableSearchHistory.value = gson.fromJson(it, Array<String>::class.java).toList() }
+            mutableDefaultEndpoint.value = storage.getString("default-endpoint", null)?.takeIf { it in setOf("local", "nas") }
         } catch (_: Exception) {
             mutableError.value = "连接配置无法读取，请重新登录。原有传输记录仍保留。"
         }
@@ -56,16 +59,20 @@ class SecureSettings(context: Context) {
     }
 
     @Synchronized
-    fun saveSession(session: Session, token: String, certificateDerBase64: String? = null, rememberAddress: Boolean = false) {
+    fun saveSession(session: Session, token: String, certificateDerBase64: String? = null, rememberAddress: Boolean = false, loginEndpoint: String? = null) {
+        require(loginEndpoint == null || loginEndpoint in setOf("local", "nas"))
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray()), Base64.NO_WRAP)
         val recent = if (rememberAddress) (listOf(session.baseUrl) + mutableRecentServers.value).distinct().take(5) else mutableRecentServers.value
-        check(storage.edit().putString("session", gson.toJson(session)).putString("token", encrypted)
-            .putString("certificate", certificateDerBase64).putString("recent-servers", gson.toJson(recent)).commit()) { "无法保存登录凭据" }
+        val editor = storage.edit().putString("session", gson.toJson(session)).putString("token", encrypted)
+            .putString("certificate", certificateDerBase64).putString("recent-servers", gson.toJson(recent))
+        loginEndpoint?.let { editor.putString("default-endpoint", it) }
+        check(editor.commit()) { "无法保存登录凭据" }
         mutableSession.value = session
         mutableTransportRevision.value++
         mutableRecentServers.value = recent
+        loginEndpoint?.let { mutableDefaultEndpoint.value = it }
         mutableError.value = null
     }
 
@@ -78,6 +85,13 @@ class SecureSettings(context: Context) {
     fun savePreferences(preferences: Preferences) {
         check(storage.edit().putString("preferences", gson.toJson(preferences)).commit()) { "无法保存外观设置" }
         mutablePreferences.value = preferences
+    }
+
+    @Synchronized
+    fun saveDefaultEndpoint(endpoint: String) {
+        require(endpoint in setOf("local", "nas"))
+        check(storage.edit().putString("default-endpoint", endpoint).commit()) { "无法保存默认登录设置" }
+        mutableDefaultEndpoint.value = endpoint
     }
 
     @Synchronized

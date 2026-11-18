@@ -22,6 +22,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val localConnection = (application as QimengApplication).localConnection
     val localRuntimeAvailable = runtime.available
     val localRuntimeStatus = runtime.status
+    val localAddress = runtime.configuredAddress
+    val localFileAccess = runtime.files.access
+    val localScanState = runtime.scans.state
+    val defaultEndpoint = graph.settings.defaultEndpoint
+    val discovery = graph.discovery.state
+    val stagedLoginEndpoint = saved.getStateFlow<String?>("loginEndpoint", null)
+    val stagedLoginAddress = saved.getStateFlow<String?>("loginAddress", null)
     val recentServers = graph.settings.recentServers
     val transportRevision = graph.settings.transportRevision
     val localConnectionError = localConnection.error
@@ -131,6 +138,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 authorTaskState.value = ListState()
                 trashState.value = ListState()
                 if (connection != null) {
+                    saved["loginEndpoint"] = null; saved["loginAddress"] = null; saved["loginLocalAddress"] = null
                     saved["uploadLibrary"] = graph.settings.uploadLibrary(connection).orEmpty()
                     refreshConnection()
                 }
@@ -211,8 +219,32 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    fun login(address: String, password: String) = action { repository.loginWithPassword(address, password) }
-    fun loginLocal(password: String = "") = action { connectLocal(forceLogin = true, password = password) }
+    fun login(address: String, password: String, expectedInstanceId: String? = null) = action {
+        repository.loginWithPassword(address, password, expectedInstanceId = expectedInstanceId, loginEndpoint = "nas")
+    }
+    fun loginLocal(password: String = "") = action {
+        saved.get<String>("loginLocalAddress")?.let { runtime.configureAddress(it) }
+        connectLocal(forceLogin = true, password = password)
+    }
+    fun discoverServers() = graph.discovery.start(graph.settings.recentServers.value)
+    fun stopDiscovery() = graph.discovery.stop()
+    fun requestLocalFileAccess() = action { runtime.files.requestAccess() }
+    fun refreshLocalFileAccess() = runtime.files.refreshAccess()
+    fun isLocalSession() = session.value?.let { runtime.available && it.baseUrl in runtime.ownedEndpoints(it.instanceId) } == true
+    fun setChargeOnlyScan(enabled: Boolean) = action { runtime.scans.setChargeOnly(enabled) }
+    fun saveDefaultEndpoint(value: String) = action(blocking = false) {
+        check(value != "local" || runtime.available) { "此安装包未包含本机服务" }
+        withContext(Dispatchers.IO) { graph.settings.saveDefaultEndpoint(value) }
+    }
+    fun prepareLogin(endpoint: String, address: String? = null) = action {
+        val normalized = if (endpoint == "local") runtime.validateAddress(address ?: runtime.configuredAddress.value)
+            else address?.takeIf { it.isNotBlank() }?.let { media.qimeng.next.data.normalizedServer(it) }
+        withContext(Dispatchers.IO) { graph.settings.saveDefaultEndpoint(endpoint) }
+        saved["loginEndpoint"] = endpoint
+        if (endpoint == "local") saved["loginLocalAddress"] = normalized else saved["loginAddress"] = normalized
+        saved["route"] = "main"; saved["backStack"] = ArrayList<String>()
+        repository.disconnect()
+    }
     fun stopLocal() = action { runtime.stop() }
     fun restoreLocalConnection() {
         runtime.files.refreshAccess()

@@ -52,8 +52,10 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
         if (current != selectedBeforeStart) return
         if (forceLogin || current == null || current.baseUrl != connection.baseUrl || current.instanceId != connection.instanceId ||
             graph.settings.certificateFor(current) != connection.certificateDerBase64) {
-            if (password.isEmpty()) graph.media.login(connection.baseUrl, connection.bootstrapToken, connection.certificateDerBase64, connection.instanceId)
-            else graph.media.loginWithPassword(connection.baseUrl, password, connection.certificateDerBase64, connection.instanceId, rememberAddress = false)
+            if (password.isEmpty()) graph.media.login(connection.baseUrl, connection.bootstrapToken, connection.certificateDerBase64, connection.instanceId,
+                loginEndpoint = if (forceLogin) "local" else null)
+            else graph.media.loginWithPassword(connection.baseUrl, password, connection.certificateDerBase64, connection.instanceId, rememberAddress = false,
+                loginEndpoint = if (forceLogin) "local" else null)
         }
         runtime.confirmInstance(connection.instanceId)
         if (graph.queue.state.value == null) graph.queue.load()

@@ -18,10 +18,12 @@ interface LocalRuntime {
     val configuredAddress: StateFlow<String>
     val status: StateFlow<RuntimeStatus>
     val files: LocalFiles
+    val scans: LocalScans
     suspend fun start(): LocalConnection
     suspend fun stop()
     suspend fun confirmInstance(instanceId: String)
     suspend fun configureAddress(address: String)
+    fun validateAddress(address: String): String
     fun ownedEndpoints(instanceId: String): Set<String>
 }
 
@@ -32,9 +34,11 @@ object RemoteOnlyRuntime : LocalRuntime {
     override val configuredAddress = MutableStateFlow("")
     override val status = MutableStateFlow(RuntimeStatus(RuntimePhase.STOPPED, "此安装包仅支持连接服务器"))
     override val files = UnavailableLocalFiles
+    override val scans = UnavailableLocalScans
     override suspend fun start(): LocalConnection = error("此安装包未包含本机服务")
     override suspend fun stop() = Unit
     override suspend fun confirmInstance(instanceId: String) = Unit
     override suspend fun configureAddress(address: String) = error("此安装包未包含本机服务")
+    override fun validateAddress(address: String): String = error("此安装包未包含本机服务")
     override fun ownedEndpoints(instanceId: String): Set<String> = emptySet()
 }

@@ -21,18 +21,24 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.R
 import media.qimeng.next.ui.component.QimengCapsuleTextField
 import media.qimeng.next.ui.theme.QimengDimens
 import media.qimeng.next.ui.theme.qimengFilledButtonColors
 import media.qimeng.next.ui.theme.softDaylightShadow
+import media.qimeng.next.model.ServerDiscoveryState
 
 /** The previous LoginScreen's layout and presentation, connected to the new runtime/API boundary. */
 @Composable
 fun LoginScreen(model: LibraryViewModel) {
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
-    var address by rememberSaveable { mutableStateOf("") }
+    val defaultEndpoint by model.defaultEndpoint.collectAsStateWithLifecycle()
+    val stagedEndpoint by model.stagedLoginEndpoint.collectAsStateWithLifecycle()
+    val stagedAddress by model.stagedLoginAddress.collectAsStateWithLifecycle()
+    var selected by rememberSaveable { mutableStateOf((stagedEndpoint ?: defaultEndpoint)?.let { if (it == "local" && !model.localRuntimeAvailable) "nas" else it }) }
+    var address by rememberSaveable { mutableStateOf(stagedAddress.orEmpty()) }
+    var addressEdited by rememberSaveable { mutableStateOf(stagedAddress != null) }
     var showManual by rememberSaveable { mutableStateOf(false) }
     // Password is transient composition state: never a SavedStateHandle, queue field or remembered address.
     var password by remember { mutableStateOf("") }
@@ -40,17 +46,25 @@ fun LoginScreen(model: LibraryViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     val settingsError by model.settingsError.collectAsStateWithLifecycle()
+    val discovery by model.discovery.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(selected) {
+        if (selected == "nas") model.discoverServers()
+        onPauseOrDispose { model.stopDiscovery() }
+    }
     LaunchedEffect(addresses) { if (address.isEmpty()) address = addresses.firstOrNull().orEmpty() }
+    LaunchedEffect(discovery.finished, discovery.candidates) {
+        if (!addressEdited && discovery.finished && discovery.candidates.size == 1) address = discovery.candidates.single().address
+    }
     LoginContent(selected, address, password, showManual, addresses, busy, model.localRuntimeAvailable,
-        message ?: settingsError,
+        message ?: settingsError, discovery, model::discoverServers,
         onMode = { selected = it; model.clearMessage() },
-        onAddress = { address = it; model.clearMessage() },
+        onAddress = { address = it; addressEdited = true; model.clearMessage() },
         onPassword = { password = it; model.clearMessage() },
         onManual = { showManual = !showManual },
         onSubmit = {
-            if (!busy) when (selected) {
+            if (!busy && (selected != "nas" || !discovery.searching)) when (selected) {
                 "local" -> model.loginLocal(password)
-                "nas" -> model.login(address, password)
+                "nas" -> model.login(address, password, discovery.candidates.find { it.address == address }?.instanceId)
                 else -> Unit
             }
         })
@@ -60,6 +74,7 @@ fun LoginScreen(model: LibraryViewModel) {
 @Composable
 internal fun LoginContent(selected: String?, address: String, password: String, showManual: Boolean,
     addresses: List<String>, submitting: Boolean, localAvailable: Boolean, error: String?,
+    discovery: ServerDiscoveryState, onDiscover: () -> Unit,
     onMode: (String) -> Unit, onAddress: (String) -> Unit, onPassword: (String) -> Unit,
     onManual: () -> Unit, onSubmit: () -> Unit) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -91,11 +106,17 @@ internal fun LoginContent(selected: String?, address: String, password: String, 
                             }
                             "nas" -> {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(stringResource(R.string.login_nas_title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                                    Text(stringResource(if (discovery.searching) R.string.login_searching else R.string.login_nas_title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                                    if (discovery.searching) LoadingIndicator(Modifier.size(QimengDimens.ButtonLoadingIndicatorSize))
+                                    else TextButton(onClick = onDiscover, enabled = !submitting) { Text(stringResource(R.string.login_refresh)) }
                                 }
-                                Text(stringResource(R.string.login_discovery_pending), style = MaterialTheme.typography.bodySmall,
+                                Text(stringResource(R.string.login_search_hint), style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                addresses.forEach { remembered -> AddressRow(remembered, remembered == address, !submitting) { onAddress(remembered) } }
+                                val found = discovery.candidates.map { it.address }
+                                val available = (found + addresses).distinct()
+                                available.forEach { candidate -> AddressRow(candidate, candidate == address, !submitting, candidate in found) { onAddress(candidate) } }
+                                if (discovery.finished && found.isEmpty()) Text(discovery.error ?: stringResource(R.string.login_search_empty),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 TextButton(onClick = onManual, enabled = !submitting) {
                                     Text(stringResource(if (showManual) R.string.login_manual_hide else R.string.login_manual))
                                 }
@@ -103,7 +124,7 @@ internal fun LoginContent(selected: String?, address: String, password: String, 
                                     placeholder = stringResource(R.string.login_server_url_placeholder), singleLine = true,
                                     enabled = !submitting, modifier = Modifier.fillMaxWidth().testTag("login-address"),
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next))
-                                if (address.isNotEmpty() && address !in addresses && !showManual) Text(address, style = MaterialTheme.typography.bodySmall)
+                                if (address.isNotEmpty() && address !in available && !showManual) Text(address, style = MaterialTheme.typography.bodySmall)
                             }
                             else -> Text(stringResource(R.string.login_choose_mode), style = MaterialTheme.typography.bodyMedium)
                         }
@@ -119,7 +140,7 @@ internal fun LoginContent(selected: String?, address: String, password: String, 
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("login-error"))
                 }
                 Spacer(Modifier.height(20.dp))
-                Button(onClick = onSubmit, enabled = !submitting && selected != null,
+                Button(onClick = onSubmit, enabled = !submitting && selected != null && (selected != "nas" || !discovery.searching),
                     colors = qimengFilledButtonColors(), modifier = Modifier.fillMaxWidth()) {
                     if (submitting) LoadingIndicator(Modifier.size(QimengDimens.ButtonLoadingIndicatorSize))
                     Text(stringResource(if (submitting) R.string.login_connecting else R.string.login_submit))
@@ -147,12 +168,12 @@ private fun ModeButton(title: String, caption: String, selected: Boolean, enable
 }
 
 @Composable
-private fun AddressRow(address: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun AddressRow(address: String, selected: Boolean, enabled: Boolean, discovered: Boolean, onClick: () -> Unit) {
     Surface(modifier = Modifier.fillMaxWidth().selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.login_address_saved), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(if (discovered) R.string.login_address_found else R.string.login_address_saved), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(address, style = MaterialTheme.typography.bodyMedium)
         }
     }
