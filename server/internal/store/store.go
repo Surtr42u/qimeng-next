@@ -103,7 +103,8 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 		favoritedAt = a.FavoritedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	}
 	query := `INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,
-		created_at,updated_at,favorite,liked,trashed,data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		created_at,updated_at,favorite,liked,trashed,data,file_date,favorited_at,cos_work_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,json_remove(?,'$.positionMs','$.positionContentVersion'),?,?,?)`
 	if !insertOnly {
 		query += ` ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,file_name=excluded.file_name,
 			media_type=excluded.media_type,author_id=excluded.author_id,collection_id=excluded.collection_id,hash=excluded.hash,

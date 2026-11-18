@@ -161,7 +161,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     expect(await like.json()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
     const key = await like.request().headerValue("idempotency-key");
     expect(key).toBeTruthy();
-    const replay = () => second.request.put(like.url(), { headers: { "Idempotency-Key": key! }, data: { liked: true } });
+    const replay = () => second.request.put(like.url(), { headers: { "Idempotency-Key": key!, Origin: base }, data: { liked: true } });
     expect(await (await replay()).json()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
     const readBack = async () => (await page.request.get("/api/v1/assets/" + encodeURIComponent(assetId))).json();
     expect(await readBack()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
@@ -274,6 +274,32 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     .evaluate((element) => (element as HTMLVideoElement).pause());
   const videoId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!);
   const videoData = await (await page.request.get(`/api/v1/assets/${encodeURIComponent(videoId)}`)).json();
+  const duration = await page.locator("video").evaluate(el => (el as HTMLVideoElement).duration);
+  await page.locator("video").hover();
+  const track = await page.locator(".art-control-progress").boundingBox();
+  expect(track).toBeTruthy();
+  for (const fraction of [0.35, 0.78, 0.52]) {
+    const expected = Math.round(duration * 1000 * fraction);
+    const receipt = page.waitForResponse(r => {
+      if (r.request().method() !== "POST" || !r.url().endsWith("/events")) return false;
+      const value = r.request().postDataJSON();
+      return value.kind === "progress" && Math.abs(value.positionMs - expected) < 80;
+    });
+    const y = track!.y + track!.height / 2;
+    await page.mouse.move(track!.x + track!.width * 0.1, y);
+    await page.mouse.down();
+    await page.mouse.move(track!.x + track!.width * fraction, y, { steps: 4 });
+    await page.mouse.up();
+    expect((await receipt).status()).toBe(200);
+  }
+  const resumeMs = duration * 1000 * 0.52;
+  await expect.poll(async () => {
+    const current = await (await page.request.get(`/api/v1/assets/${encodeURIComponent(videoId)}`)).json();
+    return current.positionContentVersion === videoData.contentVersion ? Math.abs(current.positionMs - resumeMs) : Infinity;
+  }).toBeLessThan(80);
+  await page.reload();
+  await expect.poll(() => page.locator("video").evaluate((el, expected) =>
+    Math.abs((el as HTMLVideoElement).currentTime * 1000 - expected), resumeMs)).toBeLessThan(80);
   // The original Web presents timeline marks on the player. Authoring uses the real
   // service here; do not add a new detail-page panel just to drive a test.
   const markLabel = 'CI 时间轴 <img src="synthetic-missing" onerror="window.syntheticUnsafe=true">';

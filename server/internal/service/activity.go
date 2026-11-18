@@ -112,9 +112,11 @@ func (s *Service) RecordEvent(ctx context.Context, w *Write, id string, in model
 		}
 	}
 	if in.Kind == "progress" || in.Kind == "play" {
-		a.PositionMs = in.PositionMs
-		a.PositionContentVersion = in.ContentVersion
-		if e = store.SaveAsset(ctx, q, a); e != nil {
+		_, e = q.ExecContext(ctx, `INSERT INTO asset_playback_positions(asset_id,content_version,position_ms,occurred_at)
+			VALUES(?,?,?,?) ON CONFLICT(asset_id,content_version) DO UPDATE SET
+			position_ms=excluded.position_ms,occurred_at=excluded.occurred_at
+			WHERE excluded.occurred_at>=asset_playback_positions.occurred_at`, id, in.ContentVersion, in.PositionMs, dateKey(occurred))
+		if e != nil {
 			return in, e
 		}
 	}
