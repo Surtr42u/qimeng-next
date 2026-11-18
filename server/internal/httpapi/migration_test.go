@@ -61,7 +61,7 @@ func TestV2PlanIsReadOnlyAndCommitPreservesIdentitiesAndEmptyTags(t *testing.T) 
 		t.Fatal("v2 claimed nonexistent source hashes")
 	}
 	plan := planV2(t, f, input, "plan-v2-original")
-	if plan.MatchedCount != 1 || plan.SkippedCount != 0 {
+	if plan.MatchedCount != 1 || plan.SkippedCount != 0 || plan.RequiresReview == nil || !*plan.RequiresReview {
 		t.Fatalf("plan: %+v", plan)
 	}
 	r = f.json("GET", "/assets/"+a.ID, "", nil, 200)

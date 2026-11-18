@@ -235,22 +235,8 @@ func RestoreImportedAuthorProfile(ctx context.Context, q store.Querier, authorID
 		return result, err
 	}
 	now := time.Now().UTC()
-	archive := ProfileArchive{ProfileArchiveSummary: ProfileArchiveSummary{ID: archiveID, AuthorID: authorID, AuthorName: name, Reason: "import", CreatedAt: now, Conflicts: []string{}}, Blocks: []AuthorProfileBlock{}, OriginalImport: prepared.original}
-	for _, block := range prepared.blocks {
-		block.AuthorID = authorID
-		if block.Block == "x" && prepared.avatar != nil {
-			image := prepared.avatar
-			id := digest(image.body)
-			source := profileString(prepared.profile.AvatarURL)
-			block.Avatar = &ProfileAvatar{ID: id, URL: "/api/v1/profile-avatars/" + id, Origin: "import", SourceURL: source, FetchedURL: "", SourceHash: image.sourceHash, ContentHash: id, Width: image.width, Height: image.height, Bytes: len(image.body), FetchedAt: now}
-			if _, err = q.ExecContext(ctx, "INSERT OR IGNORE INTO author_profile_avatars(id,created_at,image) VALUES(?,?,?)", id, dateKey(now), image.body); err != nil {
-				return result, err
-			}
-		}
-		archive.Blocks = append(archive.Blocks, block)
-	}
-	archive.BlockCount = len(archive.Blocks)
-	if err = saveProfileArchive(ctx, q, archive); err != nil {
+	archive, err := archiveImportedProfile(ctx, q, authorID, name, archiveID, prepared, now)
+	if err != nil {
 		return result, err
 	}
 	if author.Placeholder {
@@ -313,22 +299,46 @@ func RestoreImportedAuthorProfile(ctx context.Context, q store.Querier, authorID
 			return result, err
 		}
 	}
+	err = preserveNestedImportCandidate(ctx, q, authorID, archiveID, prepared, &result)
+	return result, err
+}
+
+func preserveNestedImportCandidate(ctx context.Context, q store.Querier, authorID, archiveID string, prepared *ImportedAuthorProfile, result *ProfileImportResult) error {
 	if prepared.profile.Candidate != nil {
 		blocks, err := convertImportedProfile(*prepared.profile.Candidate)
 		if err != nil {
-			return result, err
+			return err
 		}
 		for _, incoming := range blocks {
 			current, err := profileBlock(ctx, q, authorID, incoming.Block)
 			if err != nil {
-				return result, err
+				return err
 			}
-			if err = importProfileCandidate(ctx, q, authorID, archiveID+":candidate", incoming, current, &result); err != nil {
-				return result, err
+			if err = importProfileCandidate(ctx, q, authorID, archiveID+":candidate", incoming, current, result); err != nil {
+				return err
 			}
 		}
 	}
-	return result, nil
+	return nil
+}
+
+func archiveImportedProfile(ctx context.Context, q store.Querier, authorID, name, archiveID string, prepared *ImportedAuthorProfile, now time.Time) (ProfileArchive, error) {
+	archive := ProfileArchive{ProfileArchiveSummary: ProfileArchiveSummary{ID: archiveID, AuthorID: authorID, AuthorName: name, Reason: "import", CreatedAt: now, Conflicts: []string{}}, Blocks: []AuthorProfileBlock{}, OriginalImport: prepared.original}
+	for _, block := range prepared.blocks {
+		block.AuthorID = authorID
+		if block.Block == "x" && prepared.avatar != nil {
+			image := prepared.avatar
+			id := digest(image.body)
+			source := profileString(prepared.profile.AvatarURL)
+			block.Avatar = &ProfileAvatar{ID: id, URL: "/api/v1/profile-avatars/" + id, Origin: "import", SourceURL: source, SourceHash: image.sourceHash, ContentHash: id, Width: image.width, Height: image.height, Bytes: len(image.body), FetchedAt: now}
+			if _, err := q.ExecContext(ctx, "INSERT OR IGNORE INTO author_profile_avatars(id,created_at,image) VALUES(?,?,?)", id, dateKey(now), image.body); err != nil {
+				return archive, err
+			}
+		}
+		archive.Blocks = append(archive.Blocks, block)
+	}
+	archive.BlockCount = len(archive.Blocks)
+	return archive, saveProfileArchive(ctx, q, archive)
 }
 
 func importProfileCandidate(ctx context.Context, q store.Querier, authorID, seed string, incoming, current AuthorProfileBlock, result *ProfileImportResult) error {

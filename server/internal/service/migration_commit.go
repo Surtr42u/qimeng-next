@@ -110,6 +110,11 @@ func (s *Service) CommitV2Migration(ctx context.Context, w *Write, id, fingerpri
 		if item.State == "conflict" {
 			continue
 		}
+		if plan.AuthorProfileConflict == "replace" {
+			if e = verifyImportedBlockPlan(ctx, s.DB.DB, item, profiles[item.SourceAuthorID]); e != nil {
+				return plan, e
+			}
+		}
 		if item.State == "existing" {
 			a, e := s.Author(ctx, item.AuthorID)
 			if e != nil {
@@ -204,7 +209,13 @@ func (s *Service) CommitV2Migration(ctx context.Context, w *Write, id, fingerpri
 		if e = q.QueryRowContext(ctx, "SELECT COUNT(*) FROM author_profile_archives WHERE id=?", archiveID).Scan(&archived); e != nil {
 			return plan, e
 		}
-		if archived == 0 && profiles[item.SourceAuthorID] != nil {
+		if profile := profiles[item.SourceAuthorID]; plan.AuthorProfileConflict == "replace" && profile != nil {
+			skipped, err := applyImportedBlockPlan(ctx, q, item, profile, archiveID, &plan)
+			if err != nil {
+				return plan, err
+			}
+			partial = partial || skipped
+		} else if archived == 0 && profile != nil {
 			result, e := RestoreImportedAuthorProfile(ctx, q, a.ID, a.Name, archiveID, profiles[item.SourceAuthorID])
 			if e != nil {
 				return plan, e

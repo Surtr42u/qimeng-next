@@ -3345,6 +3345,11 @@ components:
       properties:
         mediaMappings: {type: array, maxItems: 10000, items: {type: object, required: [recordKey, assetId], properties: {recordKey: {type: string}, assetId: {type: string, description: Empty explicitly skips this source record}}}}
         authorMappings: {type: array, maxItems: 10000, items: {type: object, required: [sourceAuthorId, authorId], properties: {sourceAuthorId: {type: string}, authorId: {type: string, description: 'Existing target identity, never a display-name guess'}}}}
+        authorProfileConflict: {$ref: '#/components/schemas/V2AuthorProfileConflict'}
+    V2AuthorProfileConflict:
+      type: string
+      enum: [keep, replace]
+      default: keep
     V2MigrationPlan:
       type: object
       required: [id, importId, fingerprint, state, createdAt, mediaCount, matchedCount, skippedCount, authorCount, issueCount, issues, counts]
@@ -3362,6 +3367,8 @@ components:
         issueCount: {type: integer}
         issues: {type: array, maxItems: 100, items: {type: string}}
         counts: {type: object, additionalProperties: {type: integer, format: int64}}
+        authorProfileConflict: {$ref: '#/components/schemas/V2AuthorProfileConflict'}
+        requiresReview: {type: boolean, description: True when discovery found unresolved mappings or conflicts that require a manual decision. Earlier plans may omit this field.}
     V2MigrationItem:
       type: object
       required: [ordinal, recordKey, fileName, state, reason, tagAction, issues]
@@ -3394,6 +3401,22 @@ components:
         expectedRevision: {type: integer, format: int64}
         state: {type: string, enum: [existing, create, conflict, applied]}
         reason: {type: string}
+        profileBlocks: {type: array, maxItems: 3, items: {$ref: '#/components/schemas/V2ProfileBlockPlan'}}
+    V2ProfileBlockPlan:
+      type: object
+      required: [block, action, reason, expectedRevision, beforeFingerprint, fields, currentValues, incomingValues]
+      properties:
+        block: {type: string, enum: [x, basic, accounts]}
+        action: {type: string, enum: [restore, replace, keep, protected, candidate]}
+        reason: {type: string}
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        beforeFingerprint: {type: string}
+        fields: {type: array, items: {type: string}}
+        currentValues: {$ref: '#/components/schemas/AuthorProfileValues'}
+        incomingValues: {$ref: '#/components/schemas/AuthorProfileValues'}
+        currentAvatarSha256: {type: string}
+        incomingAvatarSha256: {type: string}
+        incomingEvidence: {type: array, maxItems: 28, items: {$ref: '#/components/schemas/AuthorProfileEvidence'}}
     V2MigrationAuthorPage:
       type: object
       required: [items]

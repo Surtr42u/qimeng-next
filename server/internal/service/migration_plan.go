@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -164,6 +165,13 @@ func (s *Service) PrepareV2Migration(ctx context.Context, w *Write, inputID stri
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return plan, e
 	}
+	plan.AuthorProfileConflict = in.AuthorProfileConflict
+	if plan.AuthorProfileConflict == "" {
+		plan.AuthorProfileConflict = "keep"
+	}
+	if plan.AuthorProfileConflict != "keep" && plan.AuthorProfileConflict != "replace" {
+		return plan, Fail(400, "invalid_profile_conflict_mode", "作者资料冲突策略只能是 keep 或 replace。")
+	}
 	if len(in.MediaMappings) > 10000 || len(in.AuthorMappings) > 10000 {
 		return plan, Fail(400, "migration_mapping_budget", "单次映射覆盖最多 10000 个媒体或作者身份。")
 	}
@@ -237,6 +245,15 @@ func (s *Service) PrepareV2Migration(ctx context.Context, w *Write, inputID stri
 		}
 	}
 	tags := map[string][]string{}
+	if plan.AuthorProfileConflict == "replace" {
+		profiles, _, err := validateV2Profiles(ctx, input)
+		if err != nil {
+			return plan, err
+		}
+		if err = planImportedProfiles(ctx, s.DB.DB, &plan, authors, profiles); err != nil {
+			return plan, err
+		}
+	}
 	for _, ref := range input.Data.MediaTagRefs {
 		tags[ref.RecordKey] = appendUnique(tags[ref.RecordKey], strings.TrimSpace(ref.TagName))
 	}
@@ -373,6 +390,10 @@ func (s *Service) PrepareV2Migration(ctx context.Context, w *Write, inputID stri
 			migrationIssue(&plan, issue)
 		}
 	}
+	review := plan.IssueCount > 0 ||
+		slices.ContainsFunc(items, func(item migrationItemRecord) bool { return item.Reason == "unique_metadata_match" }) ||
+		slices.ContainsFunc(authors, func(author V2MigrationAuthor) bool { return author.Reason == "unique_name_proposal" })
+	plan.RequiresReview = &review
 	migrationIssue(&plan, "legacy_source_has_no_content_hashes")
 	if len(input.Data.Settings) > 0 {
 		migrationIssue(&plan, "source_runtime_settings_archived_not_activated")
@@ -390,9 +411,10 @@ func (s *Service) PrepareV2Migration(ctx context.Context, w *Write, inputID stri
 	}
 	raw, e := json.Marshal(struct {
 		SourceID, SHA256 string
+		ProfileConflict string
 		Items            []migrationItemRecord
 		Authors          []V2MigrationAuthor
-	}{metadata.SourceID, metadata.SHA256, items, authors})
+	}{metadata.SourceID, metadata.SHA256, plan.AuthorProfileConflict, items, authors})
 	if e != nil {
 		return plan, e
 	}
