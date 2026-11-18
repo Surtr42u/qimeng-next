@@ -142,7 +142,13 @@ class AndroidRealServerTest {
         compose.onNodeWithContentDescription("标签").performClick()
         compose.onNodeWithTag("detail-new-tag").performTextInput("安卓云端标签")
         compose.onNodeWithText("添加").performClick()
+        compose.waitUntil(20_000) { compose.onAllNodesWithText("已选 1 个").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("取消").performClick()
+        // The installed baseline opens a fresh sheet and selects an existing vocabulary entry, with the IME closed.
+        compose.onNodeWithContentDescription("标签").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithText("安卓云端标签").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("安卓云端标签").performClick()
+        compose.onNodeWithText("已选 1 个").assertIsDisplayed()
         screenshot("real-server-tag-sheet.png")
         compose.onNodeWithText("保存").performClick()
         await("save-tags", graph) { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }

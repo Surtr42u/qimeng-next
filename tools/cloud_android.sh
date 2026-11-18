@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${CI:-}" != "true" || "${ANDROID_SERIAL:-}" != "emulator-5556" ]]; then
+if [[ "${GITHUB_ACTIONS:-}" != "true" || "${RUNNER_ENVIRONMENT:-}" != "github-hosted" || "${ANDROID_SERIAL:-}" != "emulator-5556" ]]; then
   echo 'Android verification requires the explicit cloud emulator.' >&2
   exit 2
 fi
+if [[ $(adb -s emulator-5556 emu avd name | tr -d '\r' | head -1) != qimeng_api35 ]]; then
+  echo 'The connected AVD does not match the reference capture.' >&2
+  exit 2
+fi
+adb -s emulator-5556 shell wm size 320x640
+adb -s emulator-5556 shell wm density 160
+adb -s emulator-5556 shell settings put system font_scale 1.0
+adb -s emulator-5556 shell cmd uimode night no
 export QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-android"
 independent_target=$(mktemp -d /dev/shm/qimeng-android-proof-XXXXXXXX)
 export QIMENG_BACKUP_TARGETS
@@ -37,7 +45,9 @@ if [[ "$ready" != true ]]; then echo 'Isolated Android server did not become rea
 ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
 adb -s emulator-5556 reverse tcp:18481 tcp:18481
 adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test.mp4" /data/local/tmp/qimeng-next-test.mp4
-gradle --no-daemon -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest --stacktrace
+gradle --no-daemon -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
+  -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace
 gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \

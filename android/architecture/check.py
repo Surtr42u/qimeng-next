@@ -130,8 +130,14 @@ def inspect_bytecode(facts):
 def main(inventory):
     facts = json.loads(inventory.read_text(encoding="utf-8"))
     errors = []
-    if set(facts["projects"]) != DEPENDENCIES.keys():
-        errors.append("Client project set changed. Assign the module a boundary and check the removable runtime.")
+    # Gradle creates :core as the parent of the four code-bearing :core:* projects.
+    expected_projects = set(DEPENDENCIES) | {":core"}
+    projects = set(facts["projects"])
+    if projects != expected_projects:
+        errors.append(f"Client project set changed: unexpected={sorted(projects - expected_projects)}, "
+                      f"missing={sorted(expected_projects - projects)}. Assign new modules a boundary.")
+    if any(source["module"] == ":core" for source in facts["sources"]):
+        errors.append("The :core parent must remain a grouping project without production sources.")
     classpaths = facts["classpaths"]
     for variant in ("clientDebug", "clientRelease"):
         for scope in ("CompileClasspath", "RuntimeClasspath"):
