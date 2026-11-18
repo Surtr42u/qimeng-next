@@ -157,6 +157,9 @@ jobs:
             web/test-results/
             web/playwright-report/
             web/web-format.patch
+  server-packages:
+    needs: web
+    uses: ./.github/workflows/server-packages.yml
   ai:
     needs: generate
     runs-on: ubuntu-24.04

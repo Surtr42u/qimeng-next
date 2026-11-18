@@ -8,6 +8,7 @@
 
 | 你要了解 | 阅读入口 |
 |---|---|
+| 第一次从云端成品包启动 PC/NAS 影库 | [快速开始](docs/quickstart.md) |
 | 要做成什么、哪些行为必须保留 | [产品要求](docs/requirements.md) |
 | 模块怎样分工、谁拥有业务真相 | [架构](docs/architecture.md) |
 | 现在实现到哪里、实际验证了什么 | [当前状态](docs/status.md) |

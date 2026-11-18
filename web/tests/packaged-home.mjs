@@ -1,0 +1,51 @@
+import { chromium } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+
+const { GITHUB_ACTIONS, GITHUB_SHA, QIMENG_PACKAGE_PORT: port, QIMENG_PACKAGE_APP_DIR: app,
+  QIMENG_PACKAGE_TEST_DIR: work, QIMENG_PACKAGE_EVIDENCE_DIR: evidence,
+  QIMENG_PACKAGE_TARGET: target, QIMENG_PACKAGE_TEST_MODE: mode, QIMENG_PACKAGE_PASSWORD_FILE: passwordFile } = process.env;
+assert(GITHUB_ACTIONS === "true" && /^\d{1,5}$/.test(port) && !["8420", "8421"].includes(port));
+const base = "http://127.0.0.1:" + port;
+const password = await readFile(passwordFile, "utf8");
+const source = JSON.parse(await readFile(join(app, "SOURCE.json"), "utf8"));
+assert.equal(source.sourceCommit, GITHUB_SHA);
+const browser = await chromium.launch(process.platform === "win32" ? { channel: "msedge" } : {});
+try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.goto(base);
+  await page.getByLabel("管理密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("heading", { name: "为你推荐", exact: true }).waitFor();
+  await page.getByText("还没有内容。", { exact: false }).waitFor();
+  await page.screenshot({ path: join(evidence, target + "-" + mode + "-home.png") });
+  const api = base + "/api/v1";
+  const required = async result => { assert(result.ok(), "Packaged API returned " + result.status()); return result; };
+  const key = text => ({ "Idempotency-Key": "package-smoke-" + text });
+  const inventory = await (await required(await page.request.get(api + "/libraries"))).json();
+  assert.equal(inventory.totalMatched, 0);
+  let checkpoint = await (await required(await page.request.post(api + "/backups", { headers: key("checkpoint") }))).json();
+  assert.equal(checkpoint.assetCount, 0);
+  const path = api + "/backups/" + encodeURIComponent(checkpoint.id);
+  checkpoint = await (await required(await page.request.post(path + "/export", { headers: key("export") }))).json();
+  for (let i = 0; i < 100 && ["queued", "running"].includes(checkpoint.exportState); i++) {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    checkpoint = await (await required(await page.request.get(path))).json();
+  }
+  assert.equal(checkpoint.exportState, "completed");
+  assert(checkpoint.archiveBytes < 32 * 1024 * 1024, "An empty synthetic checkpoint exceeded the smoke budget.");
+  const bytes = await (await required(await page.request.get(path + "/archive"))).body();
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  assert.equal(hash, checkpoint.archiveHash);
+  await mkdir(work, { recursive: true });
+  const archive = join(work, "fixture.qnext");
+  await writeFile(archive, bytes);
+  const tool = join(app, process.platform === "win32" ? "qimeng-backup.exe" : "qimeng-backup");
+  execFileSync(tool, ["verify", "--archive", archive, "--sha256", hash], { stdio: "pipe", timeout: 30000 });
+  execFileSync(tool, ["restore", "--archive", archive, "--sha256", hash, "--destination", join(work, "isolated-restore")], { stdio: "pipe", timeout: 30000 });
+  await writeFile(join(evidence, target + "-" + mode + "-smoke.json"),
+    JSON.stringify({ sourceCommit: GITHUB_SHA, target, mode, architecture: process.arch, homepage: "为你推荐", registeredLibraries: 0, archiveVerified: true, restoredToNewDirectory: true }, null, 2) + "\n");
+} finally { await browser.close(); }
