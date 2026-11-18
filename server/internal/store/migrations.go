@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+// SQLite preserves this definition in sqlite_schema. Backup verification
+// compares it with the table created by earlier releases, including whitespace.
+const migrationLedgerSQL = "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL)"
+
 type schemaMigration struct {
 	version  int
 	name     string
@@ -23,9 +27,7 @@ func applySchema(db *sql.DB, source fs.FS) error {
 	if err != nil {
 		return err
 	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INTEGER PRIMARY KEY, name TEXT NOT NULL, sha256 TEXT NOT NULL
-	)`); err != nil {
+	if _, err := db.Exec(migrationLedgerSQL); err != nil {
 		return err
 	}
 	// An older executable must reject a future or divergent database before

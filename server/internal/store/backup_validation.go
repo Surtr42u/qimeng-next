@@ -2,13 +2,9 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 )
 
 // ValidateBackupSchema checks both the recorded migrations and the actual
@@ -47,21 +43,13 @@ func ValidateBackupSchema(ctx context.Context, db *sql.DB) error {
 	if len(records) == 0 || len(records) > 10000 {
 		return errors.New("invalid backup migration ledger")
 	}
-	files, e := migrations.ReadDir("migrations")
+	steps, e := readSchemaMigrations(migrations)
 	if e != nil {
 		return e
 	}
-	known := map[int]string{}
-	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".sql") {
-			continue
-		}
-		prefix, _, _ := strings.Cut(file.Name(), "_")
-		version, e := strconv.Atoi(prefix)
-		if e != nil {
-			return e
-		}
-		known[version] = file.Name()
+	known := make(map[int]schemaMigration, len(steps))
+	for _, step := range steps {
+		known[step.version] = step
 	}
 	expected, e := sql.Open(sqliteDriverName, ":memory:")
 	if e != nil {
@@ -69,22 +57,18 @@ func ValidateBackupSchema(ctx context.Context, db *sql.DB) error {
 	}
 	defer expected.Close()
 	expected.SetMaxOpenConns(1)
-	if _, e = expected.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL)"); e != nil {
+	if _, e = expected.ExecContext(ctx, migrationLedgerSQL); e != nil {
 		return e
 	}
 	for _, r := range records {
-		name, ok := known[r.version]
-		if !ok || name != r.name {
+		step, ok := known[r.version]
+		if !ok || step.name != r.name {
 			return errors.New("backup requires an unknown migration")
 		}
-		body, e := migrations.ReadFile("migrations/" + name)
-		if e != nil {
-			return e
-		}
-		if fmt.Sprintf("%x", sha256.Sum256(body)) != r.hash {
+		if step.checksum != r.hash {
 			return errors.New("backup migration checksum mismatch")
 		}
-		if _, e = expected.ExecContext(ctx, string(body)); e != nil {
+		if _, e = expected.ExecContext(ctx, step.sql); e != nil {
 			return e
 		}
 	}

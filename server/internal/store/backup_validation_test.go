@@ -22,3 +22,22 @@ func TestBackupSchemaRejectsExtraTriggerWithAuthenticMigrationLedger(t *testing.
 		t.Fatal("a valid migration ledger authorized an extra trigger")
 	}
 }
+
+func TestBackupFromExistingLedgerStillValidates(t *testing.T) {
+	db, err := OpenDatabase(filepath.Join(t.TempDir(), "previous.sqlite"), CatalogDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Preserve the literal stored by the previous program, independently of
+	// the DDL in this version. SQLite records that text in the backup.
+	if _, err := db.Exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applySchema(db, migrations); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBackupSchema(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+}

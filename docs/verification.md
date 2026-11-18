@@ -17,7 +17,7 @@ Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming
 
 [Engineering checks](../.github/workflows/engineering.yml) 在推送和 PR 上独立运行。它核对仓库内文档路径与 Markdown 章节、SQL 迁移历史、Go 的模块引用以及所有受版本控制的 Go 文件格式。已有迁移文件的增删改按基线提交比较，新增版本须高于该基线已发布的最大值。不同功能分支有编号冲突时，只重排尚未发布的迁移。
 
-Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-correction` 补丁供维护者核对。正常 Go 与 Web 构建直接验证提交的源码。Web 的展示层引用随 `npm test` 检查。Android 两种构建分别检查 SDK、运行宿主和客户端的接线。格式通过只说明排版一致，错误处理、职责分工和实际效率通过审查与行为用例验证。
+Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-correction` 补丁供维护者核对。正常 Go 与 Web 构建直接验证提交的源码。Web 的展示层引用随 `npm test` 检查。Android 的 `verifyClientArchitecture` 读取构建系统实际解析的依赖、源码集和客户端 APK，再由真服务或模拟器用例验证业务行为。两端的边界和适用例外见[Web 开发说明](../web/README.md)和[Android 架构检查](../android/architecture/README.md)。错误处理、职责分工和实际效率通过审查与行为用例验证。
 
 比较性能时在同一云机器使用同一套合成数据、配置、冷暖状态和操作；记录提交、运行次数、耗时及该场景相关的内存或磁盘指标。扫描进度写入次数只反映该项数据库开销。跨版本、跨平台结论要有对应的测量范围。
 
