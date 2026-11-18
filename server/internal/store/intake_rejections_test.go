@@ -27,9 +27,9 @@ func TestUpgradeRecordsOnlyUnreceivedUnsupportedInputs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = db.Exec(`INSERT INTO batches VALUES('active','','{"state":"receiving","manifestState":"sealed","revision":8,"manifestFingerprint":"original"}'),
+	if _, err = db.Exec(`INSERT INTO batches(id,created_at,data) VALUES('active','','{"state":"receiving","manifestState":"sealed","revision":8,"manifestFingerprint":"original"}'),
  ('closed','','{"state":"cancelled","manifestState":"sealed","revision":5,"manifestFingerprint":"cancelled"}');
- INSERT INTO uploads VALUES('published','active','ingested','{"assetId":"accepted","publishedContentVersion":4}');
+ INSERT INTO uploads(id,batch_id,state,data) VALUES('published','active','ingested','{"assetId":"accepted","publishedContentVersion":4}');
  INSERT INTO batch_inputs(batch_id,input_id,ordinal,cancelled,upload_id,data) VALUES
  ('active','empty',0,0,NULL,'{"originalFileName":"image.png","size":0}'),
  ('active','text',1,0,NULL,'{"originalFileName":"notes.TxT","size":12}'),
@@ -39,7 +39,7 @@ func TestUpgradeRecordsOnlyUnreceivedUnsupportedInputs(t *testing.T) {
  ('active','done',5,0,'published','{"originalFileName":"corrected.txt","size":12}'),
  ('active','skipped',6,1,NULL,'{"originalFileName":"old.txt"}'),
  ('closed','historical',0,0,NULL,'{"originalFileName":"notes.txt"}');
- INSERT INTO idempotency VALUES('owner','old-operation','old-key','old-request','original-receipt',200);`); err != nil {
+ INSERT INTO idempotency(principal_id,operation,key,input_hash,response,status) VALUES('owner','old-operation','old-key','old-request','original-receipt',200);`); err != nil {
 		t.Fatal(err)
 	}
 	if err = applySchema(db, migrations); err != nil {
