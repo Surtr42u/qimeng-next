@@ -18,6 +18,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Scan Git history for exposed credentials and private paths
+        env:
+          SCANNER_VERSION: 8.30.1
+          SCANNER_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          package="gitleaks_${SCANNER_VERSION}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 --max-time 120 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${SCANNER_VERSION}/${package}" \
+            --output "$RUNNER_TEMP/$package"
+          echo "$SCANNER_SHA256  $RUNNER_TEMP/$package" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/$package" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact=100 --no-banner \
+            --ignore-gitleaks-allow --max-archive-depth=3 --max-decode-depth=3 --log-opts="--all --full-history -m" .
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with: {go-version-file: server/go.mod, cache: false}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065

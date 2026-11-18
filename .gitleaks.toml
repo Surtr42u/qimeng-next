@@ -1,0 +1,41 @@
+title = "Qimeng source privacy"
+
+[extend]
+useDefault = true
+
+# SDK manifests hold the computed SHA-256 of the contract and generated files.
+# Scope the exception to the exact file, whole line and generic heuristic.
+[[allowlists]]
+description = "Generated client or contract checksum"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^api/sdk\.lock$''']
+regexTarget = "line"
+regexes = ['''^\s*"(?:openapiSha256|(?:api/generated/|server/internal/transport/generated/|web/src/api/generated/)[A-Za-z0-9_./-]+)"\s*:\s*"[0-9a-f]{64}",?\s*$''']
+
+[[allowlists]]
+description = "Pinned official OpenAPI generator checksum, including historical SHA-1 pins"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tools/generate_sdks\.py$''']
+regexTarget = "match"
+regexes = ['''^OPENAPI_JAR_SHA(?:1\s*=\s*"[0-9a-f]{40}"|256\s*=\s*"[0-9a-f]{64}")$''']
+
+[[rules]]
+id = "private-user-directory"
+description = "A machine-specific user directory was written into source or documentation"
+regex = '''(?im)(?:^|[\s"'(`=:]|file://)(?:[a-z]:[\\/]+users[\\/]+|/(?:users|home)/)([\p{L}0-9_][\p{L}0-9._~-]{0,63})(?:[\\/]|[\s"'`]|$)'''
+secretGroup = 1
+tags = ["privacy"]
+
+[[rules.allowlists]]
+description = "Explicit synthetic test users"
+condition = "AND"
+paths = ['''(?:_test\.go$|/tests?/|Test\.kt$)''']
+regexes = ['''(?i)^(?:fixture|synthetic|example|test-user)$''']
+
+[[rules.allowlists]]
+description = "Standard ephemeral CI runner account referenced by build tooling"
+condition = "AND"
+paths = ['''^(?:\.github/workflows/|tools/)''']
+regexes = ['''(?i)^(?:runner|runneradmin|runner~1)$''']
