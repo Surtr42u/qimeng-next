@@ -72,9 +72,9 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = rememberGlassBackdrop()
                 val detailRoute = route.startsWith("asset:")
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route in setOf("server", "libraries", "upload")) Modifier else Modifier.statusBarsPadding())) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route in setOf("server", "libraries", "upload", "authors")) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites", "libraries", "upload", "history")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites", "libraries", "upload", "history", "authors")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -100,7 +100,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("ranking:") -> ActivityRankingScreen(model, route.split(':')[1], route.split(':')[2])
                                 route == "search" -> SearchScreen(model)
                                 route == "favorites" -> MediaBrowser(model, "favorites", favorite = true, albumTitle = "收藏")
-                                route == "authors" -> AuthorsScreen(model)
+                                route == "authors" -> AuthorDirectoryScreen(model)
                                 route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
                                 route == "upload" -> UploadScreen(model)
                                 route == "reports" -> TasksScreen(model)

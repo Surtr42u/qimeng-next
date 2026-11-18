@@ -861,6 +861,21 @@ paths:
         '200': {description: Complete qnext archive, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         '206': {description: Requested archive byte range, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
+  /local-sync/status:
+    get:
+      operationId: getLocalSyncStatus
+      description: Owner-only status of the server's configured input folder.
+      responses:
+        '200': {description: Current cycle and bounded examples, content: {application/json: {schema: {$ref: '#/components/schemas/LocalSyncStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /local-sync/trigger:
+    post:
+      operationId: triggerLocalSync
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: Queue one observation cycle. Poll status for completion. Successful imports retain source files.
+      responses:
+        '202': {description: Scan requested, content: {application/json: {schema: {$ref: '#/components/schemas/LocalSyncStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /author-lists:
     get:
       operationId: listAuthorLists
@@ -2487,6 +2502,33 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Backup'}}
         nextCursor: {type: string}
+    LocalSyncItem:
+      type: object
+      required: [path, kind, state, error, sizeBytes, attempts]
+      properties:
+        path: {type: string}
+        kind: {type: string, enum: [media, txt, other]}
+        libraryName: {type: string}
+        state: {type: string, enum: [waiting-stable, failed, ignored, synced]}
+        error: {type: string}
+        sizeBytes: {type: integer, format: int64}
+        attempts: {type: integer}
+        lastAttemptAt: {type: string, format: date-time}
+    LocalSyncStatus:
+      type: object
+      required: [enabled, root, intervalSeconds, paused, running, lastError, syncedTotal, counts, items, recentSynced]
+      properties:
+        enabled: {type: boolean}
+        root: {type: string, description: Owner-visible configured input root}
+        intervalSeconds: {type: integer}
+        paused: {type: boolean}
+        running: {type: boolean}
+        lastError: {type: string}
+        lastCycleAt: {type: string, format: date-time}
+        syncedTotal: {type: integer, format: int64}
+        counts: {type: object, required: [waitingStable, failed, ignored], properties: {waitingStable: {type: integer}, failed: {type: integer}, ignored: {type: integer}}}
+        items: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/LocalSyncItem'}}
+        recentSynced: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/LocalSyncItem'}}
     AuthorList:
       type: object
       required: [id, name, revision, position, createdAt, updatedAt, authorCount, workCount, inputHash]

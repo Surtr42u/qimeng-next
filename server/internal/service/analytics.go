@@ -3,12 +3,8 @@ package service
 import (
  "context"
  "database/sql"
- "encoding/base64"
  "encoding/json"
  "errors"
- "fmt"
- "strconv"
- "strings"
  "time"
 
  "qimeng.local/next/server/internal/analytics"
@@ -39,50 +35,6 @@ func(s *Service)UpdateRecommendationPreferences(ctx context.Context,w *Write,in 
 
 type RecommendationFilter struct {Kind,MediaType,Cursor string;Seed int64;Limit int}
 type RecommendationPage struct { Items []model.Asset `json:"items"`;NextCursor string `json:"nextCursor,omitempty"`;SnapshotID string `json:"snapshotId"` }
-
-func(s *Service)Recommendations(ctx context.Context,f RecommendationFilter)(RecommendationPage,error){
- result:=RecommendationPage{Items:[]model.Asset{}}
- n,e:=limited(f.Limit,50);if e!=nil{return result,e}
- if f.Kind!=""&&f.Kind!="regular"&&f.Kind!="cos"{return result,Fail(400,"invalid_filter","未知来源分区。")}
- if f.MediaType!=""&&f.MediaType!="image"&&f.MediaType!="animated_image"&&f.MediaType!="video"{return result,Fail(400,"invalid_filter","未知媒体类别。")}
- // Serializes snapshot publication and impression counts with library mutations;
- // no background goroutine or second authoritative recommendation index exists.
- s.mu.Lock();defer s.mu.Unlock()
- preferences,e:=s.RecommendationPreferences(ctx);if e!=nil{return result,e}
- now:=time.Now();day:=now.Format("2006-01-02")
- filter:=fmt.Sprintf("%s/%s/%d/%d/%s",f.Kind,f.MediaType,f.Seed,preferences.Revision,day)
- var ids []string;offset:=0;var snapshot string
- if f.Cursor!=""{
-  raw,e:=base64.RawURLEncoding.DecodeString(f.Cursor);if e!=nil{return result,Fail(400,"invalid_cursor","推荐游标无效。")}
-  parts:=strings.Split(string(raw),":");if len(parts)!=2{return result,Fail(400,"invalid_cursor","推荐游标无效。")}
-  snapshot=parts[0];offset,e=strconv.Atoi(parts[1]);if e!=nil||offset<0{return result,Fail(400,"invalid_cursor","推荐偏移无效。")}
-  var saved,encoded string;var created int64
-  e=s.DB.DB.QueryRowContext(ctx,"SELECT filter,created_at,ids FROM recommendation_snapshots WHERE id=?",snapshot).Scan(&saved,&created,&encoded)
-  if errors.Is(e,sql.ErrNoRows)||e==nil&&(saved!=filter||now.Unix()-created>=60){return result,Fail(409,"recommendation_expired","推荐顺序已更新，请从第一页继续。")};if e!=nil{return result,e}
-  if e=json.Unmarshal([]byte(encoded),&ids);e!=nil{return result,e}
- }else{
-  inputs,e:=s.recommendationInputs(ctx,f,day);if e!=nil{return result,e}
-  scores:=analytics.RankRecommendations(inputs,preferences.Weights,f.Seed,now)
-  ids=make([]string,len(scores));for i,item:=range scores{ids[i]=item.ID}
-  snapshot=ID();encoded,e:=json.Marshal(ids);if e!=nil{return result,e}
-  if _,e=s.DB.DB.ExecContext(ctx,"DELETE FROM recommendation_snapshots WHERE created_at<=?",now.Unix()-60);e!=nil{return result,e}
-  // Bound the number of retained snapshots, without truncating any candidate set.
-  if _,e=s.DB.DB.ExecContext(ctx,"DELETE FROM recommendation_snapshots WHERE id IN (SELECT id FROM recommendation_snapshots ORDER BY created_at DESC LIMIT -1 OFFSET 31)");e!=nil{return result,e}
-  if _,e=s.DB.DB.ExecContext(ctx,"INSERT INTO recommendation_snapshots VALUES(?,?,?,?)",snapshot,filter,now.Unix(),string(encoded));e!=nil{return result,e}
- }
- result.SnapshotID=snapshot
- if offset>len(ids){return result,Fail(400,"invalid_cursor","推荐偏移超出顺序范围。")}
- end:=min(offset+n,len(ids))
- for _,id:=range ids[offset:end]{
-  a,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id JOIN libraries lib ON lib.id=a.library_id WHERE a.id=? AND a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR "+assetPartition+"=?) AND (?='' OR a.media_type=?)",day,id,f.Kind,f.Kind,f.MediaType,f.MediaType)
-  if errors.Is(e,sql.ErrNoRows){continue};if e!=nil{return result,e};result.Items=append(result.Items,a)
- }
- tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return result,e};defer tx.Rollback()
- for _,a:=range result.Items{if _,e=tx.ExecContext(ctx,"INSERT INTO recommendation_shown VALUES(?,?,1) ON CONFLICT(day,asset_id) DO UPDATE SET count=count+1",day,a.ID);e!=nil{return result,e}}
- if _,e=tx.ExecContext(ctx,"DELETE FROM recommendation_shown WHERE day<>?",day);e!=nil{return result,e};if e=tx.Commit();e!=nil{return result,e}
- if end<len(ids){result.NextCursor=base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%d",snapshot,end)))}
- return result,nil
-}
 
 func(s *Service)recommendationInputs(ctx context.Context,f RecommendationFilter,day string)([]analytics.Candidate,error){
  rows,e:=s.DB.DB.QueryContext(ctx,`WITH totals AS (SELECT asset_id,sum(views) AS views,sum(plays) AS plays,sum(seconds) AS seconds FROM asset_daily_stats GROUP BY asset_id), last_views AS (SELECT asset_id,max(created_at) AS last_view FROM events WHERE json_extract(data,'$.kind')='view' GROUP BY asset_id), likes_total AS (SELECT asset_id,count(*) AS likes FROM likes GROUP BY asset_id)

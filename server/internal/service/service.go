@@ -29,14 +29,15 @@ func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
-type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
-type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget }
+type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64; LocalSync LocalSyncConfig }
+type Service struct { recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
  if config.DataDir==""{return nil,errors.New("QIMENG_DATA_DIR is required")}
  if config.AIToken!=""&&len(config.AIToken)<32{return nil,errors.New("QIMENG_AI_TOKEN must contain at least 32 characters")}
  if err:=validateBackupTargets(config.BackupTargets,config.DefaultBackupTarget);err!=nil{return nil,err}
+ localSync,err:=initializeLocalSync(config.LocalSync);if err!=nil{return nil,err}
  password,err:=preparePassword(config.AdminPassword);if err!=nil{return nil,err};config.AdminPassword=""
  if config.ReserveBytes<=0{config.ReserveBytes=512<<20}
  if err:=os.MkdirAll(config.DataDir,0700);err!=nil{return nil,err}
@@ -50,6 +51,8 @@ func New(config Config)(*Service,error){
  db,err:=store.Open(filepath.Join(config.DataDir,"qimeng.sqlite"));if err!=nil{owner.Close();root.Close();return nil,err}
  s:=&Service{DB:db,Root:root,Config:config,owner:owner,scanWake:make(chan struct{}),password:password,loginLimit:loginBudget{slots:make(chan struct{},2)}}
  s.workCtx,s.stopWork=context.WithCancel(context.Background())
+ s.localSync=localSync
+ s.recommendations.init()
  ctx:=context.Background()
  libraries,err:=store.List[model.Library](ctx,db.DB,"SELECT data FROM libraries ORDER BY id");if err!=nil{s.Close();return nil,err}
  for _,library:=range libraries{if err=root.RegisterLibrary(library.ID,library.StorageID,library.RootRelativePath);err!=nil{s.Close();return nil,err}}
@@ -74,6 +77,8 @@ func New(config Config)(*Service,error){
  if _,err=db.DB.ExecContext(ctx,"UPDATE batch_protections SET state='interrupted',data=json_set(data,'$.state','interrupted','$.errorCode','protection_interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  mirror,err:=readAuthorMirror(ctx,db.DB);if err!=nil{s.Close();return nil,err}
  s.mirrorEnabled.Store(mirror.Path!="");s.mirrorWake=make(chan struct{},1);s.workers.Add(1);go s.authorMirrorWorker();s.wakeAuthorMirror()
+ if localSync.config.Root!=""{s.workers.Add(1);go s.localSyncWorker()}
+ s.workers.Add(1);go s.warmRecommendationOrders()
  return s,nil
 }
 func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}

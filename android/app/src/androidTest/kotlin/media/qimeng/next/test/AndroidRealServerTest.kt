@@ -178,6 +178,14 @@ class AndroidRealServerTest {
         compose.onNodeWithContentDescription("筛选").performClick()
         compose.onNodeWithText("重置").performClick()
         compose.waitUntil(30_000) { model.query("home:1").source == "recommendations" }
+        compose.activityRule.scenario.onActivity { model.navigate("authors") }
+        compose.onNodeWithText("新建作者").performClick()
+        compose.onNodeWithTag("author-name-draft").performTextInput("合成作者 / 合成别名")
+        compose.onNodeWithText("确定").performClick()
+        await("author-directory-create", graph) { graph.media.authors(query = "合成别名").items.any { it.name == "合成作者" } }
+        compose.onNodeWithTag("author-search").performTextReplacement("合成别名")
+        compose.waitUntil(30_000) { compose.onAllNodesWithText("合成作者").fetchSemanticsNodes().isNotEmpty() }
+        screenshot("real-server-author-directory.png")
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {

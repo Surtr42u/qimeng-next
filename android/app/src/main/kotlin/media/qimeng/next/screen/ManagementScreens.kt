@@ -157,35 +157,6 @@ fun AppearanceScreen(model: LibraryViewModel) {
 }
 
 @Composable
-fun AuthorsScreen(model: LibraryViewModel) {
-    val state by model.authors.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
-    var creating by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { if (!state.loaded) model.loadAuthors() }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Row {
-            TextButton(onClick = { model.loadAuthors() }) { Text("刷新作者") }
-            TextButton(onClick = { creating = true }) { Text("添加作者") }
-        } }
-        state.error?.let { item { ErrorNotice(it) { model.loadAuthors() } } }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (state.loaded && state.items.isEmpty()) item { Text("尚无作者") }
-        items(state.items, key = { it.id }) { author ->
-            ContentCard(Modifier.fillMaxWidth().clickable { model.openAuthor(author.id) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AuthorAvatar(author.id, author.name)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) { Text(author.name, style = MaterialTheme.typography.titleMedium); if (author.aliases.isNotEmpty()) Text(author.aliases.joinToString(" · "), style = MaterialTheme.typography.bodySmall) }
-                    if (author.followed) Text("已关注", color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-        if (state.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !state.loading) { Text("加载更多作者") } }
-    }
-    if (creating) TextEditDialog("添加常规作者", "", busy, { creating = false }) { model.createAuthor(it.trim()) { creating = false } }
-}
-
-@Composable
 fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
     val author by model.author.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()

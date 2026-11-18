@@ -14,7 +14,7 @@ import (
  "unicode/utf8"
 )
 
-const MaxTextBytes=8<<20
+const MaxTextBytes=10<<20
 type Block struct{Names []string `json:"names"`;Sources []string `json:"sources"`;Works []string `json:"works"`;Order int `json:"order"`;Header string `json:"header,omitempty"`}
 type Issue struct{Line int `json:"line"`;Code string `json:"code"`}
 type Document struct{Format string `json:"format"`;Blocks []Block `json:"blocks"`;Issues []Issue `json:"issues"`}

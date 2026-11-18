@@ -56,6 +56,7 @@ func(s *Service)UpdateAuthorListMirror(ctx context.Context,w *Write,in AuthorLis
   base:=filepath.Base(in.Path)
   if !filepath.IsAbs(in.Path)||filepath.Clean(in.Path)!=in.Path||len(in.Path)>4096||!domain.ValidName(base)||!strings.EqualFold(filepath.Ext(base),".txt"){return m,Fail(400,"invalid_mirror_path","镜像须使用受信存储根内的绝对 TXT 路径。")}
   if _,_,e=s.Root.ResolveLibraryPath(filepath.Dir(in.Path));e!=nil{return m,Fail(400,"invalid_mirror_path","镜像须位于已配置的外部存储根内。")}
+  if syncRoot:=s.localSync.config.Root;syncRoot!=""&&syncRootsOverlap(syncRoot,in.Path){return m,Fail(409,"local_sync_root_overlap","作者镜像不能写进服务器导入目录。")}
   if in.Mode=="fragment"&&in.ListID!=""{if _,e=s.AuthorList(ctx,in.ListID);e!=nil{return m,e}}
   state="pending"
  }

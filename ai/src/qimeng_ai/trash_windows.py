@@ -27,7 +27,7 @@ def move(config, binding, permit, arm, observe):
         import win32con
         import win32file
         from win32com.server.exception import COMException
-        from win32com.server.util import wrap
+        from win32com.server.policy import DesignatedWrapPolicy
         from win32com.shell import shell, shellcon
     except ImportError:
         return {"outcome": "retained", "code": "windows_shell_unavailable"}
@@ -45,12 +45,15 @@ def move(config, binding, permit, arm, observe):
     if win32file.GetDriveType(path.anchor) != 3:  # DRIVE_FIXED
         return {"outcome": "retained", "code": "recycle_bin_unavailable"}
 
-    class Sink:
+    class Sink(DesignatedWrapPolicy):
         _com_interfaces_ = [shell.IID_IFileOperationProgressSink]
         _public_methods_ = ["StartOperations", "FinishOperations", "PreRenameItem", "PostRenameItem",
                             "PreMoveItem", "PostMoveItem", "PreCopyItem", "PostCopyItem",
                             "PreDeleteItem", "PostDeleteItem", "PreNewItem", "PostNewItem",
                             "UpdateProgress", "ResetTimer", "PauseTimer", "ResumeTimer"]
+
+        def __init__(self):
+            self._wrap_(self)
 
         def PreDeleteItem(self, flags, item):
             nonlocal entered, vetoed
@@ -126,7 +129,11 @@ def move(config, binding, permit, arm, observe):
             operation.SetOperationFlags(0x00080000 | 0x00100000 | 0x2000 | shellcon.FOF_SILENT
                                         | shellcon.FOF_NOERRORUI | shellcon.FOF_NOCONFIRMATION)
             native_item = shell.SHCreateItemFromParsingName(str(path), None, shell.IID_IShellItem)
-            operation.DeleteItem(native_item, wrap(Sink(), iid=shell.IID_IFileOperationProgressSink))
+            # pywin32 registers a server gateway for this sink, but has no
+            # Python client wrapper for its IID. Pass its IUnknown identity;
+            # DeleteItem queries the underlying gateway for the native sink.
+            sink = pythoncom.WrapObject(Sink(), shell.IID_IFileOperationProgressSink, pythoncom.IID_IUnknown)
+            operation.DeleteItem(native_item, sink)
             armed = True
             operation.PerformOperations()
             approved = not operation.GetAnyOperationsAborted() and outcome is not None

@@ -39,3 +39,5 @@
 库管理的列表、注册卡、类型胶囊与注销确认来自旧 `feature/manage/LibraryManageScreen.kt` 和 `RegisterLibraryCard.kt` 的纯展示。注册的授权根解析、分页、充电调度与注销检查接入新模块。
 
 上传使用旧 `feature/upload/UploadDestinationSection.kt`、`UploadPanels.kt`、`UploadPendingSection.kt` 与 `UploadScreen.kt` 的顶栏、目录树、表单节距、默认收起的作者区及锁定后缀的待传行。分支读取、私有输入快照、来源字段、名称预览与幂等写入均由新客户端和 Go 处理。
+
+作者管理复用旧 `feature/author/AuthorScreen.kt` 的顶栏新增、胶囊搜索、三区、排序下拉与头像 / 文件数 / 关注 / 更多的行布局。新目录查询独立于上传作者选择器，旧别名输入、来源编辑和删除确认走新修订接口。

@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
  "net/url"
+ "strings"
  "testing"
 
  "qimeng.local/next/server/internal/model"
@@ -52,9 +53,11 @@ func TestRecommendationContinuationRechecksEnabledLibrary(t *testing.T) {
  decode(t,f.json("GET","/recommendations?kind=regular&limit=1","",nil,200),&first)
  if first.NextCursor=="" {t.Fatal("missing continuation fixture")}
  f.json("PATCH","/libraries/"+f.library,"disable-after-recommendation",map[string]any{"expectedRevision":1,"enabled":false},200)
- var next service.RecommendationPage
- decode(t,f.json("GET","/recommendations?kind=regular&limit=1&cursor="+url.QueryEscape(first.NextCursor),"",nil,200),&next)
- if len(next.Items)!=0 {t.Fatal("continuation disclosed assets from a disabled library")}
+ reply:=f.json("GET","/recommendations?kind=regular&limit=1&cursor="+url.QueryEscape(first.NextCursor),"",nil,409)
+ if !strings.Contains(reply.Body.String(),"recommendation_expired"){t.Fatal("structural change did not identify the stale order")}
+ var refreshed service.RecommendationPage
+ decode(t,f.json("GET","/recommendations?kind=regular&limit=1","",nil,200),&refreshed)
+ if len(refreshed.Items)!=0 {t.Fatal("refreshed order disclosed assets from a disabled library")}
 }
 
 func TestImportedLikeBaselineAffectsLifetimeButNotInventedWindows(t *testing.T) {

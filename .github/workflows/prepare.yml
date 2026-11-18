@@ -376,6 +376,7 @@ jobs:
           python -m unittest discover -s ai/tests -p test_cleanup.py -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows source recycle checks failed' }
       - name: Build native connection shell
+        if: ${{ !cancelled() }}
         working-directory: desktop
         run: |
           npm install --package-lock-only --ignore-scripts

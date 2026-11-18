@@ -253,16 +253,16 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) })
     }
 
-    suspend fun authors(cursor: String? = null, query: String? = null, kind: String? = null, sort: String = "default", following: Boolean? = null): Page<Author> {
-        val page = provider.api(target()).listAuthors(cursor = cursor, limit = 50, q = query, following = following,
+    suspend fun authors(cursor: String? = null, query: String? = null, kind: String? = null, sort: String = "default",
+                        following: Boolean? = null, limit: Int = 50, target: Session = target()): Page<Author> {
+        val page = provider.api(target).listAuthors(cursor = cursor, limit = limit, q = query, following = following,
             kind = kind?.let { value -> DefaultApi.KindListAuthors.entries.first { it.value == value } },
             sort = DefaultApi.SortListAuthors.entries.first { it.value == sort }).bodyOrThrow()
         return Page(page.items.map { it.toModel() }, page.nextCursor, page.totalMatched)
     }
 
     suspend fun author(id: String): Author = provider.api(target()).getAuthor(id).bodyOrThrow().toModel()
-    suspend fun follow(author: Author): Author {
-        val target = target()
+    suspend fun follow(author: Author, target: Session = target()): Author {
         val input = AuthorUpdate(expectedRevision = author.revision, following = !author.followed)
         return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
     }
@@ -273,8 +273,18 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun createAuthor(name: String): Author = provider.api(target()).createAuthor(idempotencyKey = UUID.randomUUID().toString(),
         authorCreate = AuthorCreate(name = name)).bodyOrThrow().toModel()
-    suspend fun deleteAuthor(author: Author) {
-        val result = provider.api(target()).deleteAuthor(id = author.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = author.revision)
+    suspend fun createNamedAuthor(target: Session, names: List<String>, key: String): Author = provider.api(target).createAuthor(
+        idempotencyKey = key, authorCreate = AuthorCreate(name = names.first(), aliases = names.drop(1))).bodyOrThrow().toModel()
+    suspend fun renameAuthor(target: Session, author: Author, names: List<String>): Author {
+        val input = AuthorUpdate(expectedRevision = author.revision, name = names.first(), aliases = names.drop(1))
+        return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
+    }
+    suspend fun saveAuthorSources(target: Session, author: Author, sources: List<String>): Author {
+        val input = AuthorUpdate(expectedRevision = author.revision, acquisitionSources = sources)
+        return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
+    }
+    suspend fun deleteAuthor(author: Author, target: Session = target()) {
+        val result = provider.api(target).deleteAuthor(id = author.id, idempotencyKey = "delete-author-${author.id}-${author.revision}", expectedRevision = author.revision)
         if (!result.isSuccessful) result.bodyOrThrow()
     }
     suspend fun mergeAuthors(source: Author, targetAuthor: Author): Pair<Author, String> {

@@ -21,6 +21,7 @@ func(s *Service)CreateLibrary(ctx context.Context,w *Write,name,kind string,loca
  l:=model.Library{ID:w.ID("library"),Name:name,Kind:kind,Enabled:true,StorageID:storageID,RootRelativePath:relative,ScanState:"idle",Revision:1,CreatedAt:time.Now().UTC()};if storageID=="data"{l.RootRelativePath="libraries/"+l.ID}
  if e:=s.Root.RegisterLibrary(l.ID,l.StorageID,l.RootRelativePath);e!=nil{return l,Fail(409,"storage_registration_conflict","逻辑存储未配置、路径不可用或与已登记库重叠。")}
  w.rollback=append(w.rollback,func(){s.Root.UnregisterLibrary(l.ID)})
+ if syncRoot:=s.localSync.config.Root;syncRoot!=""{bound,e:=s.Root.LibraryPath(l.ID);if e!=nil{return l,e};if syncRootsOverlap(bound,syncRoot){return l,Fail(409,"local_sync_root_overlap","媒体库不可与服务器导入目录重叠。")}}
  if err:=s.Root.MkdirAll("libraries/"+l.ID,0700);err!=nil{return l,err}
  raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};_,e=q.ExecContext(ctx,"INSERT INTO libraries(id,name,kind,data) VALUES(?,?,?,?)",l.ID,l.Name,l.Kind,raw);return l,e
 }
