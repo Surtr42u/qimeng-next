@@ -14,7 +14,7 @@ func TestLensSeparatesUnlinkedHintsAndOperationalFailures(t *testing.T) {
 		t.Fatal("unlinked or private domain became a candidate URL")
 	}
 	for _, c := range []struct {
-		status int
+		status     int
 		code, want string
 	}{{503, "BLOCKED_BOT", "blocked"}, {503, "UNAVAILABLE", "unavailable"}, {502, "NO_RESULT", "unavailable"}, {429, "BUSY", "rate_limited"}, {504, "TIMEOUT", "unavailable"}, {404, "NOT_FOUND", "unavailable"}, {401, "UNAUTHORIZED", "unavailable"}} {
 		raw := fmt.Sprintf(`{"ok":false,"error":{"code":%q}}`, c.code)

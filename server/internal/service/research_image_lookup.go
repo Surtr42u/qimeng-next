@@ -36,8 +36,8 @@ func (s *Service) LookupResearchImage(ctx context.Context, p model.Principal, ke
 	}
 	lookup := researchLookup{
 		provider: researchprovider.Query{Name: "lens", EvidenceKind: "lead"},
-		subject: PublicResearchInput{Operation: "image_lookup", UploadID: in.UploadID, ExpectedHash: in.ExpectedHash},
-		image: &in,
+		subject:  PublicResearchInput{Operation: "image_lookup", UploadID: in.UploadID, ExpectedHash: in.ExpectedHash},
+		image:    &in,
 	}
 	return s.runResearchLookup(ctx, p, key, lookup, in)
 }

@@ -15,9 +15,9 @@ type ImageHint struct {
 // domain without providing a link. Keep that distinction in the receipt.
 func ParseLens(status int, raw []byte, expectedSHA string) (string, []Item, []ImageHint) {
 	var response struct {
-		OK          bool   `json:"ok"`
-		Status      string `json:"status"`
-		FrameSHA256 string `json:"frame_sha256"`
+		OK           bool   `json:"ok"`
+		Status       string `json:"status"`
+		FrameSHA256  string `json:"frame_sha256"`
 		Links, Cites []struct{ URL, Title string }
 		TopTitles    []ImageHint
 		TopDomains   []string

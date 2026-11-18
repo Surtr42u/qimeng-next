@@ -4,7 +4,7 @@
 
 ## 原生数据重构的交接
 
-本轮在 `codex/native-continuation` 集成。数据库追加 0034–0038，分别处理续播、原件版本和位置、原生交付回执、稳定标签和集合成员。Go 的生成接口挂在运行中的服务路由上，四端协议均从同一份 OpenAPI 生成。[数据权属与恢复](architecture.md#next-原生数据与恢复) · [协议与云端来源锁](../api/sdk.lock)
+数据库迁移 0034–0038 分别处理续播、原件版本和位置、原生交付回执、稳定标签和集合成员。0039–0042 涵盖词条别名、出处与角色关系、混合文件清单和单帧查证授权。Go 的生成接口挂在运行中的服务路由上，各端协议从同一份 OpenAPI 生成。[数据权属](architecture.md#next-原生数据与恢复) · [各版本升级说明](migration.md) · [云端生成来源锁](../api/sdk.lock)
 
 | 验收 | 已回读的结果 |
 |---|---|
@@ -33,16 +33,16 @@ Android 已接回旧版四档导航、首页间距及标签底部弹层。旧版
 
 | 范围 | 实际执行结果 |
 |---|---|
-| Go 与文件 | `e9fe1df` 在 Linux 两个 SQLite 驱动及 Windows 通过 Go 检查。覆盖发布恢复、大小写改名、批次独立备份、任务取消和监听。云 Linux 验证了来源的原生回收。Windows 云环境返回来源保留的回执。 |
-| Go 扫描 | 在同一台云机三轮手动扫描 2,048 张小图，安装旧版与 0038 后的 Next 首扫中位数分别为 5,639.48 和 2,905.30 ms，原样复扫为 66.45 和 88.57 ms，少量改动为 127.60 和 166.20 ms。Next 相对分表前同场首扫多写 23.99 MiB，三个版本最终都找到 2,052 个文件。[同机原始记录与身份核对](https://github.com/Surtr42u/qimeng-next/actions/runs/44351821418) |
+| Go 与文件 | Linux 和 Windows 2025 都在独立卷上保护合成原件，核对数据库检查点与原件摘要后，经正式 stdio MCP 移入系统回收站。Windows 发出一个清理许可，重启执行器后用原键重试，得到同一回执，同名新文件和库内原件均保留。[Linux 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44354939835/job/134981903185) · [Windows 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44384433852/job/135085794715) |
+| Go 扫描 | 同一云机三轮手动扫描 2,048 张小图，`d082fb0` 首扫 1,902.84 ms、原样复扫 71.22 ms、少量改动复扫 155.57 ms。安装旧版同场分别为 2,228.10、75.76、114.68 ms。首次扫描省去空分类行后，Next 写入从 107.82 降至 69.18 MiB。三个版本最终均找到 2,052 个文件。[同机原始记录与身份核对](https://github.com/Surtr42u/qimeng-next/actions/runs/44381286901) |
 | 文件身份 | `ff92b48` 与安装版在同一云机执行了两种操作。换成同尺寸、同时间戳、字节不同的新图时，旧版沿用了原图身份，新版为新图分配了新身份并报告原件缺失。字节相同的原图移动且时间戳改变时，旧版分配了新身份，新版保住原身份。[两种情况的云端记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44320603158) |
 | 命名与作者导入 | `7600949` 的查询计划和 HTTP 回归确认，自动补全只从索引读取当前目录，再合并磁盘上尚未登记的占号文件。已验证 v2 作者资料显式覆盖前的快照、重复交付回读，以及人工清空、订阅与候选保护。外部存储整根与子目录均可注册、上传和重启恢复。[后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44318828263/job/134852628470) |
 | Android 本机 | API 35 运行内嵌 Go，实际上传合成 H.264，再从接收页复制实例 ID、目标视频 ID 和内容版本，逐一从系统剪贴板回读，并与 Go 返回值核对。上传、重新连接和接电扫描也在隔离库验收。[内嵌设备记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44363806975/job/135016521774) |
-| Android 客户端 | `730f8ad` 全部通过核心界面 6 项、真实 Go 数据 13 项和应用 4 项。`85eb908` 的两台云模拟器均取得首次播放的彩色解码表面和系统横屏原图。`83954db` 定位到退出后活动仍请求横屏。[联网仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44357630219/job/134993469508) · [逐提交窗口和方向证据](../android/UI_PARITY.md) |
+| Android 客户端 | `627010c` 的 API 35 联网仪器全部通过，核心界面 6 项、真实 Go 数据 13 项、应用 4 项。首次播放、恢复全屏前方向、暂停后从 Go 回读、再次打开从保存位置播放均通过。首次和续播都取得彩色解码表面及系统窗口。[联网仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44378759221/job/135068792040) · [原图与 JUnit](https://github.com/Surtr42u/qimeng-next/actions/runs/44378759221/artifacts/14462729347) |
 | Web 与桌面 | 浏览器在两个独立 Go 服务间签发资料包，回读目标实际 TXT、逐项回执，并在刷新后按设备找到原记录。Windows 的 `4012001` 在云机完成 NSIS 安装、原生窗口最大化/最小化、真实鼠标打开带认证会话的原件、HTTP Range、切换服务关闭旧窗口、退出及卸载。[Web 双实例实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44354939835/job/134981903063) · [Windows 完整操作](https://github.com/Surtr42u/qimeng-next/actions/runs/44354017708/job/134978093760) |
 | PC／NAS 启动包 | `89edb6a` 的 Windows x64、Linux x64、Linux ARM64 服务端包各自通过启动、登录与隔离恢复。[三个发行包的作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259) |
 | AI 执行器与 MCP | `0325a6d` 的独立 stdio 客户端、Pi、官方 TypeScript SDK 和 Hermes 作业通过。受限合成 TLS 来源验证了研究只执行一次、重放复用回执和预算。Hermes 使用合成模型响应，核对实际宿主的工具发现、结果与拒绝写入。[独立客户端与研究](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037437) · [Hermes 宿主](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037531) |
-| 数据迁移 | 云端使用合成 v2 副本和全新目标目录验证导入、内容身份、历史记录及隔离恢复。真实资料留待独立的迁移验收。 |
+| 数据升级 | Next 使用自己的数据库迁移、整库归档和选择性交付版本。云验收从早期 Next 结构升级，重开数据库，在新目录恢复并回读关联与历史。已有 v2 导入记录可读，新的个人旧资料迁入留给单独的一次性工具。[原生升级与恢复](migration.md) |
 
 可按作业查看 [e9fe1df 集成记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44264832227) 和 [此前的本机启动检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44238104432)。
 
@@ -60,12 +60,12 @@ Android 已接回旧版四档导航、首页间距及标签底部弹层。旧版
 
 Go 的历史发布恢复与 Windows 文件占用已通过。后续设备切换使用已核对的同提交构建、协议来源锁和目标设备验收记录。
 
-## 切换前还需核对
+## 交付范围与切换条件
 
-- 本轮标签已能保留稳定 ID 改名，集合可保留成员关系改名和调整集序。下批以“给已有标签和集合增加别名，再按别名找回同一对象”为验收，覆盖独立修改、同名歧义、明确移除别名与旧修订冲突。作者和角色沿用各自已有的别名规则。
+- 标签与集合别名已经通过真实 HTTP、原搜索框和只读 MCP 验收。旧称共享时分别返回每个稳定 ID，清空后刷新不再匹配，旧回执重发不会恢复已移除的别名。作者和角色继续沿用各自已有的别名规则。[Go 事务与迁移](https://github.com/Surtr42u/qimeng-next/actions/runs/44374858300/job/135051748513) · [浏览器实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44374858300/job/135052234087) · [独立 MCP 会话](https://github.com/Surtr42u/qimeng-next/actions/runs/44374858300/job/135052119601)
 - 设备领取 Next 原生结果包。切换前核对本机身份、接收方选择的目标视频与内容版本、人工修改保护和逐项回执。同一包重复领取应回读原结果。历史 v2 记录只读。[交付和恢复操作](migration.md)
-- 七个公开文本研究来源按部署和任务授权选择。真实 stdio 和研究回执已通过合成来源验证。旧版可选的图片外查能力单独核对。
+- 七个公开文本研究来源按部署和任务授权选择。单帧查证另需管理员配置和任务授权。真实 stdio 与 CLI 已向回环测试接收器发送同一张合成视频衍生帧，核对帧摘要、回执和实际调用次数。连接真实第三方服务还取决于部署者的配置与许可。[单帧用例](../ai/tests/test_live_image_lookup.py) · [接入已有伴随服务](quickstart.md#接入已有的单帧查证服务)
 - 旧 UI 的逐屏行为，尤其是返回原列表、现有材质和选中态。结合普通与智能工作流、续传、播放与筛选记录验收范围。
-- 真实 Go、MCP 客户端、独立卷备份与来源端原生回收的端到端回执，区分回收成功和来源保留。
+- 部署者首次启用来源回收时，在自己的目标卷用一份合成资料核对实际返回的保留或回收回执，再对个人资料授权。[独立卷与恢复验收](verification.md#change-evidence)
 - 作者 TXT、两代备份、监听导入、历史媒体维护、发布包与新手运行说明在同一提交的执行结果。
 - 确定可发布版本后再在隔离目标演练设备与 NAS，不对旧实例直接操作。覆盖表、迁移条件和运行边界分别见[产品要求](requirements.md)、[迁移说明](migration.md)、[手机本机模块](runtime-separation.md)。

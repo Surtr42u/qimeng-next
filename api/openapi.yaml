@@ -2297,7 +2297,7 @@ components:
         allowClear: {type: boolean}
         canIngest: {type: boolean}
         canResearch: {type: boolean}
-        canLookupImages: {type: boolean, default: false, description: Permit delegated intake or asset tasks to request a single derived frame be sent to the configured Lens sidecar}
+        canLookupImages: {type: boolean, description: Omit to keep image lookup disabled. True permits a delegated intake or asset task to request a single derived frame be sent to the configured Lens sidecar.}
         researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
         canResearchAssets: {type: boolean, default: false, description: Separately permit previews for existing media in the selected libraries}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}

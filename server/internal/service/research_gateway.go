@@ -18,12 +18,12 @@ type providerFlight struct {
 	stop                                  context.CancelFunc
 }
 type publicResearchGateway struct {
-	slots    chan struct{}
+	slots      chan struct{}
 	frameReads chan struct{}
-	mu       sync.Mutex
-	inFlight map[string]providerFlight
-	client   *http.Client
-	lens     *lensSidecar
+	mu         sync.Mutex
+	inFlight   map[string]providerFlight
+	client     *http.Client
+	lens       *lensSidecar
 }
 
 func (g *publicResearchGateway) init() {
@@ -121,22 +121,22 @@ type PublicResearchInput struct {
 	ExpectedHash string `json:"expectedHash,omitempty"`
 }
 type PublicResearchResult struct {
-	ID              string                  `json:"id"`
-	TaskID          string                  `json:"taskId"`
-	SubjectID       string                  `json:"subjectId"`
-	SubjectHash     string                  `json:"subjectHash,omitempty"`
-	SubjectRevision int64                   `json:"subjectRevision,omitempty"`
-	ContentVersion  int64                   `json:"contentVersion,omitempty"`
-	Provider        string                  `json:"provider"`
-	Operation       string                  `json:"operation"`
-	State           string                  `json:"state"`
-	EvidenceKind    string                  `json:"evidenceKind"`
-	Items           []researchprovider.Item `json:"items"`
-	FrameID         string                  `json:"frameId,omitempty"`
-	FrameSHA256     string                  `json:"frameSha256,omitempty"`
+	ID              string                       `json:"id"`
+	TaskID          string                       `json:"taskId"`
+	SubjectID       string                       `json:"subjectId"`
+	SubjectHash     string                       `json:"subjectHash,omitempty"`
+	SubjectRevision int64                        `json:"subjectRevision,omitempty"`
+	ContentVersion  int64                        `json:"contentVersion,omitempty"`
+	Provider        string                       `json:"provider"`
+	Operation       string                       `json:"operation"`
+	State           string                       `json:"state"`
+	EvidenceKind    string                       `json:"evidenceKind"`
+	Items           []researchprovider.Item      `json:"items"`
+	FrameID         string                       `json:"frameId,omitempty"`
+	FrameSHA256     string                       `json:"frameSha256,omitempty"`
 	ImageHints      []researchprovider.ImageHint `json:"imageHints,omitempty"`
-	StartedAt       time.Time               `json:"startedAt"`
-	FinishedAt      *time.Time              `json:"finishedAt,omitempty"`
+	StartedAt       time.Time                    `json:"startedAt"`
+	FinishedAt      *time.Time                   `json:"finishedAt,omitempty"`
 }
 type PublicResearchContext struct {
 	Enabled                bool                    `json:"enabled"`

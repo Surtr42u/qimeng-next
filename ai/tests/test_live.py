@@ -1,6 +1,7 @@
 """云端同提交Go服务+真正stdio MCP子进程，只有显式隔离地址才执行。"""
 import asyncio
 import base64
+import json
 import os
 from pathlib import Path
 import tempfile

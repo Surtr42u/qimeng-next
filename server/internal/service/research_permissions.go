@@ -31,7 +31,7 @@ type providerGrant struct {
 	taskID, kind, subjectID, subjectHash, libraryID string
 	revision, version                               int64
 	knownAuthor                                     bool
-	imageLookup                                      bool
+	imageLookup                                     bool
 	allowed                                         []string
 	researchLeft                                    int
 	callsLeft                                       int

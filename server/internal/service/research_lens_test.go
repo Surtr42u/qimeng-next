@@ -20,7 +20,9 @@ func TestLensSidecarPinsLoopbackWithoutProxyOrRedirect(t *testing.T) {
 	var redirected atomic.Int32
 	second := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected.Add(1) }))
 	defer second.Close()
-	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, second.URL, http.StatusTemporaryRedirect) }))
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, second.URL, http.StatusTemporaryRedirect)
+	}))
 	defer first.Close()
 	lens, err := newLensSidecar(first.URL, "synthetic")
 	if err != nil || lens.client.Transport.(*http.Transport).Proxy != nil {
