@@ -43,7 +43,10 @@ public final class MaintenanceDocumentsProvider extends DocumentsProvider {
             return item;
         } catch (IOException problem) { throw new FileNotFoundException(); }
     }
-    private String id(File item) { return base().toPath().relativize(item.toPath()).toString(); }
+    private String id(File item) {
+        try { return base().getCanonicalFile().toPath().relativize(item.getCanonicalFile().toPath()).toString(); }
+        catch (IOException problem) { throw new IllegalStateException("Invalid synthetic document ID", problem); }
+    }
     @Override public Cursor queryRoots(String[] columns) { return new MatrixCursor(columns == null ? new String[]{DocumentsContract.Root.COLUMN_ROOT_ID} : columns); }
     @Override public Cursor queryDocument(String id, String[] columns) throws FileNotFoundException {
         MatrixCursor rows = new MatrixCursor(columns == null ? COLUMNS : columns); row(rows,file(id)); return rows;

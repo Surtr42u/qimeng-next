@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -202,6 +203,10 @@ class AndroidRealServerTest {
 
     @Test(timeout = 240_000)
     fun readOnlyArchivePreservesOriginalAfterIndependentBackup() = runBlocking {
+        archiveRoundTrip(isolatedServerGraph())
+    }
+
+    private suspend fun isolatedServerGraph(): DataGraph {
         val instrument = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
         val address = requireNotNull(args.getString("qimengServerUrl"))
@@ -209,7 +214,38 @@ class AndroidRealServerTest {
         val graph = DataGraph.get(instrument.targetContext)
         graph.awaitRecovery()
         if (graph.settings.session.value?.baseUrl != address) graph.media.login(address, requireNotNull(args.getString("qimengToken")))
-        archiveRoundTrip(graph)
+        return graph
+    }
+
+    @Test fun wrongInstanceMaintenanceFolderKeepsItsGrantTemporary() = runBlocking {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val resolver = instrument.targetContext.contentResolver
+        instrument.uiAutomation.adoptShellPermissionIdentity("android.permission.MANAGE_DOCUMENTS")
+        val tree = try {
+            val fixture = resolver.call(Uri.parse("content://media.qimeng.next.test.maintenance"), "newMaintenanceFixture", null, null)
+            Uri.parse(requireNotNull(fixture?.getString("tree")))
+        } finally { instrument.uiAutomation.dropShellPermissionIdentity() }
+        val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val slot = requireNotNull(DocumentsContract.createDocument(resolver, root, DocumentsContract.Document.MIME_TYPE_DIR, "当前"))
+        val record = requireNotNull(DocumentsContract.createDocument(resolver, slot, "application/json", ".绮梦下一代清单.json"))
+        val hashes = org.json.JSONObject()
+        listOf("archive", "master", "report", "index").forEach { hashes.put(it, "0".repeat(64)) }
+        val generation = org.json.JSONObject().put("instanceId", "foreign-synthetic-instance")
+            .put("businessRevision", "1").put("backupId", "synthetic-backup").put("hashes", hashes)
+        requireNotNull(resolver.openOutputStream(record)).use { it.write(generation.toString().toByteArray(Charsets.UTF_8)) }
+        val graph = isolatedServerGraph()
+        val target = requireNotNull(graph.settings.session.value)
+        val previous = graph.backups.folder(target)
+        val access = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        assertFalse(resolver.persistedUriPermissions.any { it.uri == tree })
+        try {
+            graph.backups.bind(target, tree, access)
+            fail("A foreign maintenance generation was accepted")
+        } catch (failure: IllegalStateException) {
+            assertTrue("Expected the foreign-instance rejection", failure.message.orEmpty().contains("另一影库"))
+        }
+        assertFalse("Rejecting a foreign folder must preserve its temporary-only grant", resolver.persistedUriPermissions.any { it.uri == tree })
+        assertEquals(previous, graph.backups.folder(target))
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {

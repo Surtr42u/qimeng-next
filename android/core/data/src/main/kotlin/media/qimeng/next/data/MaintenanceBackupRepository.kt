@@ -45,14 +45,26 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
             require((flags and access) == access) { "维护目录需要读写授权" }
             val previous = folder(target)
             check(!previous.pending || previous.tree == uri.toString()) { "请先完成上次维护目录轮换" }
-            context.contentResolver.takePersistableUriPermission(uri, access)
             val tree = MaintenanceTree(context.contentResolver, uri)
             val current = tree.generation("当前")
-            check(current == null || current.instanceId == target.instanceId) { "该目录属于另一影库，请选择对应目录" }
+            val older = tree.generation("上次")
+            check(listOfNotNull(current, older).all { it.instanceId == target.instanceId }) { "该目录属于另一影库，请选择对应目录" }
+            check(sameTarget(target, settings.session.value)) { "连接已改变，请重新选择维护目录" }
             val archive = tree.directory(tree.root, "上传归档")
             val label = DocumentsContract.getTreeDocumentId(uri).substringAfterLast('/').substringAfterLast(':')
             check(sameTarget(target, settings.session.value)) { "连接已改变，请重新选择维护目录" }
-            save(target, previous.copy(tree = uri.toString(), label = label, lastChecked = 0))
+            val resolver = context.contentResolver
+            val held = resolver.persistedUriPermissions.find { it.uri == uri }
+            val newlyGranted = access and ((if (held?.isReadPermission == true) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+                (if (held?.isWritePermission == true) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)).inv()
+            resolver.takePersistableUriPermission(uri, access)
+            try {
+                save(target, previous.copy(tree = uri.toString(), label = label, lastChecked = 0))
+            } catch (failure: Exception) {
+                if (newlyGranted != 0) try { resolver.releasePersistableUriPermission(uri, newlyGranted) }
+                catch (release: SecurityException) { failure.addSuppressed(release) }
+                throw failure
+            }
             archives.selectMaintenanceArchive(archive)
             val previousTree = previous.tree
             if (previousTree != null && previousTree != uri.toString() && !referenced(previousTree) && !archives.store.needsGrant(previousTree)) {
