@@ -53,9 +53,15 @@ type Item struct {
 	Sources     []string `json:"sources,omitempty"`
 }
 
-func publicURL(raw string) *url.URL {
+func publicURL(raw string, allowArchiveHTTP bool) *url.URL {
 	u, e := url.Parse(raw)
-	if e != nil || len(raw) > 1600 || u.Scheme != "https" || u.User != nil || u.Opaque != "" || u.Port() != "" && u.Port() != "443" || strings.ContainsAny(raw, "\\\r\n\x00") || strings.Contains(u.Path, "\\") || strings.IndexFunc(u.Path, unicode.IsControl) >= 0 {
+	if e != nil || len(raw) > 1600 || u.User != nil || u.Opaque != "" || strings.HasSuffix(u.Host, ":") || strings.ContainsAny(raw, "\\\r\n\x00") || strings.Contains(u.Path, "\\") || strings.IndexFunc(u.Path, unicode.IsControl) >= 0 {
+		return nil
+	}
+	port := u.Port()
+	secure := u.Scheme == "https" && (port == "" || port == "443")
+	historical := allowArchiveHTTP && u.Scheme == "http" && (port == "" || port == "80")
+	if !secure && !historical {
 		return nil
 	}
 	host := strings.ToLower(u.Hostname())
@@ -76,8 +82,22 @@ func publicURL(raw string) *url.URL {
 	u.Host = host
 	return u
 }
+
+// The original is a CDX lookup parameter. The only network destination is the
+// fixed HTTPS archive index, even when the historical page used plain HTTP.
+func archiveOriginal(raw string) string {
+	u := publicURL(raw, true)
+	if u == nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return ""
+	}
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return u.String()
+}
+
 func cleanLink(raw string) string {
-	u := publicURL(raw)
+	u := publicURL(raw, false)
 	if u == nil {
 		return ""
 	}
@@ -95,7 +115,7 @@ func publicTerms(s string) bool {
 }
 func publicXTarget(target, op string) string {
 	if strings.HasPrefix(target, "https://") {
-		u := publicURL(target)
+		u := publicURL(target, false)
 		if u == nil || !slices.Contains([]string{"x.com", "www.x.com", "twitter.com", "www.twitter.com"}, u.Host) || u.RawQuery != "" || u.Fragment != "" {
 			return ""
 		}
@@ -113,7 +133,7 @@ func publicXTarget(target, op string) string {
 		if handle.MatchString(target) {
 			return target
 		}
-	} else if digits.MatchString(target) {
+	} else if len(target) >= 2 && digits.MatchString(target) {
 		return target
 	}
 	return ""
@@ -186,11 +206,10 @@ func Build(name, operation, target string, limit int) (Query, error) {
 		}
 		values.Set("limit", strconv.Itoa(limit))
 	case "wayback":
-		u := publicURL(target)
-		if u == nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-			return q, errors.New("archive lookup requires an unsigned public HTTPS URL")
+		target = archiveOriginal(target)
+		if target == "" {
+			return q, errors.New("archive lookup requires an unsigned public HTTP or HTTPS original")
 		}
-		target = u.String()
 		q.URL = "https://web.archive.org/cdx/search/cdx"
 		values.Set("url", target)
 		values.Set("matchType", "exact")

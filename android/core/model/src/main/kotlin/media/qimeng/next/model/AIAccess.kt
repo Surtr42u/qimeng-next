@@ -1,5 +1,7 @@
 package media.qimeng.next.model
 
+data class AIResearchSources(val enabled: Boolean, val providers: List<String>)
+
 data class AIAccessPolicy(
     val label: String,
     val libraryIds: List<String>,

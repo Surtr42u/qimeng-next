@@ -2,6 +2,7 @@ package media.qimeng.next.data
 
 import media.qimeng.next.model.AIAccessGrant
 import media.qimeng.next.model.AIAccessPolicy
+import media.qimeng.next.model.AIResearchSources
 import media.qimeng.next.model.Page
 import media.qimeng.next.sdk.api.DefaultApi
 import media.qimeng.next.sdk.model.AIDelegation
@@ -11,6 +12,10 @@ import java.io.IOException
 
 class AIAccessRepository internal constructor(private val settings: SecureSettings, private val provider: ApiProvider) {
     private fun api() = provider.api(settings.session.value ?: error("请先登录服务器"))
+    suspend fun researchSources(): AIResearchSources {
+        val context = api().getResearchProviderContext().bodyOrThrow()
+        return AIResearchSources(context.enabled, context.providers.map { it.name.value })
+    }
     suspend fun list(state: String, cursor: String? = null): Page<AIAccessGrant> {
         val page = api().listAIDelegations(cursor = cursor, limit = 50,
             state = DefaultApi.StateListAIDelegations.entries.first { it.value == state }).bodyOrThrow()

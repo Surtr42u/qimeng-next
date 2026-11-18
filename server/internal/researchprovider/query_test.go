@@ -10,7 +10,7 @@ import (
 func TestPublicProviderOperations(t *testing.T) {
 	tests := []struct{ name, operation, target, host, payload, wantURL string }{
 		{"fxtwitter", "author", "@fixture", "api.fxtwitter.com", `{"code":200,"user":{"id":"9","screen_name":"fixture","name":"Fixture","website":{"url":"https://example.org/credits?private=drop"}}}`, "https://x.com/fixture"},
-		{"fxtwitter", "post", "https://x.com/fixture/status/4", "api.fxtwitter.com", `{"code":200,"status":{"id":"4","author":{"id":"9","screen_name":"fixture"}}}`, "https://x.com/fixture/status/4"},
+		{"fxtwitter", "post", "https://x.com/fixture/status/42", "api.fxtwitter.com", `{"code":200,"status":{"id":"42","author":{"id":"9","screen_name":"fixture"}}}`, "https://x.com/fixture/status/42"},
 		{"pixiv", "author", "9", "www.pixiv.net", `{"error":false,"body":{"userId":"9","name":"Fixture"}}`, "https://www.pixiv.net/users/9"},
 		{"pixiv", "work", "4", "www.pixiv.net", `{"error":false,"body":{"id":"4","userId":9,"userName":"fixture","title":"Fixture"}}`, "https://www.pixiv.net/artworks/4"},
 		{"yandere", "artist", "fixture", "yande.re", `[{"id":9,"name":"fixture","urls":["https://example.org/credits?private=drop"]}]`, "https://yande.re/artist/show/9"},
@@ -68,9 +68,14 @@ func TestPublicProviderOperations(t *testing.T) {
 }
 
 func TestUnsafeTargetsAndUnrelatedRecordsStayOut(t *testing.T) {
-	for _, value := range []string{"http://example.org/item", "https://example.org/abc?token=secret", "https://example.org/p#key", "https://user@example.org/", "https://127.0.0.1/x", "https://0177.0.0.1/x", "https://nas.local/x", "https://example.org/path%5Cname", "https://example.org/path%0Dname"} {
+	for _, value := range []string{"ftp://example.org/item", "http://example.org:443/item", "http://example.org/abc?token=secret", "https://example.org/abc?token=secret", "https://example.org/p#key", "https://user@example.org/", "https://127.0.0.1/x", "https://0177.0.0.1/x", "https://nas.local/x", "https://example.org/path%5Cname", "https://example.org/path%0Dname"} {
 		if _, err := Build("wayback", "url", value, 1); err == nil {
 			t.Errorf("accepted archive target %q", value)
+		}
+	}
+	for _, target := range []string{"4", "https://x.com/fixture/status/4"} {
+		if _, err := Build("fxtwitter", "post", target, 1); err == nil {
+			t.Errorf("accepted invalid FxEmbed status ID %q", target)
 		}
 	}
 	for _, value := range []string{"file:///home/fixture", "C:\\private\\fixture", "/private/path", "https://example.org/secret?q=x"} {
@@ -100,5 +105,27 @@ func TestUnsafeTargetsAndUnrelatedRecordsStayOut(t *testing.T) {
 		if HTTPState(status) != want {
 			t.Errorf("HTTP %d", status)
 		}
+	}
+}
+
+func TestWaybackMatchesOnlyTheRequestedHistoricalOriginal(t *testing.T) {
+	q, err := Build("wayback", "url", "http://EXAMPLE.org:80", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst, err := url.Parse(q.URL)
+	if err != nil || dst.Scheme != "https" || dst.Host != "web.archive.org" || dst.Query().Get("url") != "http://example.org/" {
+		t.Fatal("historical original was not a parameter of the HTTPS archive lookup")
+	}
+	for _, unrelated := range []string{"https://example.org/", "http://example.org/?other=item", "http://example.org/#fragment"} {
+		raw := `[["timestamp","original","statuscode"],["20200102030405","` + unrelated + `","200"]]`
+		if state, items := Parse(q, []byte(raw)); state != "unavailable" || len(items) != 0 {
+			t.Fatalf("another resource counted as an exact archived original: %s", unrelated)
+		}
+	}
+	raw := `[["timestamp","original","statuscode"],["20200102030405","http://example.org/","200"]]`
+	state, items := Parse(q, []byte(raw))
+	if state != "ok" || len(items) != 1 || items[0].URL != "https://web.archive.org/web/20200102030405/http://example.org/" {
+		t.Fatal("historical HTTP page did not yield its exact HTTPS archive capture")
 	}
 }

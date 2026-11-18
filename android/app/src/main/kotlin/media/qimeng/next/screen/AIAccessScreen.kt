@@ -96,6 +96,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     val authors by library.authors.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val error by model.creationError.collectAsStateWithLifecycle()
+    val sources by model.researchSources.collectAsStateWithLifecycle()
     var label by rememberSaveable { mutableStateOf("我的 AI 助手") }
     var libraryIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var authorIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -117,6 +118,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     var calls by rememberSaveable { mutableStateOf("100") }
     var minutes by rememberSaveable { mutableStateOf("60") }
     LaunchedEffect(Unit) { library.refreshConnection(); library.loadAuthors() }
+    LaunchedEffect(canResearch) { if (canResearch) model.loadResearchSources() }
     val validDays = days.toIntOrNull()?.takeIf { it in 1..365 }
     val dailyTasks = tasks.toIntOrNull()?.takeIf { it in 1..200 }
     val maxUpdates = updates.toIntOrNull()?.takeIf { it in 1..10 }
@@ -129,7 +131,8 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     val writesNeedLibrary = canIngest || canResearch || canOrganize || assetFields.isNotEmpty()
     val writesNeedAuthor = fields.isNotEmpty() || blocks.isNotEmpty()
     val valid = label.isNotBlank() && label.length <= 80 && libraryIds.size <= 100 && authorIds.size <= 100 && validDays != null && dailyTasks != null && maxUpdates != null && maxResearch != null && maxCalls != null && duration != null &&
-        (!writesNeedLibrary || libraryIds.isNotEmpty()) && (!writesNeedAuthor || allAuthors || authorIds.isNotEmpty())
+        (!writesNeedLibrary || libraryIds.isNotEmpty()) && (!writesNeedAuthor || allAuthors || authorIds.isNotEmpty()) &&
+        (researchProviders.isEmpty() || sources.data?.providers?.containsAll(researchProviders) == true)
     AlertDialog(onDismissRequest = { if (!busy) close() }, title = { Text("新增 AI 接入") }, text = {
         Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(label, { label = it }, label = { Text("连接名称") }, enabled = !busy)
@@ -142,8 +145,11 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
             if (canResearch) {
                 Text("外部研究来源", style = MaterialTheme.typography.titleSmall)
                 Text("所选来源可收到任务明确提交的公开标识或检索词。", style = MaterialTheme.typography.bodySmall)
-                researchSourceNames.forEach { (name, display) ->
-                    PermissionRow(display, name in researchProviders, !busy && (maxResearch ?: 0) > 0) { selected ->
+                if (sources.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                sources.error?.let { ErrorNotice(it, model::loadResearchSources) }
+                if (sources.data?.enabled == false) Text("服务器当前已关闭外部查询。所选来源会在服务开启后生效。", style = MaterialTheme.typography.bodySmall)
+                sources.data?.providers.orEmpty().forEach { name ->
+                    PermissionRow(researchSourceNames[name] ?: name, name in researchProviders, !busy && (maxResearch ?: 0) > 0) { selected ->
                         researchProviders = if (selected) researchProviders + name else researchProviders - name
                     }
                 }

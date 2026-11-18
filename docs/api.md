@@ -12,7 +12,7 @@
 | Pixiv | `author`、`work` | 作者或作品数字 ID |
 | yande.re | `artist`、`tags` | 公开作者名或标签表达式 |
 | e621 | `post`、`tags` | 帖文数字 ID 或标签表达式 |
-| Wayback CDX | `url` | 无凭据、查询串及片段的公开 HTTPS 页面地址 |
+| Wayback CDX | `url` | 无凭据、查询串及片段的公开 HTTP 或 HTTPS 历史页面地址，仅发送给固定的 HTTPS 存档索引 |
 | Steam Workshop | `workshop` | 创意工坊作品数字 ID |
 | Bing | `search` | 明确提交的公开搜索词 |
 

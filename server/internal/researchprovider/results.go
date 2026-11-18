@@ -296,7 +296,7 @@ func wayback(q Query, raw []byte) (string, []Item) {
 			continue
 		}
 		when, err := time.Parse("20060102150405", r[0])
-		if err != nil || cleanLink(r[1]) != q.Target {
+		if err != nil || archiveOriginal(r[1]) != q.Target {
 			continue
 		}
 		out = append(out, Item{ID: r[0], URL: "https://web.archive.org/web/" + r[0] + "/" + q.Target, PublishedAt: when.UTC().Format(time.RFC3339), Sources: []string{q.Target}})
@@ -304,10 +304,13 @@ func wayback(q Query, raw []byte) (string, []Item) {
 			break
 		}
 	}
+	if len(out) == 0 && len(rows) > 1 {
+		return "unavailable", nil
+	}
 	return "ok", out
 }
 func bingLink(value string) string {
-	u := publicURL(value)
+	u := publicURL(value, false)
 	if u == nil {
 		return ""
 	}

@@ -138,7 +138,11 @@ func (f *researchFixture) authorGrant(t *testing.T) (model.Author, service.Deleg
 	t.Helper()
 	var author model.Author
 	f.request("POST", "/authors", researchTestOwner, "research-fixture-author", map[string]string{"name": "Human name", "biography": "Human biography"}).expect(t, 201, &author)
-	policy := service.DelegationPolicy{Label: "Fixture research permission", AuthorIDs: []string{author.ID}, CandidateBlocks: []string{"basic"}, CanResearch: true, ResearchProviders: []string{"fxtwitter"}, MaxResearchCalls: 1, MaxUpdates: 2, MaxTasksPerDay: 8, ValidDays: 1}
+	policy := service.DelegationPolicy{
+		Label: "Fixture research permission", LibraryIDs: []string{}, AuthorIDs: []string{author.ID},
+		AllowedFields: []string{}, CandidateBlocks: []string{"basic"}, CanResearch: true,
+		ResearchProviders: []string{"fxtwitter"}, MaxResearchCalls: 1, MaxUpdates: 2, MaxTasksPerDay: 8, ValidDays: 1,
+	}
 	var grant service.DelegationCreated
 	f.request("POST", "/ai/delegations", researchTestOwner, "", policy).expect(t, 201, &grant)
 	return author, grant
@@ -367,7 +371,11 @@ func TestChargedLookupBecomesOnlyCandidateForOriginalIntake(t *testing.T) {
 	author, _ := f.authorGrant(t)
 	var library model.Library
 	f.request("POST", "/libraries", researchTestOwner, "intake-research-library", map[string]string{"name": "Synthetic originals", "kind": "regular"}).expect(t, 201, &library)
-	policy := service.DelegationPolicy{Label: "Intake public lookup", LibraryIDs: []string{library.ID}, CanIngest: true, CanOrganize: true, CanResearch: true, ResearchProviders: []string{"fxtwitter"}, MaxResearchCalls: 1, MaxUpdates: 1, MaxTasksPerDay: 2, ValidDays: 1}
+	policy := service.DelegationPolicy{
+		Label: "Intake public lookup", LibraryIDs: []string{library.ID}, AuthorIDs: []string{},
+		AllowedFields: []string{}, CandidateBlocks: []string{}, CanIngest: true, CanOrganize: true, CanResearch: true,
+		ResearchProviders: []string{"fxtwitter"}, MaxResearchCalls: 1, MaxUpdates: 1, MaxTasksPerDay: 2, ValidDays: 1,
+	}
 	var grant service.DelegationCreated
 	f.request("POST", "/ai/delegations", researchTestOwner, "", policy).expect(t, 201, &grant)
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))

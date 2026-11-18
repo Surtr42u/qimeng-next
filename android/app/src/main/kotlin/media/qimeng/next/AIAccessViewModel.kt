@@ -26,12 +26,30 @@ class AIAccessViewModel(application: Application) : AndroidViewModel(application
     val reconcileRequired = mutableReconcileRequired.asStateFlow()
     private var work: Job? = null
     private var read: Job? = null
+    private var sourcesRead: Job? = null
+    private val mutableSources = MutableStateFlow(LoadState<AIResearchSources>())
+    val researchSources = mutableSources.asStateFlow()
     private var connection = 0L
     init {
         viewModelScope.launch { graph.settings.session.collect {
             connection++
+            sourcesRead?.cancel(); mutableSources.value = LoadState()
             work?.cancel(); read?.cancel(); mutableSecret.value = null; mutableState.value = ListState(); mutableBusy.value = false; mutableReconcileRequired.value = false; mutableFilter.value = "active"
         } }
+    }
+    fun loadResearchSources() {
+        sourcesRead?.cancel()
+        val generation = connection
+        mutableSources.value = LoadState(loading = true)
+        sourcesRead = viewModelScope.launch {
+            try {
+                val context = repository.researchSources()
+                if (generation == connection) mutableSources.value = LoadState(data = context)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (generation == connection) mutableSources.value = LoadState(error = "未能读取服务器的外部来源状态")
+            }
+        }
     }
     fun refresh(next: Boolean = false, state: String = mutableFilter.value) {
         if (mutableBusy.value) return
