@@ -1,0 +1,54 @@
+name: Real CPU model and MCP task proof
+on:
+  push:
+    branches: [codex/model-workflow-proof]
+    paths: ['.github/workflows/model-proof.yml', 'tools/model-proof/**', 'tools/mcp-compat/model-proof.mjs']
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: MCP discovery to present to the model
+        type: choice
+        options: [both, domain, full]
+        default: both
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MODEL_PROFILE: ${{ inputs.profile || 'both' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache-dependency-path: server/go.sum}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.13'}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '24'}
+      - name: Prepare the same commit's Go server and stdio executor
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python -m pip install --require-hashes -r ai/requirements.lock
+          npm --prefix tools/mcp-compat ci
+          python tools/generate_sdks.py --target go
+          python tools/generate_sdks.py --target python
+          mkdir -p "$RUNNER_TEMP/model-proof" build/model-proof
+          (cd server && go build -trimpath -o "$RUNNER_TEMP/model-proof/qimeng-next" ./cmd/qimeng)
+      - name: Obtain the pinned public model and CPU inference engine
+        run: bash tools/model-proof/fetch.sh "$RUNNER_TEMP/model-proof"
+      - name: Run real inference with loopback networking only
+        run: |
+          mkdir "$RUNNER_TEMP/model-proof/home"
+          sudo unshare --net sh -ceu '
+            ip link set lo up
+            exec runuser -u "$1" -- env -i HOME="$2/home" PATH="$3" LANG=C.UTF-8 MODEL_WORK="$2" MODEL_PROFILE="$4" SOURCE_COMMIT="$5" bash "$6/tools/model-proof/run.sh"
+          ' sh "$(id -un)" "$RUNNER_TEMP/model-proof" "$PATH" "$MODEL_PROFILE" "$GITHUB_SHA" "$GITHUB_WORKSPACE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: real-cpu-model-evidence
+          path: build/model-proof/
+          if-no-files-found: warn
+          retention-days: 14

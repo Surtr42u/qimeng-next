@@ -49,6 +49,14 @@ mcp_servers:
 
 ## 证据与边界
 
+### 标准 CPU 上的真实模型任务
+
+手动运行 GitHub Actions 的 `Real CPU model and MCP task proof`。公开仓的 `ubuntu-24.04` 标准机提供 4 个 vCPU 和 16 GB 内存。工作流在联网准备阶段校验官方 Qwen3‑4B Q4_K_M 权重和 llama.cpp b12521 CPU 发行件的 SHA‑256。随后新建仅有回环接口的网络命名空间，运行本地推理、同提交 Go 服务、正式 stdio 执行器和 Pi MCP 客户端。模型只接收简短用户任务、当前可见的工具 Schema 和工具返回的合成数据。[运行器规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) · [权重与许可证](https://huggingface.co/Qwen/Qwen3-4B-GGUF/tree/bc640142c66e1fdd12af0bd68f40445458f3869b) · [推理器发行件](https://github.com/ggml-org/llama.cpp/releases/tag/b12521)
+
+查标签时，两条合成词条共享同一别名，模型需要给出所有匹配的正式名及稳定 ID。维护作者时，凭据只允许补一次指定作者的简介，核对正式回读、候选状态、原别名和人工清空的主页。每场都以空对话开始，推理器自行决定工具与参数。每场上限是七轮生成、十二次工具调用、九分钟，每次最多生成 512 个 token。
+
+`domain` 先呈现资料与词表工具，模型可以通过正式工具说明请求其他工具的 Schema。`full` 首轮呈现完整 MCP 清单。两种配置各用独立合成数据库。`real-cpu-model-evidence/results.json` 记录短指令、模型和推理器版本、逐轮真实输入和输出 token、请求与结果字节数、实际工具调用、重复输入、终止原因及独立业务核对结果。某一任务失败时仍保存其结果与已经完成的其他场次。[工作流](../.github/workflows/model-proof.yml) · [宿主与判定](../tools/mcp-compat/model-proof.mjs)
+
 云端`mcp-compat`作业使用真实Go服务、Python官方SDK和相互独立的Pi/TypeScript客户端。测试脚本只访问临时服务与合成图片。最新通过的提交和未验证项见[当前状态](status.md)。仅源码或配置示例存在不构成通过证据。
 
 协议依据：[MCP工具规范](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)。新SDK的旧协议协商能力必须用独立客户端实测，不凭相同SDK自测推定广泛兼容。
