@@ -225,6 +225,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                  authorKind: String? = null, leading: (@Composable () -> Unit)? = null, scrollTab: Int? = null) {
     val state by model.assets(key).collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
+    val publication by model.lastPublication.collectAsStateWithLifecycle()
     var columns by controls.columns
     val grid = rememberLazyGridState()
     LaunchedEffect(scrollTab, grid) { if (scrollTab != null) TabScrollController.events.collect { if (it == scrollTab) grid.scrollToItem(0) } }
@@ -234,7 +235,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         history = true.takeIf { source == "history" }))
     val group = if (albumTitle != null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
-    LaunchedEffect(key, query, group) {
+    LaunchedEffect(key, query, group, publication) {
         model.browse(key, query)
         val current = query.toString() + group
         if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }

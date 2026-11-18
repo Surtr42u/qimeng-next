@@ -8,6 +8,8 @@ import androidx.work.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,6 +26,12 @@ import kotlin.coroutines.coroutineContext
 class UploadRepository internal constructor(private val context: Context, val queue: QueueStore, private val settings: SecureSettings) {
     private val spool = File(context.filesDir, "upload-spool").apply { mkdirs() }
     private val intakeLock = Mutex()
+    private val published = MutableStateFlow<Pair<Session, String>?>(null)
+    val lastPublication = published.asStateFlow()
+
+    internal fun recordPublication(task: Transfer) {
+        if (sameTarget(task.target, settings.session.value)) published.value = task.target to task.id
+    }
 
     /** Copy grants into app-owned immutable snapshots; a later provider change cannot change a retry. */
     suspend fun receive(uris: List<Uri>, intakeGroup: String? = null, archive: List<ArchiveInput>? = null): List<String> = withContext(Dispatchers.IO) {

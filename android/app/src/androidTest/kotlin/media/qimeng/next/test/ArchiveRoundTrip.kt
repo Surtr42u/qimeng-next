@@ -14,13 +14,9 @@ import org.junit.Assert.*
 internal suspend fun archiveRoundTrip(graph: DataGraph) {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
-    val automation = instrumentation.uiAutomation
-    val authority = Uri.parse("content://media.qimeng.next.test.archive")
-    automation.adoptShellPermissionIdentity("android.permission.MANAGE_DOCUMENTS")
-    val tree = try {
-        val result = requireNotNull(context.contentResolver.call(authority, "seedTestArchive", null, null))
-        Uri.parse(requireNotNull(result.getString("tree")))
-    } finally { automation.dropShellPermissionIdentity() }
+    val authority = Uri.parse("content://media.qimeng.next.test.fixture")
+    val result = requireNotNull(context.contentResolver.call(authority, "seedTestArchive", null, null))
+    val tree = Uri.parse(requireNotNull(result.getString("tree")))
     val target = requireNotNull(graph.settings.session.value)
     val library = graph.media.createLibrary("云端归档目标", false)
     graph.archives.select(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)

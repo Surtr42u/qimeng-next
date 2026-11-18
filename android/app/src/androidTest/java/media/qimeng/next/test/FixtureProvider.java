@@ -5,6 +5,8 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Binder;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 
@@ -15,6 +17,19 @@ import java.util.Objects;
 /** Android may start this test APK outside instrumentation, with no target APK class loader. */
 public final class FixtureProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
+
+    @Override public Bundle call(String method, String arg, Bundle extras) {
+        if (!"seedTestArchive".equals(method) && !"newMaintenanceFixture".equals(method)) return super.call(method, arg, extras);
+        // The fixture APK owns the protected DocumentsProviders. It grants one tree to the target,
+        // like a picker would, before the target makes any calls to either DocumentsProvider.
+        long identity = Binder.clearCallingIdentity();
+        try {
+            android.content.Context owner = Objects.requireNonNull(getContext());
+            return "seedTestArchive".equals(method) ? ArchiveDocumentsProvider.grantFixture(owner) : MaintenanceDocumentsProvider.grantFixture(owner);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
 
     private File file(Uri uri) {
         String name = uri.getLastPathSegment();

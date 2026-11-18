@@ -1,6 +1,7 @@
 package media.qimeng.next.test;
 
 import android.content.Intent;
+import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
@@ -23,15 +24,15 @@ public final class MaintenanceDocumentsProvider extends DocumentsProvider {
     private static final String AUTHORITY = "media.qimeng.next.test.maintenance";
     private static final String[] COLUMNS = {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,
         Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS};
-    private File base() { return new File(Objects.requireNonNull(getContext()).getFilesDir(), "maintenance-fixtures"); }
+    private static File base(Context owner) { return new File(owner.getFilesDir(), "maintenance-fixtures"); }
+    private File base() { return base(Objects.requireNonNull(getContext())); }
     @Override public boolean onCreate() { return true; }
 
-    @Override public Bundle call(String method, String arg, Bundle extras) {
-        if (!"newMaintenanceFixture".equals(method)) return super.call(method,arg,extras);
+    static Bundle grantFixture(Context owner) {
         String id = "synthetic-" + UUID.randomUUID();
-        if (!new File(base(), id).mkdirs()) throw new IllegalStateException("Fixture creation failed");
+        if (!new File(base(owner), id).mkdirs()) throw new IllegalStateException("Fixture creation failed");
         Uri tree = DocumentsContract.buildTreeDocumentUri(AUTHORITY,id);
-        Objects.requireNonNull(getContext()).grantUriPermission("media.qimeng.next",tree, Intent.FLAG_GRANT_READ_URI_PERMISSION |
+        owner.grantUriPermission("media.qimeng.next",tree, Intent.FLAG_GRANT_READ_URI_PERMISSION |
             Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
         Bundle result = new Bundle(); result.putString("tree",tree.toString()); return result;
     }

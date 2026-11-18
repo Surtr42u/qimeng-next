@@ -1,6 +1,7 @@
 package media.qimeng.next.test;
 
 import android.content.Intent;
+import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.graphics.Bitmap;
@@ -23,17 +24,17 @@ public final class ArchiveDocumentsProvider extends DocumentsProvider {
     private static final String[] PROJECTION = {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
         Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS};
     @Override public boolean onCreate() { return true; }
-    private File fixture() { return new File(Objects.requireNonNull(getContext()).getFilesDir(), "archive-input.png"); }
-    @Override public Bundle call(String method, String arg, Bundle extras) {
-        if (!"seedTestArchive".equals(method)) return super.call(method, arg, extras);
+    private static File fixture(Context owner) { return new File(owner.getFilesDir(), "archive-input.png"); }
+    private File fixture() { return fixture(Objects.requireNonNull(getContext())); }
+    static Bundle grantFixture(Context owner) {
         Bitmap bitmap = Bitmap.createBitmap(72, 40, Bitmap.Config.ARGB_8888);
-        try (FileOutputStream out = new FileOutputStream(fixture())) {
+        try (FileOutputStream out = new FileOutputStream(fixture(owner))) {
             bitmap.eraseColor(0xffcd3974);
             if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new IOException("Cannot write test PNG");
         } catch (IOException failure) { throw new IllegalStateException("Cannot seed synthetic archive", failure); }
         finally { bitmap.recycle(); }
         Uri tree = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "root");
-        Objects.requireNonNull(getContext()).grantUriPermission("media.qimeng.next", tree,
+        owner.grantUriPermission("media.qimeng.next", tree,
             Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         Bundle result = new Bundle(); result.putString("tree", tree.toString()); return result;
     }

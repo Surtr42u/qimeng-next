@@ -14,7 +14,7 @@ import java.util.UUID
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
-    val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false)
+    val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false, val publicationId: String? = null)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -38,6 +38,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val preferences = graph.settings.preferences
     val settingsError = graph.settings.error
     val queue = graph.queue.state
+    val lastPublication = graph.uploads.lastPublication
     val queueError = graph.queue.error
     val route = saved.getStateFlow("route", "main")
     val tab = saved.getStateFlow("tab", 0)
@@ -166,8 +167,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
-        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query || state.value.reloadFromStart)) return
-        if (!next && !force && previous == query && (state.value.loaded || state.value.loading)) return
+        val publication = lastPublication.value?.takeIf { sameTarget(it.first, session.value) }?.second
+        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query || state.value.reloadFromStart || state.value.publicationId != publication)) return
+        if (!next && !force && previous == query && state.value.publicationId == publication && (state.value.loaded || state.value.loading)) return
         queries[key] = query
         listJobs[key]?.cancel()
         val generation = listVersions.getOrPut(key) { RequestGeneration() }
@@ -175,7 +177,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val connection = connectionGeneration
         val old = state.value
         val keep = next || previous == query
-        state.value = if (keep) old.copy(loading = true, error = null) else ListState(loading = true)
+        state.value = if (keep) old.copy(loading = true, error = null, publicationId = publication) else ListState(loading = true, publicationId = publication)
         listJobs[key] = viewModelScope.launch {
             try {
                 val page = repository.assets(query, if (next) old.cursor else null)
@@ -183,7 +185,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     state.value = ListState(if (next) (old.items + page.items).distinctBy(Asset::id) else page.items,
                         page.nextCursor, loaded = true, totalMatched = page.totalMatched,
                         dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query,
-                        unknownDateCount = if (next) old.unknownDateCount else page.unknownDateCount)
+                        unknownDateCount = if (next) old.unknownDateCount else page.unknownDateCount, publicationId = publication)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {

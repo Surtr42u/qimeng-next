@@ -20,6 +20,8 @@
 
 参考 APK 来自 `qimeng-media@745974081716a9d69a95002a41220e35e743d764` 的发布制品。采集作业的 `provenance.json` 记录 `installedBuild=installed-release`。模拟器支持 x86_64 和 arm64-v8a，安装后回读的 APK SHA-256 为 `72cd0c695e888877a8f07f27486c308b1b0bf8179e57e90dabf19adb384dc84a`，与旧仓手机安装回读记录一致。作业在 API 35、320×640、160 dpi、字体比例 1、浅色、系统手势导航下连接同提交的 Go 服务。五份 PNG 的摘要均已和采集清单核对。[原 APK 发布作业](https://github.com/Surtr42u/qimeng-media/actions/runs/43873579739) [截图、语义几何和来源清单](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855346/artifacts/14418989091)
 
+公开后重采的原包、系统镜像和上述显示设置相同，五张 PNG 均与新清单摘要一致。两次回首页时图片与视频的左右顺序会随服务端推荐变化。两个卡框仍是 (13,125)–(155,205) 与 (165,125)–(307,205)，液态和经典导航的首页文字框也与首轮一致。[发布 APK 重采原图及语义几何](https://github.com/Surtr42u/qimeng-next/actions/runs/44311025085/artifacts/14430811173)
+
 | 场景 | 实际画面与比较范围 |
 | --- | --- |
 | 默认首页与液态底栏 | 旧 `installed-home-liquid.png` 中首行彩色媒体占纵向 125–204 像素，在 y=160 处占 x=13–306。恢复前的 Next `f2b884b/real-server-home.png` 分别为 y=121–198、x=16–303。旧图有「已到底」；其悬浮坞位置更低、背景更浅。两图中的推荐顺序互换。当前恢复代码已包含尾标与旧底栏，待同提交生产窗口核实。 |
@@ -35,4 +37,6 @@
 - `3babd82` 的只读 SAF 云端归档编译成功，core:data 实际设备用例验证同字节改名仍阻止旧许可、MediaStore 移入系统回收并读回一致回执。联网 UI 当次只留下首页、上传和原图等截图，横屏窗口为 640×320，H.264 彩色帧断言失败。[本次截图与设备报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44263222561/artifacts/14409847833)
 - `e9fe1df` 的真实本机应用已取得普通上传的作品 ID，原件、库成员和批次回执一致。该轮随后在模拟拔电时已经提交扫描的断言失败。[本机完整测试报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44264832227/artifacts/14410254064)
 - `f2b884b` 的本机增强用例全部通过，包括临时 TLS、换端口保留资料、普通上传、接电前后扫描行为及注销后原件保留，可查看合成库管理窗口。该次联网用例仍在横屏图像断言停止。[本机截图与通过报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797/artifacts/14412194041) [联网报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797/artifacts/14412614130)
+- `044c592` 的纯客户端架构、JVM、Lint、APK 与两种原生架构构建通过；内嵌 APK 的 API 35 增强仪器再次通过，报告为 1 项执行、0 失败、0 跳过，附库管理实际窗口。[纯客户端门禁](https://github.com/Surtr42u/qimeng-next/actions/runs/44309908039/job/134821632656) [本机原图与仪器报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44309908039/artifacts/14430404347)
+- 同提交的联网 runner 实际执行了 6 项核心界面用例和 11 项数据适配用例。新建作者后 Go 返回 `fieldStatus` 字典，当时的 Kotlin SDK 却把整个字段当作枚举字符串，数据适配有 1 项失败。应用窗口采集当次没有运行。[核心设备用例与报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44309908039/artifacts/14431569234)
 - 设备证据来自指定云模拟器及合成媒体。上述旧基准覆盖默认 / 经典首页和标签弹层。其他页面的同状态逐屏图与真实手机验收仍待取得。后续状态见[仓库状态页](../docs/status.md)。

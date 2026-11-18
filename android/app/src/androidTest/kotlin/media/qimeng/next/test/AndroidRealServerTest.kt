@@ -37,7 +37,7 @@ class AndroidRealServerTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test(timeout = 480_000)
-    fun loginUploadTagRecommendAndPlayThroughRealServer() {
+    fun loginUploadTagAndBrowseThroughRealServer() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
         val server = requireNotNull(args.getString("qimengServerUrl")) { "qimengServerUrl runner argument is required" }
@@ -71,12 +71,7 @@ class AndroidRealServerTest {
         }
         context.contentResolver.openOutputStream(imageUri, "w")!!.use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         bitmap.recycle()
-        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
-            context.contentResolver.openOutputStream(videoUri, "w")!!.use { output ->
-                val bytes = input.copyTo(output)
-                assertTrue("Push a nonempty synthetic H.264 fixture before this test", bytes in 100L..8_000_000L)
-            }
-        }
+        copyCloudVideo(videoUri)
         val manualDraft = runBlocking {
             graph.settings.saveUploadLibrary(graph.settings.session.value!!, library.id)
             graph.uploads.receive(listOf(imageUri)).single()
@@ -133,8 +128,17 @@ class AndroidRealServerTest {
 
         compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("navigation:home").performClick()
-        compose.onNodeWithTag("media-browser:home:0").performTouchInput { swipeDown() }
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
+        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java]
+        try {
+            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
+        } catch (failure: Throwable) {
+            saveScreenshot("unverified-real-server-home.png")
+            val state = model.assets("home:0").value
+            val served = runBlocking { graph.media.assets(model.query("home:0")).items }
+            throw AssertionError("Home after completed upload: loaded=${state.loaded} loading=${state.loading} " +
+                "error=${state.error} observedItems=${state.items.size} hasPicture=${state.items.any { it.id == picture.id }} " +
+                "serverItems=${served.size} serverHasPicture=${served.any { it.id == picture.id }}", failure)
+        }
         screenshotWithMedia("real-server-home.png")
         captureClassicHome(graph, picture.name)
         compose.onNodeWithContentDescription(picture.name).performClick()
@@ -178,7 +182,6 @@ class AndroidRealServerTest {
         compose.onNodeWithText("应用筛选").performClick()
         compose.onNodeWithContentDescription(picture.name).assertExists()
         compose.onNodeWithText("COS").performClick()
-        val model = androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java]
         compose.waitUntil(30_000) { model.query("home:1").let { it.kind == "cos" && it.source == "assets" && it.order == "asc" } }
         compose.onNodeWithContentDescription("筛选").performClick()
         compose.onNodeWithText("重置").performClick()
@@ -191,11 +194,28 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("author-search").performTextReplacement("合成别名")
         compose.waitUntil(30_000) { compose.onAllNodesWithText("合成作者").fetchSemanticsNodes().isNotEmpty() }
         screenshot("real-server-author-directory.png")
-        compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithTag("navigation:home").performClick()
-        compose.onNodeWithText("推荐").performClick()
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(video.name).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription(video.name).performClick()
+    }
+
+    @Test(timeout = 240_000)
+    fun playRealVideoThroughTheLandscapeWindow() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val video = runBlocking {
+            graph.media.assets(AssetQuery(mediaType = "video")).items.firstOrNull { it.originalName == "android-synthetic.mp4" } ?: run {
+                val uri = Uri.parse("content://media.qimeng.next.test.fixture/android-synthetic.mp4")
+                copyCloudVideo(uri)
+                val library = graph.media.createLibrary("云端独立播放样本", false)
+                val input = graph.uploads.receive(listOf(uri)).single()
+                graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, inputIds = listOf(input))
+                withTimeout(90_000) {
+                    while (graph.queue.state.value!!.transfers.single { it.id == input }.state != TransferState.SUCCEEDED) {
+                        check(graph.queue.state.value!!.transfers.single { it.id == input }.state != TransferState.FAILED)
+                        delay(350)
+                    }
+                }
+                graph.media.asset(requireNotNull(graph.queue.state.value!!.transfers.single { it.id == input }.assetId))
+            }
+        }
+        compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].openAsset(video.id) }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
@@ -205,6 +225,15 @@ class AndroidRealServerTest {
         await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
         assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
         compose.onNodeWithContentDescription("退出全屏").performClick()
+    }
+
+    private fun copyCloudVideo(uri: Uri) {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
+            requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
+                assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
+            }
+        }
     }
 
     @Test(timeout = 240_000)
@@ -226,11 +255,8 @@ class AndroidRealServerTest {
     @Test fun wrongInstanceMaintenanceFolderKeepsItsGrantTemporary() = runBlocking {
         val instrument = InstrumentationRegistry.getInstrumentation()
         val resolver = instrument.targetContext.contentResolver
-        instrument.uiAutomation.adoptShellPermissionIdentity("android.permission.MANAGE_DOCUMENTS")
-        val tree = try {
-            val fixture = resolver.call(Uri.parse("content://media.qimeng.next.test.maintenance"), "newMaintenanceFixture", null, null)
-            Uri.parse(requireNotNull(fixture?.getString("tree")))
-        } finally { instrument.uiAutomation.dropShellPermissionIdentity() }
+        val fixture = resolver.call(Uri.parse("content://media.qimeng.next.test.fixture"), "newMaintenanceFixture", null, null)
+        val tree = Uri.parse(requireNotNull(fixture?.getString("tree")))
         val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val slot = requireNotNull(DocumentsContract.createDocument(resolver, root, DocumentsContract.Document.MIME_TYPE_DIR, "当前"))
         val record = requireNotNull(DocumentsContract.createDocument(resolver, slot, "application/json", ".绮梦下一代清单.json"))

@@ -222,6 +222,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 message = if (state == "staged") "已传输，等待智能整理；来源文件保留" else "已入库；来源文件保留") else it
         }) }
         current(id)?.takeIf { it.state == TransferState.SUCCEEDED && ownsTarget(it.target) }?.let { task ->
+            if (state == "ingested") graph.uploads.recordPublication(task)
             val file = File(applicationContext.filesDir, "upload-spool/${task.spoolName}")
             if (file.exists() && !file.delete() && file.exists()) {
                 update(id) { it.copy(message = "${it.message}；本机传输副本尚未清理，入库结果保留") }
