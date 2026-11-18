@@ -39,6 +39,11 @@ jobs:
           (cd next/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/next-server" ./cmd/qimeng)
       - name: Submit and observe manual scans
         run: python3 next/tools/scan-comparison/compare.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence
+      - name: Sample the scan functions after the timing trials
+        working-directory: next/server
+        run: |
+          go test -mod=readonly -run '^TestUnchangedLibraryScanCountsEveryFileWithoutPerFileCatalogWrites$' -count=12 -cpuprofile="$RUNNER_TEMP/scan.cpu" -o "$RUNNER_TEMP/scan.test" ./internal/httpapi
+          go tool pprof -list='service\.\(\*Service\)\.(scanFile|scanMissing|scanSignatures|walkLibrary)$' "$RUNNER_TEMP/scan.test" "$RUNNER_TEMP/scan.cpu" > ../../evidence/scan-function-samples.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
