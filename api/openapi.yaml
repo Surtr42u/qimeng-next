@@ -3194,8 +3194,13 @@ components:
       properties: {items: {type: array, items: {$ref: '#/components/schemas/Directory'}}, nextCursor: {type: string}, directFileCount: {type: integer, format: int64, minimum: 0, description: Directly indexed files in the queried parent including the library root}}
     Tag:
       type: object
-      required: [name, revision, createdAt, updatedAt]
-      properties: {name: {type: string}, revision: {type: integer, format: int64}, createdAt: {type: string}, updatedAt: {type: string}}
+      required: [id, name, revision, createdAt, updatedAt]
+      properties:
+        id: {type: string, minLength: 1, readOnly: true, description: Stable identity preserved across tag renames}
+        name: {type: string}
+        revision: {type: integer, format: int64}
+        createdAt: {type: string}
+        updatedAt: {type: string}
     TagPage:
       type: object
       required: [items]
@@ -3676,7 +3681,7 @@ components:
         revision: {type: integer, format: int64, minimum: 0}
         values: {$ref: '#/components/schemas/AuthorProfileValues'}
         evidence: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AuthorProfileEvidence'}}
-        source: {type: string, enum: [empty, human, merged, imported]}
+        source: {type: string, enum: [empty, human, merged, imported, native_delivery]}
         updatedAt: {type: string, format: date-time, nullable: true}
         candidateId: {type: string}
         avatar: {$ref: '#/components/schemas/AuthorProfileAvatar'}
