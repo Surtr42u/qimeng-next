@@ -131,7 +131,7 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 		return err
 	}
 	if !insertOnly {
-		for _, table := range []string{"asset_authors", "asset_tags", "asset_sources", "asset_characters"} {
+		for _, table := range []string{"asset_authors", "asset_sources", "asset_characters"} {
 			if _, err = q.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=?", a.ID); err != nil {
 				return err
 			}
@@ -142,13 +142,8 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 			return err
 		}
 	}
-	for _, tag := range a.Tags {
-		if _, err = q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO NOTHING", tag, a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z")); err != nil {
-			return err
-		}
-		if _, err = q.ExecContext(ctx, "INSERT INTO asset_tags(asset_id,tag) VALUES(?,?)", a.ID, tag); err != nil {
-			return err
-		}
+	if err = writeAssetTags(ctx, q, a, !insertOnly); err != nil {
+		return err
 	}
 	for _, sourceID := range a.SourceIDs {
 		if _, err = q.ExecContext(ctx, "INSERT INTO asset_sources(asset_id,source_id) VALUES(?,?)", a.ID, sourceID); err != nil {

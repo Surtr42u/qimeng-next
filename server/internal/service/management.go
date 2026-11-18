@@ -211,7 +211,7 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 		a.UpdatedAt = now
 		a.TagSetUpdatedAt = &now
 		a.TagSetSource = "human"
-		if e = store.SaveAsset(ctx, q, a); e != nil {
+		if e = store.SaveAssetTags(ctx, q, a); e != nil {
 			return nil, e
 		}
 	}
@@ -262,7 +262,7 @@ func (s *Service) RemoveAssetTag(ctx context.Context, w *Write, id, tag string, 
 	if e != nil {
 		return a, e
 	}
-	return a, store.SaveAsset(ctx, q, a)
+	return a, store.SaveAssetTags(ctx, q, a)
 }
 
 type TimelineMark struct {

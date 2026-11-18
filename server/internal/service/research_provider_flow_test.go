@@ -247,7 +247,7 @@ func TestProviderPolicyMustBeExplicitAndCannotExpand(t *testing.T) {
 	f.request("POST", "/ai/delegations", researchTestOwner, "", policy).expect(t, 201, &local)
 	delete(in, "researchProviders")
 	secret = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
-	in.CredentialSecret = secret
+	in["credentialSecret"] = secret
 	f.request("POST", "/ai/delegated-tasks", local.Credential.Token, "local-author-research", in).expect(t, 201, nil)
 	var permissions service.PublicResearchContext
 	f.request("GET", "/research/context", secret, "", nil).expect(t, 200, &permissions)

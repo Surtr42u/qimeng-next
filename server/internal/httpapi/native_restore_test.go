@@ -71,6 +71,10 @@ func nativeCheckpointCopy(t *testing.T, f *fixture, stage string) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { restored.Close() })
+	bound, err := restored.Root.LibraryPath(f.library)
+	if err != nil || filepath.Clean(bound) != filepath.Join(destination, "libraries", f.library) {
+		t.Fatal("restored location did not bind to the new isolated storage root", err)
+	}
 	return &fixture{t: t, s: restored, h: httpapi.New(restored), library: f.library}
 }
 
@@ -86,7 +90,22 @@ func assertNativeOriginal(t *testing.T, f *fixture, id string, version int64, or
 
 func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 	low, high := makeNativeVideo(t, "160x90"), makeNativeVideo(t, "1280x720")
-	f := setup(t)
+	external := t.TempDir()
+	s, err := service.New(service.Config{DataDir: t.TempDir(), StorageRoots: map[string]string{"source-volume": external},
+		AdminToken: testSecret, ReserveBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	f := &fixture{t: t, s: s, h: httpapi.New(s)}
+	var library model.Library
+	decode(t, f.json("POST", "/libraries", "register-native-source", map[string]string{"name": "Native source", "kind": "regular",
+		"storageId": "source-volume", "rootRelativePath": "originals"}, 201), &library)
+	f.library = library.ID
+	bound, err := s.Root.LibraryPath(library.ID)
+	if err != nil || filepath.Clean(bound) != filepath.Join(external, "originals") {
+		t.Fatal("source location did not bind to the synthetic external root", err)
+	}
 	controlUpload, controlBytes := f.upload("control.png", 148, nil)
 	control := f.complete(controlUpload).Asset
 	a := *f.complete(nativeVideoUpload(t, f, "camera.mp4", low, nil)).Asset
@@ -143,6 +162,13 @@ func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 		}
 		assertNativeOriginal(t, instance, a.ID, 2, high)
 		assertNativeOriginal(t, instance, control.ID, 1, controlBytes)
+		var copies int
+		if err := instance.s.DB.DB.QueryRow(`SELECT count(*) FROM asset_records r,json_each(r.data) j WHERE r.id=?
+			AND j.key IN ('id','hash','size','width','height','durationMs','mimeType','probeState','libraryId','fileName',
+			'mediaType','contentVersion','relativePath','storageLayoutVersion','contentMtime','trashed','positionMs','positionContentVersion')`,
+			a.ID).Scan(&copies); err != nil || copies != 0 {
+			t.Fatal("asset metadata retains a copy of native file or playback facts", copies, err)
+		}
 		for i, item := range []struct {
 			data          []byte
 			width, height int

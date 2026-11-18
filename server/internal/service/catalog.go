@@ -299,7 +299,7 @@ func (s *Service) UpdateTags(ctx context.Context, w *Write, id string, revision 
 	if e = protectHumanField(ctx, q, a.ID, "tags"); e != nil {
 		return a, e
 	}
-	return a, store.SaveAsset(ctx, q, a)
+	return a, store.SaveAssetTags(ctx, q, a)
 }
 func (s *Service) validateAssetTags(ctx context.Context, tags []string) ([]string, error) {
 	values, e := cleanStrings(tags, 100, 100)
