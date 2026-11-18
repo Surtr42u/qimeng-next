@@ -41,3 +41,22 @@ func TestProtectionReceiptRequiresIndependentBytesAtPermitTime(t *testing.T){
  f.json("POST","/batches/"+out.Upload.BatchID+"/protections/"+p.ID+"/cleanup-permits","reject-corrupt-independent-copy",service.CleanupPermitInput{InputID:p.Items[0].InputID,ExpectedHash:out.Asset.Hash,SourceSize:out.Asset.Size},409)
  var permits int;if e=f.s.DB.DB.QueryRow("SELECT count(*) FROM source_cleanup_permits").Scan(&permits);e!=nil||permits!=0{t.Fatal("old proof timestamp authorized cleanup after copy corruption")}
 }
+
+func TestIdenticalReplacementBytesCannotSubstituteForOriginalUploadVersion(t *testing.T){
+ f:=setup(t);target,e:=os.MkdirTemp("/dev/shm","qimeng-version-proof-");if e!=nil{t.Skip("isolated tmpfs unavailable")};t.Cleanup(func(){os.RemoveAll(target)})
+ f.s.Config.BackupTargets=map[string]service.BackupTarget{"synthetic":{Path:target,FailureDomain:"synthetic-version-volume"}};f.s.Config.DefaultBackupTarget="synthetic"
+ var targets model.Page[service.BackupTargetInfo];decode(t,f.json("GET","/backup-targets","",nil,200),&targets);if !targets.Items[0].DistinctVolume{t.Skip("test runner has no separate synthetic volume")}
+ u,_:=f.upload("original-version.png",204,nil);original:=f.complete(u)
+ base:="/batches/"+u.BatchID+"/protections";var proof service.BatchProtection
+ decode(t,f.json("POST",base,"before-replacement-proof",struct{}{},202),&proof);proof=awaitProtection(t,f,u.BatchID,proof.ID);if proof.State!="completed"{t.Fatal(proof.ErrorCode)}
+ body:=service.CleanupPermitInput{InputID:original.Upload.InputID,ExpectedHash:original.Asset.Hash,SourceSize:original.Asset.Size}
+ var permit service.CleanupPermit;permitURL:=base+"/"+proof.ID+"/cleanup-permits"
+ decode(t,f.json("POST",permitURL,"actual-version-one-permit",body,201),&permit)
+ other,_:=f.upload("replacement-v2.png",205,map[string]any{"replaceAssetId":original.Asset.ID,"expectedContentVersion":1});_ = f.complete(other)
+ back,_:=f.upload("replacement-v3.png",204,map[string]any{"replaceAssetId":original.Asset.ID,"expectedContentVersion":2});final:=f.complete(back)
+ if original.Upload.PublishedContentVersion!=1||final.Upload.PublishedContentVersion!=3||final.Asset.Hash!=original.Asset.Hash{t.Fatal("synthetic replacement did not reproduce the original bytes under a new version")}
+ f.json("POST",base,"old-input-new-protection",struct{}{},409)
+ f.json("POST",permitURL,"new-permit-for-old-proof",body,409)
+ var replay service.CleanupPermit;decode(t,f.json("POST",permitURL,"actual-version-one-permit",body,201),&replay);if replay.ID!=permit.ID||replay.State!="revoked"{t.Fatal("replayed receipt granted fresh permission for substituted bytes")}
+ decode(t,f.json("GET","/cleanup-permits/"+permit.ID,"",nil,200),&replay);if replay.State!="revoked"{t.Fatal("stale permit still appeared actionable")}
+}

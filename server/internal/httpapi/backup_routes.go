@@ -1,11 +1,22 @@
 package httpapi
 
 import (
+ "bytes"
  "net/http"
  "qimeng.local/next/server/internal/service"
 )
 
 func(a *API)backupRoutes(){
+ a.get("/backups/change-state",func(r *http.Request)(any,error){return a.s.BackupChangeState(r.Context(),principal(r))})
+ a.mux.HandleFunc("GET /api/v1/backups/{id}/author-documents",a.auth(func(w http.ResponseWriter,r *http.Request){
+  data,backup,err:=a.s.BackupAuthorDocuments(r.Context(),principal(r),r.PathValue("id"))
+  if err!=nil{fail(w,err);return}
+  w.Header().Set("Content-Type","text/plain; charset=utf-8")
+  w.Header().Set("X-Content-Type-Options","nosniff")
+  w.Header().Set("Cache-Control","private, no-store")
+  w.Header().Set("Content-Disposition","attachment; filename=authors.md; filename*=UTF-8''%E4%BD%9C%E8%80%85%E8%B5%84%E6%96%99.md")
+  http.ServeContent(w,r,"authors.md",backup.CreatedAt,bytes.NewReader(data))
+ }))
  a.get("/backups",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Backups(r.Context(),principal(r),r.URL.Query().Get("cursor"),n)})
  a.get("/backup-targets",func(r *http.Request)(any,error){return a.s.BackupTargets(r.Context(),principal(r))})
  a.get("/batches/{id}/cleanup-permits",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.CleanupPermits(r.Context(),principal(r),r.PathValue("id"),r.URL.Query().Get("inputId"),r.URL.Query().Get("cursor"),n)})

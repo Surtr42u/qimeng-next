@@ -37,6 +37,7 @@ paths:
   /credentials:
     post:
       operationId: createCredential
+      description: Issues a secret once. The request must omit Idempotency-Key. A lost response requires the owner to revoke the issued credential before issuing another.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CredentialCreate'}}}}
       responses:
         '201': {description: Batch-bound credential, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
@@ -73,6 +74,7 @@ paths:
   /libraries:
     get:
       operationId: listLibraries
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses:
         '200': {description: Libraries, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryPage'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -85,6 +87,11 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /libraries/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getLibrary
+      responses:
+        '200': {description: Current library and index state, content: {application/json: {schema: {$ref: '#/components/schemas/Library'}}}}
+        default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateLibrary
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
@@ -814,6 +821,21 @@ paths:
       responses:
         '201': {description: Consistent database snapshot and original-version manifest; not proof of independent backup, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /backups/change-state:
+    get:
+      operationId: getBackupChangeState
+      description: Owner-only business revision for deciding whether to rotate a local backup generation. Checkpoint creation and download do not themselves change it.
+      responses:
+        '200': {description: Current instance and business revision, content: {application/json: {schema: {type: object, required: [instanceId, businessRevision], properties: {instanceId: {type: string}, businessRevision: {type: string, pattern: '^[0-9]+$'}}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /backups/{id}/author-documents:
+    get:
+      operationId: exportBackupAuthorDocuments
+      description: Download the readable author Markdown from this exact immutable checkpoint. Owner access only.
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Complete UTF-8 author documentation, content: {text/plain: {schema: {type: string}}}}
+        default: {$ref: '#/components/responses/Error'}
   /backups/{id}:
     get:
       operationId: getBackup
@@ -1201,6 +1223,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createAIDelegation
+      description: Returns the new executor secret once. Idempotency-Key is not accepted on this issuance endpoint.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegationPolicy'}}}}
       responses:
         '201': {description: Permission and one-time executor credential, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegationCreated'}}}}
@@ -1849,7 +1872,7 @@ components:
             enabled: {type: boolean}
             revision: {type: integer, format: int64}
             createdAt: {type: string, format: date-time}
-            fileCount: {type: integer, format: int64, minimum: 0, description: Indexed assets outside trash, including disabled libraries}
+            fileCount: {type: integer, format: int64, minimum: 0, description: 'Indexed assets outside trash, including disabled libraries'}
             scanState: {type: string, enum: [idle, scanning, error]}
             latestScanId: {type: string}
     NamingContext:
@@ -2164,6 +2187,7 @@ components:
             state: {type: string, enum: [receiving, staged, ingested, duplicate, cancelled, failed]}
             assetId: {type: string}
             hash: {type: string}
+            publishedContentVersion: {type: integer, format: int64, minimum: 1, description: Version actually published by this upload. Absent before ingestion or when a legacy receipt cannot prove it.}
             errorCode: {type: string}
             errorMessage: {type: string}
             createdAt: {type: string, format: date-time}
@@ -2365,12 +2389,12 @@ components:
         upload: {$ref: '#/components/schemas/UploadSettings'}
     Directory:
       type: object
-      required: [relativePath, name]
-      properties: {relativePath: {type: string}, name: {type: string}}
+      required: [relativePath, name, fileCount]
+      properties: {relativePath: {type: string}, name: {type: string}, fileCount: {type: integer, format: int64, minimum: 0, description: Directly indexed live files in this directory}, hasChildren: {type: boolean, description: Omitted when the bounded child check cannot establish whether a subdirectory exists}}
     DirectoryPage:
       type: object
-      required: [items]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/Directory'}}, nextCursor: {type: string}}
+      required: [items, directFileCount]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Directory'}}, nextCursor: {type: string}, directFileCount: {type: integer, format: int64, minimum: 0, description: Directly indexed files in the queried parent including the library root}}
     Tag:
       type: object
       required: [name, revision, createdAt, updatedAt]
@@ -2447,6 +2471,7 @@ components:
         createdAt: {type: string, format: date-time}
         snapshotHash: {type: string}
         assetCount: {type: integer}
+        businessRevision: {type: string, pattern: '^[0-9]+$', description: Revision captured in the checkpoint. Older checkpoints may omit it.}
         manifestHash: {type: string}
         exportState: {type: string, enum: [not_started, queued, running, completed, failed, interrupted, unavailable]}
         exportError: {type: string, description: Stable non-sensitive failure code; never a filesystem path}
@@ -2487,7 +2512,7 @@ components:
         expectedRevision: {type: integer, format: int64, minimum: 0}
         path: {type: string, maxLength: 4096, description: Owner-entered absolute TXT path within a configured storage root. Empty disables mirroring.}
         mode: {type: string, enum: [master, fragment]}
-        listId: {type: string, description: Selected author list for fragment mode}
+        listId: {type: string, description: Selected author list for fragment mode. Empty follows the most recently added list.}
     AuthorListMirror:
       type: object
       required: [revision, path, mode, state]
@@ -2728,8 +2753,8 @@ components:
       properties: {date: {type: string, format: date}, fileCount: {type: integer, format: int64}}
     LibraryPage:
       type: object
-      required: [items]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/Library'}}, nextCursor: {type: string}}
+      required: [items, totalMatched]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Library'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64, minimum: 0}}
     AuthorPage:
       type: object
       required: [items, totalMatched]

@@ -134,7 +134,7 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
  if u.SourceMtime!=nil{if e=s.Root.Chtimes(uploadPath(u.ID),*u.SourceMtime,*u.SourceMtime);e!=nil{return model.UploadResult{},e}}
  info,e:=s.Root.Stat(uploadPath(u.ID));if e!=nil{return model.UploadResult{},e};modified:=info.ModTime().UTC();a.ContentMtime=&modified
  j:=fileIntent{ID:digest([]byte("publish:"+u.ID))[:32],Kind:operation,Source:uploadPath(u.ID),Target:assetPath(a),Retired:"retired/"+u.ID,UploadID:u.ID,Before:before,After:a}
- a,e=s.runFile(ctx,w,j);if e!=nil{return model.UploadResult{},e};u.State="ingested";u.AssetID=a.ID;return model.UploadResult{Upload:u,Asset:&a},nil
+ a,e=s.runFile(ctx,w,j);if e!=nil{return model.UploadResult{},e};u.State="ingested";u.AssetID=a.ID;u.PublishedContentVersion=a.ContentVersion;return model.UploadResult{Upload:u,Asset:&a},nil
 }
 func safeNote(note string)string{v:=strings.Map(func(r rune)rune{if r<32||strings.ContainsRune("/\\<>:\"|?*\ufffd",r){return '_'};return r},note);v=strings.Trim(v," .");if len([]rune(v))>80{v=string([]rune(v)[:80])};return v}
 func(s *Service)CancelUpload(ctx context.Context,w *Write,id string)error{

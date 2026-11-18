@@ -4,8 +4,6 @@ import (
  "context"
  "database/sql"
  "errors"
- "io"
- "os"
  "path"
  "regexp"
  "strings"
@@ -19,17 +17,10 @@ import (
 type LibraryUpdate struct{ExpectedRevision int64 `json:"expectedRevision"`;Name *string `json:"name"`;Enabled *bool `json:"enabled"`}
 func(s *Service)UpdateLibrary(ctx context.Context,w *Write,id string,in LibraryUpdate)(model.Library,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Library{},e};l,e:=s.library(ctx,id);if e!=nil{return l,e};if l.Revision!=in.ExpectedRevision{return l,Conflict(l.Revision)}
- if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>120{return l,Fail(400,"invalid_library","库名称无效。")};l.Name=v};if in.Enabled!=nil{l.Enabled=*in.Enabled};l.Revision++;raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};_,e=q.ExecContext(ctx,"UPDATE libraries SET name=?,data=? WHERE id=?",l.Name,raw,l.ID);return l,e
-}
-type Directory struct{RelativePath string `json:"relativePath"`;Name string `json:"name"`}
-func(s *Service)Directories(ctx context.Context,libraryID,parent,cursor string,limit int)(model.Page[Directory],error){
- if _,e:=s.library(ctx,libraryID);e!=nil{return model.Page[Directory]{},e};if !domain.ValidMediaPath(parent){return model.Page[Directory]{},Fail(400,"invalid_path","目录路径无效。")};n,e:=limited(limit,50);if e!=nil{return model.Page[Directory]{},e};key:="directories:"+libraryID+":"+parent;offset,e:=pageOffset(cursor,key);if e!=nil{return model.Page[Directory]{},e}
- rootPath:=path.Join("libraries",libraryID,parent);if e=s.safe(rootPath);e!=nil{return model.Page[Directory]{},e};f,e:=s.Root.Open(rootPath);if e!=nil{return model.Page[Directory]{},e};defer f.Close();out:=[]Directory{};skipped:=0
- for len(out)<n+1{entries,e:=f.ReadDir(100);for _,entry:=range entries{if entry.Name()==".qimeng-internal"||entry.Type()&os.ModeSymlink!=0||!entry.IsDir(){continue};if skipped<offset{skipped++;continue};out=append(out,Directory{RelativePath:path.Join(parent,entry.Name()),Name:entry.Name()});if len(out)==n+1{break}};if e!=nil&&!errors.Is(e,io.EOF){return model.Page[Directory]{},e};if errors.Is(e,io.EOF)||len(entries)==0{break}}
- return paged(out,n,offset,key),nil
+ if in.Name!=nil{v:=strings.TrimSpace(*in.Name);if v==""||len(v)>120{return l,Fail(400,"invalid_library","库名称无效。")};l.Name=v};if in.Enabled!=nil{l.Enabled=*in.Enabled};l.Revision++;raw,e:=store.Encode(l);if e!=nil{return l,e};q,e:=w.Q();if e!=nil{return l,e};if _,e=q.ExecContext(ctx,"UPDATE libraries SET name=?,data=? WHERE id=?",l.Name,raw,l.ID);e!=nil{return l,e};return store.Get[model.Library](ctx,q,libraryProjection+"WHERE l.id=?",id)
 }
 func(s *Service)CreateDirectory(ctx context.Context,w *Write,libraryID,relative string)(Directory,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return Directory{},e};l,e:=s.library(ctx,libraryID);if e!=nil{return Directory{},e};if !l.Enabled{return Directory{},Fail(409,"library_disabled","目标库已停用。")};if relative==""||!domain.ValidMediaPath(relative){return Directory{},Fail(400,"invalid_path","目录路径无效。")};full:="libraries/"+libraryID+"/"+relative;if e=s.safe(full);e!=nil{return Directory{},e};if e=s.Root.MkdirAll(full,0700);e!=nil{return Directory{},e};if e=s.syncParent(full);e!=nil{return Directory{},e};return Directory{RelativePath:relative,Name:path.Base(relative)},nil
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return Directory{},e};l,e:=s.library(ctx,libraryID);if e!=nil{return Directory{},e};if !l.Enabled{return Directory{},Fail(409,"library_disabled","目标库已停用。")};if relative==""||!domain.ValidMediaPath(relative){return Directory{},Fail(400,"invalid_path","目录路径无效。")};full:="libraries/"+libraryID+"/"+relative;if e=s.safe(full);e!=nil{return Directory{},e};if e=s.Root.MkdirAll(full,0700);e!=nil{return Directory{},e};if e=s.syncParent(full);e!=nil{return Directory{},e};dir:=Directory{RelativePath:relative,Name:path.Base(relative)};e=s.DB.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM assets WHERE library_id=? AND trashed=0 AND "+assetParentDir+"=?",libraryID,relative).Scan(&dir.FileCount);return dir,e
 }
 type Tag struct{Name string `json:"name"`;Revision int64 `json:"revision"`;CreatedAt string `json:"createdAt"`;UpdatedAt string `json:"updatedAt"`}
 func(s *Service)TagVocabulary(ctx context.Context,cursor string,limit int)(model.Page[Tag],error){n,e:=limited(limit,100);if e!=nil{return model.Page[Tag]{},e};o,e:=pageOffset(cursor,"tag-vocabulary");if e!=nil{return model.Page[Tag]{},e};a,e:=store.List[Tag](ctx,s.DB.DB,"SELECT json_object('name',name,'revision',revision,'createdAt',created_at,'updatedAt',updated_at) FROM tags WHERE deleted=0 ORDER BY name LIMIT ? OFFSET ?",n+1,o);return paged(a,n,o,"tag-vocabulary"),e}

@@ -18,7 +18,7 @@ var ErrUnavailable=errors.New("logical storage is unavailable")
 type location struct{root *os.Root;absolute,configured string}
 type library struct{storageID,relative string}
 type Info struct{ID string `json:"id"`;Available bool `json:"available"`}
-type Root struct{mu sync.RWMutex;local *os.Root;locations map[string]location;libraries map[string]library;uploads map[string]string}
+type Root struct{mu sync.RWMutex;local *os.Root;locations map[string]location;libraries map[string]library;detached map[string]library;uploads map[string]string}
 func Open(dataDir string,configured map[string]string)(*Root,error){
  absolute,e:=filepath.EvalSymlinks(dataDir);if e!=nil{return nil,e};absolute,e=filepath.Abs(absolute);if e!=nil{return nil,e};local,e:=os.OpenRoot(absolute);if e!=nil{return nil,e};r:=&Root{local:local,locations:map[string]location{"data":{root:local,absolute:absolute,configured:filepath.Clean(dataDir)}},libraries:map[string]library{},uploads:map[string]string{}}
  for id,value:=range configured{if id=="data"||id==""||strings.ContainsAny(id,"/\\:\x00")||len(id)>64||!filepath.IsAbs(value){r.Close();return nil,errors.New("invalid logical storage configuration")};root,e:=os.OpenRoot(value);if e!=nil{r.Close();return nil,ErrUnavailable};resolved,e:=filepath.EvalSymlinks(value);if e!=nil{root.Close();r.Close();return nil,e};r.locations[id]=location{root:root,absolute:resolved,configured:filepath.Clean(value)}}
@@ -36,9 +36,20 @@ func(r *Root)RegisterLibrary(id,storageID,relative string)error{
 }
 func(r *Root)RegisterUpload(id,libraryID string){r.mu.Lock();defer r.mu.Unlock();r.uploads[id]=libraryID}
 func(r *Root)UnregisterLibrary(id string){r.mu.Lock();defer r.mu.Unlock();delete(r.libraries,id)}
+func(r *Root)DetachLibrary(id string,retainUploads bool){
+ r.mu.Lock();defer r.mu.Unlock()
+ if lib,ok:=r.libraries[id];ok&&retainUploads{if r.detached==nil{r.detached=map[string]library{}};r.detached[id]=lib}
+ delete(r.libraries,id)
+}
+func(r *Root)RegisterDetachedUploads(id,storageID,relative string)error{
+ if !cleanRelative(relative)||id==""||strings.ContainsAny(id,"/\\:\x00"){return fs.ErrInvalid}
+ if storageID=="data"{relative="libraries/"+id}
+ r.mu.Lock();defer r.mu.Unlock()
+ if r.detached==nil{r.detached=map[string]library{}};r.detached[id]=library{storageID,relative};return nil
+}
 func(r *Root)resolve(name string)(location,string,error){
  if !cleanRelative(name){return location{},"",fs.ErrInvalid};r.mu.RLock();defer r.mu.RUnlock();local:=r.locations["data"];parts:=strings.Split(name,"/")
- route:=func(id string,rest []string)(location,string,error){lib,ok:=r.libraries[id];if !ok{return location{},"",ErrUnavailable};l,ok:=r.locations[lib.storageID];if !ok||l.root==nil{return location{},"",ErrUnavailable};relative:=path.Join(append([]string{lib.relative},rest...)...);parts:=strings.Split(relative,"/");for i:=range parts{info,e:=l.root.Lstat(strings.Join(parts[:i+1],"/"));if errors.Is(e,os.ErrNotExist){break};if e!=nil{return location{},"",e};if info.Mode()&os.ModeSymlink!=0{return location{},"",fs.ErrPermission}};return l,relative,nil}
+ route:=func(id string,rest []string)(location,string,error){lib,ok:=r.libraries[id];if !ok&&len(parts)==2&&(parts[0]=="uploads"||parts[0]=="retired"){lib,ok=r.detached[id]};if !ok{return location{},"",ErrUnavailable};l,ok:=r.locations[lib.storageID];if !ok||l.root==nil{return location{},"",ErrUnavailable};relative:=path.Join(append([]string{lib.relative},rest...)...);parts:=strings.Split(relative,"/");for i:=range parts{info,e:=l.root.Lstat(strings.Join(parts[:i+1],"/"));if errors.Is(e,os.ErrNotExist){break};if e!=nil{return location{},"",e};if info.Mode()&os.ModeSymlink!=0{return location{},"",fs.ErrPermission}};return l,relative,nil}
  if len(parts)>=2&&parts[0]=="libraries"{if _,ok:=r.libraries[parts[1]];ok{return route(parts[1],parts[2:])}}
  if len(parts)>=2&&parts[0]=="library-trash"{return route(parts[1],append([]string{".qimeng-internal","trash"},parts[2:]...))}
  if len(parts)==2&&(parts[0]=="uploads"||parts[0]=="retired"){

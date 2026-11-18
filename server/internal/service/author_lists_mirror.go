@@ -56,7 +56,7 @@ func(s *Service)UpdateAuthorListMirror(ctx context.Context,w *Write,in AuthorLis
   base:=filepath.Base(in.Path)
   if !filepath.IsAbs(in.Path)||filepath.Clean(in.Path)!=in.Path||len(in.Path)>4096||!domain.ValidName(base)||!strings.EqualFold(filepath.Ext(base),".txt"){return m,Fail(400,"invalid_mirror_path","镜像须使用受信存储根内的绝对 TXT 路径。")}
   if _,_,e=s.Root.ResolveLibraryPath(filepath.Dir(in.Path));e!=nil{return m,Fail(400,"invalid_mirror_path","镜像须位于已配置的外部存储根内。")}
-  if in.Mode=="fragment"{if _,e=s.AuthorList(ctx,in.ListID);e!=nil{return m,e}}
+  if in.Mode=="fragment"&&in.ListID!=""{if _,e=s.AuthorList(ctx,in.ListID);e!=nil{return m,e}}
   state="pending"
  }
  if in.Mode=="master"||in.Path==""{in.ListID=""}
@@ -80,7 +80,10 @@ func(s *Service)publishPendingAuthorMirror(ctx context.Context)error{
  tx,e:=s.DB.DB.BeginTx(ctx,&sql.TxOptions{ReadOnly:true});if e!=nil{return e};defer tx.Rollback()
  m,e:=readAuthorMirror(ctx,tx);if e!=nil||m.State!="pending"{return e}
  var content string
- if m.Mode=="master"{content,e=renderMasterList(ctx,tx)}else{var list authorListRecord;list,e=authorListRecordAt(ctx,tx,m.ListID);if e==nil{content,e=renderAuthorList(ctx,tx,list)}}
+ if m.Mode=="master"{content,e=renderMasterList(ctx,tx)}else{var list authorListRecord
+  if m.ListID==""{list,e=store.Get[authorListRecord](ctx,tx,"SELECT data FROM author_lists ORDER BY position DESC LIMIT 1")}else{list,e=authorListRecordAt(ctx,tx,m.ListID)}
+  if e==nil{content,e=renderAuthorList(ctx,tx,list)}
+ }
  if endErr:=tx.Commit();endErr!=nil{return endErr}
  // A late export cannot publish to a superseded owner path or overwrite newer
  // business data. The business write has already committed before this worker.

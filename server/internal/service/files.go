@@ -99,7 +99,7 @@ func(s *Service)commitFile(ctx context.Context,q store.Querier,j *fileIntent)err
  }
  var receipt any=j.After
  if j.UploadID!=""{
-  u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};u.AssetID=j.After.ID;u.State="ingested";u.ErrorCode="";u.ErrorMessage="";if e=store.SaveUpload(ctx,q,u);e!=nil{return e}
+  u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};u.AssetID=j.After.ID;u.PublishedContentVersion=j.After.ContentVersion;u.State="ingested";u.ErrorCode="";u.ErrorMessage="";if e=store.SaveUpload(ctx,q,u);e!=nil{return e}
   if u.BatchID!=""{if e=s.refreshBatch(ctx,q,u.BatchID);e!=nil{return e}}
   receipt=model.UploadResult{Upload:u,Asset:&j.After}
  }

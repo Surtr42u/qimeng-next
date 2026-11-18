@@ -4,6 +4,8 @@
 
 ## 身份与错误
 
+本人在 `POST /credentials` 和 `POST /ai/delegations` 签发的秘密只显示一次。这两个端点拒绝幂等键，从而避免通用操作回执保存秘密。开发版中曾经带键签发且确有明文回执的凭据在升级时撤销，日常无键签发的凭据继续按原期限使用。
+
 `GET /instance` 返回实例身份和明确能力。客户端缓存、队列和任务绑定实例 ID，不只绑定 URL。`POST /sessions`用`password`或可信`token`二选一换取独立会话；登录密码仅在此交换，不能充当API Bearer。每台设备会话独立，单设备退出不撤销其他设备。API接受Bearer，同源Web接受HttpOnly、SameSite=Strict cookie。cookie写入检查Origin。媒体原件使用同源cookie或带Bearer的客户端流式请求，支持Range，不把token放URL。
 
 错误为 `{code,message,currentRevision?}`。权限拒绝 403；对象或内容变化、重复、名称冲突 409；不支持格式 415；有界上传/空间不足为 429/507。错误不能被客户端转成空列表或保存成功。
@@ -39,6 +41,8 @@ COS 分区由实际关联的 COS 作者决定，不按库类型猜测。COS 库�
 `GET/PUT /settings`保留原设置页的扫描与上传语义。默认`scan.workers=0`自动、`scan.thumbEdge=800`预留、`upload.autoAccept=true`；PUT需完整三项及`expectedRevision`，遗漏不以零值替代。自动并发按可用CPU及内存保守取1–8库，手动1–32；队列最多64个活动任务，同库不能重复排队。调整只影响后续准入，不打断运行任务；等待和运行均可取消。上传开关关闭后拒绝新会话、分片与新发布，已接收内容和已完成回执保留，取消/查询仍可用。
 
 缩略图`size=sm|md|lg`对应长边256/512/1024，缺省md。预留`thumbEdge`保存不改变此管线。缓存包含内容版本、策略与尺寸，ETag取实际缩略图字节摘要；旧版本或原件已变拒绝返回另一内容，原件出口始终逐字节直出。
+
+JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规则。视频优先用内嵌封面，其次从时长 35% 处取代表帧。如果全部 100 个采样像素都接近黑色或白色，再依次尝试 25%、45%、15%、55%、5%、65% 和起点。时长未知时只读起点。服务在同一超时和进程预算内完成抽取，保留可读取的第一张极端帧供全黑或全白作品使用。
 
 浏览回顾返回服务端日历窗口`fromDay/toDay/previousFromDay/previousToDay`和本期/前期`viewCount/previousViewCount`，不让客户端猜前期。`all`起点和前期日期为空串；固定窗口前期等长且紧邻，本期或前期无浏览都不可比较。`totalSeconds/imageSeconds/animatedSeconds/videoSeconds`来自日聚合，三类型互斥，包含只有停留而没有新增浏览的日期；视频项仍是详情停留。
 
@@ -77,6 +81,8 @@ COS 分区由实际关联的 COS 作者决定，不按库类型猜测。COS 库�
 手动上传与 AI 共同使用 `/libraries/{id}/naming/context`、`suggestions` 和 `preview`。预览不占号，返回作用域摘要和规范名称；最终发布再次核验。空组图使用同一首作品分配器，补页从最大页之后追加。当前普通上传的同集合条目须按选定顺序 complete，前项失败待处理时后项不越过；可并发传输字节，客户端不计算页码。
 
 ## 媒体与备份
+
+浏览器两代资料目录以 `GET /backups/change-state` 返回的实例身份与 `businessRevision` 判断是否有新业务内容。版本为十进制字符串，创建快照、导出和下载可反复执行。备份记录中的同名版本读取自该份快照，保存成功时应记录此值，避免覆盖快照之后发生的更改。`GET /backups/{id}/author-documents` 从该快照一次导出 UTF-8 的《作者资料.md》，包括作者、简介原文/译文、来源、核实状态与关联作品，供维护目录直接保存。
 
 长期 AI 授权的 `canRecycleSources` 缺省关闭，只在同时允许新增且选定媒体库时可启用。派生接收任务仅在这一明确授权下获得 `source.cleanup`；作者资料任务没有该权限。服务器许可与执行器本地回收授权必须同时成立，不以 `ingest` 或 `organize` 推导删除权。
 

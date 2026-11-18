@@ -52,6 +52,9 @@ func New(config Config)(*Service,error){
  ctx:=context.Background()
  libraries,err:=store.List[model.Library](ctx,db.DB,"SELECT data FROM libraries ORDER BY id");if err!=nil{s.Close();return nil,err}
  for _,library:=range libraries{if err=root.RegisterLibrary(library.ID,library.StorageID,library.RootRelativePath);err!=nil{s.Close();return nil,err}}
+ detached,err:=db.DB.QueryContext(ctx,"SELECT library_id,storage_id,relative_path FROM detached_upload_roots");if err!=nil{s.Close();return nil,err}
+ for detached.Next(){var id,storageID,relative string;if err=detached.Scan(&id,&storageID,&relative);err==nil{err=root.RegisterDetachedUploads(id,storageID,relative)};if err!=nil{detached.Close();s.Close();return nil,err}}
+ err=detached.Err();detached.Close();if err!=nil{s.Close();return nil,err}
  uploadRows,err:=db.DB.QueryContext(ctx,"SELECT id,json_extract(data,'$.libraryId') FROM uploads");if err!=nil{s.Close();return nil,err};for uploadRows.Next(){var id,libraryID string;if err=uploadRows.Scan(&id,&libraryID);err!=nil{uploadRows.Close();s.Close();return nil,err};root.RegisterUpload(id,libraryID)};err=uploadRows.Err();uploadRows.Close();if err!=nil{s.Close();return nil,err}
  s.InstanceID,err=store.Get[string](ctx,db.DB,"SELECT json_quote(value) FROM settings WHERE key='instance_id'")
  if errors.Is(err,sql.ErrNoRows){s.InstanceID=ID();_,err=db.DB.Exec("INSERT INTO settings(key,value) VALUES('instance_id',?)",s.InstanceID)}

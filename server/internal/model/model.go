@@ -10,6 +10,9 @@ type Library struct {
  Enabled bool `json:"enabled"`
  StorageID string `json:"storageId"`
  RootRelativePath string `json:"rootRelativePath"`
+ FileCount int64 `json:"fileCount"`
+ ScanState string `json:"scanState"`
+ LatestScanID string `json:"latestScanId,omitempty"`
  Revision int64 `json:"revision"`
  CreatedAt time.Time `json:"createdAt"`
 }
@@ -145,6 +148,7 @@ type Upload struct {
  Offset int64 `json:"offset"`
  State string `json:"state"`
  AssetID string `json:"assetId,omitempty"`
+ PublishedContentVersion int64 `json:"publishedContentVersion,omitempty"`
  Hash string `json:"hash,omitempty"`
  ErrorCode string `json:"errorCode,omitempty"`
  ErrorMessage string `json:"errorMessage,omitempty"`

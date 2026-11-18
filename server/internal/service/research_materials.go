@@ -6,7 +6,6 @@ import (
  "database/sql"
  "encoding/json"
  "errors"
- "image"
  "image/jpeg"
  "io"
  "os"
@@ -80,12 +79,7 @@ func(s *Service)UploadResearchMaterials(ctx context.Context,p model.Principal,id
 
 func(s *Service)researchFrame(ctx context.Context,source,mime string,width,height int,position float64)([]byte,error){
  if width<1||height<1||int64(width)*int64(height)>40_000_000{return nil,Fail(422,"research_image_limit","画面超过研究预览解码预算，原件仍可正常保留。")}
- if builtinImage(mime){
-  f,e:=s.Root.Open(source);if e!=nil{return nil,e};src,_,e:=image.Decode(f);f.Close();if e!=nil{return nil,Fail(422,"research_decode_failed","研究预览解码失败，原件保留。")}
-  targetWidth,targetHeight:=width,height;if width>640||height>640{if width>=height{targetWidth=640;targetHeight=max(1,height*640/width)}else{targetHeight=640;targetWidth=max(1,width*640/height)}}
-  dst:=image.NewRGBA(image.Rect(0,0,targetWidth,targetHeight));draw.ApproxBiLinear.Scale(dst,dst.Bounds(),src,src.Bounds(),draw.Src,nil)
-  var output bytes.Buffer;if e=jpeg.Encode(&output,dst,&jpeg.Options{Quality:85});e!=nil{return nil,e};return output.Bytes(),nil
- }
+ if builtinImage(mime){return s.scaledStill(source,mime,640,85,draw.ApproxBiLinear)}
  ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");if ffmpeg==""{return nil,Fail(501,"media_tool_unavailable","研究预览需要FFmpeg。")};absolute,e:=s.Root.AbsolutePath(source);if e!=nil{return nil,e}
  demuxer:=mediaDemuxer(mime);if demuxer==""{return nil,Fail(415,"media_unsupported","此格式没有受限研究通道。")};deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-threads","2","-max_alloc","67108864","-protocol_whitelist","file,pipe","-f",demuxer,"-ss",strconv.FormatFloat(position,'f',6,64),"-i",absolute,"-frames:v","1","-vf","scale=640:640:force_original_aspect_ratio=decrease","-threads","1","-f","image2pipe","-vcodec","mjpeg","pipe:1");configureMediaProcess(cmd)
  output:=&boundedOutput{limit:2<<20};cmd.Stdout=output;cmd.Stderr=io.Discard;if e=cmd.Run();e!=nil{return nil,Fail(422,"research_decode_failed","研究抽帧失败或超时，原件保留。")};if _,e=jpeg.DecodeConfig(bytes.NewReader(output.Bytes()));e!=nil{return nil,e};return output.Bytes(),nil

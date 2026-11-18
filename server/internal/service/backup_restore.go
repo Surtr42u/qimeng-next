@@ -41,7 +41,7 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
   if file.Kind=="snapshot"{
    snapshot,e=store.OpenDatabase(filepath.Join(destination,"restore.sqlite"),store.SnapshotDatabase);if e!=nil{return e};if e=store.ValidateBackupSchema(ctx,snapshot);e!=nil{return e}
    libraries,e:=store.List[model.Library](ctx,snapshot,"SELECT data FROM libraries");if e!=nil{return e};for _,library:=range libraries{if !safeBackupID(library.ID){return errors.New("invalid library identity in backup")};if e=root.RegisterLibrary(library.ID,"data","");e!=nil{return e};if e=root.MkdirAll("libraries/"+library.ID,0700);e!=nil{return e}}
-   uploads,e:=snapshot.QueryContext(ctx,"SELECT id,json_extract(data,'$.libraryId') FROM uploads");if e!=nil{return e};for uploads.Next(){var id,libraryID string;if e=uploads.Scan(&id,&libraryID);e!=nil{uploads.Close();return e};if !safeBackupID(id)||!safeBackupID(libraryID){uploads.Close();return errors.New("invalid upload identity in backup")};root.RegisterUpload(id,libraryID)};e=uploads.Err();uploads.Close();if e!=nil{return e}
+   uploads,e:=snapshot.QueryContext(ctx,"SELECT u.id,json_extract(u.data,'$.libraryId'),l.id IS NOT NULL FROM uploads u LEFT JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId')");if e!=nil{return e};for uploads.Next(){var id,libraryID string;var active bool;if e=uploads.Scan(&id,&libraryID,&active);e!=nil{uploads.Close();return e};if !safeBackupID(id)||!safeBackupID(libraryID){uploads.Close();return errors.New("invalid upload identity in backup")};if active{root.RegisterUpload(id,libraryID)}};e=uploads.Err();uploads.Close();if e!=nil{return e}
   };return nil
  }
  manifest,e:=archive.Read(ctx,io.TeeReader(input,hash),output);if e!=nil{return result,e};result.ArchiveHash=hex.EncodeToString(hash.Sum(nil));if options.ExpectedSHA256!=""&&strings.ToLower(options.ExpectedSHA256)!=result.ArchiveHash{return result,errors.New("archive checksum differs from expected backup")}
@@ -52,6 +52,7 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
  for _,statement:=range []string{
   "DELETE FROM credentials","DELETE FROM idempotency","DELETE FROM file_intents","DELETE FROM delegated_tasks",
   "DELETE FROM author_list_mirror",
+  "DELETE FROM detached_upload_roots",
   "UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
   "UPDATE author_tasks SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='authorized'",
   "UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",

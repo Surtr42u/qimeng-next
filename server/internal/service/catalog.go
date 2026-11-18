@@ -14,12 +14,11 @@ import (
  "qimeng.local/next/server/internal/store"
 )
 
-func(s *Service)Libraries(ctx context.Context)(model.Page[model.Library],error){a,e:=store.List[model.Library](ctx,s.DB.DB,"SELECT data FROM libraries ORDER BY name,id LIMIT 100");return model.Page[model.Library]{Items:a},e}
 func(s *Service)CreateLibrary(ctx context.Context,w *Write,name,kind string,location ...string)(model.Library,error){
  if err:=Authorize(w.Principal,"admin","");err!=nil{return model.Library{},err}
  name=strings.TrimSpace(name);if name==""||len(name)>120||(kind!="regular"&&kind!="cos"){return model.Library{},Fail(400,"invalid_library","库名称或分类无效。")}
  storageID,relative:="data","";if len(location)>0&&location[0]!=""{storageID=location[0]};if len(location)>1{relative=location[1]};if !domain.ValidMediaPath(relative){return model.Library{},Fail(400,"invalid_path","库位置须为受信逻辑存储根内的相对目录。")}
- l:=model.Library{ID:w.ID("library"),Name:name,Kind:kind,Enabled:true,StorageID:storageID,RootRelativePath:relative,Revision:1,CreatedAt:time.Now().UTC()};if storageID=="data"{l.RootRelativePath="libraries/"+l.ID}
+ l:=model.Library{ID:w.ID("library"),Name:name,Kind:kind,Enabled:true,StorageID:storageID,RootRelativePath:relative,ScanState:"idle",Revision:1,CreatedAt:time.Now().UTC()};if storageID=="data"{l.RootRelativePath="libraries/"+l.ID}
  if e:=s.Root.RegisterLibrary(l.ID,l.StorageID,l.RootRelativePath);e!=nil{return l,Fail(409,"storage_registration_conflict","逻辑存储未配置、路径不可用或与已登记库重叠。")}
  w.rollback=append(w.rollback,func(){s.Root.UnregisterLibrary(l.ID)})
  if err:=s.Root.MkdirAll("libraries/"+l.ID,0700);err!=nil{return l,err}

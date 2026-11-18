@@ -17,6 +17,7 @@ type Backup struct{
  State string `json:"state"`
  CreatedAt time.Time `json:"createdAt"`
  SnapshotHash string `json:"snapshotHash"`
+ BusinessRevision string `json:"businessRevision,omitempty"`
  AssetCount int `json:"assetCount"`
  ManifestHash string `json:"manifestHash"`
  ExportState string `json:"exportState"`
@@ -42,6 +43,7 @@ func(s *Service)createBackupCheckpoint(ctx context.Context,w *Write)(Backup,erro
   if _,e=s.DB.DB.ExecContext(ctx,"VACUUM INTO ?",filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)));e!=nil{return b,e}
  }else if e!=nil{return b,e}
  snapshotDB,e:=store.OpenDatabase(filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)),store.SnapshotDatabase);if e!=nil{return b,e};defer snapshotDB.Close()
+ if e=snapshotDB.QueryRowContext(ctx,"SELECT revision FROM backup_business_state WHERE id=1").Scan(&b.BusinessRevision);e!=nil{return b,e}
  assets,e:=store.List[model.Asset](ctx,snapshotDB,"SELECT data FROM assets ORDER BY id");if e!=nil{return b,e};entries:=make([]backupEntry,0,len(assets));for _,a:=range assets{entries=append(entries,backupEntry{a.ID,a.ContentVersion,a.Revision,assetPath(a),a.Hash,a.Size})}
  b.SnapshotHash,_,e=s.hashFile(snapshot);if e!=nil{return b,e};manifest,e:=json.Marshal(struct{InstanceID,SnapshotHash string;Entries []backupEntry}{s.InstanceID,b.SnapshotHash,entries});if e!=nil{return b,e};b.ManifestHash=digest(manifest);b.AssetCount=len(entries)
  f,e:=s.Root.OpenFile(directory+"/manifest.json",os.O_WRONLY|os.O_CREATE|os.O_TRUNC,0600);if e!=nil{return b,e};if _,e=f.Write(manifest);e!=nil{f.Close();return b,e};if e=f.Sync();e!=nil{f.Close();return b,e};if e=f.Close();e!=nil{return b,e}
