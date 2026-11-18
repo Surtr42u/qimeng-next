@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"qimeng.local/next/server/internal/service"
-	"time"
 	"qimeng.local/next/server/internal/transport/generated"
+	"time"
 )
 
 func (a *API) GetResearchProviderContext(w http.ResponseWriter, r *http.Request) {

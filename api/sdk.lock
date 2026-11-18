@@ -251,6 +251,7 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2ProfileBlockPlan.kt": "2cd827fbaa9c3e8409d7a412c01a882ad8b16cc9ee2c48aaf391d79f3a100bdd",
     "api/generated/python/operations.json": "9e5d0f8e3c6b9bb29787fe61c75c2d312d8b8db47ecd03b843f8cae3df322ba9",
     "server/internal/transport/generated/api.gen.go": "d3aed585118872846c67fb920324ae544388b788779cca50b4886c22b1167abd",
+    "server/internal/transport/generated/request_rules.gen.go": "a3760c3c9e70ba4a03424b7bb565afbcbdc55773c84eab9779250858c7ca140d",
     "web/src/api/generated/schema.d.ts": "4f5b4aa1249c4ce7c7ae6c86444e01c23422db0eb3baa003ed8d9e294a21e87c"
   }
 }
