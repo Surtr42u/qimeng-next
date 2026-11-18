@@ -1019,7 +1019,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     put:
       operationId: setBatchInputs
-      description: Register and seal the complete original selection before any explicit-batch upload. Stable input identities and order remain immutable; missing uploads stay visible and cannot count as completed. A new selection uses a new batch.
+      description: Register the complete ordered selection before transfer. The server records a terminal failed result for each known empty file or known unsupported file type at sealing. All other inputs proceed independently. The batch report and task context return the stable input identities, dispositions and reasons. A new selection uses a new batch.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BatchInputsSet'}}}}
       responses:
@@ -3135,7 +3135,7 @@ components:
         nameState: {type: string, enum: [known, unavailable], default: known, description: known requires a real originalFileName; unavailable must omit it and retain the selected input}
         originalFileName: {type: string, minLength: 1, maxLength: 1024}
         sourceRelativePath: {type: string, maxLength: 4096}
-        size: {type: integer, format: int64, minimum: 1, description: Omit only when the trusted picker cannot determine the source length yet}
+        size: {type: integer, format: int64, minimum: 0, description: Known source byte length. Zero records an empty input. Omit only when the trusted picker cannot determine the length.}
         expectedHash: {type: string, pattern: '^[0-9a-fA-F]{64}$'}
     BatchInput:
       allOf:
@@ -3147,7 +3147,7 @@ components:
             state: {type: string, enum: [pending, receiving, staged, ingested, duplicate, cancelled, failed]}
             uploadId: {type: string}
             assetId: {type: string}
-            errorCode: {type: string}
+            errorCode: {type: string, description: A terminal pre-transfer failure has state failed and no uploadId or assetId. empty_input records a known zero-byte file. unsupported_media records a known unsupported file extension.}
     BatchInputsSet:
       type: object
       required: [expectedManifestRevision, inputs]
