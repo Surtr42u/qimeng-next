@@ -549,11 +549,13 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateAsset
+      description: Ordered sourceIds and characterIds identify the selected terms. Each selected character also requires its parent source. For a dimension without linked terms, compatibility text is retained without guessing an identity. Conflicting display text for linked identities returns taxonomy_ids_required. Change or clear the corresponding IDs explicitly.
       parameters:
         - {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 8, maxLength: 128}, description: Required when newAuthorNames is non-empty so author creation and relationship replacement share one replay identity}
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetUpdate'}}}}
       responses:
         '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        '409': {description: 'Revision or relationship conflict, including taxonomy_ids_required when supplied text disagrees with linked terms', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         default: {$ref: '#/components/responses/Error'}
     delete:
       operationId: trashAsset
