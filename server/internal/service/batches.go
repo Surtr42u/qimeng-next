@@ -101,7 +101,11 @@ func (s *Service) BatchDetail(ctx context.Context, p model.Principal, id string)
 	if e != nil {
 		return model.BatchDetail{}, e
 	}
-	return model.BatchDetail{Batch: b, Inputs: inputs, Items: items, Plans: plans}, nil
+	executor, e := s.batchExecutorStatus(ctx, s.DB.DB, b)
+	if e != nil {
+		return model.BatchDetail{}, e
+	}
+	return model.BatchDetail{Batch: b, Inputs: inputs, Items: items, Plans: plans, ExecutorStatus: executor}, nil
 }
 func (s *Service) refreshBatch(ctx context.Context, q store.Querier, id string) error {
 	b, e := store.Get[model.Batch](ctx, q, "SELECT data FROM batches WHERE id=?", id)

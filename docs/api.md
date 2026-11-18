@@ -152,6 +152,10 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 ## 上传与智能批次
 
+手机或 Web 可从 `GET /batches/{id}` 的 `executorStatus` 查看智能批次的停等情况。部署未配置且没有适用的接收整理授权时显示 `not_configured`。原始清单仍在传输或当前没有可认领的输入时显示 `not_ready`。已有就绪输入显示 `awaiting_claim`，已认领显示 `claimed`。来源 `deployment`、`batch`、`queue`、`lease` 分别表示部署配置、批次记录、待认领队列和租约。只有 `source=worker` 附服务端接收实际状态变化的 `reportedAt`。已过期或撤销的租约显示 `lease_inactive`。普通、已完成、已取消及没有剩余工作的部分批次省略此状态。
+
+已认领智能批次的受限执行器通过 `PUT /ai/delegated-tasks/{id}/intake-status` 记录明确的暂停或恢复。`paused` 只能携带宿主不可用、缺少许可、预算用尽、需要处理或待核对回执对应的固定原因。恢复使用 `claimed` 并省略原因。上报使用当前 `generation`、`batchRevision`、`expectedStatusRevision` 和稳定幂等键，应答丢失时沿用原键及原请求。状态修订或业务修订冲突时重读批次。换代后及业务推进后，旧观察只作为原操作回执保留。读取状态不刷新时间，重复同态不增加状态修订；服务照常依据各输入和发布回执计算业务完成情况。此写入口只供可信执行器使用。[执行状态实现](../server/internal/service/intake_executor_status.go)
+
 标准 CLI 与 MCP 的 `task.context` 将 Go 给出的下一步转换为当前执行器和当前任务凭据均获准使用的工具名。`nextActions` 中的名称可原样传给 `platform.tool.describe`，例如收到智能上传后可按提示读取 `plan.prepare` 或 `research.submit` 的参数。`actionWaits` 单独列出等待事项。重复输入由用户决定，仍在传输的字节由原发送端续传，观察方可以用 `upload.status` 读到当前偏移。缺少许可时会列出对应的本地 scope、服务 scope 或任务绑定。混合批次可以同时有等待项和可执行的下一步。对外 HTTP 的任务状态、修订及写入校验继续以 Go 为准。
 
 本人库管理界面的原有“根目录路径”输入框通过 `POST /storages/resolve-library-root` 解析，body 为 `{rootPath}`，返回 `{storageId,rootRelativePath,rootPath}`。它只读取和验证，不创建目录；必须落在已配置的媒体根内，拒绝控制目录、链接及越界。创建库仍使用现有逻辑位置字段。`GET /libraries/{id}/location` 给本人回显登记根；两个接口均要求 admin，不加入MCP工具映射，一般库列表不暴露本机绝对路径。
