@@ -53,7 +53,7 @@ mcp_servers:
 
 手动运行 GitHub Actions 的 `Real CPU model and MCP task proof`。公开仓的 `ubuntu-24.04` 标准机提供 4 个 vCPU 和 16 GB 内存。工作流在联网准备阶段校验官方 Qwen3‑4B Q4_K_M 权重和 llama.cpp b12521 CPU 发行件的 SHA‑256。随后新建仅有回环接口的网络命名空间，运行本地推理、同提交 Go 服务、正式 stdio 执行器和 Pi MCP 客户端。模型只接收简短用户任务、当前可见的工具 Schema 和工具返回的合成数据。[运行器规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) · [权重与许可证](https://huggingface.co/Qwen/Qwen3-4B-GGUF/tree/bc640142c66e1fdd12af0bd68f40445458f3869b) · [推理器发行件](https://github.com/ggml-org/llama.cpp/releases/tag/b12521)
 
-查标签时，两条合成词条共享同一别名，模型需要给出所有匹配的正式名及稳定 ID。维护作者时，凭据只允许补一次指定作者的简介，核对正式回读、候选状态、原别名和人工清空的主页。每场都以空对话开始，宿主转交 MCP 初始化说明，推理器自行决定工具与参数。每场上限是七轮生成、十二次工具调用、十二分钟，每次最多生成 512 个 token。首轮最多等待 660 秒。
+查标签时，两条合成词条共享同一别名，模型需要给出所有匹配的正式名及稳定 ID。维护作者时，凭据只允许补一次指定作者的简介，核对正式回读、候选状态、原别名和人工清空的主页。每场都以空对话开始，宿主转交 MCP 初始化说明，推理器自行决定工具与参数。每场上限是七轮生成、十二次工具调用，每次最多生成 512 个 token。领域配置单题十二分钟，首轮最多 660 秒。完整目录的 CPU 冷启动单独分配二十五分钟，首轮最多 1,200 秒。
 
 `domain` 先呈现资料与词表工具，模型可以通过正式工具说明请求其他工具的 Schema。`full` 首轮呈现完整 MCP 清单。两种配置各用独立合成数据库。`real-cpu-model-evidence/results.json` 记录短指令、模型和推理器版本、逐轮真实输入和输出 token、请求与结果字节数、实际工具调用、重复输入、终止原因及独立业务核对结果。某一任务失败时仍保存其结果与已经完成的其他场次。[工作流](../.github/workflows/model-proof.yml) · [宿主与判定](../tools/mcp-compat/model-proof.mjs)
 
@@ -62,6 +62,8 @@ mcp_servers:
 首轮混合入库 `cf02691` 实际唤起 worker 与模型。模型 10 轮生成、调用 10 次工具，7 次重复，输入 45,162、输出 573 token，触发无进展停止。Go 保留两项已暂存媒体和文本附件的拒绝原因，研究用量为零，两项媒体都未入库。[首轮混合任务与业务回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44391206965)
 
 首轮 `27f71b3` 的领域配置呈现 15 个工具（7,920 字节）。一次词表查询返回 387 字节，模型正确给出两组正式名和 ID，两轮合计输入 5,311、输出 124 个 token。作者任务中，模型两次提交相同的写请求，两次均被拒绝，实际资料未变，三轮合计输入 8,130、输出 287 个 token。完整配置呈现 62 个工具（47,559 字节），两个任务都在收到第一条推理应答前达到 240 秒上限，token 用量未测。该轮宿主尚未转交 MCP 初始化说明。后续报告将未收到的用量记为 `null`。[首轮作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44384690363/job/135085894125) · [逐轮报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44384690363/artifacts/14466926397)
+
+第二轮 `f2baba8` 转交了 MCP 初始化说明。领域配置呈现 16 个工具、9,410 字节。两个任务各调用一次工具，却都额外传入了本机并未持有的 `taskId`，返回 `TASK_NOT_BOUND`。标签检索共用 6,034 个输入、54 个输出 token，作者维护为 6,130 个输入、141 个输出 token。完整目录呈现 63 个工具、49,191 字节。标签题首轮在 660 秒超时，用量未测。作者题收到了应答，却把显示名填入稳定 ID 字段并给出与授权基线不符的修订，Go 返回 `author_task_stale`。该题共用 30,719 个输入、126 个输出 token。四场的独立回读均未通过任务判定，作者资料和词表保持原值。[第二轮作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44388930776/job/135100958217) · [逐轮报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44388930776/artifacts/14467952143)
 
 云端`mcp-compat`作业使用真实Go服务、Python官方SDK和相互独立的Pi/TypeScript客户端。测试脚本只访问临时服务与合成图片。最新通过的提交和未验证项见[当前状态](status.md)。仅源码或配置示例存在不构成通过证据。
 

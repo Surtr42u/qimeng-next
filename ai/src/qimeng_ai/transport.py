@@ -97,7 +97,7 @@ class Transport:
                         if code == "scope_denied" and "acquisitionSources" in (arguments.get("body") or {}):
                             message = "作者维护凭据不能写 acquisitionSources。请省略该字段，用 platform.session 的 authorTaskId 读取 author.task.context，再按 allowedFields 提交。"
                         else:
-                            message = "用 platform.session 核对范围。已有 authorTaskId 时读 author.task.context，按实际 author.id、author.revision 和 allowedFields 只提交此次修改。清空需要 allowClear。只有长期 delegate 凭据须先用 platform.permissions 和 task.start 建立任务。"
+                              message = "用 platform.session 核对范围。单一作者任务可直接用 author.task.context 回读获准字段及 task.expectedRevision。人工修改后须复核原任务。清空需要 allowClear。长期 delegate 凭据可用 platform.permissions 和 task.start 建立任务。"
                     raise ToolError(code, message,
                                     status=response.status_code, uncertain=mutation and response.status_code >= 500,
                                     details=details)

@@ -19,6 +19,8 @@ class SyntheticTransport:
         self.calls.append(operation)
         if operation == "getInstance":
             return {"id": "synthetic-instance", "apiVersion": "0.1.0"}
+        if operation == "getCurrentSession":
+            return {"id": "synthetic-reader", "scopes": ["read"]}
         if operation == "listAuthors":
             return {"items": [{"id": "synthetic-author", "name": "Synthetic"}]}
         raise AssertionError("unexpected mutation or operation")

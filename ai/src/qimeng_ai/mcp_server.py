@@ -18,13 +18,14 @@ from .state import RESEARCH_QUERY_OPERATIONS
 
 def create_server(runtime: Runtime) -> Server:
     async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
+        tools = await asyncio.to_thread(runtime.tools)
         return ListToolsResult(tools=[Tool(name=tool["name"], description=tool["description"],
                                          input_schema=tool["inputSchema"],
                                          annotations=ToolAnnotations(read_only_hint=tool["readOnly"],
                                              destructive_hint=not tool["readOnly"],
                                              idempotent_hint=tool["readOnly"] or any(key in tool["inputSchema"].get("required", []) for key in ("operationId", "Idempotency-Key")),
                                              open_world_hint=tool["name"] in RESEARCH_QUERY_OPERATIONS))
-                                    for tool in sorted(runtime.tools(), key=lambda item: item["name"])])
+                                    for tool in sorted(tools, key=lambda item: item["name"])])
 
     async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
         try:
@@ -44,7 +45,7 @@ def create_server(runtime: Runtime) -> Server:
                               is_error=failed)
 
     return Server("qimeng-next", version="0.1.0", on_list_tools=list_tools, on_call_tool=call_tool,
-                  instructions="绮梦媒体库。只读检索可直接查询。写入前用 platform.session 查看有效范围和已绑定任务。单任务凭据按返回的任务 ID 读对应上下文。长期凭据用 platform.permissions 确认范围，再由 task.start 创建或认领任务。只提交本次明确修改的字段。身份、修订、证据与执行结果从实际记录读取，改后回读。")
+                  instructions="绮梦媒体库。只读检索可直接查询。单任务凭据已经绑定工作对象，按工具列出的参数调用。作者维护可直接提交本次获准修改的资料，用 author.read 回读。长期凭据用 platform.permissions 确认范围，再由 task.start 创建或认领任务。身份、修订、证据与执行结果从实际记录读取。")
 
 
 async def run() -> None:

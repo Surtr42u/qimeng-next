@@ -12,7 +12,7 @@ const system = '你是绮梦资料库助手。依据用户要求和实际工具�
 const domainNames = new Set(['platform.catalog', 'platform.session', 'platform.permissions', 'platform.tool.describe', 'platform.result.read',
   'platform.budget', 'library.query', 'tag.query', 'tag.vocabulary.query', 'collection.query', 'author.query',
   'author.read', 'author.profile.summary', 'author.task.context', 'author.profile.update', 'operation.read']);
-const limits = { turns: 7, toolCalls: 12, responseTokens: 512, wallSeconds: 720, firstResponseSeconds: 660 };
+const taskLimits = { turns: 7, toolCalls: 12, responseTokens: 512, wallSeconds: 720, firstResponseSeconds: 660 };
 const bytes = value => Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value));
 const functionName = name => name.replace(/[^A-Za-z0-9_]/g, '_');
 const redact = (text, secret) => String(text || '').replaceAll(secret, '[redacted]').replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]');
@@ -42,6 +42,7 @@ async function infer(payload, deadlineMs) {
 }
 
 async function runCase(fixture, scenario, profile) {
+  const limits = profile === 'full' ? { ...taskLimits, wallSeconds: 1500, firstResponseSeconds: 1200 } : taskLimits;
   const record = { discovery: profile, scenario: scenario.name, userPrompt: scenario.prompt, turns: [], calls: [],
     stop: 'not_started', tokenTotals: { prompt: null, completion: null }, limits };
   const observed = { events: [] };
@@ -51,7 +52,8 @@ async function runCase(fixture, scenario, profile) {
     cwd: process.cwd(), stderr: 'inherit', env: {
       PATH: process.env.PATH, HOME: fixture.root, LANG: 'C.UTF-8', PYTHONPATH: resolve('ai/src'),
       QIMENG_AI_STATE_DIR: stateDir, QIMENG_API_BASE: goOrigin, QIMENG_API_TOKEN: scenario.token,
-      QIMENG_AI_PERMISSIONS: scenario.permissions, QIMENG_AI_MAX_CALLS: '25', QIMENG_AI_MAX_SECONDS: '900',
+      QIMENG_AI_PERMISSIONS: scenario.permissions, QIMENG_AI_MAX_CALLS: '25',
+      QIMENG_AI_MAX_SECONDS: String(Math.max(900, limits.wallSeconds + 30)),
     } });
   const client = new McpClient({ name: 'qimeng-model-proof', version: '1' });
   const messages = [{ role: 'system', content: system }, { role: 'user', content: scenario.prompt }];

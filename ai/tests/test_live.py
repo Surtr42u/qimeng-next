@@ -14,6 +14,76 @@ from live_fixture import CloudGoFixture
 
 @unittest.skipUnless(os.environ.get("QIMENG_TEST_BASE") == "http://127.0.0.1:18481", "requires cloud isolated Go service")
 class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
+    async def test_direct_author_session_resolves_the_granted_target_and_replays_its_original_baseline(self):
+        author = self.request("POST", "/authors", {"kind": "regular", "name": "Single target", "biography": "Before"},
+                              key="bound-author-target")
+        other = self.request("POST", "/authors", {"kind": "regular", "name": "Another target", "biography": "Unrelated"},
+                             key="bound-author-other")
+
+        def grant(key, revision):
+            task = self.request("POST", "/author-tasks", {"authorId": author["id"], "expectedRevision": revision,
+                                "allowedFields": ["biography"], "allowClear": False, "maxUpdates": 2}, key=key)
+            credential = self.request("POST", "/credentials", {"label": "Single author", "authorTaskId": task["id"],
+                                      "scopes": ["read", "author.profile.write"]})
+            self.addCleanup(self.request, "DELETE", "/credentials/" + credential["id"])
+            return task, credential["token"]
+
+        async def get(client, name, args):
+            result = await client.call_tool(name, args)
+            self.assertFalse(result.is_error, result.content)
+            return result.structured_content
+
+        task, token = grant("bound-author-first", author["revision"])
+        args = {"Idempotency-Key": "bound-author-write", "body": {"biography": "Reviewed text"}}
+        with tempfile.TemporaryDirectory() as directory:
+            process = self.process(Path(directory), token, "read,author.profile.write")
+            async with Client(process) as first:
+                tools = {t.name: t for t in (await first.list_tools()).tools}
+                self.assertNotIn("taskId", tools["tag.vocabulary.query"].input_schema["properties"])
+                shown = tools["author.profile.update"].input_schema
+                self.assertEqual(set(shown["properties"]), {"Idempotency-Key", "body"})
+                self.assertEqual(set(shown["properties"]["body"]["properties"]), {"biography"})
+                description = await get(first, "platform.tool.describe", {"tool": "author.profile.update"})
+                self.assertEqual(description["inputSchema"], shown)
+                self.assertEqual((await get(first, "author.task.context", {}))["task"]["id"], task["id"])
+                self.assertEqual((await get(first, "author.read", {}))["id"], author["id"])
+                for name, original in (("author.read", {"id": other["id"]}),
+                                       ("author.profile.update", {**args, "id": other["id"]}),
+                                       ("author.task.context", {"id": "another-task"})):
+                    denied = await first.call_tool(name, original)
+                    self.assertTrue(denied.is_error)
+                    self.assertEqual(denied.structured_content["code"], "task_scope_denied")
+                    self.assertNotIn("Unrelated", str(denied.content))
+                clear = await first.call_tool("author.profile.update", {**args, "Idempotency-Key": "bound-author-clear",
+                                                                        "body": {"biography": ""}})
+                self.assertTrue(clear.is_error)
+                self.assertEqual(clear.structured_content["code"], "clear_not_authorized")
+                changed = await get(first, "author.profile.update", args)
+            async with Client(process) as restarted:
+                self.assertEqual(await get(restarted, "author.profile.update", args), changed)
+                legacy = {"taskId": task["id"], "id": author["id"], "Idempotency-Key": args["Idempotency-Key"],
+                          "body": {"expectedRevision": author["revision"], "biography": "Reviewed text"}}
+                self.assertEqual(await get(restarted, "author.profile.update", legacy), changed)
+                altered = await restarted.call_tool("author.profile.update", {**args, "body": {"biography": "Other text"}})
+                self.assertTrue(altered.is_error)
+                self.assertEqual(altered.structured_content["code"], "idempotency_conflict")
+                self.assertEqual((await get(restarted, "author.read", {}))["biography"], "Reviewed text")
+        actual = self.request("GET", "/author-tasks/" + task["id"])
+        self.assertEqual((actual["task"]["usedUpdates"], actual["author"]["revision"]), (1, author["revision"] + 1))
+
+        stale, token = grant("bound-author-second", changed["revision"])
+        human = self.request("PATCH", "/authors/" + author["id"], {"expectedRevision": changed["revision"],
+                             "biography": "Human edit"}, key="bound-author-human")
+        with tempfile.TemporaryDirectory() as directory:
+            async with Client(self.process(Path(directory), token, "read,author.profile.write")) as client:
+                denied = await client.call_tool("author.profile.update", {**args, "Idempotency-Key": "bound-author-stale"})
+                self.assertTrue(denied.is_error)
+                self.assertEqual(denied.structured_content["code"], "revision_conflict")
+                after = await get(client, "author.task.context", {})
+                self.assertEqual((after["task"]["usedUpdates"], after["task"]["expectedRevision"]), (0, stale["expectedRevision"]))
+                self.assertEqual((after["author"]["biography"], after["author"]["revision"]), ("Human edit", human["revision"]))
+        self.assertEqual(self.request("GET", "/authors/" + other["id"])["biography"], "Unrelated")
+
     async def test_read_only_alias_lookup_preserves_each_candidate_identity(self):
         self.assertEqual(os.environ.get("CI"), "true")
         library = self.request("POST", "/libraries", {"name": "Alias lookup", "kind": "regular"}, key="mcp-alias-library")
@@ -31,6 +101,8 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         try:
             with tempfile.TemporaryDirectory() as root:
                 async with Client(self.process(Path(root), credential["token"], "read")) as client:
+                    listing = {tool.name: tool.input_schema for tool in (await client.list_tools()).tools}
+                    self.assertNotIn("taskId", listing["tag.vocabulary.query"]["properties"])
                     async def items(tool, **arguments):
                         result = await client.call_tool(tool, arguments)
                         self.assertFalse(result.is_error, result.content)
@@ -107,6 +179,8 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
             token = grant["credential"]["token"]
             async with Client(self.process(Path(first), token, "read,delegate,ingest,research,organize")) as client:
+                listing = {tool.name: tool.input_schema for tool in (await client.list_tools()).tools}
+                self.assertIn("taskId", listing["tag.vocabulary.query"]["properties"])
                 result = await client.call_tool("task.start", {"operationId": "mcp-persistent-start", "body": {
                     "kind": "intake", "label": "Synthetic task", "libraryId": library["id"], "mode": "intelligent"}})
                 self.assertFalse(result.is_error, result.content)
