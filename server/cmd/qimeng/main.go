@@ -30,9 +30,11 @@ func run()error{
   if value:=os.Getenv(key);value!=""{d,e:=time.ParseDuration(value);if e!=nil||d<=0{return errors.New("invalid local input folder timing")};*field=d}
  }
  scanner:=service.LibraryMonitorConfig{WatchEnabled:true,PollInterval:5*time.Minute}
+ researchEnabled:=false
+ if value:=os.Getenv("QIMENG_RESEARCH_ENABLED");value!=""{enabled,e:=strconv.ParseBool(value);if e!=nil{return errors.New("invalid public research setting")};researchEnabled=enabled}
  if value:=os.Getenv("QIMENG_SCANNER_WATCH_ENABLED");value!=""{on,e:=strconv.ParseBool(value);if e!=nil{return errors.New("invalid scanner watch setting")};scanner.WatchEnabled=on}
  if value:=os.Getenv("QIMENG_SCANNER_POLL_INTERVAL");value!=""{duration,e:=time.ParseDuration(value);if e!=nil{return errors.New("invalid scanner polling interval")};if duration>0{scanner.PollInterval=duration}}
- s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AdminPassword:password,AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,BackupTargets:backupTargets,DefaultBackupTarget:os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"),SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true"||os.Getenv("QIMENG_EPHEMERAL_TLS")=="true",AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true",LocalSync:localSync,Scanner:&scanner});password="";if e!=nil{return e};defer s.Close()
+ s,e:=service.New(service.Config{DataDir:os.Getenv("QIMENG_DATA_DIR"),AdminToken:os.Getenv("QIMENG_ADMIN_TOKEN"),AdminPassword:password,AIToken:os.Getenv("QIMENG_AI_TOKEN"),StorageRoots:storages,BackupTargets:backupTargets,DefaultBackupTarget:os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"),SecureCookies:os.Getenv("QIMENG_SECURE_COOKIES")=="true"||os.Getenv("QIMENG_EPHEMERAL_TLS")=="true",ResearchEnabled:researchEnabled,AIConfigured:os.Getenv("QIMENG_AI_CONFIGURED")=="true",LocalSync:localSync,Scanner:&scanner});password="";if e!=nil{return e};defer s.Close()
  address:=os.Getenv("QIMENG_LISTEN");if address==""{address="127.0.0.1:8421"};api:=httpapi.New(s);var handler http.Handler=api
  if web:=os.Getenv("QIMENG_WEB_DIR");web!=""{
   files:=http.FileServer(http.Dir(web))

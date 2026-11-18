@@ -129,7 +129,7 @@ def probe(runtime, arguments: dict) -> dict:
                                "positionSeconds": position, "mimeType": "image/png"})
             return {"status": "ready", "businessWrites": 0, "sourceSha256": source_hash,
                     "metadata": metadata, "frameRefs": frames, "candidates": [],
-                    "next": "仅使用获授权的外部研究工具核实候选；返回证据后提交research.submit。",
+                    "next": "可依据本地材料提交 research.submit。需公开查证时先读 research.context，再用已授权来源查询，并把实际回执附在候选上。",
                     "limitations": ["探测/抽帧不证明作者归属", "尚未进行外部原帖核实"]}
 
 

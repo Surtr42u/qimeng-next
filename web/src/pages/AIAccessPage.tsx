@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import {
   useAIDelegations,
   useCreateAIDelegation,
+  useResearchProviderContext,
   useRevokeAIDelegation,
 } from "../data/ai-access";
 import { useAuthors, useLibraries } from "../data/manage";
@@ -22,6 +23,10 @@ import { dateTime } from "../lib/format";
 type Policy = Schema<"AIDelegationPolicy">;
 const assetFieldNames: Record<Schema<"AssetMaintenanceField">, string> = {
   authors: "作者关联", taxonomy: "出处与角色", tags: "标签", rename: "文件名",
+};
+const providerNames: Record<Schema<"ResearchProviderName">, string> = {
+  fxtwitter: "FxTwitter（X 公开账号与帖子）", pixiv: "Pixiv", yandere: "yande.re", e621: "e621",
+  wayback: "Wayback Machine", steam: "Steam 创意工坊", bing: "Bing 搜索",
 };
 const fieldNames = {
   name: "作者名称",
@@ -44,6 +49,7 @@ const initialPolicy: Policy = {
   allowClear: false,
   canIngest: false,
   canResearch: false,
+  researchProviders: [],
   canResearchAssets: false,
   assetFields: [],
   canOrganize: false,
@@ -239,6 +245,8 @@ function DelegationForm({
   const [policy, setPolicy] = useState<Policy>(initialPolicy);
   const [step, setStep] = useState(0);
   const [discard, setDiscard] = useState(false);
+  const providers = useResearchProviderContext(policy.canResearch && step > 0);
+  const choices = providers.data?.enabled && !providers.isError ? providers.data.providers.filter(p => Object.hasOwn(providerNames, p.name)) : [];
   const libraries = useLibraries();
   const [authorQ, setAuthorQ] = useState("");
   const authors = useAuthors(authorQ, undefined, step === 1);
@@ -251,6 +259,7 @@ function DelegationForm({
       const next = { ...current, ...patch };
       if (!next.canIngest || !next.libraryIds.length) next.canRecycleSources = false;
       if (!next.canResearch || !next.libraryIds.length) next.canResearchAssets = false;
+      if (!next.canResearch || next.maxResearchCalls <= 0) next.researchProviders = [];
       if (!next.libraryIds.length) next.assetFields = [];
       return next;
     });
@@ -259,7 +268,8 @@ function DelegationForm({
   const rangeReady =
     (!(policy.canIngest || policy.canOrganize) ||
       policy.libraryIds.length > 0) &&
-    (!hasAuthorWrites || policy.allAuthors || policy.authorIds.length > 0);
+    (!hasAuthorWrites || policy.allAuthors || policy.authorIds.length > 0) &&
+    (policy.researchProviders ?? []).every(name => choices.some(choice => choice.name === name));
   const dirty = JSON.stringify(policy) !== JSON.stringify(initialPolicy);
   return (
     <form
@@ -597,6 +607,25 @@ function DelegationForm({
                 </label>
               )}
             </div>
+            {policy.canResearch && (
+              <fieldset className="profile-account-row">
+                <legend>允许发送文字查询的公开来源</legend>
+                <p className="muted">任务会向勾选的来源发送核验所需的公开账号、作品编号、网址或检索词。</p>
+                <ErrorNotice error={providers.error} retry={() => void providers.refetch()} />
+                {providers.isPending ? <Loading /> : !providers.isError && (!choices.length
+                  ? <p className="muted">当前服务器未开放公开来源查询。</p>
+                  : choices.map(({ name }) => (
+                    <label className="check-label" key={name}>
+                      <input type="checkbox" disabled={policy.maxResearchCalls <= 0} checked={!!policy.researchProviders?.includes(name)}
+                        onChange={() => change({ researchProviders: toggle(policy.researchProviders ?? [], name) })} />
+                      {providerNames[name]}
+                    </label>
+                  )))}
+                {!!policy.researchProviders?.some(name => !choices.some(choice => choice.name === name)) && (
+                  <button type="button" className="pill" onClick={() => change({ researchProviders: policy.researchProviders?.filter(name => choices.some(choice => choice.name === name)) })}>移除当前不可用的来源</button>
+                )}
+              </fieldset>
+            )}
             <p className="muted">
               这些是影库工具的执行预算，不是模型平台费用额度。换宿主接续任务不会清零已经使用的预算。
             </p>
@@ -624,7 +653,7 @@ function DelegationForm({
             className="button button--primary"
             disabled={
               !policy.label.trim() ||
-              (step === 1 && !rangeReady) ||
+              (step > 0 && !rangeReady) ||
               create.isPending
             }
           >
@@ -689,6 +718,7 @@ function PolicySummary({ policy }: { policy: Policy }) {
             : "未授权"}
         </dd>
       </div>
+      {!!policy.researchProviders?.length && <div><dt>允许发送文字查询的公开来源</dt><dd>{policy.researchProviders.map(name => providerNames[name]).join("、")}</dd></div>}
       <div>
         <dt>作者范围</dt>
         <dd>

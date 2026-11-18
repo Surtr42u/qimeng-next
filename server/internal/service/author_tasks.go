@@ -76,7 +76,7 @@ func(s *Service)AuthorTaskContext(ctx context.Context,p model.Principal,id strin
 
 func(s *Service)CancelAuthorTask(ctx context.Context,w *Write,id string)error{
  if e:=Authorize(w.Principal,"admin","");e!=nil{return e};task,e:=s.authorTask(ctx,id);if e!=nil{return e};if task.State!="authorized"{return nil};task.State="cancelled";raw,e:=store.Encode(task);if e!=nil{return e};q,e:=w.Q();if e!=nil{return e}
- _,e=q.ExecContext(ctx,"UPDATE author_tasks SET state=?,data=? WHERE id=?",task.State,raw,id);return e
+ _,e=q.ExecContext(ctx,"UPDATE author_tasks SET state=?,data=? WHERE id=?",task.State,raw,id);if e==nil{w.after=append(w.after,func()error{s.researchGateway.cancelSubject(id,"");return nil})};return e
 }
 
 // authorizeAuthorUpdate only accepts a trusted task bound to this author and version.

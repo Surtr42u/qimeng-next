@@ -8,6 +8,13 @@ import (
 )
 
 func(a *API)researchRoutes(){
+ a.get("/research/context",func(r *http.Request)(any,error){return a.s.ResearchProviderContext(r.Context(),principal(r))})
+ a.get("/research/queries/{id}",func(r *http.Request)(any,error){return a.s.PublicResearchResult(r.Context(),principal(r),r.PathValue("id"))})
+ a.mux.HandleFunc("POST /api/v1/research/providers/{provider}/query",a.auth(func(w http.ResponseWriter,r *http.Request){
+  in,_,e:=decode[service.PublicResearchInput](w,r);if e!=nil{fail(w,e);return}
+  out,e:=a.s.QueryResearchProvider(r.Context(),principal(r),r.PathValue("provider"),r.Header.Get("Idempotency-Key"),in)
+  if e!=nil{fail(w,e);return};result(w,out)
+ }))
  a.get("/asset-tasks/{id}",func(r *http.Request)(any,error){return a.s.AssetTaskContext(r.Context(),principal(r),r.PathValue("id"))})
  a.get("/asset-tasks/{id}/evidence",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.AssetTaskEvidence(r.Context(),principal(r),r.PathValue("id"),r.URL.Query().Get("cursor"),n)})
  a.get("/asset-tasks/{id}/materials",func(r *http.Request)(any,error){return a.s.AssetTaskMaterials(r.Context(),principal(r),r.PathValue("id"))})

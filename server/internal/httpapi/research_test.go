@@ -11,6 +11,9 @@ import (
 
 func TestResearchMaterialsPersistAndRespectOriginalUploadScope(t *testing.T){
  f:=setup(t);u,original:=f.upload("research-persist.png",78,nil);completed:=f.complete(u);u=completed.Upload
+ var providers service.PublicResearchContext;decode(t,f.json("GET","/research/context","",nil,200),&providers)
+ if providers.Enabled||len(providers.AllowedProviders)!=0{t.Fatal("public provider egress is enabled by default")}
+ f.json("POST","/research/providers/fxtwitter/query","research-disabled-key",service.PublicResearchInput{Operation:"author",Target:"fixture"},503)
  request:="/uploads/"+u.ID+"/research-materials?expectedHash="+u.Hash
  var first service.ResearchMaterials;decode(t,f.json("GET",request,"",nil,200),&first)
  if first.BusinessWrites!=0||first.SourceSHA256!=u.Hash||first.Width!=8||first.Height!=8||len(first.Artifacts)!=1{t.Fatalf("bad research metadata: %+v",first)}

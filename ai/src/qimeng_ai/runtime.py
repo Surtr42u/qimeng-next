@@ -120,7 +120,9 @@ class Runtime:
                     raise ToolError("OPERATION_ID_REQUIRED", "写入必须提供稳定操作身份，重试沿用原值")
             request = state.reserve(name, arguments, key)
             try:
-                if task_id:
+                # The public provider gateway reserves both budgets atomically
+                # with its durable query key, including calls from a direct client.
+                if task_id and name != "research.provider.query":
                     self.transport.call("reserveDelegatedCall", {"id": task_id, "Idempotency-Key": "call-" + secrets.token_hex(16)})
                 value = self._dispatch(name, arguments, state)
             except ToolError as exc:
@@ -149,9 +151,11 @@ class Runtime:
                     "existingAssetWorkflow": ["asset.query", "asset.read", "task.start", "asset.task.context",
                                               "asset.research.materials", "platform.artifact.read", "asset.metadata.apply",
                                               "naming.suggest", "naming.preview", "asset.rename.apply"],
+                    "publicResearchWorkflow": ["research.context", "research.provider.query", "research.provider.result"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",
                               "计划在Go服务端持久化；用原计划ID和fingerprint提交。",
                               "候选与已核实身份分开；作者未知归其他搁置，不周期研究。",
+                              "公开研究只发送所选来源需要的公开标识或搜索词。先查作品，再核对身份；保留人工选定的作者、出处和角色。",
                               "超时先按原操作键回读；预算不覆盖宿主未提供的模型费用。"]}
         if name == "platform.tool.describe":
             tool = next((item for item in self.tools() if item["name"] == arguments["tool"]), None)

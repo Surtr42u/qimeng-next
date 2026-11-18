@@ -194,10 +194,12 @@ type Research struct {
  Outcome string `json:"outcome"`
  Candidates []ResearchCandidate `json:"candidates"`
  CallsUsed int `json:"callsUsed"`
+ ProviderQueryIDs []string `json:"providerQueryIds,omitempty"`
 }
 type BatchItem struct {
  Upload Upload `json:"upload"`
  ResearchOutcome string `json:"researchOutcome"`
+ ProviderQueryIDs []string `json:"providerQueryIds,omitempty"`
  Candidates []ResearchCandidate `json:"candidates"`
 }
 type BatchDetail struct {

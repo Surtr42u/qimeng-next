@@ -9,6 +9,32 @@ security:
   - bearerAuth: []
   - sessionCookie: []
 paths:
+  /research/context:
+    get:
+      operationId: getResearchProviderContext
+      description: Discover the fixed public metadata adapters and current task permissions without contacting a provider.
+      responses:
+        '200': {description: Public sources and effective task permissions, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderContext'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /research/providers/{provider}/query:
+    post:
+      operationId: queryResearchProvider
+      description: One explicit text lookup by a live delegated task. A stable request key reserves its budget once. Results supply candidate evidence only.
+      parameters:
+        - {name: provider, in: path, required: true, schema: {$ref: '#/components/schemas/ResearchProviderName'}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderQuery'}}}}
+      responses:
+        '200': {description: Completed or interrupted lookup, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderResult'}}}}
+        '202': {description: Original lookup is still running, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /research/queries/{id}:
+    get:
+      operationId: getResearchProviderResult
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200': {description: Sanitized receipt belonging to this task, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /device/credentials:
     post:
       operationId: createDeviceCredential
@@ -1725,6 +1751,72 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    ResearchProviderName: {type: string, enum: [fxtwitter, pixiv, yandere, e621, wayback, steam, bing]}
+    ResearchProviderList: {type: array, maxItems: 7, uniqueItems: true, items: {$ref: '#/components/schemas/ResearchProviderName'}}
+    ResearchProviderInfo:
+      type: object
+      required: [name, operations, evidenceKind]
+      properties:
+        name: {$ref: '#/components/schemas/ResearchProviderName'}
+        operations: {type: array, items: {type: string}}
+        evidenceKind: {type: string, enum: [platform_record, lead]}
+    ResearchProviderContext:
+      type: object
+      required: [enabled, providers, allowedProviders]
+      properties:
+        enabled: {type: boolean}
+        providers: {type: array, items: {$ref: '#/components/schemas/ResearchProviderInfo'}}
+        allowedProviders: {$ref: '#/components/schemas/ResearchProviderList'}
+        taskId: {type: string}
+        remainingResearchCalls: {type: integer}
+        queries: {type: array, maxItems: 100, description: 本任务已经发出的查询，可在执行器重启后按回执 ID 回读, items: {$ref: '#/components/schemas/ResearchProviderRef'}}
+    ResearchProviderRef:
+      type: object
+      required: [id, subjectId, provider, operation, state]
+      properties:
+        id: {type: string}
+        subjectId: {type: string}
+        provider: {$ref: '#/components/schemas/ResearchProviderName'}
+        operation: {type: string}
+        state: {type: string, enum: [pending, ok, not_found, blocked, rate_limited, unavailable, interrupted]}
+    ResearchProviderQuery:
+      type: object
+      additionalProperties: false
+      required: [operation, target]
+      properties:
+        operation: {type: string, enum: [author, post, work, artist, tags, url, workshop, search]}
+        target: {type: string, minLength: 1, maxLength: 500, description: Only the deliberately submitted public lookup identifier or terms are sent}
+        limit: {type: integer, minimum: 1, maximum: 20, default: 10}
+        uploadId: {type: string, description: Required for an intake task}
+        expectedHash: {type: string, pattern: '^[0-9a-f]{64}$', description: Required for an intake task}
+    ResearchProviderItem:
+      type: object
+      required: [url]
+      properties:
+        url: {type: string, format: uri}
+        id: {type: string}
+        title: {type: string}
+        author: {type: string}
+        authorId: {type: string}
+        publishedAt: {type: string}
+        sources: {type: array, maxItems: 5, items: {type: string, format: uri}}
+    ResearchProviderResult:
+      type: object
+      required: [id, taskId, subjectId, provider, operation, state, evidenceKind, items, startedAt]
+      properties:
+        id: {type: string}
+        taskId: {type: string}
+        subjectId: {type: string}
+        subjectHash: {type: string, description: 已核对的上传或作品 SHA-256}
+        subjectRevision: {type: integer, format: int64, minimum: 1, description: 查证时的作品或作者修订}
+        contentVersion: {type: integer, format: int64, minimum: 1, description: 查证时的作品内容版本}
+        provider: {$ref: '#/components/schemas/ResearchProviderName'}
+        operation: {type: string}
+        state: {type: string, enum: [pending, ok, not_found, blocked, rate_limited, unavailable, interrupted]}
+        evidenceKind: {type: string, enum: [platform_record, lead]}
+        items: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ResearchProviderItem'}}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time}
     DeviceCredentialInput:
       type: object
       required: [deviceId, label, credentialSecret]
@@ -1978,6 +2070,7 @@ components:
         allowClear: {type: boolean}
         canIngest: {type: boolean}
         canResearch: {type: boolean}
+        researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
         canResearchAssets: {type: boolean, default: false, description: Separately permit previews for existing media in the selected libraries}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
         canOrganize: {type: boolean}
@@ -2023,6 +2116,7 @@ components:
         batchId: {type: string}
         mode: {type: string, enum: [ordinary, intelligent]}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
+        researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
         authorId: {type: string}
         expectedRevision: {type: integer, format: int64}
         allowedFields: {type: array, items: {type: string, enum: [name, biography, homepage, aliases]}}
@@ -2791,6 +2885,7 @@ components:
       properties:
         upload: {$ref: '#/components/schemas/Upload'}
         researchOutcome: {type: string}
+        providerQueryIds: {type: array, maxItems: 20, items: {type: string}}
         candidates: {type: array, items: {$ref: '#/components/schemas/ResearchCandidate'}}
     BatchDetail:
       type: object
@@ -2847,9 +2942,10 @@ components:
         expectedRevision: {type: integer, format: int64}
         uploadId: {type: string}
         expectedHash: {type: string}
+        providerQueryIds: {type: array, maxItems: 20, uniqueItems: true, items: {type: string}, description: Completed lookups for precisely this staged upload. Their budget was already charged}
         outcome: {type: string, enum: [candidates, unknown, conflict]}
         candidates: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ResearchCandidate'}}
-        callsUsed: {type: integer, minimum: 1, maximum: 100}
+        callsUsed: {type: integer, minimum: 0, maximum: 100, description: Additional research calls. Zero requires a completed provider query for this input}
     PlanInput:
       type: object
       required: [uploadId, family]

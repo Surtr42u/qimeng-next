@@ -1,6 +1,9 @@
 {
   "getInstance": {"tool": "platform.instance", "scope": "read"},
   "getCurrentAIDelegation": {"tool": "platform.permissions", "scope": "read"},
+  "getResearchProviderContext": {"tool": "research.context", "scope": "read"},
+  "queryResearchProvider": {"tool": "research.provider.query", "scope": "research"},
+  "getResearchProviderResult": {"tool": "research.provider.result", "scope": "research"},
   "listLibraries": {"tool": "library.query", "scope": "read"},
   "getNamingContext": {"tool": "naming.context", "scope": "read"},
   "suggestNames": {"tool": "naming.suggest", "scope": "read"},

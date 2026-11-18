@@ -1,8 +1,17 @@
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api, read } from "./client";
 import type { Schema } from "./client";
 import { useRemoteKey } from "./session";
 import { queryClient } from "./query";
+
+export function useResearchProviderContext(enabled: boolean) {
+  const key = useRemoteKey();
+  return useQuery({
+    queryKey: [...key, "research-provider-context"],
+    queryFn: ({ signal }) => read(api.GET("/research/context", { signal })),
+    enabled,
+  });
+}
 
 export function useAIDelegations(
   state: Schema<"AIDelegation">["state"] | "all" = "active",

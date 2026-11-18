@@ -57,6 +57,7 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
   "DELETE FROM device_apply_requests",
   "UPDATE device_apply_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled','$.finishedAt',qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now')),'$.revision',json_extract(data,'$.revision')+1) WHERE state IN ('pending','claimed')",
   "UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
+  "UPDATE research_provider_calls SET state='interrupted',data=json_set(data,'$.state','interrupted','$.finishedAt',qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) WHERE state='pending'",
   "UPDATE author_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE state='authorized'",
   "UPDATE asset_maintenance_tasks SET data=json_set(data,'$.state','revoked') WHERE coalesce(json_extract(data,'$.state'),'authorized')!='revoked'",
   "UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",

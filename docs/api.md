@@ -2,6 +2,26 @@
 
 唯一协议正文是 `api/openapi.yaml`（OpenAPI 3.0.3）。路径前缀 `/api/v1`，实例 API 版本 `0.1.0`。生成的 TypeScript/Kotlin/Python 契约和来源锁由云端输出，不手写 SDK 或修改生成物。
 
+## 公开资料查证
+
+本人首次创建 AI 授权时用 `researchProviders` 逐项选择可发查询的公开来源，同时设置 `canResearch=true` 和正数 `maxResearchCalls`。缺省和空列表均保留本地研究。迁移 0033 为已有任务设置空名单。派生任务可请求更小的来源集合或研究预算。部署者还须显式开启 `QIMENG_RESEARCH_ENABLED=true`。读取 `GET /research/context` 可查看实例开关、各来源支持的操作、当前授权及任务剩余额度。任务上下文的 `queries` 按新到旧列出已发查询及回执 ID，供执行器接续。
+
+| 来源 | 操作 | 实际发送的内容 |
+| --- | --- | --- |
+| FxTwitter | `author`、`post` | 公开 X 账号名或帖文数字 ID |
+| Pixiv | `author`、`work` | 作者或作品数字 ID |
+| yande.re | `artist`、`tags` | 公开作者名或标签表达式 |
+| e621 | `post`、`tags` | 帖文数字 ID 或标签表达式 |
+| Wayback CDX | `url` | 无凭据、查询串及片段的公开 HTTPS 页面地址 |
+| Steam Workshop | `workshop` | 创意工坊作品数字 ID |
+| Bing | `search` | 明确提交的公开搜索词 |
+
+获准的任务通过 `POST /research/providers/{provider}/query` 发起一次查询。接收批次须同时指定本批待整理的 `uploadId` 和 `expectedHash`。已有选定作者的上传复用该身份，查询作者资料由该作者的维护任务承担。作品任务绑定库、哈希、内容版本和修订，作者任务绑定作者和修订。Go 在发出和返回时核实授权与对象，自动生成的外部请求只携公开查证所需的参数。搜索或存档结果标记为 `lead`，平台记录标记为 `platform_record`，都须结合实际作品和账号证据判断。
+
+服务在联网前持久扣除一次任务调用和一次研究额度。相同幂等键及输入复用原回执，处理中返回 HTTP 202，完成后可通过 `GET /research/queries/{id}` 读取。同一实例最多两次并行查询，每个来源滚动一分钟最多 20 次。每次最多读取 2 MiB、等待 10 秒并返回 20 项。请求固定 HTTPS 端点。连接前核验该次 DNS 的所有地址，禁用代理和重定向。响应保留有界的公开名称、ID、时间和出处链接，链接剥离凭据与跟踪参数。
+
+`not_found` 表示本次查询未找到对应记录。`blocked`、`rate_limited`、`unavailable` 和 `interrupted` 均保留未确定状态。撤销授权、取消任务或轮换执行器会结束相关在途请求。进程重启后，可以回读已结束和已中断的记录。对批次提交研究候选时，`providerQueryIds` 引用属于同一上传和哈希的已完成回执。仅汇报这些已收费查询时填 `callsUsed=0`，候选出处须在引用的结果中出现。作者归属、人工资料与命名计划分别通过各自的业务操作处理。
+
 ## 显式设备维护包
 
 PC 或 NAS 的管理员在 `POST /device/credentials` 登记目标设备及客户端生成的 32 字节独立随机凭据（无填充 base64url）。服务只返回凭据 ID、设备标签、显示名和到期时间。轮换须提供当前凭据 ID。设备可用 `GET /sessions/current` 核对本人的设备身份与 `device.apply` 权限，登记端的媒体目录和管理接口另需本人会话。

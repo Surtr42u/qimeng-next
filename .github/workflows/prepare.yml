@@ -333,6 +333,11 @@ jobs:
           npm --prefix tools/mcp-compat ci
       - name: Real stdio intake and independent client matrix
         run: bash tools/cloud_mcp.sh
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache-dependency-path: server/go.sum}
+      - name: Real stdio research with a restricted synthetic TLS provider
+        working-directory: server
+        run: QIMENG_PROVIDER_MCP_PYTHON="$(command -v python)" go test -run '^TestPublicProviderStdioMCP$' -count=1 -v ./internal/service
   hermes:
     needs: [generate, server-runtime]
     runs-on: ubuntu-24.04

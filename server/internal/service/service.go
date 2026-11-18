@@ -30,8 +30,8 @@ func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};if err!=nil&&strings.Contains(err.Error(),"qimeng_pending_asset"){return Fail(409,"publication_pending","此资产已有未提交的文件操作，请先恢复原操作。")};return err}
-type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64; LocalSync LocalSyncConfig; Scanner *LibraryMonitorConfig }
-type Service struct { Traffic sysmon.Traffic; samples systemSamples; previews previewWork; sourceRules sourceRuleWorker; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWorkers map[string]scanWorker; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner; monitor *libraryMonitor }
+type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured,ResearchEnabled bool; ReserveBytes int64; LocalSync LocalSyncConfig; Scanner *LibraryMonitorConfig }
+type Service struct { researchGateway publicResearchGateway; Traffic sysmon.Traffic; samples systemSamples; previews previewWork; sourceRules sourceRuleWorker; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWorkers map[string]scanWorker; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner; monitor *libraryMonitor }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -55,6 +55,7 @@ func New(config Config)(*Service,error){
  s.localSync=localSync
  s.monitor=newLibraryMonitor(config.Scanner)
  s.recommendations.init()
+ s.researchGateway.init()
  s.previews.init()
  s.samples.init()
  ctx:=context.Background()
@@ -76,6 +77,8 @@ func New(config Config)(*Service,error){
  if err=s.initializeAuthorKeys(ctx);err!=nil{s.Close();return nil,err}
  if err=s.initializeAuthorTextLinks(ctx);err!=nil{s.Close();return nil,err}
  if err=s.recoverIntents(ctx);err!=nil{s.Close();return nil,fmt.Errorf("file recovery requires attention: %w",err)}
+ if _,err=db.DB.ExecContext(ctx,`UPDATE research_provider_calls SET state='interrupted',
+  data=json_set(data,'$.state','interrupted','$.finishedAt',?) WHERE state='pending'`,dateKey(time.Now().UTC()));err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted') WHERE json_extract(data,'$.exportState') IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE batch_protections SET state='interrupted',data=json_set(data,'$.state','interrupted','$.errorCode','protection_interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
@@ -164,5 +167,5 @@ func(s *Service)CreateSession(ctx context.Context,w *Write,label,batchID string,
  _,err=q.ExecContext(ctx,"INSERT INTO credentials(id,token_hash,expires_at,data) VALUES(?,?,?,?)",p.ID,digest([]byte(secret)),p.ExpiresAt.Format(time.RFC3339Nano),raw);p.Token=secret;return p,err
 }
 func(s *Service)Revoke(ctx context.Context,w *Write,id string)error{
- if !w.Principal.Has("admin")||id=="owner"{return Fail(403,"scope_denied","无法撤销该凭据。")};q,err:=w.Q();if err!=nil{return err};_,err=q.ExecContext(ctx,"DELETE FROM credentials WHERE id=?",id);return err
+ if !w.Principal.Has("admin")||id=="owner"{return Fail(403,"scope_denied","无法撤销该凭据。")};q,err:=w.Q();if err!=nil{return err};_,err=q.ExecContext(ctx,"DELETE FROM credentials WHERE id=?",id);if err==nil{w.after=append(w.after,func()error{s.researchGateway.cancel(id,"");return nil})};return err
 }

@@ -22,6 +22,7 @@ type DelegationPolicy struct {
  AllowClear bool `json:"allowClear"`
  CanIngest bool `json:"canIngest"`
  CanResearch bool `json:"canResearch"`
+ ResearchProviders []string `json:"researchProviders,omitempty"`
  CanResearchAssets bool `json:"canResearchAssets,omitempty"`
  AssetFields []string `json:"assetFields,omitempty"`
  CanOrganize bool `json:"canOrganize"`
@@ -42,6 +43,7 @@ type DelegatedTaskStart struct {
  BatchID string `json:"batchId"`
  Mode string `json:"mode"`
  MaxResearchCalls *int `json:"maxResearchCalls"`
+ ResearchProviders []string `json:"researchProviders,omitzero"`
  AuthorID string `json:"authorId"`
  AssetID string `json:"assetId"`
  ExpectedContentVersion int64 `json:"expectedContentVersion"`
@@ -95,6 +97,7 @@ func(s *Service)CreateDelegation(ctx context.Context,w *Write,in DelegationPolic
  if !in.CanResearch&&len(in.CandidateBlocks)>0{return result,Fail(400,"research_required","提交资料候选需要明确研究权限。")}
  if in.CanRecycleSources&&!in.CanIngest{return result,Fail(400,"intake_scope_required","来源回收须独立授权并绑定允许的接收库。")}
  if e=validateAssetPolicy(&in);e!=nil{return result,e}
+ if e=validateResearchProviders(in.ResearchProviders,in.CanResearch,in.MaxResearchCalls);e!=nil{return result,e}
  if len(in.LibraryIDs)==0&&(in.CanIngest||in.CanOrganize){return result,Fail(400,"library_required","入库整理须明确选择允许的库。")}
  if !in.AllAuthors&&len(in.AuthorIDs)==0&&(len(in.AllowedFields)>0||len(in.CandidateBlocks)>0){return result,Fail(400,"author_scope_required","资料维护须指定作者或明确选择全部作者。")}
  for _,id:=range in.LibraryIDs{if _,e=s.library(ctx,id);e!=nil{return result,e}}
@@ -109,7 +112,8 @@ func(s *Service)CreateDelegation(ctx context.Context,w *Write,in DelegationPolic
 func(s *Service)RevokeDelegation(ctx context.Context,w *Write,id string)error{
  if e:=Authorize(w.Principal,"admin","");e!=nil{return e};d,e:=s.delegation(ctx,id);if e!=nil{return e};d.State="revoked";raw,e:=store.Encode(d);if e!=nil{return e};q,e:=w.Q();if e!=nil{return e}
  if _,e=q.ExecContext(ctx,"UPDATE ai_delegations SET state='revoked',data=? WHERE id=?",raw,id);e!=nil{return e}
- _,e=q.ExecContext(ctx,"DELETE FROM credentials WHERE id=? OR json_extract(data,'$.parentDelegationId')=?",id,id);return e
+ _,e=q.ExecContext(ctx,"DELETE FROM credentials WHERE id=? OR json_extract(data,'$.parentDelegationId')=?",id,id)
+ if e==nil{w.after=append(w.after,func()error{s.researchGateway.cancel("",id);return nil})};return e
 }
 
 func validExecutorSecret(value string)bool{decoded,e:=base64.RawURLEncoding.DecodeString(value);return e==nil&&len(decoded)==32&&len(value)==43}
@@ -126,13 +130,17 @@ func(s *Service)StartDelegatedTask(ctx context.Context,w *Write,in DelegatedTask
  if e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM delegated_tasks WHERE delegation_id=? AND created_day=?",d.ID,today).Scan(&todayCount);e!=nil{return result,e}
  if todayCount>=d.MaxTasksPerDay{return result,Fail(429,"delegation_daily_limit","已达到首次配置的每日任务上限。")}
  result.Kind=in.Kind
+ providers:=d.ResearchProviders;if in.ResearchProviders!=nil{providers=in.ResearchProviders}
+ if !withinStrings(providers,d.ResearchProviders){return result,Fail(403,"research_provider_denied","该研究来源未在首次授权中选择。")}
+ researchLimit:=d.MaxResearchCalls;if in.MaxResearchCalls!=nil{researchLimit=*in.MaxResearchCalls}
+ if researchLimit<0||researchLimit>d.MaxResearchCalls{return result,Fail(403,"research_budget_denied","任务研究预算超出长期授权。")}
+ if e=validateResearchProviders(in.ResearchProviders,d.CanResearch,researchLimit);e!=nil{return result,e}
  p:=model.Principal{ID:w.ID("delegated-credential"),Label:in.Label,Scopes:[]string{"read"},ParentDelegationID:d.ID,Generation:1,ExpiresAt:limitExpiry(d,24*time.Hour)}
  isNewBatch:=false
  switch in.Kind {
  case "intake":
   if !d.CanIngest||!containsString(d.LibraryIDs,in.LibraryID){return result,Fail(403,"library_scope_denied","首次配置未授权此库的接收任务。")}
-  budget:=d.MaxResearchCalls;if in.MaxResearchCalls!=nil{budget=*in.MaxResearchCalls};if budget<0||budget>d.MaxResearchCalls{return result,Fail(403,"research_budget_denied","任务研究预算超出长期授权。")}
-  if !d.CanResearch{budget=0}
+  budget:=researchLimit
   mode:=in.Mode;if mode==""{mode="intelligent"};if mode=="intelligent"&&!d.CanOrganize{return result,Fail(403,"organize_scope_denied","智能整理需要明确整理权限。")}
   var b model.Batch
   if in.BatchID!=""{
@@ -161,7 +169,11 @@ func(s *Service)StartDelegatedTask(ctx context.Context,w *Write,in DelegatedTask
  if result.AuthorTask!=nil{if e=saveAuthorTask(ctx,q,*result.AuthorTask);e!=nil{return result,e}}
  if result.AssetTask!=nil{if e=saveAssetMaintenance(ctx,q,*result.AssetTask);e!=nil{return result,e}}
  if e=saveDelegatedCredential(ctx,q,p,in.CredentialSecret);e!=nil{return result,e}
- if _,e=q.ExecContext(ctx,"INSERT INTO delegated_tasks(task_id,delegation_id,credential_id,kind,created_day,max_calls,deadline) VALUES(?,?,?,?,?,?,?)",result.TaskID,d.ID,p.ID,result.Kind,today,d.MaxCallsPerTask,limitExpiry(d,time.Duration(d.TaskSeconds)*time.Second).Format(time.RFC3339Nano));e!=nil{return result,e}
+ if result.Batch!=nil{researchLimit=result.Batch.MaxResearchCalls}
+ if !p.Has("research")||researchLimit==0{providers=[]string{}}
+ if providers==nil{providers=[]string{}}
+ encoded,e:=store.Encode(providers);if e!=nil{return result,e}
+ if _,e=q.ExecContext(ctx,"INSERT INTO delegated_tasks(task_id,delegation_id,credential_id,kind,created_day,max_calls,deadline,research_providers,provider_limit) VALUES(?,?,?,?,?,?,?,?,?)",result.TaskID,d.ID,p.ID,result.Kind,today,d.MaxCallsPerTask,limitExpiry(d,time.Duration(d.TaskSeconds)*time.Second).Format(time.RFC3339Nano),encoded,researchLimit);e!=nil{return result,e}
  result.Credential=p;return result,nil
 }
 
@@ -178,7 +190,7 @@ func(s *Service)ResumeDelegatedTask(ctx context.Context,w *Write,id,secret strin
  case "asset":task,err:=s.assetMaintenance(ctx,id);if err!=nil{return result,err};if !task.ExpiresAt.After(time.Now()){return result,Fail(409,"asset_task_expired","作品任务已到期。")};result.AssetTask=&task;p.ExpiresAt=task.ExpiresAt
  default:return result,Fail(409,"task_kind_invalid","任务记录无效。")
  }
- p.Generation++;q,e:=w.Q();if e!=nil{return result,e};if e=saveDelegatedCredential(ctx,q,p,secret);e!=nil{return result,e};result.TaskID=id;result.Credential=p;return result,nil
+ p.Generation++;q,e:=w.Q();if e!=nil{return result,e};if e=saveDelegatedCredential(ctx,q,p,secret);e!=nil{return result,e};w.after=append(w.after,func()error{s.researchGateway.cancel(credentialID,"");return nil});result.TaskID=id;result.Credential=p;return result,nil
 }
 
 type DelegatedBudget struct{Calls int `json:"calls"`;MaxCalls int `json:"maxCalls"`;Deadline time.Time `json:"deadline"`}

@@ -71,6 +71,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
                 Text("全库只读 · ${if (grant.canIngest) "可新增媒体" else "不可新增媒体"} · ${if (grant.canResearch) "可研究" else "不可研究"} · ${if (grant.canOrganize) "可整理" else "不可整理"}")
                 Text(if (grant.canRecycleSources) "已单独授权：备份核验后回收来源" else "未授权回收来源", style = MaterialTheme.typography.bodySmall)
                 if (grant.canResearchAssets) Text("可研究所选影库中的现有作品", style = MaterialTheme.typography.bodySmall)
+                if (grant.researchProviders.isNotEmpty()) Text("外部研究来源 · ${grant.researchProviders.joinToString("、") { researchSourceNames[it] ?: it }}", style = MaterialTheme.typography.bodySmall)
                 if (grant.assetFields.isNotEmpty()) Text("现有作品权限 · ${grant.assetFields.joinToString("、", transform = ::assetFieldName)}", style = MaterialTheme.typography.bodySmall)
                 Text("写入范围：${grant.libraryIds.size} 个影库，${if (grant.allAuthors) "全部可维护作者" else "${grant.authorIds.size} 位作者"}")
                 if (grant.allowedFields.isNotEmpty()) Text("作者字段：${grant.allowedFields.joinToString("、") { fieldName(it) }}")
@@ -103,6 +104,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     var blocks by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var canIngest by rememberSaveable { mutableStateOf(false) }
     var canResearch by rememberSaveable { mutableStateOf(false) }
+    var researchProviders by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var canOrganize by rememberSaveable { mutableStateOf(false) }
     var canRecycle by rememberSaveable { mutableStateOf(false) }
     var researchAssets by rememberSaveable { mutableStateOf(false) }
@@ -121,7 +123,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     val maxResearch = research.toIntOrNull()?.takeIf { it in 0..100 }
     val maxCalls = calls.toIntOrNull()?.takeIf { it in 10..10000 }
     val duration = minutes.toIntOrNull()?.takeIf { it in 1..1440 }
-    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, canOrganize, canRecycle, researchAssets, assetFields, allowClear, days, tasks, updates, research, calls, minutes) {
+    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, researchProviders, canOrganize, canRecycle, researchAssets, assetFields, allowClear, days, tasks, updates, research, calls, minutes) {
         model.clearCreationError()
     }
     val writesNeedLibrary = canIngest || canResearch || canOrganize || assetFields.isNotEmpty()
@@ -133,7 +135,19 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
             OutlinedTextField(label, { label = it }, label = { Text("连接名称") }, enabled = !busy)
             Text("只读查询全库始终开放；下面仅增加你选择的写入权限。", style = MaterialTheme.typography.bodySmall)
             PermissionRow("新增媒体", canIngest, !busy) { canIngest = it; if (!it) canRecycle = false }
-            PermissionRow("研究（使用已配置的外部工具）", canResearch, !busy) { canResearch = it; if (!it) researchAssets = false }
+            PermissionRow("研究", canResearch, !busy) { enabled ->
+                canResearch = enabled
+                if (!enabled) { researchAssets = false; researchProviders = emptyList() }
+            }
+            if (canResearch) {
+                Text("外部研究来源", style = MaterialTheme.typography.titleSmall)
+                Text("所选来源可收到任务明确提交的公开标识或检索词。", style = MaterialTheme.typography.bodySmall)
+                researchSourceNames.forEach { (name, display) ->
+                    PermissionRow(display, name in researchProviders, !busy && (maxResearch ?: 0) > 0) { selected ->
+                        researchProviders = if (selected) researchProviders + name else researchProviders - name
+                    }
+                }
+            }
             PermissionRow("整理 / 命名", canOrganize, !busy) { canOrganize = it }
             PermissionRow("备份核验后回收来源", canRecycle, !busy && canIngest && libraryIds.isNotEmpty()) { canRecycle = it }
             Text("现有作品权限", style = MaterialTheme.typography.titleSmall)
@@ -168,7 +182,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
             OutlinedTextField(days, { days = it }, label = { Text("有效天数（1–365）") }, isError = validDays == null, enabled = !busy)
             OutlinedTextField(tasks, { tasks = it }, label = { Text("每日任务上限（1–200）") }, isError = dailyTasks == null, enabled = !busy)
             OutlinedTextField(updates, { updates = it }, label = { Text("每任务资料更新上限（1–10）") }, isError = maxUpdates == null, enabled = !busy)
-            if (canResearch) OutlinedTextField(research, { research = it }, label = { Text("每任务研究调用上限（0–100）") }, isError = maxResearch == null, enabled = !busy)
+            if (canResearch) OutlinedTextField(research, { research = it; if (it.toIntOrNull() == 0) researchProviders = emptyList() }, label = { Text("每任务研究调用上限（0–100）") }, isError = maxResearch == null, enabled = !busy)
             OutlinedTextField(calls, { calls = it }, label = { Text("每任务工具调用上限（10–10000）") }, isError = maxCalls == null, enabled = !busy)
             OutlinedTextField(minutes, { minutes = it }, label = { Text("单任务有效分钟数（1–1440）") }, isError = duration == null, enabled = !busy)
             error?.let { ErrorNotice(it) }
@@ -178,10 +192,14 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
             fields, blocks, allowClear && writesNeedAuthor, canIngest, canResearch, canOrganize,
             if (canResearch) maxResearch!! else 0, maxUpdates!!, dailyTasks!!, validDays!!, maxCalls!!, duration!! * 60,
             canRecycleSources = canRecycle && canIngest && libraryIds.isNotEmpty(),
-            canResearchAssets = researchAssets && canResearch && libraryIds.isNotEmpty(), assetFields = assetFields), close)
+            canResearchAssets = researchAssets && canResearch && libraryIds.isNotEmpty(), assetFields = assetFields,
+            researchProviders = researchProviders), close)
     }, enabled = valid && !busy && error == null) { Text("创建接入凭据") } },
         dismissButton = { TextButton(onClick = close, enabled = !busy) { Text("取消") } })
 }
+
+private val researchSourceNames = mapOf("fxtwitter" to "FxTwitter", "pixiv" to "Pixiv", "yandere" to "yande.re",
+    "e621" to "e621", "wayback" to "Wayback Machine", "steam" to "Steam", "bing" to "Bing")
 
 @Composable
 private fun PermissionRow(label: String, selected: Boolean, enabled: Boolean, changed: (Boolean) -> Unit) {

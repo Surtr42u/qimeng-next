@@ -52,6 +52,8 @@ GitHub Actions 的 `Installed Web UI comparison` 独立检出已安装旧提交 
 
 展示层边界随现有 `npm test` 执行。只检查该项可在云端 `web/` 执行 `npm test -- tests/architecture.test.ts`。TypeScript 按符号检查路由壳、页面、组件及共用展示包。SDK 运行值、传输、浏览器凭据与持久化读写留在数据层，类型、数据钩子、图片预载、视频播放和显式输入口令继续使用。检查同时运行允许和禁止的最小样例，错误列出文件及行号。
 
+AI 首次接入页在用户勾选研究后读取服务的 `/research/context`。每种公开文字查询来源都需单独选择，研究次数设为零或关闭研究会撤去这些选择。核对页与已建立授权会显示实际来源；此前未配置的接入继续使用空清单。
+
 ## 依赖来源与固定版本
 
 2026-11-17 通过官方 npm registry 实际读取精确版本和 peerDependencies。首次云端准备发现 openapi-typescript 只支持 TypeScript 5.x，已使用 5.9.3；不以 force 或 legacy-peer-deps 绕过。

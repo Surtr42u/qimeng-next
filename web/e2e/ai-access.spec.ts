@@ -30,6 +30,7 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await expect(page.getByLabel('一次性显示的接入凭据')).toHaveValue(syntheticSecret);
   expect(record?.canIngest).toBe(false);
   expect(record?.canResearchAssets).toBe(false);
+  expect(record?.researchProviders).toEqual([]);
   expect(record?.assetFields).toEqual([]);
   expect(record?.candidateBlocks).toEqual([]);
   expect(record?.allAuthors).toBe(false);
@@ -44,4 +45,39 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await page.getByRole('alertdialog').getByRole('button', { name: '确认', exact: true }).click();
   await page.getByLabel('接入状态').selectOption('revoked');
   await expect(page.getByRole('article').filter({ has: page.getByRole('heading', { name: '合成执行器', exact: true }) }).getByText('已撤销', { exact: true })).toBeVisible();
+});
+
+test('public research sends only explicitly checked deployed text sources with a positive budget', async ({ page }) => {
+  await mockLibrary(page);
+  await page.route('**/api/v1/research/context', route => route.fulfill({ json: { enabled: true, allowedProviders: [], providers: [
+    { name: 'fxtwitter', operations: ['author', 'post'], evidenceKind: 'platform_record' },
+    { name: 'steam', operations: ['workshop'], evidenceKind: 'platform_record' },
+  ] } }));
+  await page.route('**/api/v1/ai/delegations**', route => {
+    if (route.request().method() !== 'POST') return route.fulfill({ json: { items: [] } });
+    const body = route.request().postDataJSON();
+    return route.fulfill({ status: 201, json: { delegation: { ...body, id: 'fixture-grant', state: 'active' }, credential: { token: 'fixture-only-text-grant' } } });
+  });
+  await page.goto('/settings/ai');
+  await page.getByRole('button', { name: '添加 AI 接入' }).click();
+  await page.getByLabel('接入名称').fill('合成外部文字核验');
+  await page.getByLabel('研究未知身份与来源').check();
+  await page.getByRole('button', { name: '下一步' }).click();
+  const sources = page.getByRole('group', { name: '允许发送文字查询的公开来源' });
+  await expect(sources.getByRole('checkbox')).toHaveCount(2);
+  const fx = sources.getByLabel('FxTwitter', { exact: false });
+  const steam = sources.getByLabel('Steam 创意工坊');
+  await expect(fx).not.toBeChecked();
+  await expect(steam).not.toBeChecked();
+  await steam.check();
+  await page.getByLabel('每任务研究调用上限').fill('0');
+  await expect(steam).not.toBeChecked();
+  await expect(steam).toBeDisabled();
+  await page.getByLabel('每任务研究调用上限').fill('2');
+  await fx.check();
+  await page.getByRole('button', { name: '下一步' }).click();
+  await expect(page.getByText('FxTwitter（X 公开账号与帖子）', { exact: true })).toBeVisible();
+  const submitted = page.waitForRequest(r => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/ai/delegations'));
+  await page.getByRole('button', { name: '建立此范围的接入' }).click();
+  expect((await submitted).postDataJSON()).toMatchObject({ canResearch: true, maxResearchCalls: 2, researchProviders: ['fxtwitter'] });
 });

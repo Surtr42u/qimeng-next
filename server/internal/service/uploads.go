@@ -122,6 +122,7 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
   if !strings.EqualFold(path.Ext(old.FileName),path.Ext(u.FileName)){a.FileName=strings.TrimSuffix(old.FileName,path.Ext(old.FileName))+strings.ToLower(path.Ext(u.FileName))}
   a.RelativePath=path.Join(path.Dir(old.RelativePath),a.FileName);a.AcquisitionSources=appendUnique(a.AcquisitionSources,u.AcquisitionSources...);a.OriginalFileName=u.OriginalFileName;a.SourceRelativePath=u.SourceRelativePath;operation="replace"
  }else if item!=nil{
+  if e=preserveUploadSelection(w.Principal,u,item.AuthorIDs,item.SourceIDs,item.CharacterIDs);e!=nil{return model.UploadResult{},e}
   if item.ExpectedHash!=u.Hash{return model.UploadResult{},Fail(409,"plan_content_changed","计划引用的内容已改变。")};a.FileName=item.FileName;a.RelativePath=item.RelativePath;a.CollectionID=item.CollectionID;a.Page=item.Page;a.MetadataSource="ai";authors,e:=s.resolveAuthors(ctx,a.LibraryID,item.AuthorIDs);if e!=nil{return model.UploadResult{},e};setAuthors(&a,authors);if e=s.resolveTaxonomy(ctx,&a,item.SourceIDs,item.CharacterIDs);e!=nil{return model.UploadResult{},e}
  }else if u.CollectionID!=""&&kind!="video"{
   sequence,e:=s.appendSequence(ctx,u.CollectionID,u.RelativeDirectory,u.Family);if e!=nil{return model.UploadResult{},e};a.Page=sequence.MaxPage+1;a.FileName=domain.WorkFilename(sequence.Family,sequence.Separator,sequence.Number,sequence.Width,a.Page,path.Ext(u.FileName));a.RelativePath=path.Join(sequence.Directory,a.FileName)
