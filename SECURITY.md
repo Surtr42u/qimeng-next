@@ -14,4 +14,6 @@
 
 工程检查使用固定版本的 Gitleaks，在输出中遮蔽疑似秘密。SDK 文件校验和、生成器固定摘要的例外限定到对应文件和文本形状。机器检查无法识别所有私人影像、文件名和自由文本，维护者仍须核对其来源和实际可见内容。[扫描规则](.gitleaks.toml) · [Gitleaks 官方项目](https://github.com/gitleaks/gitleaks)
 
+Go、Python、Node 和 Rust 的锁定依赖变化时，GitHub Actions 按已提交的版本查询 OSV 公告。维护者也可以在 Actions 手动选择目标分支运行。命中后从报告核对依赖路径、受影响平台、实际使用方式和修复版本，在云端更新锁并重跑对应入口。此项检查覆盖列明的依赖清单，Android 的系统组件及设备厂商补丁需要另外核对。[依赖公告检查](.github/workflows/dependencies.yml) · [OSV 清单扫描说明](https://google.github.io/osv-scanner/usage/scan-source)
+
 若发现已暴露的有效凭据，先在签发端撤销或轮换，然后核对包含它的提交、日志和附件。后续提交删除一行不能撤回已公开的旧副本。公开问题中只说明受影响的版本和信息类别，避免再次贴出原值。[GitHub 敏感数据处理说明](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)

@@ -1,0 +1,36 @@
+name: Dependency advisories
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/**']
+    paths:
+      - .github/workflows/dependencies.yml
+      - server/go.mod
+      - ai/requirements.lock
+      - tools/mcp-compat/package-lock.json
+      - web/package-lock.json
+      - desktop/package-lock.json
+      - desktop/src-tauri/Cargo.lock
+permissions:
+  contents: read
+jobs:
+  locked-packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Check locked package versions against published advisories
+        env:
+          OSV_VERSION: 2.7.1
+          OSV_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8
+        run: |
+          scanner="$RUNNER_TEMP/osv-scanner"
+          curl --fail --silent --show-error --location --retry 2 --max-time 120 \
+            "https://github.com/google/osv-scanner/releases/download/v$OSV_VERSION/osv-scanner_linux_amd64" -o "$scanner"
+          echo "$OSV_SHA256  $scanner" | sha256sum --check --status
+          chmod +x "$scanner"
+          "$scanner" scan source --no-call-analysis=go \
+            --lockfile=server/go.mod --lockfile=requirements.txt:ai/requirements.lock \
+            --lockfile=tools/mcp-compat/package-lock.json --lockfile=web/package-lock.json \
+            --lockfile=desktop/package-lock.json --lockfile=desktop/src-tauri/Cargo.lock
