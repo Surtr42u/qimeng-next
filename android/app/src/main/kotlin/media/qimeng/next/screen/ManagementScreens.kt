@@ -283,24 +283,4 @@ fun TrashScreen(model: LibraryViewModel) {
         dismissButton = { TextButton(onClick = { purgeId = null }) { Text("取消") } }) }
 }
 
-@Composable
-fun HistoryScreen(model: LibraryViewModel) {
-    val state by model.history.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { if (!state.loaded) model.loadHistory() }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { TextButton(onClick = { model.loadHistory() }) { Text("刷新历史") } }
-        state.error?.let { item { ErrorNotice(it) { model.loadHistory() } } }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (state.loaded && state.items.isEmpty()) item { Text("还没有浏览记录") }
-        items(state.items, key = { it.id }) { entry ->
-            ContentCard(Modifier.fillMaxWidth().clickable { model.openAsset(entry.assetId) }) {
-                Text(entry.name, style = MaterialTheme.typography.titleMedium)
-                Text("${entry.createdAt} · ${if (entry.kind == "view") "浏览" else "播放 ${entry.positionMs / 1000} 秒"}", style = MaterialTheme.typography.bodySmall)
-                if (entry.contentVersion == 0L) Text("历史内容版本未知，进度不会映射到当前文件", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        if (state.cursor != null) item { TextButton(onClick = { model.loadHistory(true) }, enabled = !state.loading) { Text("加载更多记录") } }
-    }
-}
-
 private fun themeName(theme: ThemeChoice): String = when (theme) { ThemeChoice.SYSTEM -> "跟随系统"; ThemeChoice.LIGHT -> "浅色"; ThemeChoice.DARK -> "深色" }

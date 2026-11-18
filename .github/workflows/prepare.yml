@@ -51,6 +51,28 @@ jobs:
             server/internal/transport/generated/
             ai/requirements.lock
             tools/mcp-compat/package-lock.json
+  server-runtime:
+    needs: generate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: generated-contracts-and-locks, path: .}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache-dependency-path: server/go.sum}
+      - name: Build Linux runtime for independent client checks
+        working-directory: server
+        run: |
+          go build -trimpath -o ../build/qimeng-next ./cmd/qimeng
+          go build -trimpath -o ../build/qimeng-backup ./cmd/qimeng-backup
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-runtime
+          retention-days: 7
+          path: build/
+          if-no-files-found: error
   server:
     needs: generate
     runs-on: ubuntu-24.04
@@ -73,8 +95,6 @@ jobs:
           go vet ./...
           go test -race -timeout 180s -v ./...
           go test -tags=qimeng_native_sqlite,sqlite_omit_load_extension -timeout 180s ./internal/store ./internal/service ./internal/httpapi
-          go build -trimpath -o ../build/qimeng-next ./cmd/qimeng
-          go build -trimpath -o ../build/qimeng-backup ./cmd/qimeng-backup
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -82,8 +102,6 @@ jobs:
           retention-days: 7
           path: |
             build-format.patch
-            build/qimeng-next
-            build/qimeng-backup
             server/go.mod
             server/go.sum
   web:
@@ -238,7 +256,7 @@ jobs:
             android/**/build/reports/
             android/app/build/outputs/apk/embedded/debug/*.apk
   live:
-    needs: [generate, server, web]
+    needs: [generate, server-runtime, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -247,7 +265,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with: {name: generated-contracts-and-locks, path: .}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with: {name: server-first-check, path: '${{ runner.temp }}/server-artifact'}
+        with: {name: linux-runtime, path: '${{ runner.temp }}/server-artifact/build'}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with: {name: web-first-check, path: web}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -270,7 +288,7 @@ jobs:
           path: web/test-results/**/live-synthetic-*.png
           if-no-files-found: ignore
   mcp-compat:
-    needs: [generate, server]
+    needs: [generate, server-runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -279,7 +297,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with: {name: generated-contracts-and-locks, path: .}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with: {name: server-first-check, path: '${{ runner.temp }}/server-artifact'}
+        with: {name: linux-runtime, path: '${{ runner.temp }}/server-artifact/build'}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with: {python-version: '3.13'}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -292,7 +310,7 @@ jobs:
       - name: Real stdio intake and independent client matrix
         run: bash tools/cloud_mcp.sh
   hermes:
-    needs: [generate, server]
+    needs: [generate, server-runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -307,7 +325,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with: {name: generated-contracts-and-locks, path: .}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with: {name: server-first-check, path: '${{ runner.temp }}/server-artifact'}
+        with: {name: linux-runtime, path: '${{ runner.temp }}/server-artifact/build'}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with: {python-version: '3.13'}
       - name: Install the isolated stdio executor
@@ -384,7 +402,7 @@ jobs:
             desktop/src-tauri/Cargo.lock
             desktop/src-tauri/target/release/bundle/
   android-ui:
-    needs: [generate, android, server]
+    needs: [generate, android, server-runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env: {ANDROID_SERIAL: emulator-5556}
@@ -394,7 +412,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with: {name: generated-contracts-and-locks, path: .}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with: {name: server-first-check, path: '${{ runner.temp }}/server-artifact'}
+        with: {name: linux-runtime, path: '${{ runner.temp }}/server-artifact/build'}
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with: {distribution: temurin, java-version: '17'}
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d

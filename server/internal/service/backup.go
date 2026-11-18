@@ -2,6 +2,7 @@ package service
 
 import (
  "context"
+ "database/sql"
  "encoding/json"
  "errors"
  "os"
@@ -40,13 +41,14 @@ func(s *Service)createBackupCheckpoint(ctx context.Context,w *Write)(Backup,erro
  // must be rebuilt against that same snapshot, never relabelled as a newer one.
  if _,e:=s.Root.Stat(snapshot);errors.Is(e,os.ErrNotExist){
   var pages,pageSize int64;if e=s.DB.DB.QueryRowContext(ctx,"PRAGMA page_count").Scan(&pages);e!=nil{return b,e};if e=s.DB.DB.QueryRowContext(ctx,"PRAGMA page_size").Scan(&pageSize);e!=nil{return b,e};free,e:=freeBytes(s.Config.DataDir);if e!=nil{return b,e};if free-pages*pageSize-(4<<20)<s.Config.ReserveBytes{return b,Fail(507,"insufficient_storage","空间不足以生成业务快照并保留存储余量。")}
-  if _,e=s.DB.DB.ExecContext(ctx,"VACUUM INTO ?",filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)));e!=nil{return b,e}
+  if e=s.publishCheckpointDatabase(ctx,snapshot);e!=nil{return b,e}
  }else if e!=nil{return b,e}
  snapshotDB,e:=store.OpenDatabase(filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)),store.SnapshotDatabase);if e!=nil{return b,e};defer snapshotDB.Close()
- if e=snapshotDB.QueryRowContext(ctx,"SELECT revision FROM backup_business_state WHERE id=1").Scan(&b.BusinessRevision);e!=nil{return b,e}
- assets,e:=store.List[model.Asset](ctx,snapshotDB,"SELECT data FROM assets ORDER BY id");if e!=nil{return b,e};entries:=make([]backupEntry,0,len(assets));for _,a:=range assets{entries=append(entries,backupEntry{a.ID,a.ContentVersion,a.Revision,assetPath(a),a.Hash,a.Size})}
- b.SnapshotHash,_,e=s.hashFile(snapshot);if e!=nil{return b,e};manifest,e:=json.Marshal(struct{InstanceID,SnapshotHash string;Entries []backupEntry}{s.InstanceID,b.SnapshotHash,entries});if e!=nil{return b,e};b.ManifestHash=digest(manifest);b.AssetCount=len(entries)
- f,e:=s.Root.OpenFile(directory+"/manifest.json",os.O_WRONLY|os.O_CREATE|os.O_TRUNC,0600);if e!=nil{return b,e};if _,e=f.Write(manifest);e!=nil{f.Close();return b,e};if e=f.Sync();e!=nil{f.Close();return b,e};if e=f.Close();e!=nil{return b,e}
+ var hasRevision int
+ if e=snapshotDB.QueryRowContext(ctx,"SELECT 1 FROM sqlite_schema WHERE type='table' AND name='backup_business_state'").Scan(&hasRevision);e!=nil&&!errors.Is(e,sql.ErrNoRows){return b,e}
+ if hasRevision==1 {if e=snapshotDB.QueryRowContext(ctx,"SELECT revision FROM backup_business_state WHERE id=1").Scan(&b.BusinessRevision);e!=nil{return b,e}}
+ b.SnapshotHash,_,e=s.hashFile(snapshot);if e!=nil{return b,e}
+ b.AssetCount,b.ManifestHash,e=s.publishCheckpointManifest(ctx,snapshotDB,b);if e!=nil{return b,e}
  raw,e:=store.Encode(b);if e!=nil{return b,e};q,e:=w.Q();if e!=nil{return b,e};_,e=q.ExecContext(ctx,"INSERT INTO backups(id,data) VALUES(?,?)",b.ID,raw);return b,e
 }
 // Operation never exposes another principal's receipt. A key may be reused for

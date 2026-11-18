@@ -133,14 +133,26 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     if (showTags) TagsDialog(item, model) { showTags = false }
     if (showAuthors) AuthorsDialog(item, model) { showAuthors = false }
     if (showRelations) AssetRelationsDialog(item, model) { showRelations = false }
-    if (showAcquisition) TextEditDialog("获取渠道 / 来源（每行一条）", item.acquisitionSources.joinToString("\n"), busy, { showAcquisition = false }) {
-        model.saveAcquisitionSources(it.lines().filter(String::isNotBlank)) { showAcquisition = false }
+    if (showAcquisition) {
+        val revision = rememberSaveable(item.id) { item.revision }
+        TextEditDialog("获取渠道 / 来源（每行一条）", item.acquisitionSources.joinToString("\n"), busy, { showAcquisition = false }) {
+            model.saveAcquisitionSources(item.copy(revision = revision), it.lines().filter(String::isNotBlank)) { showAcquisition = false }
+        }
     }
-    if (showNote) TextEditDialog("编辑备注", item.note, busy, { showNote = false }) { value -> model.saveNote(value) { showNote = false } }
-    if (showRename) TextEditDialog("库内路径与文件名", item.relativePath, busy, { showRename = false }) { value -> model.renameCurrentAsset(value) { showRename = false } }
-    if (showTrash) AlertDialog(onDismissRequest = { showTrash = false }, title = { Text("移到回收站？") }, text = { Text(item.name) },
-        confirmButton = { TextButton(onClick = { showTrash = false; model.trashCurrentAsset() }, enabled = !busy) { Text("移到回收站") } },
+    if (showNote) {
+        val revision = rememberSaveable(item.id) { item.revision }
+        TextEditDialog("编辑备注", item.note, busy, { showNote = false }) { value -> model.saveNote(item.copy(revision = revision), value) { showNote = false } }
+    }
+    if (showRename) {
+        val revision = rememberSaveable(item.id) { item.revision }
+        TextEditDialog("库内路径与文件名", item.relativePath, busy, { showRename = false }) { value -> model.renameCurrentAsset(item.copy(revision = revision), value) { showRename = false } }
+    }
+    if (showTrash) {
+      val revision = rememberSaveable(item.id) { item.revision }
+      AlertDialog(onDismissRequest = { showTrash = false }, title = { Text("移到回收站？") }, text = { Text(item.name) },
+        confirmButton = { TextButton(onClick = { model.trashCurrentAsset(item.copy(revision = revision)) }, enabled = !busy) { Text("移到回收站") } },
         dismissButton = { TextButton(onClick = { showTrash = false }) { Text("取消") } })
+    }
     if (showInfo) {
         val clipboard = LocalClipboardManager.current
         var copied by remember { mutableStateOf(false) }

@@ -49,6 +49,8 @@ data class Asset(
     val fileDate: String? = null,
     val workGroups: List<AssetGroup> = emptyList(),
     val roleGroups: List<AssetGroup> = emptyList(),
+    val playCount: Long? = null,
+    val lastViewedAt: String? = null,
 )
 data class AssetGroup(val key: String, val name: String)
 data class AssetQuery(

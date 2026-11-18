@@ -60,7 +60,8 @@ func(s *Service)prepareFile(ctx context.Context,w *Write,j fileIntent)(fileInten
  if j.Kind!="trash"{
   var applies bool
   if e=s.DB.DB.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM author_lists)").Scan(&applies);e!=nil{return j,e}
-  if applies||j.After.AuthorID!="unknown"{
+  hasCreator:=false;for _,id:=range j.After.AuthorIDs{if id!=""&&id!="unknown"{hasCreator=true;break}}
+  if applies||hasCreator{
    tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return j,e}
    preview:=j;e=saveCOSPlacement(ctx,tx,j.COSAuthor,j.COSWork)
    if e==nil&&j.Kind=="purge"{e=removeAssetAuthorWorks(ctx,tx,j.After)}else if e==nil{e=store.SaveAsset(ctx,tx,j.After);if e==nil{e=s.finalizeAuthorTextForFile(ctx,tx,&preview)}}

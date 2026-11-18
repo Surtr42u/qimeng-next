@@ -20,10 +20,12 @@ private val dimensions = listOf("partitions" to "分区", "works" to "作品", "
 internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls, rows: Map<String, FacetRowState>,
                           onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit) {
     QimengTitleRow(title, total?.let { "$it 文件" }.orEmpty(), onBack = onBack,
-        titleStyle = MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
-        onFilterClick = { controls.showFilters.value = true }, filterActive = controls.panel != FilterPanelDraft(),
-        columns = controls.columns.intValue, onToggleColumns = { controls.columns.intValue = if (controls.columns.intValue >= 5) 2 else controls.columns.intValue + 1 })
-    val shadow = Modifier.softDaylightShadow(QimengShapes.pill)
+        titleStyle = if (onBack == null) MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
+            else MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+        onFilterClick = if (onBack == null) ({ controls.showFilters.value = true }) else null, filterActive = controls.panel != FilterPanelDraft(),
+        columns = controls.columns.intValue.takeIf { onBack == null },
+        onToggleColumns = if (onBack == null) ({ controls.columns.intValue = if (controls.columns.intValue >= 5) 2 else controls.columns.intValue + 1 }) else null)
+    val shadow = if (onBack == null) Modifier.softDaylightShadow(QimengShapes.pill) else Modifier
     QimengChipRow(dimensions.map { (row, label) ->
         val count = rows[row]?.totalOptions?.let { if (row == "partitions" || row == "types") (it - 1).coerceAtLeast(0) else it }
         val text = if (row == "types" && controls.row == row && !controls.expanded)

@@ -16,6 +16,7 @@ import (
  "path/filepath"
  "strings"
  "sync"
+ "sync/atomic"
  "time"
 
  "qimeng.local/next/server/internal/model"
@@ -29,7 +30,7 @@ func Fail(status int,code,message string)error{return &Error{Code:code,Message:m
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
 type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64 }
-type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; password *passwordLogin; loginLimit loginBudget }
+type Service struct { DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -71,7 +72,8 @@ func New(config Config)(*Service,error){
  if _,err=db.DB.ExecContext(ctx,"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted') WHERE json_extract(data,'$.exportState') IN ('queued','running')");err!=nil{s.Close();return nil,err}
  if _,err=db.DB.ExecContext(ctx,"UPDATE batch_protections SET state='interrupted',data=json_set(data,'$.state','interrupted','$.errorCode','protection_interrupted') WHERE state IN ('queued','running')");err!=nil{s.Close();return nil,err}
- s.mirrorWake=make(chan struct{},1);s.workers.Add(1);go s.authorMirrorWorker();s.wakeAuthorMirror()
+ mirror,err:=readAuthorMirror(ctx,db.DB);if err!=nil{s.Close();return nil,err}
+ s.mirrorEnabled.Store(mirror.Path!="");s.mirrorWake=make(chan struct{},1);s.workers.Add(1);go s.authorMirrorWorker();s.wakeAuthorMirror()
  return s,nil
 }
 func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}

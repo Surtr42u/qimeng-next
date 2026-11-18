@@ -21,7 +21,7 @@ internal fun gallerySections(items: List<Asset>, mode: String?, options: List<Fa
     val offset = ZoneOffset.ofTotalSeconds(TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000)
     val today = LocalDate.now(offset)
     val counts = dates.associate { it.date to it.count }
-    val groups = items.groupBy { asset -> asset.fileDate?.let { Instant.parse(it).atOffset(offset).toLocalDate() } }
+    val groups = items.groupBy { asset -> (if (mode == "history") asset.lastViewedAt else asset.fileDate)?.let { Instant.parse(it).atOffset(offset).toLocalDate() } }
     return groups.entries.sortedBy { it.key == null }.map { (day, assets) ->
         val label = if (day == null) "未知日期" else when (ChronoUnit.DAYS.between(day, today)) {
             0L -> "今天"

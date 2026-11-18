@@ -14,7 +14,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class ApiFailure(val status: Int, override val message: String) : IOException(message)
+class ApiFailure(val status: Int, override val message: String, val code: String? = null) : IOException(message)
 
 internal fun <T> Response<T>.bodyOrThrow(): T {
     if (!isSuccessful) {
@@ -27,6 +27,7 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
             } catch (_: Exception) { null }
         }
         val explanation = when {
+            code() == 409 && errorCode == "recommendation_expired" -> "推荐列表已更新，请刷新后继续浏览。"
             code() == 409 && errorCode == "tag_deleted" -> "标签已被删除。请刷新并移除草稿中的旧标签；确需恢复时，使用“添加”明确新建。"
             code() == 409 && errorCode == "source_hash_mismatch" -> "传输字节与入队摘要不一致，未入库。请保留原件并重新选择文件。"
             code() == 409 && errorCode == "publication_pending" -> "服务器正在完成提交，当前不能取消；请保留来源并等待结果核对。"
@@ -49,7 +50,7 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
             else -> "请求失败（HTTP ${code()}）"
             }
         }
-        throw ApiFailure(code(), explanation)
+        throw ApiFailure(code(), explanation, errorCode)
     }
     return body() ?: throw IOException("服务器返回了缺失的数据")
 }

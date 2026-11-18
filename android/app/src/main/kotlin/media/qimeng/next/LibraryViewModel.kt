@@ -14,7 +14,7 @@ import java.util.UUID
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
-    val unknownDateCount: Long? = null)
+    val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -94,8 +94,6 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val listVersions = mutableMapOf<String, RequestGeneration>()
     private val authorState = MutableStateFlow(ListState<Author>())
     val authors = authorState.asStateFlow()
-    private val historyState = MutableStateFlow(ListState<HistoryEntry>())
-    val history = historyState.asStateFlow()
     private val reportState = MutableStateFlow(ListState<TaskReport>())
     val reports = reportState.asStateFlow()
     private val authorTaskState = MutableStateFlow(ListState<AuthorTaskReport>())
@@ -135,7 +133,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 }
                 saved["uploadInstance"] = connection?.instanceId
                 analyticsState.value = LoadState(); reviewState.value = LoadState(); recommendationState.value = null
-                authorState.value = ListState(); historyState.value = ListState(); reportState.value = ListState()
+                authorState.value = ListState(); reportState.value = ListState()
                 authorTaskState.value = ListState()
                 trashState.value = ListState()
                 if (connection != null) {
@@ -168,7 +166,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
-        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query)) return
+        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query || state.value.reloadFromStart)) return
         if (!next && !force && previous == query && (state.value.loaded || state.value.loading)) return
         queries[key] = query
         listJobs[key]?.cancel()
@@ -190,7 +188,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (generation.isCurrent(ticket) && connection == connectionGeneration)
-                    state.value = state.value.copy(loading = false, error = explain(failure))
+                    state.value = state.value.copy(loading = false, error = explain(failure),
+                        reloadFromStart = next && failure is ApiFailure && failure.code == "recommendation_expired")
             }
         }
     }
@@ -321,9 +320,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val current = mutableAsset.value ?: return@action
         publishAsset(repository.tags(current.copy(tagsRevision = expectedRevision), tags)); onSaved()
     }
-    fun saveNote(note: String, onSaved: () -> Unit) = action {
-        val current = mutableAsset.value ?: return@action
-        publishAsset(repository.updateNote(current, note)); onSaved()
+    fun saveNote(asset: Asset, note: String, onSaved: () -> Unit) = action {
+        publishAsset(repository.updateNote(asset, note)); onSaved()
     }
     fun saveAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long, onSaved: () -> Unit) = action {
         val result = repository.updateAuthors(asset, ids, names, revision, authorsRevision)
@@ -331,11 +329,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
         onSaved()
     }
-    fun saveRelations(sources: List<String>, characters: List<String>, onSaved: () -> Unit) = action {
-        mutableAsset.value?.let { publishAsset(repository.updateRelations(it, sources, characters)); onSaved() }
+    fun saveRelations(asset: Asset, sources: List<String>, characters: List<String>, onSaved: () -> Unit) = action {
+        publishAsset(repository.updateRelations(asset, sources, characters)); onSaved()
     }
-    fun saveAcquisitionSources(sources: List<String>, onSaved: () -> Unit) = action {
-        mutableAsset.value?.let { publishAsset(repository.updateAcquisitionSources(it, sources)); onSaved() }
+    fun saveAcquisitionSources(asset: Asset, sources: List<String>, onSaved: () -> Unit) = action {
+        publishAsset(repository.updateAcquisitionSources(asset, sources)); onSaved()
     }
     fun loadTags(next: Boolean = false) = action {
         val page = repository.tags(if (next) mutableTagCursor.value else null)
@@ -360,12 +358,14 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun mediaClient(target: Session) = repository.mediaClient(target)
     private fun publishAsset(asset: Asset) {
+        if (!sameTarget(asset.target, session.value)) return
         if (mutableAsset.value?.id == asset.id) mutableAsset.value = asset
-        lists.values.forEach { state -> state.value = state.value.copy(items = state.value.items.map { if (it.id == asset.id) asset else it }) }
+        lists.values.forEach { state -> state.value = state.value.copy(items = state.value.items.map {
+            if (it.id == asset.id) asset.copy(rankingScore = it.rankingScore, lastViewedAt = it.lastViewedAt) else it
+        }) }
     }
 
     fun loadAuthors(next: Boolean = false) = loadPage(authorState, next) { repository.authors(it) }
-    fun loadHistory(next: Boolean = false) = loadPage(historyState, next) { repository.history(it) }
     fun loadReports(next: Boolean = false) = loadPage(reportState, next) { repository.reports(it) }
     fun loadAuthorTasks(next: Boolean = false) = loadPage(authorTaskState, next) { repository.authorTasks(it) }
     fun cancelAuthorTask(id: String) = action { repository.cancelAuthorTask(id); loadAuthorTasks() }
@@ -400,15 +400,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         repository.createDirectory(libraryId, listOf(parent, name.trim()).filter(String::isNotEmpty).joinToString("/"))
         onSaved()
     }
-    fun trashCurrentAsset() = action {
-        mutableAsset.value?.let { current ->
-            repository.trash(current)
-            lists.values.forEach { it.value = it.value.copy(items = it.value.items.filterNot { item -> item.id == current.id }) }
-            back()
-        }
+    fun trashCurrentAsset(asset: Asset) = action {
+        repository.trash(asset)
+        lists.values.forEach { it.value = it.value.copy(loaded = false, items = it.value.items.filterNot { item -> item.id == asset.id }) }
+        if (route.value == "asset:${asset.id}") back()
     }
-    fun renameCurrentAsset(path: String, onSaved: () -> Unit) = action {
-        mutableAsset.value?.let { publishAsset(repository.rename(it, path)); onSaved() }
+    fun renameCurrentAsset(asset: Asset, path: String, onSaved: () -> Unit) = action {
+        publishAsset(repository.rename(asset, path)); onSaved()
     }
     fun loadTrash(next: Boolean = false) = loadPage(trashState, next) { repository.trashPage(it) }
     fun restoreAsset(asset: Asset) = action {

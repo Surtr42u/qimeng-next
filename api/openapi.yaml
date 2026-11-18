@@ -515,6 +515,7 @@ paths:
     get:
       operationId: listHistory
       parameters:
+        - {name: dateCounts, in: query, schema: {type: boolean}, description: Include counts per local date of the latest view on the first page}
         - {$ref: '#/components/parameters/FixedTag'}
         - {$ref: '#/components/parameters/DirectoryFilter'}
         - {$ref: '#/components/parameters/RecursiveFilter'}
@@ -2766,7 +2767,7 @@ components:
     HistoryPage:
       type: object
       required: [items, totalMatched]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/HistoryEvent'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}}
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/HistoryEvent'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}, dateCounts: {type: array, items: {$ref: '#/components/schemas/DateCountBucket'}}}
     BatchPage:
       type: object
       required: [items]

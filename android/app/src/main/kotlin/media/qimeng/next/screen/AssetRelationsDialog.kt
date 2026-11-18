@@ -18,6 +18,7 @@ import media.qimeng.next.ui.ErrorNotice
 
 @Composable
 internal fun AssetRelationsDialog(asset: Asset, library: LibraryViewModel, management: ManagementViewModel = viewModel(), close: () -> Unit) {
+    val revision = rememberSaveable(asset.id) { asset.revision }
     var kind by rememberSaveable { mutableStateOf("sources") }
     var sources by rememberSaveable(asset.id) { mutableStateOf(asset.sourceIds) }
     var characters by rememberSaveable(asset.id) { mutableStateOf(asset.characterIds) }
@@ -48,6 +49,6 @@ internal fun AssetRelationsDialog(asset: Asset, library: LibraryViewModel, manag
             }
             message?.let { ErrorNotice(it) }
         }
-    }, confirmButton = { TextButton(onClick = { library.saveRelations(sources, characters, close) }, enabled = !busy) { Text("保存") } },
+    }, confirmButton = { TextButton(onClick = { library.saveRelations(asset.copy(revision = revision), sources, characters, close) }, enabled = !busy) { Text("保存") } },
         dismissButton = { TextButton(onClick = close, enabled = !busy) { Text("取消") } })
 }

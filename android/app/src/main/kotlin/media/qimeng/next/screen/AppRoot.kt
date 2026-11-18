@@ -74,7 +74,7 @@ fun AppRoot(model: LibraryViewModel) {
                 val detailRoute = route.startsWith("asset:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route in setOf("server", "libraries", "upload")) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites", "libraries", "upload")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites", "libraries", "upload", "history")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -101,7 +101,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "search" -> SearchScreen(model)
                                 route == "favorites" -> MediaBrowser(model, "favorites", favorite = true, albumTitle = "收藏")
                                 route == "authors" -> AuthorsScreen(model)
-                                route == "history" -> HistoryScreen(model)
+                                route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
                                 route == "upload" -> UploadScreen(model)
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(model)

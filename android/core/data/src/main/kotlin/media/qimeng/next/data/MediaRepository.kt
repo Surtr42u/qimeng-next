@@ -139,6 +139,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
 
     suspend fun assets(query: AssetQuery, cursor: String? = null): Page<Asset> {
         val target = target()
+        if (query.source == "history") {
+            val page = history(cursor, query)
+            return Page(page.items.map { row ->
+                (row.asset ?: throw IOException("浏览历史缺少当前媒体投影")).copy(lastViewedAt = row.createdAt)
+            }, page.nextCursor, page.totalMatched, page.dateCounts)
+        }
         if (query.source == "recommendations") {
             val page = provider.api(target).getRecommendations(seed = query.seed, cursor = cursor, limit = 50,
                 kind = query.kind?.let { value -> DefaultApi.KindGetRecommendations.entries.first { it.value == value } },
@@ -193,20 +199,20 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun reaction(asset: Asset, favorite: Boolean, liked: Boolean): Asset {
-        val target = target()
+        val target = asset.target
         return provider.api(target).updateReaction(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
             reactionUpdate = ReactionUpdate(favorite = favorite, liked = liked)).bodyOrThrow().toModel(target)
     }
 
     suspend fun tags(asset: Asset, tags: List<String>): Asset {
-        val target = target()
+        val target = asset.target
         val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf(target.instanceId, asset.id, asset.tagsRevision, tags)).toByteArray()).toString()
         return provider.api(target).updateAssetTags(id = asset.id, idempotencyKey = key,
             tagsUpdate = TagsUpdate(expectedRevision = asset.tagsRevision, tags = tags)).bodyOrThrow().toModel(target)
     }
 
     suspend fun updateNote(asset: Asset, note: String): Asset {
-        val target = target()
+        val target = asset.target
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision, note = note))
             .bodyOrThrow().toModel(target)
     }
@@ -216,12 +222,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(asset.target).updateAsset(id = asset.id, idempotencyKey = key, assetUpdate = input).bodyOrThrow().toModel(asset.target)
     }
     suspend fun updateRelations(asset: Asset, sources: List<String>, characters: List<String>): Asset {
-        val target = target()
+        val target = asset.target
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
             sourceIds = sources, characterIds = characters)).bodyOrThrow().toModel(target)
     }
     suspend fun updateAcquisitionSources(asset: Asset, sources: List<String>): Asset {
-        val target = target()
+        val target = asset.target
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
             acquisitionSources = sources)).bodyOrThrow().toModel(target)
     }
@@ -230,16 +236,21 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     suspend fun createTag(name: String): String = provider.api(target()).createTag(idempotencyKey = UUID.randomUUID().toString(),
         createTagRequest = CreateTagRequest(name = name)).bodyOrThrow().name
     suspend fun removeTag(asset: Asset, tag: String): Asset {
-        val target = target()
+        val target = asset.target
         return provider.api(target).removeAssetTag(id = asset.id, tag = tag, idempotencyKey = UUID.randomUUID().toString(),
             expectedRevision = asset.tagsRevision).bodyOrThrow().toModel(target)
     }
 
-    suspend fun history(cursor: String? = null): Page<HistoryEntry> {
+    suspend fun history(cursor: String? = null, query: AssetQuery = AssetQuery()): Page<HistoryEntry> {
         val target = target()
-        val page = provider.api(target).listHistory(cursor = cursor, limit = 50).bodyOrThrow()
+        val page = provider.api(target).listHistory(cursor = cursor, limit = 50, dateCounts = cursor == null,
+            kind = query.kind?.let { value -> DefaultApi.KindListHistory.entries.first { it.value == value } },
+            mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeListHistory.entries.first { it.value == value } },
+            workKeys = query.workKeys, roleKeys = query.roleKeys,
+            tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
         return Page(page.items.map { HistoryEntry(it.eventId, it.assetId, it.fileName ?: "已移除的媒体", it.kind.value,
-            it.positionMs ?: 0, it.createdAt, it.asset?.toModel(target), it.contentVersion) }, page.nextCursor, page.totalMatched)
+            it.positionMs ?: 0, it.createdAt, it.asset?.toModel(target), it.contentVersion) }, page.nextCursor, page.totalMatched,
+            page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) })
     }
 
     suspend fun authors(cursor: String? = null, query: String? = null, kind: String? = null, sort: String = "default", following: Boolean? = null): Page<Author> {
@@ -273,7 +284,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun trash(asset: Asset) {
-        provider.api(target()).trashAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision).bodyOrThrow()
+        provider.api(asset.target).trashAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision).bodyOrThrow()
     }
     suspend fun trashPage(cursor: String? = null): Page<Asset> {
         val target = target()
@@ -281,15 +292,15 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return Page(page.items.map { it.toModel(target) }, page.nextCursor)
     }
     suspend fun restore(asset: Asset) {
-        provider.api(target()).restoreAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
+        provider.api(asset.target).restoreAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
             revisionRequest = RevisionRequest(expectedRevision = asset.revision)).bodyOrThrow()
     }
     suspend fun purge(asset: Asset) {
-        val result = provider.api(target()).purgeAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision)
+        val result = provider.api(asset.target).purgeAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(), expectedRevision = asset.revision)
         if (!result.isSuccessful) result.bodyOrThrow()
     }
     suspend fun rename(asset: Asset, relativePath: String): Asset {
-        val target = target()
+        val target = asset.target
         return provider.api(target).moveAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
             moveRequest = MoveRequest(expectedRevision = asset.revision, relativePath = relativePath)).bodyOrThrow().toModel(target)
     }
@@ -354,7 +365,7 @@ private fun ApiAsset.toModel(target: Session): Asset {
         collectionId = collectionId, page = page,
         contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt,
         fileDate = fileDate, workGroups = workFacets.orEmpty().map { AssetGroup(it.key, it.name) },
-        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) })
+        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount)
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,

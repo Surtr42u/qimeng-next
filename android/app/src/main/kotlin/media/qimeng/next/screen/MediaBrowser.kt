@@ -131,8 +131,10 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val session by model.session.collectAsStateWithLifecycle()
     var columns by controls.columns
     val grid = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
-        sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId))
+        sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId,
+        history = true.takeIf { source == "history" }))
     val group = if (albumTitle != null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
     LaunchedEffect(key, query, group) {
@@ -164,10 +166,16 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "列数") }
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
-        state.error?.let { ErrorNotice(it) { model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true) } }
+        state.error?.let { ErrorNotice(it) {
+            if (state.reloadFromStart) {
+                if (onRefresh != null) onRefresh() else {
+                    scope.launch { grid.scrollToItem(0) }; model.browse(key, query, force = true)
+                }
+            } else model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true)
+        } }
         if (state.loading && !state.loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
         val entries = if (state.loadedQuery == query) state.items else emptyList()
-        val sectionMode = group ?: if (caption) "partitions" else null
+        val sectionMode = when { source == "history" -> "history"; favorite == true || caption -> "partitions"; else -> group }
         val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }

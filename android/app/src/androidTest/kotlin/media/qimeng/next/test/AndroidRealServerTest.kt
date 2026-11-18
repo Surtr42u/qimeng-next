@@ -150,7 +150,8 @@ class AndroidRealServerTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        await("video-play-event", graph) { graph.media.history().items.any { it.assetId == video.id && it.kind == "play" } }
+        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
+        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
         compose.onNodeWithContentDescription("进入全屏").performClick()
         compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
         screenshot("real-server-video-fullscreen.png")
@@ -158,6 +159,7 @@ class AndroidRealServerTest {
         val recommendation = runBlocking { graph.media.assets(AssetQuery(source = "recommendations", seed = 42)) }
         assertTrue(recommendation.items.any { it.id == picture.id })
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("navigation:albums").performClick()
         compose.waitUntil(30_000) { compose.onAllNodesWithText("2 文件").fetchSemanticsNodes().isNotEmpty() }
         screenshot("real-server-albums.png")

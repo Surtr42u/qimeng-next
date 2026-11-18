@@ -63,10 +63,12 @@ func(s *Service)UpdateAuthorListMirror(ctx context.Context,w *Write,in AuthorLis
  q,e:=w.Q();if e!=nil{return m,e}
  _,e=q.ExecContext(ctx,`INSERT INTO author_list_mirror(id,revision,path,mode,list_id,version,state) VALUES(1,1,?,?,?,1,?)
   ON CONFLICT(id) DO UPDATE SET revision=revision+1,path=excluded.path,mode=excluded.mode,list_id=excluded.list_id,version=version+1,state=excluded.state,error_code='',content_hash='',published_at=NULL`,in.Path,in.Mode,in.ListID,state)
- if e!=nil{return m,e};return readAuthorMirror(ctx,q)
+ if e!=nil{return m,e}
+ w.after=append(w.after,func()error{s.mirrorEnabled.Store(in.Path!="");s.wakeAuthorMirror();return nil})
+ return readAuthorMirror(ctx,q)
 }
 
-func(s *Service)wakeAuthorMirror(){select{case s.mirrorWake<-struct{}{}:default:}}
+func(s *Service)wakeAuthorMirror(){if s.mirrorEnabled.Load(){select{case s.mirrorWake<-struct{}{}:default:}}}
 
 func(s *Service)authorMirrorWorker(){
  defer s.workers.Done()
@@ -77,6 +79,10 @@ func(s *Service)authorMirrorWorker(){
 }
 
 func(s *Service)publishPendingAuthorMirror(ctx context.Context)error{
+ if e:=ctx.Err();e!=nil{return e}
+ // Close joins this bounded worker. Finish its active snapshot synchronously
+ // instead of racing database/sql's background rollback against DB.Close.
+ ctx=context.WithoutCancel(ctx)
  tx,e:=s.DB.DB.BeginTx(ctx,&sql.TxOptions{ReadOnly:true});if e!=nil{return e};defer tx.Rollback()
  m,e:=readAuthorMirror(ctx,tx);if e!=nil||m.State!="pending"{return e}
  var content string
