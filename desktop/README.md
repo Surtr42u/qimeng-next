@@ -6,11 +6,11 @@
 
 首次打开配置窗，输入 HTTP/HTTPS 根地址，保存后连接影库；访问令牌在 Web 登录页交换。地址写入系统应用配置目录，失败保留旧配置，启动时可从上一份配置恢复。托盘提供打开、切换地址与退出，`--setup` 也能进入配置。关闭主窗口退出应用；媒体子窗口关闭只关闭该窗口。
 
-主窗口恢复旧版 1200×800 无边框布局，Web 顶栏原位置的三键、空白区域拖动和双击调用当前窗口的原生操作。Tauri 运行时 capability 按每次连接唯一的 WebView 标签和所选 HTTP(S) 完整 origin 建立，只允许 `window_action`。Rust 选择目标并检查当前活动窗口。连接地址命令仅限内置连接页，媒体子窗不能调用标题栏或地址命令。
+主窗口恢复旧版 1200×800 无边框布局，Web 顶栏原位置的三键、空白区域拖动和双击调用当前窗口的原生操作。Tauri 按当前 WebView 标签及 HTTP(S) 完整 origin 授权主窗使用 `window_action` 和 `open_original`。Rust 再次检查活动窗口和目标来源。连接地址命令只授予内置连接页。
 
 主窗及原件子窗逐次核对导航协议、主机与端口。外部 Web 链接由系统浏览器打开，关闭子窗只影响该子窗，切换服务器会关闭旧主窗及其原件子窗。设置窗口复用旧 `desktop/ui/setup.html` 的 420×340 布局、颜色及 `desktop/ui/app-icon.png` 品牌图；地址、保存与权限判断由 Next 实现。
 
-主窗打开原件时，壳先核对目标地址，结束浏览器回调后在现有 WebView2 资料目录下打开独立原件窗。打开期间若用户已切换服务器，旧子窗会关闭。云测从原件服务器实际收到的 Cookie 核对会话是否保留。[WebView2 线程与回调](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model)
+主窗中真实点击同源的新窗口链接时，控制层将地址传给专用命令。壳核对目标后，在现有 WebView2 资料目录下打开独立原件窗。打开期间若用户已切换服务器，旧子窗会关闭。云测从真实鼠标点击、原件请求和认证 Cookie 分别确认这三个环节。[WebView2 线程与回调](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model)
 
 ## 云端准备与验证
 

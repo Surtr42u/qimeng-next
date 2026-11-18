@@ -30,6 +30,31 @@ fn show_connection(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn build_media_window(app: &tauri::AppHandle, generation: u64, origin: url::Url, target: url::Url) -> Result<(), String> {
+    if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation || !connection::same_origin(&origin, &target) {
+        return Err("原件不属于当前连接".into());
+    }
+    let label = format!("media-{generation}-{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(target))
+        .title("绮梦原件")
+        .on_navigation(move |url| ACTIVE_LIBRARY.load(Ordering::Acquire) == generation && connection::same_origin(&origin, url))
+        .on_new_window(|_, _| NewWindowResponse::Deny)
+        .build().map_err(|_| "无法打开原件窗口".to_owned())?;
+    if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation {
+        window.destroy().map_err(|_| "无法关闭已过期的原件窗口".to_owned())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_original(app: tauri::AppHandle, window: WebviewWindow, address: String) -> Result<(), String> {
+    let generation = ACTIVE_LIBRARY.load(Ordering::Acquire);
+    if window.label() != format!("library-{generation}") { return Err("当前窗口无原件访问权".into()); }
+    let origin = window.url().map_err(|_| "无法读取当前影库地址".to_owned())?;
+    let target = url::Url::parse(&address).map_err(|_| "原件地址无效".to_owned())?;
+    build_media_window(&app, generation, origin, target)
+}
+
 fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> Result<(), String> {
     let _switch = SWITCHING.try_lock().map_err(|_| "已有连接正在打开，请稍后再试")?;
     let origin = connection::normalize(&connection.origin)?;
@@ -37,7 +62,7 @@ fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> 
     let label = format!("library-{generation}");
     let serialized_origin = origin.origin().ascii_serialization();
     app.add_capability(CapabilityBuilder::new(format!("own-titlebar-{generation}"))
-        .local(false).webview(label.clone()).remote(format!("{serialized_origin}/*")).permission("own-titlebar"))
+        .local(false).webview(label.clone()).remote(format!("{serialized_origin}/*")).permission("own-titlebar").permission("open-connected-original"))
         .map_err(|_| "无法为所选地址建立窗口操作权限")?;
 
     let allowed = origin.clone();
@@ -53,23 +78,12 @@ fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> 
             if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation { return NewWindowResponse::Deny; }
             if connection::same_origin(&popup_origin, &url) {
                 let allowed = popup_origin.clone();
-                let label = format!("media-{generation}-{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
                 let media_app = handle.clone();
                 // Finish the browser callback before creating another native view.
                 // The media links are independent windows in the app's existing profile.
                 tauri::async_runtime::spawn_blocking(move || {
-                    if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation { return; }
-                    let result = WebviewWindowBuilder::new(&media_app, label, WebviewUrl::External(url))
-                        .title("绮梦原件")
-                        .on_navigation(move |target| ACTIVE_LIBRARY.load(Ordering::Acquire) == generation && connection::same_origin(&allowed, target))
-                        .on_new_window(|_, _| NewWindowResponse::Deny)
-                        .build();
-                    match result {
-                        Ok(window) if ACTIVE_LIBRARY.load(Ordering::Acquire) != generation => {
-                            if window.destroy().is_err() { eprintln!("Unable to close a superseded media window"); }
-                        }
-                        Err(_) => eprintln!("Unable to open original media window"),
-                        _ => {}
+                    if build_media_window(&media_app, generation, allowed, url).is_err() {
+                        eprintln!("Unable to open original media window");
                     }
                 });
                 NewWindowResponse::Deny
@@ -154,7 +168,7 @@ fn reopen(app: tauri::AppHandle, settings: bool) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![current_connection, save_connection, window_action])
+        .invoke_handler(tauri::generate_handler![current_connection, save_connection, window_action, open_original])
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "打开主窗口", true, None::<&str>)?;
             let setup = MenuItem::with_id(app, "setup", "切换服务器地址", true, None::<&str>)?;

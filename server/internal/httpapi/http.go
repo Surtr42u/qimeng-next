@@ -268,6 +268,7 @@ type libraryCreateRequest struct {
 	StorageID        string `json:"storageId"`
 	RootRelativePath string `json:"rootRelativePath"`
 }
+
 func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 	if e := a.s.CheckReadiness(r.Context()); e != nil {
 		fail(w, e)

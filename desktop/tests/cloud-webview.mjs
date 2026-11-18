@@ -18,7 +18,7 @@ assert.equal(installers.length, 1, "Expected one installer from this build.");
 await mkdir(evidence, { recursive: true });
 
 async function site(label) {
-  const seen = { range: false, page: false, trustedLinkClick: false, originalRequests: 0, original: false };
+  const seen = { range: false, page: false, trustedLinkClick: false, openError: false, originalRequests: 0, original: false };
   const server = createServer((req, res) => {
     if (req.url === "/range") {
       const ok = req.headers.range === "bytes=4-7" && req.headers.cookie?.includes("synthetic_session=ok");
@@ -33,6 +33,11 @@ async function site(label) {
     }
     if (req.method === "POST" && req.url === "/trusted-link-click") {
       seen.trustedLinkClick = true;
+      res.writeHead(204).end();
+      return;
+    }
+    if (req.method === "POST" && req.url === "/open-error") {
+      seen.openError = true;
       res.writeHead(204).end();
       return;
     }
@@ -52,6 +57,7 @@ async function site(label) {
       '<button data-window-action="close">Close ' + label + '</button></header>' +
       '<a href="/original" target="_blank">Open original</a>' +
       '<script>document.querySelector("a").addEventListener("click", e => { if (e.isTrusted) navigator.sendBeacon("/trusted-link-click"); });' +
+      'window.addEventListener("qimeng-original-open-error",()=>navigator.sendBeacon("/open-error"));' +
       '(async()=>{if (!window.__QIMENG_DESKTOP__) return;' +
       'const r=await fetch("/range",{headers:{Range:"bytes=4-7"}});' +
       'if (r.status===206 && await r.text()==="4567") await fetch("/range-read",{method:"POST"});})();</script>');
