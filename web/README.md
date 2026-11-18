@@ -50,6 +50,8 @@ Node 24；命令工作目录为 `web`。锁文件来源与 SDK 摘要由根 CI �
 
 GitHub Actions 的 `Installed Web UI comparison` 独立检出已安装旧提交 `745974081716a9d69a95002a41220e35e743d764` 与当前提交，各自生成 SDK、构建 Web 并读取同一组十张合成图片。云端 Chromium 在 1440×900 和 390×844 分别由首页点击相册，再从卡片打开详情、返回。下载 `installed-web-comparison` 产物可查看原图、六张并排图、未遮罩的逐像素差异、元素位置、底衬滚动、实际 HTTP 上下行字节和 SHA-256。`report.md` 会注明失败及未覆盖场景。此验证不连接现有服务，也不把旧代码放入产品。
 
+展示层边界随现有 `npm test` 执行。只检查该项可在云端 `web/` 执行 `npm test -- tests/architecture.test.ts`。TypeScript 按符号检查路由壳、页面、组件及共用展示包。SDK 运行值、传输、浏览器凭据与持久化读写留在数据层，类型、数据钩子、图片预载、视频播放和显式输入口令继续使用。检查同时运行允许和禁止的最小样例，错误列出文件及行号。
+
 ## 依赖来源与固定版本
 
 2026-11-17 通过官方 npm registry 实际读取精确版本和 peerDependencies。首次云端准备发现 openapi-typescript 只支持 TypeScript 5.x，已使用 5.9.3；不以 force 或 legacy-peer-deps 绕过。

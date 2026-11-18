@@ -1,72 +1,61 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import ts from "typescript";
-import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { presentationFindings } from "./presentation-boundary";
 
-function sources(directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
-    entry.isDirectory()
-      ? sources(resolve(directory, entry.name))
-      : /\.(ts|tsx)$/.test(entry.name)
-        ? [resolve(directory, entry.name)]
-        : [],
-  );
-}
+const roots = ["src/app", "src/pages", "src/components", "../ui/react"];
+const views = roots.flatMap(dir => ts.sys.readDirectory(resolve(dir), [".ts", ".tsx"]));
+const examples = new Map([
+  [resolve("tests/.boundary-bridge.ts"), 'export { api as forwarded } from "../src/data/client";'],
+  [resolve("tests/.boundary-allowed.tsx"), [
+    'import { type Schema } from "../src/data/client";',
+    'import { useAssets } from "../src/data/media";',
+    'declare const src: string, receive: (s: string) => void;',
+    'const thumb = new Image(); thumb.src = src;',
+    'const login = <input type="password" onChange={e => receive(e.target.value)} />;',
+    'const video = <video src={src} preload="metadata" />;',
+    'const fixture = { fetch: () => "local definition" }; fixture.fetch();',
+  ].join("\n")],
+  [resolve("tests/.boundary-forbidden.tsx"), [
+    'import { forwarded as client } from "./.boundary-bridge";',
+    'const load = () => import("../src/data/client");',
+    'const { fetch: send } = window;',
+    'navigator.sendBeacon("/unexpected");',
+    'const io = globalThis["XMLHttpRequest"];',
+    'const cookie = document.cookie;',
+    'const cache = window.localStorage;',
+    'const ambient = import.meta.env.VITE_API_TOKEN;',
+    'declare const request: import("../src/data/client").Schema<"SessionCreate">;',
+    'const key = request.token;',
+  ].join("\n")],
+]);
+let program: ts.Program;
+
+beforeAll(() => {
+  const configPath = resolve("tsconfig.json");
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
+  const host = ts.createCompilerHost(options);
+  const originalRead = host.readFile.bind(host);
+  const originalExists = host.fileExists.bind(host);
+  const originalSource = host.getSourceFile.bind(host);
+  host.fileExists = file => examples.has(resolve(file)) || originalExists(file);
+  host.readFile = file => examples.get(resolve(file)) ?? originalRead(file);
+  host.getSourceFile = (file, ...args) => {
+    const source = examples.get(resolve(file));
+    return source === undefined ? originalSource(file, ...args) : ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  };
+  program = ts.createProgram([...views, ...examples.keys()], options, host);
+}, 30000);
+
 describe("presentation boundaries", () => {
-  it("pages and visual components do not request the network or import runtime SDK values", () => {
-    const violations: string[] = [];
-    for (const file of [
-      ...sources(resolve("src/pages")),
-      ...sources(resolve("src/components")),
-      ...sources(resolve("../ui/react")),
-    ]) {
-      const tree = ts.createSourceFile(
-        file,
-        readFileSync(file, "utf8"),
-        ts.ScriptTarget.Latest,
-        true,
-        ts.ScriptKind.TSX,
-      );
-      const visit = (node: ts.Node) => {
-        if (
-          ts.isImportDeclaration(node) &&
-          ts.isStringLiteral(node.moduleSpecifier)
-        ) {
-          const name = node.moduleSpecifier.text;
-          if (
-            (name.includes("/api/") || name.endsWith("/data/client")) &&
-            !node.importClause?.isTypeOnly
-          )
-            violations.push(`${file}: runtime API import`);
-        }
-        if (
-          ts.isCallExpression(node) &&
-          ts.isIdentifier(node.expression) &&
-          ["fetch", "XMLHttpRequest", "WebSocket", "EventSource"].includes(
-            node.expression.text,
-          )
-        )
-          violations.push(`${file}: network call`);
-        if (
-          ts.isNewExpression(node) &&
-          ts.isIdentifier(node.expression) &&
-          ["XMLHttpRequest", "WebSocket", "EventSource"].includes(
-            node.expression.text,
-          )
-        )
-          violations.push(`${file}: network constructor`);
-        ts.forEachChild(node, visit);
-      };
-      visit(tree);
-    }
+  it("keeps application transport, browser credential storage and runtime SDKs outside views", () => {
+    const violations = views.flatMap(file => presentationFindings(program, program.getSourceFile(file)!));
     expect(violations).toEqual([]);
-  });
-  it("the reusable visual package has no application or data dependency", () => {
-    for (const file of sources(resolve("../ui/react"))) {
-      const source = readFileSync(file, "utf8");
-      expect(source).not.toMatch(
-        /from ['"][^'"]*(?:web\/|data\/|api\/|react-router)/,
-      );
-    }
+  }, 30000);
+  it("allows typed hooks, media preloading and explicit login, and catches indirect transport and credential access", () => {
+    const check = (name: string) => presentationFindings(program, program.getSourceFile(resolve("tests/.boundary-" + name + ".tsx"))!);
+    expect(check("allowed")).toEqual([]);
+    expect(check("forbidden").map(f => f.line)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 10]);
   });
 });
