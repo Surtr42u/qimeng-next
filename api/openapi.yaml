@@ -35,6 +35,16 @@ paths:
       responses:
         '200': {description: Sanitized receipt belonging to this task, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderResult'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /research/image-lookup:
+    post:
+      operationId: lookupResearchImage
+      description: Send one server-derived JPEG to the administrator's fixed Lens sidecar. Both the delegation and its intake or asset task must opt in. Each request key uses the shared research budget once. Returns unverified leads.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchImageLookup'}}}}
+      responses:
+        '200': {description: Completed or interrupted single-frame lookup, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderResult'}}}}
+        '202': {description: The same lookup is still running, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchProviderResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /device/credentials:
     post:
       operationId: createDeviceCredential
@@ -1870,6 +1880,7 @@ components:
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
     ResearchProviderName: {type: string, enum: [fxtwitter, pixiv, yandere, e621, wayback, steam, bing]}
+    ResearchReceiptProvider: {type: string, enum: [fxtwitter, pixiv, yandere, e621, wayback, steam, bing, lens]}
     ResearchProviderList: {type: array, maxItems: 7, uniqueItems: true, items: {$ref: '#/components/schemas/ResearchProviderName'}}
     ResearchProviderInfo:
       type: object
@@ -1880,9 +1891,11 @@ components:
         evidenceKind: {type: string, enum: [platform_record, lead]}
     ResearchProviderContext:
       type: object
-      required: [enabled, providers, allowedProviders]
+      required: [enabled, providers, allowedProviders, imageLookupEnabled, imageLookupAllowed]
       properties:
         enabled: {type: boolean}
+        imageLookupEnabled: {type: boolean, description: The instance has configured the fixed image sidecar}
+        imageLookupAllowed: {type: boolean, description: The current grant permits single-frame egress; unrelated to local preview or model image access}
         providers: {type: array, items: {$ref: '#/components/schemas/ResearchProviderInfo'}}
         allowedProviders: {$ref: '#/components/schemas/ResearchProviderList'}
         taskId: {type: string}
@@ -1894,7 +1907,7 @@ components:
       properties:
         id: {type: string}
         subjectId: {type: string}
-        provider: {$ref: '#/components/schemas/ResearchProviderName'}
+        provider: {$ref: '#/components/schemas/ResearchReceiptProvider'}
         operation: {type: string}
         state: {type: string, enum: [pending, ok, not_found, blocked, rate_limited, unavailable, interrupted]}
     ResearchProviderQuery:
@@ -1907,6 +1920,25 @@ components:
         limit: {type: integer, minimum: 1, maximum: 20, default: 10}
         uploadId: {type: string, description: Required for an intake task}
         expectedHash: {type: string, pattern: '^[0-9a-f]{64}$', description: Required for an intake task}
+    ResearchImageLookup:
+      type: object
+      additionalProperties: false
+      required: [frameId, frameSha256]
+      description: Identify one unexpired frame from the current task's research materials. Supply uploadId and expectedHash for intake, or assetId and contentVersion for an asset task.
+      properties:
+        frameId: {type: string, minLength: 1, maxLength: 100}
+        frameSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        uploadId: {type: string, minLength: 1, maxLength: 100}
+        expectedHash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        assetId: {type: string, minLength: 1, maxLength: 100}
+        contentVersion: {type: integer, format: int64, minimum: 1}
+    ResearchImageHint:
+      type: object
+      required: [domain]
+      description: An unverified domain or page title reported without a source link.
+      properties:
+        domain: {type: string, maxLength: 253}
+        title: {type: string, maxLength: 300}
     ResearchProviderItem:
       type: object
       required: [url]
@@ -1928,11 +1960,14 @@ components:
         subjectHash: {type: string, description: 已核对的上传或作品 SHA-256}
         subjectRevision: {type: integer, format: int64, minimum: 1, description: 查证时的作品或作者修订}
         contentVersion: {type: integer, format: int64, minimum: 1, description: 查证时的作品内容版本}
-        provider: {$ref: '#/components/schemas/ResearchProviderName'}
+        provider: {$ref: '#/components/schemas/ResearchReceiptProvider'}
         operation: {type: string}
         state: {type: string, enum: [pending, ok, not_found, blocked, rate_limited, unavailable, interrupted]}
         evidenceKind: {type: string, enum: [platform_record, lead]}
         items: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ResearchProviderItem'}}
+        frameId: {type: string, description: Local derived frame used for image lookup}
+        frameSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        imageHints: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ResearchImageHint'}}
         startedAt: {type: string, format: date-time}
         finishedAt: {type: string, format: date-time}
     DeviceCredentialInput:
@@ -2256,6 +2291,7 @@ components:
         allowClear: {type: boolean}
         canIngest: {type: boolean}
         canResearch: {type: boolean}
+        canLookupImages: {type: boolean, default: false, description: Permit delegated intake or asset tasks to request a single derived frame be sent to the configured Lens sidecar}
         researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
         canResearchAssets: {type: boolean, default: false, description: Separately permit previews for existing media in the selected libraries}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
@@ -2303,6 +2339,7 @@ components:
         mode: {type: string, enum: [ordinary, intelligent]}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
         researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
+        allowImageLookup: {type: boolean, default: false, description: Explicitly request single-frame egress within this task's parent grant and research budget}
         authorId: {type: string}
         expectedRevision: {type: integer, format: int64}
         allowedFields: {type: array, items: {type: string, enum: [name, biography, homepage, aliases]}}
