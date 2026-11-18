@@ -34,7 +34,8 @@ async function site(label) {
     res.setHeader("Content-Type", "text/html;charset=utf-8");
     res.setHeader("Set-Cookie", "synthetic_session=ok; HttpOnly; SameSite=Strict; Path=/");
     if (req.url === "/original") {
-      seen.original = true;
+      seen.original = req.headers.cookie?.includes("synthetic_session=ok") === true;
+      if (!seen.original) { res.writeHead(403).end(); return; }
       res.end('<title>Original</title><button>Original media proof</button>');
       return;
     }
@@ -85,6 +86,7 @@ try {
     installedNSIS: true, setup: true, maximize: true, minimize: true, mediaWindow: true,
     switchClosesOldWindows: true, cookieRange: true, mainCloseExits: true, uninstalled: true }, null, 2) + "\n");
 } catch (error) {
+  console.error("Synthetic site receipts", JSON.stringify({ first: first.seen, second: second.seen }));
   if (error.stdout) process.stderr.write(error.stdout);
   if (error.stderr) process.stderr.write(error.stderr);
   throw error;

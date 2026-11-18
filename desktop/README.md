@@ -10,6 +10,8 @@
 
 主窗及原件子窗逐次核对导航协议、主机与端口。外部 Web 链接由系统浏览器打开，关闭子窗只影响该子窗，切换服务器会关闭旧主窗及其原件子窗。设置窗口复用旧 `desktop/ui/setup.html` 的 420×340 布局、颜色及 `desktop/ui/app-icon.png` 品牌图；地址、保存与权限判断由 Next 实现。
 
+主窗打开原件时，壳先核对请求的地址，将同一浏览器环境中新建的空白子窗交给 WebView2，再由 WebView2 导航至原件。这样原件请求沿用登录会话。子窗随后继续检查所选服务器的完整 origin。[WebView2 新窗口约定](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2newwindowrequestedeventargs#put_newwindow)
+
 ## 云端准备与验证
 
 CLI、Tauri 和插件版本见[前端依赖](package.json)和[Rust 依赖](src-tauri/Cargo.toml)，传递版本由仓库中的 `package-lock.json`、`src-tauri/Cargo.lock` 固定。

@@ -54,8 +54,13 @@ fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> 
             if connection::same_origin(&popup_origin, &url) {
                 let allowed = popup_origin.clone();
                 let label = format!("media-{generation}-{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
-                match WebviewWindowBuilder::new(&handle, label, WebviewUrl::External(url)).window_features(features)
-                    .title("绮梦原件").on_navigation(move |target| ACTIVE_LIBRARY.load(Ordering::Acquire) == generation && connection::same_origin(&allowed, target))
+                // WebView2 supplies the requested URL after it adopts the new view.
+                let blank = tauri::Url::parse("about:blank").expect("valid blank page URL");
+                match WebviewWindowBuilder::new(&handle, label, WebviewUrl::External(blank)).window_features(features)
+                    .title("绮梦原件").on_navigation(move |target| {
+                        ACTIVE_LIBRARY.load(Ordering::Acquire) == generation &&
+                            (target.as_str() == "about:blank" || connection::same_origin(&allowed, target))
+                    })
                     .on_new_window(|_, _| NewWindowResponse::Deny).build() {
                     Ok(window) => NewWindowResponse::Create { window },
                     Err(_) => { eprintln!("Unable to open original media window"); NewWindowResponse::Deny },
