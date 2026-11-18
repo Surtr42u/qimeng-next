@@ -26,6 +26,7 @@ type fileIntent struct {
  COSAuthor *model.Author `json:"cosAuthor,omitempty"`
  COSWork *model.CosWork `json:"cosWork,omitempty"`
  State string
+ SpellingOnly bool `json:"spellingOnly,omitempty"`
 }
 func assetPath(a model.Asset)string{if a.Trashed{if a.StorageLayoutVersion>=2{return "library-trash/"+a.LibraryID+"/"+a.ID+"/"+a.FileName};return "trash/"+a.ID+"/"+a.FileName};return "libraries/"+a.LibraryID+"/"+a.RelativePath}
 func(s *Service)safe(pathname string)error{
@@ -53,9 +54,11 @@ func(s *Service)prepareFile(ctx context.Context,w *Write,j fileIntent)(fileInten
  if w.tx!=nil{return j,errors.New("file intent must precede transaction")}
  old,e:=store.Get[fileIntent](ctx,s.DB.DB,"SELECT data FROM file_intents WHERE id=?",j.ID)
  if e==nil{if old.Kind!=j.Kind||old.UploadID!=j.UploadID||old.Operation!=w.operation{return j,Fail(409,"publication_pending","此输入已有不同发布操作，须先回读原操作并恢复，不能用新计划覆盖。")};return old,nil};if !errors.Is(e,sql.ErrNoRows){return j,e}
+ if j.Kind=="move" {j.SpellingOnly,e=s.classifyMove(j.Source,j.Target);if e!=nil{return j,e}}
  j.State="prepared";j.PrincipalID=w.Principal.ID;j.Operation=w.operation;j.Key=w.key;j.InputHash=w.inputHash;return j,s.saveIntent(ctx,j)
 }
 func(s *Service)applyFile(j fileIntent)error{
+ if j.SpellingOnly{return s.publishSpelling(j)}
  if j.Kind=="purge"{return s.removeVerified(j.Source,j.After.Hash,j.After.Size)}
  if e:=s.verify(j.Source,j.After.Hash,j.After.Size);e!=nil{return e}
  if j.Kind=="replace"&&j.Before!=nil{
@@ -71,10 +74,11 @@ func(s *Service)applyFile(j fileIntent)error{
  }
  if e:=s.linkNoReplace(j.Source,j.Target);e!=nil{return e};return s.verify(j.Target,j.After.Hash,j.After.Size)
 }
-func(s *Service)commitFile(ctx context.Context,q store.Querier,j fileIntent)error{
- var receipt any=j.After;status:=200
+func(s *Service)commitFile(ctx context.Context,q store.Querier,j *fileIntent)error{
+ status:=200
  if e:=saveCOSPlacement(ctx,q,j.COSAuthor,j.COSWork);e!=nil{return e}
  if j.Kind=="purge"{if _,e:=q.ExecContext(ctx,"DELETE FROM assets WHERE id=?",j.After.ID);e!=nil{return e}}else if e:=store.SaveAsset(ctx,q,j.After);e!=nil{return e}
+ var receipt any=j.After
  if j.UploadID!=""{
   u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};u.AssetID=j.After.ID;u.State="ingested";u.ErrorCode="";u.ErrorMessage="";if e=store.SaveUpload(ctx,q,u);e!=nil{return e}
   if u.BatchID!=""{if e=s.refreshBatch(ctx,q,u.BatchID);e!=nil{return e}}
@@ -85,7 +89,10 @@ func(s *Service)commitFile(ctx context.Context,q store.Querier,j fileIntent)erro
  j.State="committed";raw,e:=store.Encode(j);if e!=nil{return e};_,e=q.ExecContext(ctx,"UPDATE file_intents SET state=?,data=? WHERE id=?",j.State,raw,j.ID);return e
 }
 func(s *Service)finishFile(ctx context.Context,j fileIntent)error{
- if j.Kind!="purge"&&j.Source!=j.Target{if e:=s.removeVerified(j.Source,j.After.Hash,j.After.Size);e!=nil{return e}}
+ if j.SpellingOnly{
+  if e:=s.publishSpelling(j);e!=nil{return e}
+  if e:=s.removeVerified(spellingHold(j),j.After.Hash,j.After.Size);e!=nil{return e}
+ }else if j.Kind!="purge"&&j.Source!=j.Target{if e:=s.removeVerified(j.Source,j.After.Hash,j.After.Size);e!=nil{return e}}
  if j.Kind=="replace"&&j.Before!=nil{
   old:=assetPath(*j.Before);if old!=j.Target{if e:=s.removeVerified(old,j.Before.Hash,j.Before.Size);e!=nil{return e}}
   if e:=s.removeVerified(j.Retired,j.Before.Hash,j.Before.Size);e!=nil{return e}
@@ -97,13 +104,14 @@ func(s *Service)runFile(ctx context.Context,w *Write,j fileIntent)(model.Asset,e
  if j.Kind=="ingest"||j.Kind=="move"||j.Kind=="restore"{var e error;j.COSAuthor,j.COSWork,e=s.planCOSPlacement(ctx,s.DB.DB,&j.After);if e!=nil{return j.After,e}}
  j,e:=s.prepareFile(ctx,w,j);if e!=nil{return j.After,e}
  if j.State=="prepared"{if e=s.applyFile(j);e!=nil{return j.After,e}}
- q,e:=w.Q();if e!=nil{return j.After,e};if e=s.commitFile(ctx,q,j);e!=nil{return j.After,e}
+ q,e:=w.Q();if e!=nil{return j.After,e};if e=s.commitFile(ctx,q,&j);e!=nil{return j.After,e}
  w.after=append(w.after,func()error{return s.finishFile(context.Background(),j)});return j.After,nil
 }
 func(s *Service)recoverIntents(ctx context.Context)error{
  intents,e:=store.List[fileIntent](ctx,s.DB.DB,"SELECT data FROM file_intents WHERE state!='done' ORDER BY id");if e!=nil{return e}
  for _,j:=range intents{
-  if j.State=="prepared"{if e=s.applyFile(j);e!=nil{return fmt.Errorf("intent %s: %w",j.ID,e)};tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e};if e=s.commitFile(ctx,tx,j);e!=nil{tx.Rollback();return e};if e=tx.Commit();e!=nil{return e}}
+  j,e=s.recoverMoveSpelling(ctx,j);if e!=nil{return e}
+  if j.State=="prepared"{if e=s.applyFile(j);e!=nil{return fmt.Errorf("intent %s: %w",j.ID,e)};tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e};if e=s.commitFile(ctx,tx,&j);e!=nil{tx.Rollback();return e};if e=tx.Commit();e!=nil{return e}}
   if e=s.finishFile(ctx,j);e!=nil{return fmt.Errorf("intent %s cleanup: %w",j.ID,e)}
  }
  return nil
