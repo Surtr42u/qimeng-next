@@ -124,15 +124,16 @@ data class Transfer(
     val sourceHash: String? = null,
     val originalName: String? = null,
     val cancelConfirmed: Boolean = false,
+    val archiveSourceState: String? = null,
 )
 data class PendingEvent(val id: String, val target: Session, val assetId: String, val kind: String, val positionMs: Long, val contentVersion: Long,
     val sessionId: String, val seconds: Double = 0.0, val occurredAt: String, val failure: String? = null)
 data class UploadDraft(val id: String, val name: String, val mimeType: String, val bytes: Long, val spoolName: String, val sourceHash: String, val originalName: String,
-    val sourceMtime: String? = null)
+    val sourceMtime: String? = null, val intakeGroup: String? = null)
 data class IntakeFailure(val id: String, val name: String, val message: String, val batchKey: String? = null)
 /** Original picker selection, recorded before byte reads; never reconstructed from successful uploads. */
 data class OriginalInput(val id: String, val originalFileName: String? = null, val size: Long? = null, val expectedHash: String? = null,
-    val nameState: String = "unavailable")
+    val nameState: String = "unavailable", val intakeGroup: String? = null)
 data class TransferBatch(val key: String, val target: Session, val libraryId: String, val mode: UploadMode, val label: String,
     val inputs: List<OriginalInput>, val serverId: String? = null, val manifestFingerprint: String? = null,
     val relativeDirectory: String? = null, val options: UploadOptions? = null)

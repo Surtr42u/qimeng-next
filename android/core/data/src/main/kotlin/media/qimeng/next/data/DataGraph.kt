@@ -18,6 +18,8 @@ class DataGraph private constructor(context: Context) {
     val naming = NamingRepository(settings, provider)
     val discovery = ServerDiscovery(context, media::discoverRemembered)
     val scans = ScanRepository(settings, provider)
+    val archives = ArchiveRepository(context, provider, settings)
+    internal val archiveProtection = ArchiveProtection(context, archives.store, provider, queue)
     val uploads = UploadRepository(context, queue, settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -33,13 +35,12 @@ class DataGraph private constructor(context: Context) {
         }
     }
 
-    init {
-        scope.launch {
-            try { queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule() }
+    private val recovery = scope.async {
+            try { queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule(); settings.session.value?.let { archives.resume(it) } }
             catch (failure: CancellationException) { throw failure }
-            catch (_: Exception) { /* QueueStore publishes the recoverable read failure to UI. */ }
-        }
+            catch (failure: Exception) { queue.reportProblem(safeFailure(failure)) }
     }
+    suspend fun awaitRecovery() { recovery.await(); if (queue.state.value == null) queue.load() }
 
     companion object {
         @Volatile private var instance: DataGraph? = null

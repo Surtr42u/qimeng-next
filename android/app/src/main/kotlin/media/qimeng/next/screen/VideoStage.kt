@@ -74,7 +74,14 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
     // The disposing player's final position belongs to its original content version.
     val playbackAsset = remember(player) { asset }
     LaunchedEffect(activated) { onPlayerActiveChanged(activated) }
-    BackHandler(activated && !fullscreen && !timeline) { player.pause(); activated = false }
+    val activity = context.activity()
+    val canRotate = asset.width?.let { w -> asset.height?.let { h -> w > h && h > 0 } } == true
+    DisposableEffect(activity, fullscreen) {
+        val previous = activity?.requestedOrientation
+        if (fullscreen) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose { if (fullscreen && activity != null && previous != null) activity.requestedOrientation = previous }
+    }
+    BackHandler(activated && !timeline) { if (fullscreen) fullscreen = false else { player.pause(); activated = false } }
     DisposableEffect(player, owner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
@@ -121,13 +128,8 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
                 .diskCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail").build(),
                 imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         }
-    } else if (fullscreen) {
-        Dialog(onDismissRequest = { fullscreen = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-            BackHandler { fullscreen = false }
-            PlayerSurface(player, true, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }, Modifier.fillMaxSize(), onPlaybackChromeChanged) { fullscreen = false }
-        }
-        Box(Modifier.fillMaxSize().background(Color.Black))
-    } else PlayerSurface(player, false, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() }, Modifier.fillMaxSize(), onPlaybackChromeChanged) { fullscreen = true }
+    } else PlayerSurface(player, fullscreen, canRotate, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() },
+        Modifier.fillMaxSize(), onPlaybackChromeChanged) { fullscreen = !fullscreen }
     if (activated && !fullscreen) IconButton(onClick = { timeline = true; player.pause() }, modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(8.dp)) {
         Icon(Icons.Outlined.BookmarkAdd, "时间轴标记", tint = Color.White)
     }
@@ -137,13 +139,13 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?, onRetry: () -> Unit, modifier: Modifier,
+private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, canRotate: Boolean, error: String?, onRetry: () -> Unit, modifier: Modifier,
     onChromeChanged: (Boolean) -> Unit, toggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     var feedback by remember { mutableStateOf<String?>(null) }
     var playing by remember(player) { mutableStateOf(player.isPlaying) }
     var showControls by remember { mutableStateOf(true) }
-    LaunchedEffect(showControls, playing) { onChromeChanged(showControls || !playing) }
+    LaunchedEffect(showControls, playing, fullscreen) { onChromeChanged(!fullscreen && (showControls || !playing)) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying; if (!isPlaying) showControls = true }
@@ -160,7 +162,7 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
     }
     Box(modifier.background(Color.Black)
         .semantics { contentDescription = "视频播放区域" }) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply {
+        AndroidView(factory = { ctx -> (android.view.LayoutInflater.from(ctx).inflate(media.qimeng.next.R.layout.video_player, null, false) as PlayerView).apply {
             this.player = player; useController = true; controllerAutoShow = true
             setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
             setControllerHideOnTouch(false)
@@ -199,7 +201,7 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, error: String?
                     }
                 }
             })
-        IconButton(onClick = toggleFullscreen, modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(8.dp)) {
+        IconButton(onClick = toggleFullscreen, enabled = canRotate || fullscreen, modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(8.dp)) {
             Icon(if (fullscreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen, if (fullscreen) "退出全屏" else "进入全屏", tint = Color.White)
         }
         feedback?.let { Text(it, Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.65f)).padding(12.dp), color = Color.White) }

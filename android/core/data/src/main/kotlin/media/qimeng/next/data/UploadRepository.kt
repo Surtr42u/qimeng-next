@@ -26,21 +26,29 @@ class UploadRepository internal constructor(private val context: Context, val qu
     private val intakeLock = Mutex()
 
     /** Copy grants into app-owned immutable snapshots; a later provider change cannot change a retry. */
-    suspend fun receive(uris: List<Uri>): List<String> = withContext(Dispatchers.IO) {
+    suspend fun receive(uris: List<Uri>, intakeGroup: String? = null, archive: List<ArchiveInput>? = null): List<String> = withContext(Dispatchers.IO) {
         intakeLock.withLock {
         require(uris.size <= 100) { "每批最多选择 100 个文件" }
-        check(queue.state.value != null) { "请先恢复传输记录" }
-        val initialCount = queue.state.value!!.pendingInputs.size
-        val selection = uris.map { uri -> uri to OriginalInput(UUID.randomUUID().toString()) }
+        val saved = queue.state.value ?: error("请先恢复传输记录")
+        val initialCount = saved.pendingInputs.count { it.intakeGroup == intakeGroup }
+        val selection = uris.mapIndexed { index, uri ->
+            val entry = archive?.get(index)
+            uri to OriginalInput(entry?.id ?: UUID.randomUUID().toString(), entry?.name, entry?.size?.takeIf { it > 0 },
+                nameState = if (entry == null) "unavailable" else "known", intakeGroup = intakeGroup)
+        }
+        val reserved = saved.pendingInputs.mapTo(mutableSetOf(), OriginalInput::id)
+        val complete = (saved.drafts.map(UploadDraft::id) + saved.intakeFailures.map(IntakeFailure::id)).toSet()
+        val additions = selection.map { it.second }.filterNot { it.id in reserved }
         queue.update { previous ->
-            require(previous.pendingInputs.size + selection.size <= 100) { "待传清单每批最多 100 项，请先处理已有选择" }
-            check(previous.intakeFailures.size + selection.size <= 200 && previous.drafts.size + selection.size +
+            require(initialCount + additions.size <= 100) { "待传清单每批最多 100 项，请先处理已有选择" }
+            check(previous.intakeFailures.count { it.batchKey == null } + additions.size <= 200 && previous.drafts.size + additions.size +
                 previous.transfers.count { it.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED) } <= 200) { "请先处理已有队列，再选择这一批文件" }
-            previous.copy(pendingInputs = previous.pendingInputs + selection.map { it.second })
+            previous.copy(pendingInputs = previous.pendingInputs + additions)
         }
         selection.forEachIndexed { index, (uri, original) ->
             coroutineContext.ensureActive()
             val id = original.id
+            if (id in complete) return@forEachIndexed
             val unavailableName = "第${initialCount + index + 1}项（名称读取失败）"
             var name = unavailableName
             var nameKnown = false
@@ -57,6 +65,8 @@ class UploadRepository internal constructor(private val context: Context, val qu
                 }
             }
             require(nameKnown) { "无法读取原始文件名，输入仍保留在清单中" }
+            val preview = archive?.get(index)
+            check(preview == null || (name == preview.name && (preview.size == null || preview.size == declaredSize))) { "归档来源已改变，原始清单保留" }
             require(name.isNotBlank() && name.length <= 240 && '/' !in name && '\\' !in name) { "文件名无效或过长" }
             queue.update { it.copy(pendingInputs = it.pendingInputs.map { input -> if (input.id == id) input.copy(originalFileName = name, nameState = "known", size = declaredSize?.takeIf { size -> size > 0 }) else input }) }
             if (DocumentsContract.isDocumentUri(context, uri)) {
@@ -64,6 +74,8 @@ class UploadRepository internal constructor(private val context: Context, val qu
                     if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it > 0 }?.let { sourceMtime = Instant.ofEpochMilli(it).toString() }
                 }
             }
+            val expectedMtime = preview?.modified
+            check(expectedMtime == null || expectedMtime <= 0 || sourceMtime == Instant.ofEpochMilli(expectedMtime).toString()) { "归档来源修改时间已改变，未传此文件" }
             val mime = readSourceMetadata { context.contentResolver.getType(uri) } ?: "application/octet-stream"
             val reserve = 64L * 1024 * 1024
             declaredSize?.let { require(spool.usableSpace - reserve > it) { "手机空间不足，无法保存可恢复传输副本" } }
@@ -87,7 +99,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
                     }
                 } ?: error("无法读取所选文件")
                 require(count > 0 && (declaredSize == null || declaredSize == count)) { "文件长度已变化，请重新选择" }
-                val draft = UploadDraft(id, name, mime, count, id, digest.digest().joinToString("") { "%02x".format(it) }, name, sourceMtime)
+                val draft = UploadDraft(id, name, mime, count, id, digest.digest().joinToString("") { "%02x".format(it) }, name, sourceMtime, intakeGroup)
                 queue.update { previous ->
                     previous.copy(drafts = previous.drafts + draft, pendingInputs = previous.pendingInputs.map {
                         if (it.id == id) it.copy(size = count, expectedHash = draft.sourceHash) else it
@@ -112,11 +124,25 @@ class UploadRepository internal constructor(private val context: Context, val qu
         val snapshot = queue.state.value ?: return@withLock
         val known = (snapshot.drafts.map { it.id } + snapshot.intakeFailures.map { it.id }).toSet()
         val interrupted = snapshot.pendingInputs.filter { it.id !in known }
+        val unconfirmed = snapshot.transfers.filter { it.mode == UploadMode.ORDINARY && it.state == TransferState.SUCCEEDED && it.assetId.isNullOrBlank() }.mapTo(mutableSetOf(), Transfer::id)
         val remainingCopies = withContext(Dispatchers.IO) { interrupted.filterNot { deleteUncommittedSnapshot(it.id) }.map { it.id }.toSet() }
-        if (interrupted.isNotEmpty()) queue.update { it.copy(intakeFailures = it.intakeFailures + interrupted.map { input ->
+        if (interrupted.isNotEmpty() || unconfirmed.isNotEmpty() || snapshot.pendingInputs.any { it.intakeGroup?.startsWith("share-") == true }) queue.update { it.copy(
+            transfers = it.transfers.map { task -> if (task.id in unconfirmed && task.assetId.isNullOrBlank()) task.copy(
+                state = if (task.uploadId != null) TransferState.QUEUED else TransferState.FAILED,
+                message = if (task.uploadId != null) "正在核对原普通上传的入库回执" else "原普通上传缺少提交凭据，请核对任务报告") else task },
+            pendingInputs = it.pendingInputs.map { input -> if (input.intakeGroup?.startsWith("share-") == true) input.copy(intakeGroup = null) else input },
+            drafts = it.drafts.map { draft -> if (draft.intakeGroup?.startsWith("share-") == true) draft.copy(intakeGroup = null) else draft },
+            intakeFailures = it.intakeFailures + interrupted.map { input ->
             IntakeFailure(input.id, input.originalFileName ?: "第${snapshot.pendingInputs.indexOf(input) + 1}项（名称读取失败）",
                 "上次读取被中断，未创建可传输副本；此输入仍保留在原始清单" + if (input.id in remainingCopies) "；应用内未完成副本尚未清理" else "")
         }) }
+    }
+
+    suspend fun releaseSharedDrafts(group: String) = intakeLock.withLock {
+        if (queue.state.value?.pendingInputs?.none { it.intakeGroup == group } == true) return@withLock
+        queue.update { state -> state.copy(
+            pendingInputs = state.pendingInputs.map { if (it.intakeGroup == group) it.copy(intakeGroup = null) else it },
+            drafts = state.drafts.map { if (it.intakeGroup == group) it.copy(intakeGroup = null) else it }) }
     }
 
     suspend fun renameDraft(id: String, name: String) = intakeLock.withLock {
@@ -132,13 +158,13 @@ class UploadRepository internal constructor(private val context: Context, val qu
 
     suspend fun enqueue(libraryId: String, directory: String, mode: UploadMode, options: UploadOptions = UploadOptions(),
                         target: Session = settings.session.value ?: error("请先登录服务器"),
-                        inputIds: List<String> = queue.state.value?.pendingInputs.orEmpty().map { it.id },
-                        reviewed: List<UploadDraft>? = null, editedStems: Map<String, String> = emptyMap()) {
+                        inputIds: List<String> = queue.state.value?.pendingInputs.orEmpty().filter { it.intakeGroup == null }.map { it.id },
+                        reviewed: List<UploadDraft>? = null, editedStems: Map<String, String> = emptyMap(), batchKey: String = UUID.randomUUID().toString()) {
         intakeLock.withLock {
         require(libraryId.isNotBlank()) { "请选择上传影库" }
-        val batchKey = UUID.randomUUID().toString()
         queue.update { previous ->
             check(sameTarget(target, settings.session.value)) { "服务器已改变，请重新确认上传位置" }
+            if (previous.batches.any { it.key == batchKey && sameTarget(it.target, target) }) return@update previous
             val selectedIds = inputIds.toSet()
             val inputs = previous.pendingInputs.filter { it.id in selectedIds }
             val drafts = previous.drafts.filter { it.id in selectedIds }.map { draft ->
@@ -147,7 +173,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
                 draft.withEditedStem(stem)
             }
             require(inputIds.size in 1..100 && inputs.map { it.id } == inputIds) { "原始输入清单已改变，请核对本批后重试" }
-            check(drafts.isNotEmpty()) { "本批没有可读取的文件，请查看读取结果" }
+            check(drafts.isNotEmpty() || (inputs.all { it.intakeGroup == batchKey } && previous.intakeFailures.any { it.id in selectedIds })) { "本批没有可读取的文件，请查看读取结果" }
             check(reviewed == null || reviewed == drafts) { "待传文件已改变，请核对本批后重试" }
             check(drafts.all { it.sourceHash.length == 64 }) { "待传快照缺少完整摘要，请重新选择文件" }
             val label = "Android ${inputs.size} 个文件"
@@ -157,7 +183,8 @@ class UploadRepository internal constructor(private val context: Context, val qu
                 intakeFailures = previous.intakeFailures.map { if (it.id in selectedIds) it.copy(batchKey = batchKey) else it },
                 transfers = previous.transfers + drafts.map {
                     Transfer(it.id, target, libraryId, it.name, it.mimeType, it.bytes, it.spoolName, mode, it.sourceMtime,
-                        batchKey, label, directory.trim(), options = options, sourceHash = it.sourceHash, originalName = it.originalName)
+                        batchKey, label, directory.trim(), options = options, sourceHash = it.sourceHash, originalName = it.originalName,
+                        archiveSourceState = if (batchKey.startsWith("archive-")) "pending" else null)
                 })
         }
         }
@@ -194,17 +221,22 @@ class UploadRepository internal constructor(private val context: Context, val qu
 
     suspend fun clearFinished() = intakeLock.withLock {
         val snapshot = queue.state.value ?: return@withLock
-        val finished = snapshot.transfers.filter { it.state == TransferState.SUCCEEDED || (it.state == TransferState.CANCELLED && it.cancelConfirmed) }
+        val finished = snapshot.transfers.filter { (it.state == TransferState.SUCCEEDED && it.archiveSourceState in setOf(null, "done", "blocked")) ||
+            (it.state == TransferState.CANCELLED && it.cancelConfirmed) }
         val removed = withContext(Dispatchers.IO) { finished.filter {
             val file = File(spool, it.spoolName)
             !file.exists() || file.delete() || !file.exists()
         }.map(Transfer::id).toSet() }
         val retained = finished.map(Transfer::id).toSet() - removed
-        val clearedFailures = withContext(Dispatchers.IO) { snapshot.intakeFailures.filter { it.batchKey == null && deleteUncommittedSnapshot(it.id) }.map { it.id }.toSet() }
+        val sealed = snapshot.batches.filter { it.serverId != null && it.manifestFingerprint != null }.mapTo(mutableSetOf(), TransferBatch::key)
+        val reserved = snapshot.pendingInputs.filter { it.intakeGroup != null }.mapTo(mutableSetOf(), OriginalInput::id)
+        val clearedFailures = withContext(Dispatchers.IO) { snapshot.intakeFailures.filter {
+            (it.batchKey == null && it.id !in reserved || it.batchKey in sealed) && deleteUncommittedSnapshot(it.id)
+        }.map { it.id }.toSet() }
         queue.update { it.copy(transfers = it.transfers.filterNot { item -> item.id in removed }.map { item ->
             if (item.id in retained) item.copy(message = "本机传输副本清理失败；服务器结果保留，可重试清理") else item
         }, batches = it.batches.filter { batch -> it.transfers.any { task -> task.batchKey == batch.key && task.id !in removed } ||
-            it.intakeFailures.any { failure -> failure.batchKey == batch.key } },
+            it.intakeFailures.any { failure -> failure.batchKey == batch.key && failure.id !in clearedFailures } },
             pendingInputs = it.pendingInputs.filterNot { input -> input.id in clearedFailures && snapshot.intakeFailures.any { failure -> failure.id == input.id && failure.batchKey == null } },
             intakeFailures = it.intakeFailures.filterNot { failure -> failure.id in clearedFailures }.map { failure ->
                 if (failure.batchKey == null) failure.copy(message = "应用内未完成副本清理失败，记录已保留；来源文件未改动") else failure

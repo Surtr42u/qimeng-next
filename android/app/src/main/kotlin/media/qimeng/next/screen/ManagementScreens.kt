@@ -110,6 +110,7 @@ fun DataManageScreen(model: LibraryViewModel) {
             QimengSettingsRow(VocabularyBookIcon, "词表维护", "编辑出处、角色与标签", { model.navigate("vocabulary-manage") })
         }
         QimengSettingsGroup("备份与存储") {
+            QimengSettingsRow(FolderManagedIcon, "上传归档文件夹", "按库名归档与一键上传", { model.navigate("archive-folder") })
             QimengSettingsRow(Icons.Outlined.DeleteOutline, "回收站", "恢复移除的媒体", { model.navigate("trash") })
         }
     }

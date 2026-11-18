@@ -72,7 +72,7 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = rememberGlassBackdrop()
                 val detailRoute = route.startsWith("asset:")
-                val ownTopBar = route in setOf("server", "libraries", "upload", "authors") || route.startsWith("author:") ||
+                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder") || route.startsWith("author:") ||
                     route.startsWith("profile:") || route.startsWith("profile-archive:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
@@ -105,6 +105,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "authors" -> AuthorDirectoryScreen(model)
                                 route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
                                 route == "upload" -> UploadScreen(model)
+                                route == "archive-folder" -> ArchiveSettingsScreen(model::back)
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(model)
                                 route == "server" -> ServerSettingsScreen(model)

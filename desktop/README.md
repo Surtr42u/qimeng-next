@@ -26,6 +26,6 @@ npm run build
 
 后续云端安装使用已生成 lock；Cargo 使用 `--locked`。Tauri CLI 从授权复用的品牌图在云端生成各平台尺寸。Windows 云产物包括 NSIS 安装包和 Go 服务/恢复工具。
 
-自动单测覆盖地址规范化、凭据/路径拒绝、完整 origin、本地连接页边界。Windows WebView2 的实际连接、Cookie、媒体子窗口、Range、托盘、自定义标题栏与退出行为仍需同提交产物验收。当前没有安装到用户设备，也未连接真实媒体库。
+自动单测覆盖地址规范化、凭据/路径拒绝、完整 origin 和本地连接页边界。Windows 云冒烟从同次 NSIS 安装，使用独立 WebView2 资料目录、两个临时合成站点和原生窗口状态，核验 Cookie、Range、子窗换服、标题栏三键、退出与卸载。05d9da5 产物已完成构建，首次窗口检查停在读取连接页。后续运行的窗口收据与用户设备、真实托盘菜单另行记录。[微软 WebView2 分发说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution) [Playwright WebView2 连接办法](https://playwright.dev/docs/webview2)
 
 官方依据：[Tauri capabilities](https://v2.tauri.app/security/capabilities/)、[窗口导航与新窗口](https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html)、[托盘](https://v2.tauri.app/learn/system-tray/)、[Opener](https://v2.tauri.app/plugin/opener/)、[图标](https://v2.tauri.app/develop/icons/)。

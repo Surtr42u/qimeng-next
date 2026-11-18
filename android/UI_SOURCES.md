@@ -1,45 +1,22 @@
-# Android 纯展示复用来源
+# Android UI 复用来源
 
-用户于 2026-11-17 明确授权“UI 可以用旧的，把旧版 UI 背后代码优化，不导致未同意的界面区别”。这覆盖之前对纯展示 Kotlin 复用的限制；服务端业务、旧 ViewModel、旧 API、内嵌后端和旧客户端业务库仍不引入。
+用户授权直接复用旧版纯展示 UI，保留实际页面与操作，只增加平滑过渡和底栏玻璃选中效果。旧版来源为 `qimeng-media@d0215962bb1e9c29baabeed9fc9dc5c8b4b94555`。下表路径相对各自的 Android 模块根；设备与截图情况见[界面对照与验收](UI_PARITY.md)。
 
-来源为 `qimeng-media` 提交 `d0215962bb1e9c29baabeed9fc9dc5c8b4b94555`，旧项目只读。下面路径均相对各自 Android 根目录。
+| 旧版展示来源 | Next 落点及适配 |
+| --- | --- |
+| `core/ui/.../theme/{Color,Dimens,Shape,Type,Theme,SoftDaylight,ButtonColors}.kt`，`glass/{GlassColors,GlassSurface,GlassButtons,PressScale}.kt` | `core/ui/.../ui/theme/` 与 `ui/glass/` 保留颜色、尺寸、字型、日间阴影、卡面和按压反馈。 |
+| `core/ui/.../component/Qimeng{SegmentedControl,SegPill,Settings,Pills,TitleRow,CapsuleTextField,TouchGuards}.kt`、`QimengScaffold.kt` 顶栏与计数格式函数 | 新 `ui/component/`；计数接 Go 的 Long，胶囊、标题、顶栏、筛选值区和分组均由这些共享组件渲染。 |
+| `core/ui/.../component/QimengFilterSheet*.kt` 及筛选文字资源 | 新 `ui/component/QimengFilterSheet*.kt`、`filter_strings.xml`。保留行顺序、年份、标签长按确认、重置和应用。新草稿、分页和修订写入由客户端数据层管理。 |
+| `core/ui/.../icon/Qimeng{Icons,ManageIcons,DetailIcons}.kt` | 新 `ui/icon/` 保留图形路径和来源注释。 |
+| `HomeScreen.HomeTopRow`、`AllScreen`、`FavoriteScreen`、`HistoryScreen`、`QimengMediaGrid.AssetCard`、`FloatingTabDock.TabDockDefaults` | `MediaBrowser.kt`、`AlbumFilters.kt`、`GallerySections.kt` 和 `LiquidNavigation.kt`。保留 16:9、5dp 外距、24px 封面圆角、四维控件及原底栏几何。导航采样与选择动画为新实现。 |
+| `feature/login/LoginScreen.kt`、`feature/settings/ServerSettingsScreen.kt`、`SettingsScreen` 与 `SettingsCards.CountCard` | 新登录/服务器/我的页面沿用双卡、候选行、密码、计数和分组。NSD、连接恢复、权限和充电任务经新独立模块接入。 |
+| `feature/detail/{DetailChromeBars,DetailChromeIcons,DetailSections}.kt`、原详情资源及 `feature/search/SearchScreen.kt` | 同名详情组件、`detail_strings.xml` 与新搜索页；图像、视频、点赞与查询接新 Asset 和 SDK。播放器沿用系统 Media3 控件，横屏时保留同一解码输出。 |
+| `feature/stats/{StatsScreen,StatsDetailScreen,StatsFormatters}.kt`、`QimengTrendLineChart.kt` 和 `QimengTrendMarker.kt` | 新统计页与 `core/ui/.../ui/chart/`。趋势和榜单由 Go 返回；Vico 以真实数据点实现点选。 |
+| `feature/manage/{LibraryManageScreen,RegisterLibraryCard}.kt`、`feature/upload/{UploadScreen,UploadPanels,UploadDestinationSection,UploadPendingSection,UploadArchiveBatchSection}.kt` 与归档文件夹设置页 | 新库管理、上传、目录树、待传清单和归档区沿用原入口与控件。原始文件名、目标身份、目录解析、扫描调度和回执走新代码。 |
+| `feature/author/{AuthorScreen,AuthorCollectionScreen,CreatorProfileCard,CreatorNewWorks,CreatorProfileDetails}.kt` | 新作者列表、作品集合、资料与维护、订阅区域；查询、编辑、候选、已确认账号与手动检查采用新 Go 服务。 |
 
-| 旧纯展示文件（`core/ui/src/main/java/media/qimeng/app/core/ui/`） | 新文件（`core/ui/src/main/kotlin/media/qimeng/next/ui/`） | 适配 |
-| --- | --- | --- |
-| `theme/Color.kt`, `Dimens.kt`, `Shape.kt`, `Type.kt`, `Theme.kt`, `SoftDaylight.kt`, `ButtonColors.kt` | 同名 `theme/` 文件 | 仅包名；旧中性配色、字型、尺寸及日间阴影原值保留。根 `ui/Theme.kt` 为现有调用兼容转发。 |
-| `glass/GlassColors.kt`, `GlassSurface.kt`, `GlassButtons.kt`, `PressScale.kt` | 同名 `glass/` 文件 | 包名 / 主题引用；这是旧静态展示玻璃与按压反馈，不将它宣称为新导航的背景折射。 |
-| `component/QimengSegPill.kt`, `QimengSegmentedControl.kt`, `QimengSettings.kt`, `QimengPills.kt`, `QimengTitleRow.kt`, `QimengCapsuleTextField.kt` | 同名 `component/` 文件 | 包名、资源与主题引用；不含网络或业务算法。 |
-| `icon/QimengIcons.kt`, `QimengManageIcons.kt`, `QimengDetailIcons.kt` | 同名 `icon/` 文件 | 包名与尺寸引用，保留原图标路径及 Material Icons 来源注释。 |
-| `component/QimengTouchGuards.kt`、`QimengFormat.kt` 中计数格式函数 | `component/QimengTouchGuards.kt`、`CountFormat.kt` | 点击穿透隔离保持；计数参数拓宽为新 API 的 Long。 |
+## 依赖与模块边界
 
-页面级已复用 / 适配：旧 `feature/detail/DetailChromeBars.kt`、`DetailChromeIcons.kt`、`DetailSections.kt` 与 `res/values/strings.xml` 放入新 app 的 `screen/` 与详情资源，参数改接新 Asset，点赞 / 收藏字段名按新模型映射；不引用旧 ViewModel。旧 `SettingsScreen` 的分组层级、`SettingsCards.CountCard` 与 `HomeScreen.HomeTopRow` 布局接入新页面；`QimengMediaGrid.AssetCard` 的 16:9 / 5dp / 24px 与仅搜索附标题呈现接入新 MediaTile。
-
-旧 `feature/login/LoginScreen.kt` 的双模式卡、地址卡、胶囊密码与提交区域复用到新 `screen/LoginScreen.kt`，原登录文案进入 `login_strings.xml`；私有本机启动与 NAS 密码交换均走新接口。自动发现尚未接通，在原信息位置明确显示进度说明，不伪报已搜索或放无效刷新操作。旧 `feature/search/SearchScreen.kt` 的顶行、三态布局、词条与结果筛选形式及结果输入触摸呈现接到新的 SearchViewModel；不复制旧查询业务。
-
-以上说明实际来源，不代表页面已完全对齐。详情信息 / 作者编辑 / 播放器控制、相册、搜索日期分组、统计及上传仍需按 UI_PARITY 继续恢复和同数据基准比对。
-
-旧纯展示注释中的历史工程路径仅说明来源，不转移其架构规则。新业务调用仍由生成 SDK → Repository → ViewModel → UI 完成。
-
-为保留 `SoftDaylight` 原 `dropShadow` 阴影，将 Compose BOM 从 2025.04.01 锁至 **2025.09.01**（UI/Foundation/Runtime 1.9.2，Material3 1.4.0）。已读取 Google Maven 官方 POM 与 UI/Material3 AAR 元数据：均要求 compileSdk ≥35、AGP ≥8.6.0；Compose 1.9 lint 要求 AGP ≥8.8.2。现有 AGP8.9.2、Gradle8.11.1、JDK17、SDK35 满足，不复制旧工程构建脚本，也不升级其余依赖。
-
-依据：[官方 Compose UI 1.9 发布说明](https://developer.android.com/jetpack/androidx/releases/compose-ui#1.9.0)、[原生阴影 API](https://developer.android.com/develop/ui/compose/graphics/draw/shadows)、[Google Maven BOM](https://dl.google.com/dl/android/maven2/androidx/compose/compose-bom/2025.09.01/compose-bom-2025.09.01.pom)。依赖兼容与页面效果仍需本提交云端构建 / 仪器 / 合成截图验证；读取元数据不等于通过构建。
-
-云端 `011ace6` 证明稳定 Material3 1.4.0 不公开旧登录页使用的 Expressive `LoadingIndicator`。为保留原加载表现，单独锁 Material3 **1.5.0-alpha01**，不整套升级旧构建：Google Maven AAR 元数据要求 compileSdk35 / AGP8.6，POM 使用 Kotlin2.0.21、Compose UI1.8.2 / Runtime1.9.0-beta03，现有锁定版本均可覆盖。官方 sources 确认该版公开对应注解与组件。依据：[Material3 发布说明](https://developer.android.com/jetpack/androidx/releases/compose-material3#1.5.0-alpha01)、[该版官方 POM](https://dl.google.com/dl/android/maven2/androidx/compose/material3/material3-android/1.5.0-alpha01/material3-android-1.5.0-alpha01.pom)。新的云端编译与视觉结果仍待验证。
-
-统计页与详情页的原布局、尺寸、系列颜色、数字格式来自旧 `feature/stats/StatsScreen.kt`、`StatsDetailScreen.kt`、`StatsFormatters.kt`；新 Repository 消费服务端汇总与 `getTopInterests`，不复制旧榜单混合算法。旧 `QimengTrendLineChart.kt` 的线 / 平涂面积 / 空心点 / 坐标标签形态与 `QimengTrendMarker.kt` 气泡呈现进入独立 `core/ui/chart/`。Vico 锁 **2.2.0**：官方 Maven POM 的 core1.16.0 / Kotlin2.1.21 与本工具链兼容，较新版本的 SDK / Kotlin 要求不在此次顺带升级。为适配该版无 markerController 的公开 API，点击直接取 Vico `CartesianLayer.markerTargets` 的真实布局坐标，再以 persistentMarkers 切换气泡；无自绘折线、无推算点击坐标。多系列放在一个图层模型中，保留原系列色。仪器测试覆盖点选 / 再点隐藏和多系列值，生成合成趋势截图；未运行前不称通过。
-
-依据：[Vico 官方 POM](https://repo.maven.apache.org/maven2/com/patrykandpatrick/vico/compose/2.2.0/compose-2.2.0.pom)、[官方图层与 marker 说明](https://guide.vico.patrykandpatrick.com/android/core/cartesian-charts/cartesianmarker)；确切 2.2.0 API 另对照 Maven 官方 sources。
-
-后续导航纠偏只引用旧 `FloatingTabDock.TabDockDefaults` 的 62dp 高、16dp 左右距、10dp 底距、18dp 槽距、24dp 图标及原文字色 / 字重 / 1.12 图标选中比例；新的采样折射与选择滑块独立实现，不引入旧 renderer 或状态层。列表底部让位恢复旧 80dp 基线加系统 inset；大字号时按实际标签高度增加，默认字号不改变原几何。应用减少动效贯通按压反馈、详情 chrome 和图表；原 34dp 胶囊输入保留默认高度，大字号允许自然增高。
-
-旧 `feature/settings/ServerSettingsScreen.kt` 的服务器 / 本机 / 默认登录 / 仅充电扫描 / 存储权限卡顺序、文案、16dp 圆角与 16×12dp 内边距现用于新 `ServerSettingsScreen`；纯 `QimengScaffold.kt` 的 TopAppBar 进入 `core/ui/component/QimengTopBar.kt`。登录的发现状态、重新寻找与候选行恢复自旧 `LoginScreen` 的纯展示。未复制旧设置 ViewModel、地址推断、权限启动或扫描实现；新默认端持久化、NsdManager 发现、权限模块和充电待扫队列均独立编写。
-
-首页与相册的万能筛选采用旧 `core/ui/component/QimengFilterSheet*.kt` 的布局、标签按钮和资源，接入新草稿、分页词表与带修订的删除动作。相册和收藏直接使用旧 `QimengTitleRow`、`QimengChipRow`、`QimengValuePillBlock`。计数、过滤和 COS 推荐来自新 Go 查询。
-
-库管理的列表、注册卡、类型胶囊与注销确认来自旧 `feature/manage/LibraryManageScreen.kt` 和 `RegisterLibraryCard.kt` 的纯展示。注册的授权根解析、分页、充电调度与注销检查接入新模块。
-
-上传使用旧 `feature/upload/UploadDestinationSection.kt`、`UploadPanels.kt`、`UploadPendingSection.kt` 与 `UploadScreen.kt` 的顶栏、目录树、表单节距、默认收起的作者区及锁定后缀的待传行。分支读取、私有输入快照、来源字段、名称预览与幂等写入均由新客户端和 Go 处理。
-
-作者管理复用旧 `feature/author/AuthorScreen.kt` 的顶栏新增、胶囊搜索、三区、排序下拉与头像 / 文件数 / 关注 / 更多的行布局。新目录查询独立于上传作者选择器，旧别名输入、来源编辑和删除确认走新修订接口。
-
-作者作品集合的滚动头部、简介原文/中文切换、本地作品与作者新作两项、常规与 COS 各自的维度、资料与维护的展开顺序参照旧 `AuthorCollectionScreen.kt`、`CreatorProfileCard.kt`、`CreatorNewWorks.kt`、`CreatorProfileDetails.kt`。新作订阅的持久状态、条目读取和手动检查统一由 Go 提供。
+- `android/gradle/libs.versions.toml` 锁定 Compose BOM 2025.09.01、Material3 1.5.0-alpha01 与 Vico 2.2.0。原阴影和 Expressive 加载组件使用这些版本的公开接口。[Compose UI](https://developer.android.com/jetpack/androidx/releases/compose-ui#1.9.0) [Material3](https://developer.android.com/jetpack/androidx/releases/compose-material3#1.5.0-alpha01) [Vico 2.2.0 POM](https://repo.maven.apache.org/maven2/com/patrykandpatrick/vico/compose/2.2.0/compose-2.2.0.pom)
+- 上传归档采用 Android SAF 的持久授权；可回收来源还需可核验的 MediaStore 条目、物理文件和版本。视频使用 Media3 官方 `PlayerView` 的纹理输出。[DocumentsContract](https://developer.android.com/reference/android/provider/DocumentsContract) [MediaStore](https://developer.android.com/reference/android/provider/MediaStore) [StructStat](https://developer.android.com/reference/android/system/StructStat) [Media3 输出视图](https://developer.android.com/media/media3/ui/surface)
+- 新仓库没有引入旧 ViewModel、旧业务数据库或旧服务端。数据层消费云端从 OpenAPI 生成的 SDK；可剥离的本机运行模块托管与 NAS 相同的新 Go 后端。

@@ -73,6 +73,40 @@ async function initialized() {
 }
 
 describe("durable upload behavior", () => {
+  const storedUpload = (phase: QueueEntry['phase'], mode: 'ordinary' | 'intelligent' = 'ordinary'): QueueEntry => ({
+    id: 'stored-selection', scope: 'instance-fixture:device-fixture', request: { ...target, mode, fileName: file().name, size: file().size, mimeType: file().type, expectedHash: 'source-digest' },
+    name: file().name, libraryName: '合成库', size: file().size, modified: file().lastModified, digest: 'source-digest', uploadId: 'upload-fixture', phase, offset: file().size, hashProgress: file().size, createdAt: '2026-01-01T00:00:00Z',
+  });
+  it('publishes an earlier ordinary staged row with its original completion key and no local file', async () => {
+    const stored = storedUpload('staged');
+    mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? [stored] : []));
+    mocks.get.mockResolvedValue(upload('staged', file().size));
+    const queue = await initialized();
+    await vi.waitFor(() => expect(queue.getSnapshot().entries[0]).toMatchObject({ phase: 'ingested', assetId: 'asset-fixture' }));
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+    expect(mocks.post.mock.calls[0]).toMatchObject(['/uploads/{id}/complete', { params: { header: { 'Idempotency-Key': 'stored-selection-complete' } } }]);
+    expect(mocks.put).not.toHaveBeenCalled(); expect(mocks.digest).not.toHaveBeenCalled();
+    queue.dispose();
+  });
+  it('keeps intelligent staged rows and unarchived source copies until their own work finishes', async () => {
+    const stored = { ...storedUpload('staged', 'intelligent'), archiveBinding: 'synthetic-folder', archiveState: 'failed' as const };
+    mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? [stored] : []));
+    const queue = await initialized();
+    await queue.clearFinished();
+    expect(queue.getSnapshot().entries[0]?.phase).toBe('staged');
+    expect(mocks.post).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled();
+    queue.dispose();
+  });
+  it('requires a real asset ID before treating an ordinary upload as ingested', async () => {
+    const stored = storedUpload('ingested');
+    mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? [stored] : []));
+    mocks.get.mockResolvedValue({ ...upload('ingested', file().size), assetId: undefined });
+    const queue = await initialized();
+    await vi.waitFor(() => expect(queue.getSnapshot().entries[0]?.phase).toBe('failed'));
+    expect(queue.getSnapshot().entries[0]?.error).toContain('资产标识');
+    expect(mocks.post).not.toHaveBeenCalled(); expect(mocks.digest).not.toHaveBeenCalled();
+    queue.dispose();
+  });
   it('does not publish a later collection page while an earlier selection needs recovery', async () => {
     const next = new File(['second synthetic page'], 'second.jpg', { type: 'image/jpeg', lastModified: 1001 });
     let completes = 0;

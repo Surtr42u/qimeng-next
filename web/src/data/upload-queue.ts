@@ -40,6 +40,7 @@ export class QueuedPreparationError extends Error {
 export class UploadQueue {
   private entries = new Map<string, QueueEntry>();
   private files = new Map<string, File>();
+  private verifiedFiles = new WeakSet<File>();
   private active = new Map<string, AbortController>();
   private listeners = new Set<() => void>();
   private snapshot: Snapshot = { entries: [], initialized: false, preparing: false };
@@ -85,6 +86,7 @@ export class UploadQueue {
       for (const batch of batches.filter(batch => batch.scope === this.scope)) this.batches.set(batch.id, batch);
       this.sortEntries();
       this.publish({ initialized: true });
+      this.pump();
     } catch { this.publish({ initialized: true, persistenceError: '任务恢复不可用。本次上传仅当前页面有效，刷新可能无法恢复；请保留源文件。' }); }
   }
   private persist(entry: QueueEntry) {
@@ -95,7 +97,14 @@ export class UploadQueue {
   }
   private restored(entry: QueueEntry): QueueEntry {
     const interrupted = entry.archiveState === 'writing' || entry.archiveState === 'waiting' && ['ingested', 'staged'].includes(entry.phase);
-    return { ...entry, phase: terminal(entry.phase) ? entry.phase : 'waiting_file', ...(interrupted ? { archiveState: 'failed' as const, archiveNote: '服务器已接收，重选原文件可继续核对本地归档。' } : {}) };
+    const unconfirmed = entry.phase === 'staged' && entry.request.mode === 'ordinary' || entry.phase === 'ingested' && !entry.assetId;
+    const full = !!entry.uploadId && entry.size > 0 && entry.offset === entry.size;
+    let phase = entry.phase;
+    if (unconfirmed || !terminal(phase)) {
+      if (phase === 'paused' || phase === 'failed') phase = full ? phase : 'waiting_file';
+      else phase = entry.uploadId && (unconfirmed || full) ? 'queued' : 'waiting_file';
+    }
+    return { ...entry, phase, ...(interrupted ? { archiveState: 'failed' as const, archiveNote: '重选原文件可继续核对本地归档。' } : {}) };
   }
   private persistBatch(batch: UploadBatchPreparation) {
     const snapshot = structuredClone(batch);
@@ -160,6 +169,7 @@ export class UploadQueue {
     }).catch(() => { this.publish({ persistenceError: '仍无法保存本地任务，请保留源文件并核对任务报告。' }); });
     this.writes = retry;
     await retry;
+    this.pump();
   }
   async add(files: readonly File[], target: Omit<Schema<'UploadCreate'>, 'fileName' | 'size' | 'mimeType'>, libraryName: string, authorName?: string) {
     if (this.disposed) throw new DOMException('设备会话已离开，未开始新的上传操作。', 'AbortError');
@@ -217,15 +227,16 @@ export class UploadQueue {
     for (const entry of this.entries.values()) {
       if (this.active.size >= this.concurrency) break;
       const file = this.files.get(entry.id);
-      if (entry.phase !== 'queued' || !file || this.active.has(entry.id)) continue;
+      if (entry.phase !== 'queued' || (!file && !entry.uploadId) || this.active.has(entry.id)) continue;
       // Completion allocates authoritative work/page numbers. An earlier
       // failed or paused member must be resolved before a later member starts.
       if (this.blockingEntry(entry)) continue;
       const controller = new AbortController(); this.active.set(entry.id, controller);
-      void this.transfer(entry.id, file, controller.signal).finally(() => { this.active.delete(entry.id); this.pump(); });
+      const completeOnly = file && this.verifiedFiles.has(file) && !!entry.uploadId && entry.offset === entry.size;
+      void this.transfer(entry.id, completeOnly ? undefined : file, controller.signal).finally(() => { this.active.delete(entry.id); this.pump(); });
     }
   }
-  private async transfer(id: string, file: File, signal: AbortSignal) {
+  private async transfer(id: string, file: File | undefined, signal: AbortSignal) {
     try {
       let entry = this.entries.get(id)!;
       if (entry.batchPlanId) {
@@ -233,21 +244,25 @@ export class UploadQueue {
         if (this.disposed || signal.aborted) return;
         entry = this.entries.get(id)!;
       }
-      this.change(id, { phase: 'hashing', error: undefined });
-      const digest = await fileDigest(file, signal, value => this.change(id, { hashProgress: value }, false));
-      const originalDigest = entry.digest ?? entry.request.expectedHash;
-      if (originalDigest && digest !== originalDigest) throw new Error('所选文件内容已改变。没有继续旧上传，请选择原文件或作为新任务添加。');
-      this.change(id, { digest, request: { ...entry.request, expectedHash: digest } });
+      if (file) {
+        this.change(id, { phase: 'hashing', error: undefined });
+        const digest = await fileDigest(file, signal, value => this.change(id, { hashProgress: value }, false));
+        const originalDigest = entry.digest ?? entry.request.expectedHash;
+        if (originalDigest && digest !== originalDigest) throw new Error('所选文件内容已改变。没有继续旧上传，请选择原文件或作为新任务添加。');
+        this.verifiedFiles.add(file);
+        this.change(id, { digest, request: { ...entry.request, expectedHash: digest } });
+      } else this.change(id, { phase: 'completing', error: undefined });
       entry = this.entries.get(id)!;
       let upload = entry.uploadId
         ? await read(api.GET('/uploads/{id}', { params: { path: { id: entry.uploadId } }, signal }))
         : await read(api.POST('/uploads', { params: { header: operationHeaders(entry.id) }, body: entry.request, signal }));
+      if (entry.uploadId && (upload.id !== entry.uploadId || !file && upload.size !== entry.size || upload.expectedHash && entry.digest && upload.expectedHash !== entry.digest)) throw new Error('服务器回读的上传身份与原始队列不一致，已停止处理。');
       this.change(id, { uploadId: upload.id, offset: upload.offset });
-      if (upload.state === 'ingested' || upload.state === 'staged' || upload.state === 'duplicate') { this.finish(id, upload); return; }
-      if (upload.state === 'cancelled') { this.change(id, { phase: 'cancelled' }); return; }
-      this.change(id, { phase: 'uploading' });
-      if (upload.offset < 0 || upload.offset > file.size) throw new Error('服务器返回的上传位置超出文件范围，已停止传输。');
-      while (upload.offset < file.size) {
+      if (this.finish(id, upload)) { void invalidateLibrary(); return; }
+      if (upload.offset < 0 || upload.offset > entry.size || upload.state === 'staged' && upload.offset !== entry.size) throw new Error('服务器返回的上传位置与已接收状态不一致，已停止传输。');
+      if (upload.offset < entry.size && !file) { this.change(id, { phase: 'waiting_file', error: '服务器仍需接收剩余字节，请重选原文件。' }); return; }
+      if (upload.offset < entry.size) this.change(id, { phase: 'uploading' });
+      while (file && upload.offset < file.size) {
         const previousOffset = upload.offset;
         const chunk = file.slice(upload.offset, Math.min(file.size, upload.offset + this.maxChunkBytes));
         upload = await read(api.PUT('/uploads/{id}/content', { params: { path: { id: upload.id }, header: { 'Upload-Offset': upload.offset } }, body: chunk as unknown as string,
@@ -257,7 +272,7 @@ export class UploadQueue {
       }
       this.change(id, { phase: 'completing' });
       const result = await read(api.POST('/uploads/{id}/complete', { params: { path: { id: upload.id }, header: operationHeaders(`${entry.id}-complete`) }, signal }));
-      this.finish(id, result.upload);
+      if (!this.finish(id, result.upload)) throw new Error('服务器保留了上传内容，尚未确认入库。继续重试可核对同一份文件。');
       if (result.asset) this.change(id, { actualFileName: result.asset.fileName });
       void invalidateLibrary();
     } catch (error) {
@@ -266,10 +281,14 @@ export class UploadQueue {
     }
   }
   private finish(id: string, upload: Schema<'Upload'>) {
-    const phase: UploadPhase = upload.state === 'ingested' ? 'ingested' : upload.state === 'staged' ? 'staged' : upload.state === 'duplicate' ? 'duplicate' : 'failed';
+    const entry = this.entries.get(id);
+    if (!entry || upload.state === 'receiving' || upload.state === 'staged' && entry.request.mode !== 'intelligent') return false;
+    if (upload.state === 'ingested' && !upload.assetId) throw new Error('服务器尚未返回入库资产标识，请重试核对当前上传。');
+    const phase = upload.state;
     this.change(id, { phase, offset: upload.offset, assetId: upload.assetId, error: upload.errorMessage });
     if (phase === 'ingested' || phase === 'staged') this.startArchive(id, this.files.get(id));
     if (terminal(phase)) this.files.delete(id);
+    return true;
   }
   startArchive(id: string, file?: File) {
     const entry = this.entries.get(id);
@@ -293,7 +312,7 @@ export class UploadQueue {
       }
       this.files.set(id, file);
     }
-    if (!this.files.has(id)) { this.change(id, { phase: 'waiting_file' }); return; }
+    if (!this.files.has(id) && !entry.uploadId) { this.change(id, { phase: 'waiting_file' }); return; }
     this.change(id, { phase: 'queued', error: undefined }); this.pump();
   }
   pause(id: string) { const entry = this.entries.get(id); if (!entry || terminal(entry.phase)) return; this.active.get(id)?.abort(); this.change(id, { phase: 'paused' }); }
@@ -319,7 +338,7 @@ export class UploadQueue {
         ? await read(api.GET('/uploads/{id}', { params: { path: { id: entry.uploadId } }, signal: controller.signal }))
         : entry.digest ? await read(api.POST('/uploads', { params: { header: operationHeaders(entry.id) }, body: entry.request, signal: controller.signal })) : undefined;
       controller.signal.throwIfAborted();
-      if (current && ['ingested', 'staged', 'duplicate'].includes(current.state)) { this.finish(id, current); return; }
+      if (current && current.state !== 'failed' && this.finish(id, current)) return;
       if (current) await read(api.DELETE('/uploads/{id}', { params: { path: { id: current.id } }, signal: controller.signal }));
       this.change(id, { phase: 'cancelled', error: undefined }); this.files.delete(id);
     } catch (error) {
@@ -349,7 +368,7 @@ export class UploadQueue {
     return this.cancellingAll;
   }
   async clearFinished() {
-    const finished = [...this.entries.values()].filter(entry => terminal(entry.phase) && entry.archiveState !== 'writing').map(entry => entry.id);
+    const finished = [...this.entries.values()].filter(entry => terminal(entry.phase) && (!entry.archiveBinding || !['ingested', 'staged'].includes(entry.phase) || entry.archiveState === 'complete')).map(entry => entry.id);
     const batchIds = new Set(finished.map(id => this.entries.get(id)?.batchPlanId).filter((id): id is string => !!id));
     const cleanup = this.writes.then(async () => {
       for (const id of finished) {

@@ -70,15 +70,27 @@ class EmbeddedRuntimeTest {
             val bitmap = Bitmap.createBitmap(40, 30, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(72, 112, 190)) }
             try { compose.activity.contentResolver.openOutputStream(source, "w")!!.use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) } }
             finally { bitmap.recycle() }
-            graph.uploads.receive(listOf(source))
-            graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY)
-            withTimeout(90_000) {
-                while (graph.queue.state.value!!.transfers.none { it.state == TransferState.SUCCEEDED }) {
-                    check(graph.queue.state.value!!.transfers.none { it.state == TransferState.FAILED }) { "Synthetic native upload failed" }
+            val input = graph.uploads.receive(listOf(source)).single()
+            graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, inputIds = listOf(input))
+            val transfer = withTimeout(90_000) {
+                while (graph.queue.state.value!!.transfers.single { it.id == input }.state != TransferState.SUCCEEDED) {
+                    val item = graph.queue.state.value!!.transfers.single { it.id == input }
+                    check(item.state != TransferState.FAILED) { "Synthetic native upload failed: ${item.message}" }
                     delay(300)
                 }
+                graph.queue.state.value!!.transfers.single { it.id == input }
             }
-            val asset = graph.media.assets(AssetQuery(libraryId = library.id)).items.single()
+            val target = graph.settings.session.value!!
+            val receipt = graph.media.report(requireNotNull(transfer.batchId)).items.single { it.id == input }
+            val assetId = requireNotNull(transfer.assetId) { "Ordinary upload missing asset identity; input=${receipt.state}; transfer=${transfer.message}" }
+            val asset = graph.media.asset(assetId)
+            val page = graph.media.assets(AssetQuery(libraryId = library.id))
+            val projection = graph.media.library(target, library.id)
+            assertTrue("Native upload membership; targetMatches=${media.qimeng.next.model.sameTarget(transfer.target,target)}; " +
+                "receipt=${receipt.state}; assetLibraryMatches=${asset.libraryId == library.id}; " +
+                "enabled=${projection.enabled}; indexCount=${projection.fileCount}; matched=${page.totalMatched}; " +
+                "listed=${page.items.size}; originalPresent=${java.io.File(root,asset.relativePath).isFile}",
+                asset.libraryId == library.id && receipt.assetId == assetId && page.items.any { it.id == assetId })
 
             shell("dumpsys battery unplug")
             runtime.scans.setChargeOnly(true)

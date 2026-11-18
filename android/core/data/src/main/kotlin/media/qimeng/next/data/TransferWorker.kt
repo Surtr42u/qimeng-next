@@ -36,6 +36,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             val api = graph.provider.api(target)
             val instance = api.getInstance().bodyOrThrow()
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
+            val initial = requireNotNull(graph.queue.state.value)
+            val withTransfers = initial.transfers.mapTo(mutableSetOf(), Transfer::batchKey)
+            initial.batches.filter { sameTarget(it.target, target) && it.manifestFingerprint == null && it.key !in withTransfers }
+                .forEach { prepareBatch(it.key) }
             var retry = false
             graph.queue.state.value!!.events.filter { sameTarget(it.target, target) && it.failure == null }.forEach { event ->
                 try {
@@ -95,7 +99,8 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                     retry = retry || automatic
                 }
             }
-            if (retry) Result.retry() else Result.success()
+            val awaitingArchive = graph.archiveProtection.run(target)
+            if (retry || awaitingArchive) Result.retry() else Result.success()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -111,7 +116,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         update(initial.id) { it.copy(state = TransferState.UPLOADING, message = "核对传输进度") }
         var task = current(initial.id) ?: return
         if (!ownsTarget(task.target)) return
-        prepareBatch(task)
+        prepareBatch(task.batchKey)
         task = current(task.id) ?: return
         if (isStopped || task.state == TransferState.CANCELLED || !ownsTarget(task.target)) return
         check(task.sourceHash?.length == 64) { "传输快照缺少完整摘要，请重新选择文件" }
@@ -127,33 +132,39 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
         } else api.getUpload(task.uploadId!!).bodyOrThrow()
         update(task.id) { it.copy(uploadId = upload.id, offset = upload.offset) }
         if (isStopped || current(task.id)?.state == TransferState.CANCELLED) return
-        if (upload.state.value in setOf("ingested", "staged")) {
+        if (upload.state.value == "ingested" || (upload.state.value == "staged" && task.mode == UploadMode.INTELLIGENT)) {
             finish(task.id, upload.assetId, upload.state.value)
             return
         }
-        check(upload.state.value == "receiving") { upload.errorMessage ?: "服务器已停止此传输，请在任务报告核对" }
-        val file = File(applicationContext.filesDir, "upload-spool/${task.spoolName}")
-        check(file.isFile && file.length() == task.bytes) { "本机传输副本缺失或变化，不能继续原任务" }
-        RandomAccessFile(file, "r").use { source ->
-            while (upload.offset < task.bytes) {
-                if (isStopped || current(task.id)?.let { it.state == TransferState.CANCELLED || !ownsTarget(it.target) } != false) return
-                val chunk = ByteArray(minOf(1024 * 1024L, task.bytes - upload.offset).toInt())
-                source.seek(upload.offset)
-                source.readFully(chunk)
-                upload = api.appendUpload(id = upload.id, uploadOffset = upload.offset,
-                    body = chunk.toRequestBody("application/octet-stream".toMediaType())).bodyOrThrow()
-                update(task.id) { it.copy(offset = upload.offset, message = "正在上传") }
+        check(upload.state.value == "receiving" || (upload.state.value == "staged" && upload.offset == task.bytes)) {
+            upload.errorMessage ?: "服务器已停止此传输，请在任务报告核对"
+        }
+        if (upload.offset < task.bytes) {
+            val file = File(applicationContext.filesDir, "upload-spool/${task.spoolName}")
+            check(file.isFile && file.length() == task.bytes) { "本机传输副本缺失或变化，不能继续原任务" }
+            RandomAccessFile(file, "r").use { source ->
+                while (upload.offset < task.bytes) {
+                    if (isStopped || current(task.id)?.let { it.state == TransferState.CANCELLED || !ownsTarget(it.target) } != false) return
+                    val chunk = ByteArray(minOf(1024 * 1024L, task.bytes - upload.offset).toInt())
+                    source.seek(upload.offset)
+                    source.readFully(chunk)
+                    upload = api.appendUpload(id = upload.id, uploadOffset = upload.offset,
+                        body = chunk.toRequestBody("application/octet-stream".toMediaType())).bodyOrThrow()
+                    update(task.id) { it.copy(offset = upload.offset, message = "正在上传") }
+                }
             }
         }
         if (current(task.id)?.state == TransferState.CANCELLED) return
         val completed = api.completeUpload(id = upload.id, idempotencyKey = "complete-${task.id}").bodyOrThrow()
-        check(completed.upload.state.value in setOf("ingested", "staged")) { completed.upload.errorMessage ?: "尚未入库，请查看任务报告" }
+        check(completed.upload.state.value == "ingested" || (completed.upload.state.value == "staged" && task.mode == UploadMode.INTELLIGENT)) {
+            completed.upload.errorMessage ?: "服务器尚未确认普通上传入库，请重试核对原任务"
+        }
         finish(task.id, completed.upload.assetId, completed.upload.state.value)
     }
 
     /** The entire immutable picker manifest is committed before the first upload of this batch. */
-    private suspend fun prepareBatch(task: Transfer): TransferBatch {
-        var batch = graph.queue.state.value!!.batches.find { it.key == task.batchKey }
+    private suspend fun prepareBatch(key: String): TransferBatch {
+        var batch = graph.queue.state.value!!.batches.find { it.key == key }
             ?: error("旧传输记录缺少完整原始清单，请保留来源并重新选择文件")
         if (!ownsTarget(batch.target)) throw CancellationException("任务已交给新端点连接")
         val api = graph.provider.api(batch.target)
@@ -182,7 +193,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
     }
 
     private suspend fun confirmCancellation(task: Transfer) {
-        val batch = prepareBatch(task)
+        val batch = prepareBatch(task.batchKey)
         val api = graph.provider.api(task.target)
         try {
             val result = api.cancelBatchInput(id = requireNotNull(batch.serverId), inputId = task.id,
@@ -205,6 +216,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
     }
 
     private suspend fun finish(id: String, assetId: String?, state: String) {
+        check(state != "ingested" || !assetId.isNullOrBlank()) { "服务器尚未返回入库作品身份，请重试核对原任务" }
         graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
             if (it.id == id && ownsTarget(it.target)) it.copy(state = TransferState.SUCCEEDED, assetId = assetId, offset = it.bytes,
                 message = if (state == "staged") "已传输，等待智能整理；来源文件保留" else "已入库；来源文件保留") else it

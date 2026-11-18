@@ -33,7 +33,7 @@ import java.util.UUID
 class AndroidRealServerTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test(timeout = 300_000)
+    @Test(timeout = 480_000)
     fun loginUploadTagRecommendAndPlayThroughRealServer() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
@@ -152,7 +152,7 @@ class AndroidRealServerTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("进入全屏").performClick()
         compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
-        screenshotWithMedia("real-server-video-fullscreen.png")
+        screenshotWithMedia("real-server-video-fullscreen.png", landscape = true)
         await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
         assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
         compose.onNodeWithContentDescription("退出全屏").performClick()
@@ -190,6 +190,7 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("author-search").performTextReplacement("合成别名")
         compose.waitUntil(30_000) { compose.onAllNodesWithText("合成作者").fetchSemanticsNodes().isNotEmpty() }
         screenshot("real-server-author-directory.png")
+        runBlocking { archiveRoundTrip(graph) }
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {
@@ -208,9 +209,10 @@ class AndroidRealServerTest {
         compose.waitForIdle()
         saveScreenshot(name)
     }
-    private fun screenshotWithMedia(name: String) {
+    private fun screenshotWithMedia(name: String, landscape: Boolean = false) {
         compose.waitUntil(30_000) {
             media.qimeng.next.testsupport.captureCloudScreenshot(name) { bitmap ->
+                if (landscape && bitmap.width <= bitmap.height) return@captureCloudScreenshot false
                 // Both the PNG and H.264 fixtures contain saturated colors; the surrounding UI and shutter are neutral.
                 val readable = if (bitmap.config == Bitmap.Config.HARDWARE) requireNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false)) else bitmap
                 try {

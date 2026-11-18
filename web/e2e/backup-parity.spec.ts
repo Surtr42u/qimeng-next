@@ -2,6 +2,30 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mockLibrary } from "./fixture";
 
+test('a second v2 preflight carries all earlier explicit mappings for the same source', async ({ page }) => {
+  await mockLibrary(page);
+  const source = { id: 'synthetic-v2', sourceId: 'synthetic-legacy', createdAt: '2026-01-01T00:00:00Z', mediaCount: 2, authorCount: 0, eventCount: 0 };
+  const mappings: { mediaMappings: { recordKey: string; assetId: string }[] }[] = [];
+  await page.route('**/api/v1/migration/v2/imports?**', route => route.fulfill({ json: { items: [source] } }));
+  await page.route('**/api/v1/migration/v2/imports/synthetic-v2/plans', route => {
+    mappings.push(route.request().postDataJSON());
+    return route.fulfill({ json: { id: 'plan-' + mappings.length, importId: source.id, state: 'prepared', mediaCount: 2, matchedCount: 0, skippedCount: 0, issueCount: 0, issues: [], fingerprint: 'synthetic' } });
+  });
+  await page.route('**/api/v1/migration/v2/plans/*/items?**', route => route.fulfill({ json: { items: ['one', 'two'].map(recordKey => ({ recordKey, fileName: recordKey, state: 'unmatched', reason: '合成', issues: [] })) } }));
+  await page.route('**/api/v1/migration/v2/plans/*/authors?**', route => route.fulfill({ json: { items: [] } }));
+  await page.goto('/manage/backup');
+  await page.getByText('已暂存的 v2 文档', { exact: true }).click();
+  await page.getByRole('button', { name: /synthetic-legacy/ }).click();
+  await page.getByRole('button', { name: '生成预检报告' }).click();
+  await page.getByText('逐项匹配与冲突', { exact: true }).click();
+  await page.getByLabel('目标资产 ID').nth(0).fill('target-one');
+  await page.getByRole('button', { name: '重新生成预检' }).click();
+  await expect(page.getByRole('button', { name: '重新生成预检' })).toHaveCount(0);
+  await page.getByLabel('目标资产 ID').nth(1).fill('target-two');
+  await page.getByRole('button', { name: '重新生成预检' }).click();
+  await expect.poll(() => mappings.at(-1)?.mediaMappings).toEqual([{ recordKey: 'one', assetId: 'target-one' }, { recordKey: 'two', assetId: 'target-two' }]);
+});
+
 test("maintenance folder freezes real browser files, resumes interrupted rotation and preserves an external edit", async ({ page, browserName }, testInfo) => {
   test.skip(browserName !== "chromium", "Uses the Chromium file-system writable API with a synthetic OPFS root.");
   await mockLibrary(page);

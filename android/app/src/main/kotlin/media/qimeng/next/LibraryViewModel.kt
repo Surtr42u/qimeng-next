@@ -212,6 +212,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         mutableCapabilities.value = caps
         loadLibraries()
         graph.uploads.schedule()
+        session.value?.let { graph.archives.resume(it) }
     }
     fun loadLibraries(next: Boolean = false) = loadPage(libraryState, next) { cursor ->
         val page = repository.libraryPage(cursor)
@@ -518,11 +519,16 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         // Transient Android URI grants must be consumed even when another UI action is busy or a login changes.
         viewModelScope.launch {
             try {
-                if (queue.value == null) graph.queue.load()
-                val inputs = graph.uploads.receive(uris)
-                if (target != null && !destination.isNullOrEmpty() && sameTarget(target, session.value)) {
-                    if (repository.library(target, destination).enabled) graph.uploads.enqueue(destination, directory, UploadMode.ORDINARY, target = target, inputIds = inputs)
-                    else mutableMessage.value = "原上传库已停用，本次分享已保留，请选择上传位置"
+                graph.awaitRecovery()
+                val group = if (target != null && !destination.isNullOrEmpty()) "share-${UUID.randomUUID()}" else null
+                try {
+                    val inputs = graph.uploads.receive(uris, intakeGroup = group)
+                    if (group == null) return@launch
+                    if (target != null && destination != null && sameTarget(target, session.value) && repository.library(target, destination).enabled) {
+                        graph.uploads.enqueue(destination, directory, UploadMode.ORDINARY, target = target, inputIds = inputs, batchKey = group)
+                    } else mutableMessage.value = "原上传位置已改变，本次分享已保留，请选择上传位置"
+                } finally {
+                    if (group != null) withContext(NonCancellable) { graph.uploads.releaseSharedDrafts(group) }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableMessage.value = explain(failure) }
@@ -535,12 +541,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val mode = UploadMode.valueOf(uploadMode.value)
         val snapshot = queue.value ?: error("请先恢复传输记录")
         val stems = editedStems.value.toMap()
-        val draftFiles = snapshot.drafts.map { draft ->
+        val draftFiles = snapshot.drafts.filter { it.intakeGroup == null }.map { draft ->
             val stem = stems[draft.id]
             require(stem == null || draft.validStem(stem)) { "请输入有效的作品名" }
             draft.withEditedStem(stem)
         }
-        val inputs = snapshot.pendingInputs.map { it.id }
+        val inputs = snapshot.pendingInputs.filter { it.intakeGroup == null }.map { it.id }
         check(draftFiles.all { it.id in inputs }) { "旧待传项缺少原始输入身份，请重新选择" }
         check(libraries.value.any { it.id == libraryId && it.enabled }) { "请选择正在接收上传的影库" }
         val family = uploadFamily.value.trim().takeIf { mode == UploadMode.ORDINARY && (uploadAutoName.value || uploadCollectionId.value != null) }?.takeIf(String::isNotBlank)
@@ -574,7 +580,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun retryUpload(id: String) = action { graph.uploads.retry(id) }
     fun cancelUpload(id: String) = action { graph.uploads.cancel(id) }
-    fun clearUploads() = action { graph.uploads.clearFinished() }
+    fun clearUploads() = action {
+        val previously = queue.value?.transfers.orEmpty().filter { it.archiveSourceState != null }.mapTo(mutableSetOf(), Transfer::id)
+        graph.uploads.clearFinished()
+        graph.archives.prune(previously - queue.value?.transfers.orEmpty().map(Transfer::id).toSet())
+    }
+    fun retryArchiveSource(task: Transfer) = action {
+        graph.archives.retryProtection(task)
+        graph.queue.update { data -> data.copy(transfers = data.transfers.map {
+            if (it.id == task.id) it.copy(archiveSourceState = "pending", message = "已入库；正在重新核对本批独立备份") else it
+        }) }
+        graph.uploads.schedule()
+    }
     fun reloadQueue() = action { graph.queue.load(); graph.uploads.schedule() }
     fun retryEvents() = action { graph.uploads.retryEvents() }
     fun savePreferences(preferences: Preferences) = action { withContext(Dispatchers.IO) { graph.settings.savePreferences(preferences) } }

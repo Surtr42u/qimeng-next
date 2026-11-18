@@ -1,6 +1,6 @@
 # Android 客户端
 
-独立 Kotlin / Compose 客户端，应用包名 `media.qimeng.next`。客户端不拥有媒体业务数据库或双向备份合并。用户已明确保留本机离线与远程双模式：可移除 embedded 模块运行同一个新 Go 服务，装配契约见 [本机运行模块](embedded/README.md)，当前仍在接通。业务与数据层从空目录编写；用户授权复用旧纯展示 UI 以保持界面一致，复用清单与边界见 [UI 来源](UI_SOURCES.md)。
+独立 Kotlin / Compose 客户端，应用包名 `media.qimeng.next`。客户端不拥有媒体业务数据库或双向备份合并。用户已明确保留本机离线与远程双模式：可移除 embedded 模块运行同一个新 Go 服务，装配契约见 [本机运行模块](embedded/README.md)，基础启停、登录和证书更新已在云端本机仪器运行。业务与数据层从空目录编写；用户授权复用旧纯展示 UI 以保持界面一致，复用清单与边界见 [UI 来源](UI_SOURCES.md)。
 
 ## 分层
 
@@ -18,7 +18,7 @@
 
 登录恢复原本机 / NAS 双模式页。NAS 密码只用于交换可撤销会话，不保存密码；最近 5 个成功地址持久保留。旧默认登录偏好与成功登录跟随、服务器设置卡片顺序和本机地址预填流程已接回；预填地址在登录确认后才用于启动。本机入口启动独立运行模块，再以私有回执的临时 TLS leaf 证书认证连接；远程使用系统证书信任（或本机隧道的 loopback HTTP）。服务会话保存在 Android Keystore 加密的私有配置中，备份关闭，传输记录不保存令牌。客户端禁用重定向，不把媒体认证转送其他来源。设置中的退出会撤销服务器会话；更换连接仅清除本机选择，原目标传输保留。
 
-自动发现先匿名核对最多 5 个已记住地址（每个至多 2 秒），再进行 12 秒有界 DNS-SD，最多保留 32 个候选。正式服务类型 `_qimeng._tcp`，使用 SRV 实际端口和 `txtvers=1/api=0.1.0/id/scheme/path=/api/v1`；可选 `origin` 必须是无凭据 / 查询 / 路径的 HTTPS 根地址。发现不发送密码或保存令牌，不改变 TLS 信任；选中候选后登录仍先回读实例 ID。HTTP 局域网候选不能绕过 HTTPS / 隧道登录约束。API34+ 使用服务更新回调，较旧版本顺序 resolve；离开登录页或退后台停止发现并释放监听。暂不把带接口作用域的 IPv6 地址去掉作用域后使用。依据：[Android NSD](https://developer.android.com/reference/android/net/nsd/NsdManager)、[服务 TXT 与地址 API](https://developer.android.com/reference/android/net/nsd/NsdServiceInfo)。解析与候选接线已写，云端真实发现和界面对照仍待验证。
+自动发现先匿名核对最多 5 个已记住地址（每个至多 2 秒），再进行 12 秒有界 DNS-SD，最多保留 32 个候选。正式服务类型 `_qimeng._tcp`，使用 SRV 实际端口和 `txtvers=1/api=0.1.0/id/scheme/path=/api/v1`；可选 `origin` 必须是无凭据 / 查询 / 路径的 HTTPS 根地址。发现不发送密码或保存令牌，不改变 TLS 信任；选中候选后登录仍先回读实例 ID。HTTP 局域网候选不能绕过 HTTPS / 隧道登录约束。API34+ 使用服务更新回调，较旧版本顺序 resolve；离开登录页或退后台停止发现并释放监听。暂不把带接口作用域的 IPv6 地址去掉作用域后使用。依据：[Android NSD](https://developer.android.com/reference/android/net/nsd/NsdManager)、[服务 TXT 与地址 API](https://developer.android.com/reference/android/net/nsd/NsdServiceInfo)。解析和候选已接线。远程登录已实际运行，真实多设备 DNS-SD 与旧版截图对照另行验收。
 
 浏览支持服务器推荐/COS推荐、换 seed、各周期排行、搜索、媒体类型、常规/COS、影库、标签、排序、收藏与作者筛选、游标续页和 2–5 列网格。列表只加载版本化缩略图，缺预览显示占位。详情提供原图缩放平移、单指左右切换、标签/备注/多作者编辑、收藏、每日点赞与作者入口。视频使用 Media3 官方 `PlayerView` 的单一 AndroidView 桥接；新写 Compose 手势提供双击播放暂停、水平进度、左右区域亮度/音量、全屏退出。时间轴标记可新建、编辑、删除和跳转；旧内容版本的标记/进度保持可见但不映射到新内容。
 
@@ -50,7 +50,7 @@ gradle -p android -Pqimeng.embedded=false :app:assembleClientDebug :app:testClie
 
 云端专用 API 35 模拟器再运行 `:core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest`。这些测试覆盖快速切换只有一个活动页面、草稿恢复、减少动效、选择语义、大字/深色导航，以及队列重建、坏记录不伪装空队列、认证同源/重定向/断开边界；合成背景截图写入测试应用 external files 目录。JVM 测试另覆盖前后台停留区段、目标实例与查询代际。不得使用本机默认模拟器或手机，也不能访问旧 8420 实例。
 
-真实链路仪器类为 `media.qimeng.next.test.AndroidRealServerTest`：只允许 runner 参数 `qimengServerUrl=http://127.0.0.1:18481/`，`qimengToken` 来自同 SHA 隔离 Go 服务的临时测试凭据。云端将短 H.264 合成视频放到设备 `/data/local/tmp/qimeng-next-test.mp4`；测试通过仅存在于测试 APK 的 ContentProvider 和真实 WorkManager 验证 PNG/视频入库、标签、收藏、推荐及播放历史，不 mock 服务。完整窗口截图写到目标 APK 的 `getExternalFilesDir("screenshots")`，包含实际 GPU 合成和视频表面。运行命令、显式设备选择及产物回收由云端工作流负责。
+真实链路仪器类为 `media.qimeng.next.test.AndroidRealServerTest`：只允许 runner 参数 `qimengServerUrl=http://127.0.0.1:18481/`，`qimengToken` 来自同 SHA 隔离 Go 服务的临时测试凭据。云端将短 H.264 合成视频放到设备 `/data/local/tmp/qimeng-next-test.mp4`；测试通过仅存在于测试 APK 的 ContentProvider 和真实 WorkManager 验证 PNG/视频入库、标签、收藏、推荐及播放历史，不 mock 服务。完整窗口截图存入云模拟器的合成相册，应用卸载后仍可回收。运行命令、显式设备选择及产物回收由云端工作流负责。
 
 client 仪器任务为 `:app:connectedClientDebugAndroidTest`。本机原生产物按 embedded README 云端装配后构建 `:app:assembleEmbeddedDebug`；隔离清空合成应用数据，再单独运行 `:app:connectedEmbeddedDebugAndroidTest`，限定类 `media.qimeng.next.test.EmbeddedRuntimeTest` 且显式参数 `qimengEmbedded=true`。该测试验证受包 Go 在 App UID 下启动、TLS pin 与正常 SDK 登录、同一实例的库数据经停止 / 重启仍在，并要求新启动更换临时证书。不能用这条基础测试代替全部本机媒体 / 后台 / 迁移验收。
 
@@ -58,9 +58,11 @@ client 仪器任务为 `:app:connectedClientDebugAndroidTest`。本机原生产�
 
 ## 验证和仍在接通的能力
 
-本文件首次编写时尚未取得本提交的云端编译或设备结果。当前完整状态以仓库 `docs/status.md` 的提交与 CI 证据为准。
+当前云端运行、逐屏截图、已知失败位置见 [Android 界面对照](UI_PARITY.md) 与[仓库状态](../docs/status.md)。
 
-作者 TXT、完整备份导入/导出与重复/替换/研究冲突的具体决定入口仍待后续正式协议；不是取消需求。手机本机运行层按新授权独立实现，复用同一新 Go 服务，不引入旧业务或日常双向合并。当前普通传输队列固定字节输入并保留来源。来源端回收尚未接通，必须具备本批独立备份证据与可回收的来源能力；界面不会宣称已清理来源。推荐/统计/缩略图等源码接线不等于已通过当前版本端到端验证。真实系统文件提供器、分享授权撤回、进程终止恢复、服务器切换、GPU 折射、TalkBack 与厂商后台限制仍需独立验收。
+作者 TXT、完整备份和异常决定的服务端协议已进入新仓。Android 对应维护入口分别按实际接线核验。归档文件夹接受持久 SAF 树授权，由 Go 匹配一级目录名并保留库内层级。真实厂商后台、无障碍与真实用户媒体不属于当前云模拟器证据。
+
+手机归档的私有 SQLite 清单仅保存设备读取与传输状态。确认后沿稳定的文件和批次身份复用上传队列，重扫相同清单仍显示原批次。上传到本机时保留来源；远程上传须先取得 Go 对同一输入、版本和摘要的独立备份与回收许可。手机仅对可以重新核实物理身份、字节和摘要的 Android 系统媒体执行有条件的回收操作，并读回系统结果。只读、第三方提供器、原件变化、许可失效和回收状态未知分别留有结果。API 35 云仪器分别覆盖只读合成 SAF 归档和可回收的系统媒体。
 
 实际读取资料：新仓 `AGENTS.md`、`README.md`、`docs/verification.md`、`docs/requirements.md`、`api/openapi.yaml`；规划需求 R01–R23 / 验收对照；旧 Android README 与 `GUIDE_UI` Android 相关段落（仅产品行为参考）；上列官方依赖与图形 API 文档。实现分工与模型证据由仓库 `docs/provenance.md` 统一记录。
 

@@ -42,7 +42,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val note by model.uploadNote.collectAsStateWithLifecycle()
     val namingState by naming.state.collectAsStateWithLifecycle()
     val stems by model.editedStems.collectAsStateWithLifecycle()
-    val drafts = queue?.drafts.orEmpty()
+    val drafts = queue?.drafts.orEmpty().filter { it.intakeGroup == null }
     var numberClass by rememberSaveable { mutableStateOf("image") }
     val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null)
     val namingRequest = if (needsNaming && selected.isNotEmpty()) NamingRequest(selected, directory, family.trim(), collectionId, numberClass, note,
@@ -96,6 +96,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                 }
             }
         }
+        item { ArchiveUploadSection({ model.navigate("archive-folder") }) }
         item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("任务结果", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = model::clearUploads, enabled = !busy) { Text("清理已结束记录") }
@@ -116,6 +117,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (canRetry(transfer.state)) TextButton(onClick = { model.retryUpload(transfer.id) }, enabled = !busy) { Text("重试") }
+                    if (transfer.archiveSourceState == "blocked") TextButton(onClick = { model.retryArchiveSource(transfer) }, enabled = !busy) { Text("重新核对备份和来源") }
                     if (transfer.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED)) TextButton(onClick = { model.cancelUpload(transfer.id) }, enabled = !busy) { Text("停止") }
                     transfer.batchId?.let { batch -> TextButton(onClick = { model.openReport(batch) }) { Text("报告") } }
                     transfer.assetId?.let { id -> TextButton(onClick = { model.openAsset(id) }) { Text("查看媒体") } }

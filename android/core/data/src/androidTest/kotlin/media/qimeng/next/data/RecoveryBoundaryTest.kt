@@ -20,6 +20,26 @@ import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 class RecoveryBoundaryTest {
+    @Test fun ordinarySuccessWithoutAssetReconcilesOriginalUploadAfterRestart() = runBlocking {
+        val context = isolatedContext()
+        val queue = QueueStore(context)
+        queue.load()
+        val target = Session("https://example.test/", "archive-instance", "Synthetic")
+        val item = Transfer("ordinary", target, "library", "recover.png", "image/png", 54, "spool-already-cleaned",
+            UploadMode.ORDINARY, null, "batch", "Synthetic", state = TransferState.SUCCEEDED, uploadId = "original-upload", offset = 54)
+        val intelligent = item.copy(id = "intelligent", mode = UploadMode.INTELLIGENT)
+        val published = item.copy(id = "published", assetId = "original-asset")
+        queue.update { it.copy(transfers = listOf(item, intelligent, published)) }
+        val restored = QueueStore(context)
+        restored.load()
+        UploadRepository(context, restored, SecureSettings(context)).recoverInterruptedIntake()
+        val entries = requireNotNull(restored.state.value).transfers
+        assertEquals(TransferState.QUEUED, entries[0].state)
+        assertEquals("original-upload", entries[0].uploadId)
+        assertEquals(54L, entries[0].offset)
+        assertEquals(listOf(intelligent, published), entries.drop(1))
+    }
+
     @Test fun authenticatedEndpointMoveKeepsOperationIdentityAndDoesNotMergeAnotherAddress() = runBlocking {
         val queue = QueueStore(isolatedContext())
         queue.load()

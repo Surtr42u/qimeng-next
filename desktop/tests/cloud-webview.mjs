@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as tcpServer } from "node:net";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,9 +11,17 @@ assert(process.platform === "win32" && process.env.GITHUB_ACTIONS === "true", "A
 const evidence = resolve("../build/desktop-evidence");
 await mkdir(evidence, { recursive: true });
 const temp = await mkdtemp(join(tmpdir(), "qimeng-native-window-"));
+const installed = join(temp, "installed");
+const bundles = resolve("src-tauri/target/release/bundle/nsis");
+const installers = (await readdir(bundles)).filter(file => file.endsWith("-setup.exe"));
+assert.equal(installers.length, 1, "Expected one NSIS installer from this build.");
+// Launch the same installer the owner receives so its Evergreen prerequisite runs on clean Windows images.
+execFileSync(join(bundles, installers[0]), ["/S", "/D=" + installed], { windowsHide: true, stdio: "ignore", timeout: 300000 });
+const executable = join(installed, "qimeng-next-desktop.exe");
+await access(executable);
 const listen = async server => { await new Promise(done => server.listen(0, "127.0.0.1", done)); return server.address().port; };
 async function until(check, label) {
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 60000;
   while (Date.now() < deadline) { const value = await check(); if (value) return value; await delay(200); }
   throw new Error(label);
 }
@@ -32,14 +40,21 @@ function site(label) {
 const first = site("synthetic-one"), second = site("synthetic-two");
 const origins = ["http://127.0.0.1:" + await listen(first), "http://127.0.0.1:" + await listen(second)];
 const probe = tcpServer(); const port = await listen(probe); await new Promise(done => probe.close(done));
-const shell = spawn(resolve("src-tauri/target/release/qimeng-next-desktop.exe"), ["--setup"], { windowsHide: true, stdio: "ignore", env: { ...process.env,
-  APPDATA: join(temp, "settings"), LOCALAPPDATA: join(temp, "local"), WEBVIEW2_USER_DATA_FOLDER: join(temp, "webview"),
-  WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + port } });
+const shell = spawn(executable, ["--setup"], { windowsHide: true, stdio: "ignore", env: { ...process.env,
+  WEBVIEW2_USER_DATA_FOLDER: join(temp, "webview"), WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=" + port } });
 const exited = new Promise((done, fail) => { shell.once("exit", done); shell.once("error", fail); });
+let debugReachable = false;
+let targetSummary = [];
 async function targets() {
-  try { return await (await fetch("http://127.0.0.1:" + port + "/json/list")).json(); }
+  try {
+    const list = await (await fetch("http://127.0.0.1:" + port + "/json/list", { signal: AbortSignal.timeout(2000) })).json();
+    debugReachable = true;
+    targetSummary = list.map(item => ({ type: /^[a-z_]{1,20}$/.test(item.type) ? item.type : "other", location: isSetup(item.url) ? "setup" : item.url === "about:blank" ? "blank" : origins.some(origin => item.url.startsWith(origin + "/")) ? "synthetic" : "other" }));
+    return list;
+  }
   catch { if (shell.exitCode !== null) throw new Error("Desktop application exited before its window opened."); return []; }
 }
+function isSetup(url) { return /^https?:\/\/tauri\.localhost\/connection\.html$/.test(url) || url === "tauri://localhost/connection.html"; }
 class Page {
   constructor(socket) {
     this.socket = socket; this.id = 0; this.pending = new Map();
@@ -47,7 +62,7 @@ class Page {
       const p = this.pending.get(m.id); this.pending.delete(m.id); if (m.error) p?.fail(new Error(m.error.message)); else p?.done(m.result); };
   }
   static async connect(predicate) {
-    const target = await until(async () => (await targets()).find(t => t.type === "page" && predicate(t.url)), "Expected a WebView2 target.");
+    const target = await until(async () => (await targets()).find(t => ["page", "webview"].includes(t.type) && predicate(t.url)), "Expected a WebView2 target.");
     const socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((done, fail) => { socket.onopen = done; socket.onerror = fail; });
     return new Page(socket);
@@ -74,7 +89,7 @@ class Page {
 const state = (restore=false) => JSON.parse(execFileSync("pwsh.exe", ["-NoProfile", "-NonInteractive", "-File", resolve("tests/window-state.ps1"), "-OwnerPid", String(shell.pid), ...(restore ? ["-Restore"] : [])], { encoding: "utf8", windowsHide: true, timeout: 10000 }));
 const pages = [];
 try {
-  const setup = await Page.connect(url => /^https?:\/\/tauri\.localhost\/connection\.html$/.test(url)); pages.push(setup);
+  const setup = await Page.connect(isSetup); pages.push(setup);
   await until(() => setup.value("!!document.querySelector('#save') && !!window.__TAURI__?.core"), "Bundled setup did not initialize.");
   const screen = await setup.command("Page.captureScreenshot");
   await writeFile(join(evidence, "native-connection.png"), Buffer.from(screen.data, "base64"));
@@ -100,7 +115,15 @@ try {
   const click = next.click("[data-window-action=close]");
   await Promise.race([click, exited]);
   assert.equal(await Promise.race([exited, delay(20000).then(() => "timeout")]), 0, "Closing the main window must exit the process.");
-  await writeFile(join(evidence, "native-window.json"), JSON.stringify({ sourceCommit: process.env.GITHUB_SHA, setup: true, maximize: true, minimize: true, mediaWindow: true, switchClosesOldWindows: true, cookieRange: true, mainCloseExits: true }, null, 2) + "\n");
+  const uninstall = (await readdir(installed)).find(file => /^uninstall.*\.exe$/i.test(file));
+  assert(uninstall, "Installed desktop must include its uninstaller.");
+  execFileSync(join(installed, uninstall), ["/S"], { windowsHide: true, stdio: "ignore", timeout: 60000 });
+  await until(async () => { try { await access(executable); return false; } catch { return true; } }, "Desktop uninstaller did not remove its installed executable.");
+  await writeFile(join(evidence, "native-window.json"), JSON.stringify({ sourceCommit: process.env.GITHUB_SHA, installedNSIS: true, setup: true, maximize: true, minimize: true, mediaWindow: true, switchClosesOldWindows: true, cookieRange: true, mainCloseExits: true, uninstalled: true }, null, 2) + "\n");
+} catch (error) {
+  // Keep user/environment paths, CDP URLs and cookie values out of failure evidence.
+  console.error("WebView2 diagnostics", JSON.stringify({ debugReachable, targetSummary, exitCode: shell.exitCode }));
+  throw error;
 } finally {
   for (const page of pages) page.socket.close();
   first.closeAllConnections(); second.closeAllConnections(); first.close(); second.close();
