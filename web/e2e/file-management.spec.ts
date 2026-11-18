@@ -4,7 +4,7 @@ import { mockLibrary } from './fixture';
 test('file management replays an uncertain move with its original key and reads the committed name', async ({ page }) => {
   const fixture = await mockLibrary(page);
   fixture.assets.splice(1);
-  await page.route('**/api/v1/libraries/synthetic-library/directories**', route => route.fulfill({ json: { items: [] } }));
+  await page.route('**/api/v1/libraries/synthetic-library/directories**', route => route.fulfill({ json: { items: [], directFileCount: 1 } }));
   const keys: string[] = [];
   await page.route('**/api/v1/assets/synthetic-0/move', async route => {
     keys.push(route.request().headers()['idempotency-key']!);

@@ -5,6 +5,7 @@ package service
 import("encoding/binary";"fmt";"os";"syscall";"golang.org/x/sys/windows")
 
 const syncReadFlags=0
+const syncPlatformSupported=true
 
 func syncFileStamp(file *os.File,info os.FileInfo)(string,error){
  var id syscall.ByHandleFileInformation;if e:=syscall.GetFileInformationByHandle(syscall.Handle(file.Fd()),&id);e!=nil{return "",e}

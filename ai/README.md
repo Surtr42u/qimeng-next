@@ -53,6 +53,17 @@
 
 作者资料维护采用单独的明确授权任务：可信客户端用 `POST /author-tasks` 指定作者、读取修订、允许字段、是否允许清空、次数及有效期，随后签发只绑定该任务的 `read,author.profile.write` 凭据。模型通过 `author.task.context` 获取需要的信息，使用稳定幂等键执行 `author.profile.update`。正常用户界面仍直接使用本人会话编辑；只有向AI委托时才需要此范围授权。AI修改字段标为candidate，不冒充人工核实；无关字段保留。
 
+## 整理已经在库里的作品
+
+第一次在 AI 授权页选择媒体库、是否允许研究已有作品，以及可补全的字段和是否允许改名。需要执行写入的宿主同时在 `QIMENG_AI_PERMISSIONS` 配置 `asset.metadata.write`。向模型发送预览图还需开启 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL`。现有授权升级后按原来的权限继续工作。
+
+例如，你可以在聊天里说「找出这个库里叫 source.png 的作品，查证作者，按这个目录现有格式接下一个编号」。执行器通过 `asset.query` 查找条目，用返回的修订号和内容版本创建 `kind=asset` 任务。扫描得到、从 v2 恢复和手工上传的作品使用同一流程。查询和回读沿用任务 ID，可在另一个宿主用 `task.resume` 接续。
+
+1. `asset.task.context` 返回这件作品被授权的字段。可以先用 `asset.evidence.query` 回读同一内容版本已经采用的证据。
+2. `asset.research.materials` 准备有界预览；通过 `platform.artifact.read` 将图送给已获授权的模型。无法核实时保留未知状态。
+3. `asset.metadata.apply` 只补全授权的缺失项。每个字段附自己的来源和观察，主动清空的标签与作者关系受保护。人工编辑使旧修订失效，需要重新核对。
+4. `naming.suggest`、`naming.preview` 由 Go 读当前目录计算续号。将同一计划、目标和目录指纹交给 `asset.rename.apply`；期间占号会返回冲突。文件身份、内容版本和作者关系随改名保留。
+
 ## 可信端维护
 
 配置独立备份目标并取得本人授权后，`backup.protect` 保护本批已经入库的输入。用 `backup.protection.read` 核对目标、原始清单、内容版本和读回结果。要回收来源，还需给该任务单独授予 `source.cleanup`，在执行器配置 `local.read,local.recycle` 并选中允许回收的来源存储。`source.recycle` 接收原批次、输入、`fileRef` 和保护记录，校验登记时的实体文件、SHA‑256 和当前租约。文件内容相同、来源目录不同的另一文件会被拒绝。回执丢失时沿用原操作键重试。

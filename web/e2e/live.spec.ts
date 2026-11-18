@@ -27,7 +27,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
       "-f",
       "lavfi",
       "-i",
-      "color=c=blue:s=96x128",
+      testInfo.retry ? "color=c=orange:s=96x128" : "color=c=blue:s=96x128",
       "-frames:v",
       "1",
       "-threads",
@@ -46,7 +46,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
       "-f",
       "lavfi",
       "-i",
-      "color=c=purple:s=160x120:r=10",
+      testInfo.retry ? "color=c=yellow:s=160x120:r=10" : "color=c=purple:s=160x120:r=10",
       "-t",
       "2",
       "-c:v",
@@ -125,8 +125,17 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   await page.getByLabel("查找作者", { exact: true }).fill(newName);
   await page.getByRole("button", { name: "新建：" + newName + " 保存时创建" }).click();
   await expect(page.getByText("待新建作者（保存后自动创建并关联）", { exact: true })).toBeVisible();
+  const patchReceipt = page.waitForResponse(response => response.request().method() === "PATCH" && new URL(response.url()).pathname === "/api/v1/assets/" + encodeURIComponent(assetId));
   await page.locator("#page-asset-edit").getByRole("button", { name: "保存", exact: true }).click();
-  await expect(page.locator("#page-asset-edit")).toHaveCount(0);
+  const patchResponse = await patchReceipt;
+  const patchData = await patchResponse.json();
+  expect(patchResponse.status(), "作者关联回执 " + (patchData.code ?? "ok")).toBe(200);
+  expect(patchData.authorIds).toHaveLength(2);
+  try { await expect(page.locator("#page-asset-edit")).toHaveCount(0); }
+  catch (failure) {
+    await page.screenshot({ path: testInfo.outputPath("live-synthetic-author-edit.png") });
+    throw failure;
+  }
   await page.getByRole("button", { name: "收藏", exact: true }).click();
   await page.getByRole("button", { name: "点赞 · 0", exact: true }).click();
   await expect(

@@ -9,11 +9,19 @@ import { useRemoteKey } from "./session";
 
 export function useLibraries(observeScans = false) {
   const key = useRemoteKey();
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: [...key, "libraries"],
-    queryFn: ({ signal }) => read(api.GET("/libraries", { signal })),
-    refetchInterval: query => observeScans && query.state.data?.items.some(library => library.scanState === "scanning") ? 5000 : false,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => read(api.GET("/libraries", { params: { query: pageParam ? { cursor: pageParam } : {} }, signal })),
+    getNextPageParam: page => page.nextCursor || undefined,
+    select: data => ({ items: data.pages.flatMap(page => page.items), totalMatched: data.pages[0]?.totalMatched }),
+    refetchInterval: query => observeScans && query.state.data?.pages.some(page => page.items.some(library => library.scanState === "scanning")) ? 5000 : false,
   });
+}
+export function useLibrary(id: string | undefined) {
+  const key = useRemoteKey();
+  return useQuery({ queryKey: [...key, "library", id], enabled: !!id,
+    queryFn: ({ signal }) => read(api.GET("/libraries/{id}", { params: { path: { id: id! } }, signal })) });
 }
 export function useStorages() {
   const key = useRemoteKey();

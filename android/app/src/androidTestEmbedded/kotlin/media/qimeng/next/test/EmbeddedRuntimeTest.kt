@@ -40,7 +40,9 @@ class EmbeddedRuntimeTest {
             assertEquals("https://127.0.0.1:18431/", first.baseUrl)
             assertTrue(first.certificateDerBase64.isNotBlank())
             application.localConnection.connect(forceLogin = true)
-            val root = java.io.File(application.filesDir, "embedded-v1/media/synthetic-registration")
+            // Use the same trusted spelling as the host. Android's public app-data alias can differ.
+            val root = java.io.File(application.filesDir.canonicalFile, "embedded-v1/media/synthetic-registration")
+            assertTrue("Create the existing synthetic media folder", root.mkdir() || root.isDirectory)
             val library = graph.media.registerLibrary(graph.settings.session.value!!, "Embedded synthetic cloud library",
                 root.absolutePath, false, "synthetic-cloud-register-library")
             assertTrue(graph.media.libraryPage().items.any { it.id == library.id })

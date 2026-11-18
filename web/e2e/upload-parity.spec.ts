@@ -11,6 +11,7 @@ test("upload keeps the original position, optional author and queue workflow", a
   await expect(page.getByRole("region", { name: "上传任务" })).toContainText("暂无上传任务");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 800 });
+    await page.locator("#main-content").evaluate(element => element.scrollTo({ top: 0, behavior: "instant" }));
     const box = await page.locator(".upload-intake").boundingBox();
     expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
     await page.screenshot({ path: testInfo.outputPath("parity-upload-" + width + ".png"), fullPage: true });

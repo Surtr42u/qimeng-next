@@ -15,3 +15,9 @@ v2 迁入只读取旧协议定义，未复制旧实现。PrepareImportedAuthorPr
 实现位于 service/author_profiles*.go、httpapi/author_profiles*.go 与追加迁移 0011。测试覆盖块版本、显式清空、译文失效、候选权限/回执、私网与 DNS 重绑定、图片预算、来源变化、合并/删除及迁入保护；Web 另有草稿重基、候选不提前保存和真实 Go 上传头像闭环。所有格式化、编译与测试在云端执行，是否通过以对应 SHA 的 CI 记录为准。
 
 独立实现参考：旧项目 api/openapi.yaml 的 CreatorProfile/CreatorXProfile/LegacyAuthor 结构、docs/domain/authors.md 的公开档案与 X 简介章节、docs/domain/migration.md 的作者公开档案章节。技术依据为 [Go HTTP Transport](https://pkg.go.dev/net/http#Transport)、[netip 地址分类](https://pkg.go.dev/net/netip#Addr.IsPrivate)、[image.DecodeConfig](https://pkg.go.dev/image#DecodeConfig)、[官方 WebP decoder](https://pkg.go.dev/golang.org/x/image/webp)。新增依赖锁为 golang.org/x/image v0.48.0，来自 [Go 模块代理官方记录](https://proxy.golang.org/golang.org/x/image/@v/v0.48.0.info)，go.sum 由云端生成。
+
+## 作品订阅
+
+作者作品页可保存经核实身份的作品专用 RSS 或 Atom 地址。启用订阅只保存配置，手动检查才访问网络。读取遵守与头像相同的公网 HTTPS、DNS 解析后绑定地址、重定向重验、超时及并发限制。单次读取最多 1 MiB，显示最多 30 个去重的作品页面链接及来源提供的发布时间。[RSS 2.0 规范](https://www.rssboard.org/rss-specification) · [Atom 格式](https://www.rfc-editor.org/rfc/rfc4287)
+
+关闭订阅或撤回已核实身份时，旧条目同时清空。检查期间改动配置后，迟到的结果不能写回。失败保留最近一次成功读取的条目。v2 迁入可保留已知的订阅地址，首次启用仍由用户决定。RSS 和 Atom 仅作为发布源，服务不会下载条目中的媒体。

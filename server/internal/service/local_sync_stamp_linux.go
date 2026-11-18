@@ -5,6 +5,7 @@ package service
 import("errors";"fmt";"os";"syscall")
 
 const syncReadFlags=syscall.O_NONBLOCK
+const syncPlatformSupported=true
 
 func syncFileStamp(_ *os.File,info os.FileInfo)(string,error){
  st,ok:=info.Sys().(*syscall.Stat_t);if !ok{return "",errors.New("file identity unavailable")}

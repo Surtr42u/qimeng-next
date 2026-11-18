@@ -10,17 +10,6 @@ import (
  "qimeng.local/next/server/internal/store"
 )
 
-func verifiedAuthorLinks(ctx context.Context,q store.Querier,id string)([]string,error){
- accounts,e:=profileBlock(ctx,q,id,"accounts");if e!=nil{return nil,e}
- links:=[]string{}
- if profileString(accounts.Values.IdentityStatus)!="verified"{return links,nil}
- if accounts.Values.Accounts!=nil{for _,account:=range *accounts.Values.Accounts{if account.URL!=""{links=appendUnique(links,account.URL)}}}
- x,e:=profileBlock(ctx,q,id,"x");if e!=nil{return nil,e}
- if url:=profileString(x.Values.ProfileURL);url!=""{links=appendUnique(links,url)}
- for _,block:=range []AuthorProfileBlock{accounts,x}{for _,evidence:=range block.Evidence{if evidence.Status=="confirmed"&&evidence.URL!=""{links=appendUnique(links,evidence.URL)}}}
- return links,nil
-}
-
 func renderAuthorList(ctx context.Context,q store.Querier,list authorListRecord)(string,error){
  out:=make([]authorlist.Block,0,len(list.Blocks));enriched:=map[string]bool{}
  for _,entry:=range list.Blocks{
@@ -29,7 +18,7 @@ func renderAuthorList(ctx context.Context,q store.Querier,list authorListRecord)
    author,e:=store.Get[model.Author](ctx,q,"SELECT data FROM authors WHERE id=?",entry.AuthorID);if e!=nil{return "",e}
    var explicit bool;if e=q.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM author_source_overrides WHERE author_id=?)",author.ID).Scan(&explicit);e!=nil{return "",e}
    if explicit{b.Sources=slices.Clone(author.AcquisitionSources)}
-   links,e:=verifiedAuthorLinks(ctx,q,author.ID);if e!=nil{return "",e};b.Sources=appendUnique(b.Sources,links...);enriched[author.ID]=true
+   links,e:=confirmedAuthorSourceLinks(ctx,q,author.ID);if e!=nil{return "",e};b.Sources=appendUnique(b.Sources,links...);enriched[author.ID]=true
   }
   out=append(out,b)
  }
@@ -56,11 +45,11 @@ func renderMasterList(ctx context.Context,q store.Querier)(string,error){
   at,ok:=positions[entry.AuthorID];if !ok{at=len(blocks);positions[entry.AuthorID]=at;blocks=append(blocks,authorlist.Block{Names:entry.Declaration.Names})}
   b:=&blocks[at];b.Sources=appendUnique(b.Sources,entry.Declaration.Sources...);for _,work:=range entry.Declaration.Works{addWork(entry.AuthorID,at,work)}
  }}
- authors,e:=store.List[model.Author](ctx,q,"SELECT data FROM authors WHERE json_extract(data,'$.kind')='regular' OR id='unknown' ORDER BY name,id");if e!=nil{return "",e}
+ authors,e:=store.List[model.Author](ctx,q,"SELECT data FROM authors WHERE json_extract(data,'$.kind')='regular' OR id='unknown' ORDER BY qimeng_time_key(json_extract(data,'$.createdAt')) IS NULL,qimeng_time_key(json_extract(data,'$.createdAt')),id");if e!=nil{return "",e}
  for _,author:=range authors{
-  at,ok:=positions[author.ID];if !ok{if author.Placeholder{continue};declaration,e:=textDeclaration(author);if e!=nil{return "",e};at=len(blocks);positions[author.ID]=at;blocks=append(blocks,declaration)}
+  at,ok:=positions[author.ID];if !ok{if author.Placeholder{continue};declaration,e:=textDeclaration(author);if e!=nil{continue};at=len(blocks);positions[author.ID]=at;blocks=append(blocks,declaration)}
   b:=&blocks[at];b.Sources=slices.Clone(author.AcquisitionSources)
-  links,e:=verifiedAuthorLinks(ctx,q,author.ID);if e!=nil{return "",e};b.Sources=appendUnique(b.Sources,links...)
+  links,e:=confirmedAuthorSourceLinks(ctx,q,author.ID);if e!=nil{return "",e};b.Sources=appendUnique(b.Sources,links...)
  }
  rows,e:=q.QueryContext(ctx,"SELECT x.author_id,a.file_name FROM asset_authors x JOIN assets a ON a.id=x.asset_id WHERE a.trashed=0 ORDER BY x.author_id,a.file_name,a.id");if e!=nil{return "",e};defer rows.Close()
  for rows.Next(){var id,work string;if e=rows.Scan(&id,&work);e!=nil{return "",e};if at,ok:=positions[id];ok{addWork(id,at,work)}};if e=rows.Err();e!=nil{return "",e}

@@ -1,4 +1,6 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { dateGroup } from "../lib/album-presentation";
 import {
   BarChart3,
   Database,
@@ -69,7 +71,7 @@ export function MinePage() {
         <dl className="profile-stats">
           <div>
             <dd>
-              {libraries.data?.items.length.toLocaleString("zh-CN") ?? "—"}
+              {libraries.data?.totalMatched?.toLocaleString("zh-CN") ?? "—"}
             </dd>
             <dt>已登记媒体库</dt>
           </div>
@@ -272,7 +274,8 @@ function Favorites() {
   );
 }
 function HistoryList() {
-  const query = useHistory();
+  const [offset] = useState(() => -new Date().getTimezoneOffset());
+  const query = useHistory(offset);
   const [params, setParams] = useSearchParams();
   const search = params.get("q") ?? "";
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
@@ -281,10 +284,14 @@ function HistoryList() {
       !search ||
       item.fileName?.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
-  const groups = new Map<string, typeof shown>();
+  const groups = new Map<string, { label: string; events: typeof shown }>();
+  const counts = new Map(query.data?.pages[0]?.dateCounts?.map(bucket => [bucket.date, bucket.fileCount]));
+  const ids = shown.map(item => item.assetId);
+  const now = Date.now();
   for (const item of shown) {
-    const day = new Date(item.createdAt).toLocaleDateString("zh-CN");
-    groups.set(day, [...(groups.get(day) ?? []), item]);
+    const { key, label } = dateGroup(item.createdAt, offset, now);
+    const group = groups.get(key);
+    if (group) group.events.push(item); else groups.set(key, { label, events: [item] });
   }
   return (
     <>
@@ -336,15 +343,15 @@ function HistoryList() {
         stale={items.length > 0}
         retry={() => void query.refetch()}
       />
-      {[...groups].map(([label, events]) => (
-        <div className="hist-group2" key={label}>
+      {[...groups].map(([key, { label, events }]) => (
+        <div className="hist-group2" key={key}>
           <h3>
             {label}
-            <span>{events.length} 项</span>
+            <span>{search ? events.length : counts.get(key) ?? "—"} 项</span>
           </h3>
           <div className="hist-grid">
             {events.map((event) => (
-              <HistoryCard key={event.eventId} event={event} />
+              <HistoryCard key={event.eventId} event={event} ids={ids} />
             ))}
           </div>
         </div>
@@ -388,7 +395,8 @@ function HistoryList() {
     </>
   );
 }
-function HistoryCard({ event }: { event: Schema<"HistoryEvent"> }) {
+function HistoryCard({ event, ids }: { event: Schema<"HistoryEvent">; ids: string[] }) {
+  const location = useLocation();
   const { ref, visible } = useNearViewport<HTMLAnchorElement>();
   const query = useAsset(event.assetId, visible && !event.asset);
   const asset = event.asset ?? query.data;
@@ -398,6 +406,7 @@ function HistoryCard({ event }: { event: Schema<"HistoryEvent"> }) {
       ref={ref}
       className="hist-card card"
       to={`/asset/${encodeURIComponent(event.assetId)}`}
+      state={{ ids, index: ids.indexOf(event.assetId), returnTo: location.pathname + location.search }}
       aria-label={`打开 ${event.fileName ?? "媒体记录"}`}
     >
       <div className="hc-cover card--cover">

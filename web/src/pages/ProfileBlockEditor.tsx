@@ -28,7 +28,6 @@ export function ProfileBlockEditor({
   close,
   authorName = "作者",
   avatar,
-  presentation,
 }: {
   block: Block;
   candidate?: Candidate;
@@ -36,7 +35,6 @@ export function ProfileBlockEditor({
   close: () => void;
   authorName?: string;
   avatar?: Schema<"AuthorProfileAvatar">;
-  presentation?: "subscription";
 }) {
   const [base, setBase] = useState(block);
   const [draft, setDraft] = useState<ProfileValues>({
@@ -64,9 +62,7 @@ export function ProfileBlockEditor({
   );
   const title = candidate
     ? "候选核对"
-    : presentation === "subscription"
-      ? "作品订阅"
-      : block.block === "x"
+    : block.block === "x"
         ? "X资料"
         : block.block === "basic"
           ? "基础资料"
@@ -273,28 +269,6 @@ export function ProfileBlockEditor({
                   备注保存在影库中；具有全库读取权限的 AI 接入也能读取。
                 </p>
               </details>
-            </>
-          ) : presentation === "subscription" ? (
-            <>
-              <label className="settings-field">
-                <span>作品发布订阅地址（RSS / Atom）</span>
-                <input
-                  type="url"
-                  placeholder="https://…"
-                  maxLength={4096}
-                  value={draft.accounts?.[0]?.publishingUrl ?? ""}
-                  onChange={(event) =>
-                    updateAccount({ publishingUrl: event.target.value })
-                  }
-                />
-              </label>
-              <label className="settings-switch">
-                <input type="checkbox" checked={false} disabled readOnly />
-                检查作品订阅更新
-              </label>
-              <p className="creator-profile-note">
-                保留作品发布来源供主动访问，自动抓取不启用。
-              </p>
             </>
           ) : (
             <>

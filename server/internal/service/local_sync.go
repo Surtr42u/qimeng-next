@@ -56,6 +56,7 @@ func syncRootsOverlap(a,b string)bool{
 func(s *Service)openLocalSyncRoot(ctx context.Context)(*os.Root,error){
  configured:=s.localSync.config.Root
  if configured==""{return nil,Fail(409,"local_sync_disabled","服务器目录自动导入未启用。")}
+ if !syncPlatformSupported{return nil,Fail(501,"local_sync_platform_unsupported","当前服务平台尚未提供可靠的文件变动版本。")}
  resolved,e:=filepath.EvalSymlinks(configured);if e!=nil{return nil,Fail(409,"local_sync_unavailable","导入目录不存在或不可读取。")}
  original:=filepath.Clean(configured);same,e:=filepath.Rel(original,resolved)
  if e!=nil||same!="."{return nil,Fail(409,"local_sync_root_link","导入目录及其父路径不能包含链接。")}

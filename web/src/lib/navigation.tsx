@@ -6,7 +6,6 @@ import {
   useId,
   useLayoutEffect,
   useRef,
-  useState,
 } from "react";
 import type { ReactNode } from "react";
 import {
@@ -119,26 +118,16 @@ const DirtyContext = createContext<
   ((id: string, dirty: boolean) => void) | null
 >(null);
 export function UnsavedProvider({ children }: { children: ReactNode }) {
-  const [drafts, setDrafts] = useState<Set<string>>(() => new Set());
-  const setDirty = useCallback(
-    (id: string, dirty: boolean) =>
-      setDrafts((previous) => {
-        if (previous.has(id) === dirty) return previous;
-        const next = new Set(previous);
-        if (dirty) next.add(id);
-        else next.delete(id);
-        return next;
-      }),
-    [],
-  );
-  const dirty = drafts.size > 0;
-  const blocker = useBlocker(dirty);
-  useBeforeUnload((event) => {
-    if (dirty) {
-      event.preventDefault();
-      event.returnValue = "";
-    }
-  });
+  // The router can navigate in a child effect immediately after a save. Read the
+  // registered layout state directly instead of waiting for a parent render/effect.
+  const drafts = useRef(new Set<string>());
+  const setDirty = useCallback((id: string, dirty: boolean) => {
+    if (dirty) drafts.current.add(id); else drafts.current.delete(id);
+  }, []);
+  const blocker = useBlocker(useCallback(() => drafts.current.size > 0, []));
+  useBeforeUnload(useCallback((event: BeforeUnloadEvent) => {
+    if (drafts.current.size) { event.preventDefault(); event.returnValue = ""; }
+  }, []));
   return (
     <DirtyContext.Provider value={setDirty}>
       {children}

@@ -2,6 +2,7 @@ package service
 
 import (
  "context"
+ "errors"
  "strings"
  "time"
 
@@ -64,13 +65,17 @@ func(s *Service)prepareAuthorTask(ctx context.Context,id string,in AuthorTaskCre
 
 func(s *Service)AuthorTaskContext(ctx context.Context,p model.Principal,id string)(map[string]any,error){
  if !p.Has("admin")&&p.AuthorTaskID!=id{return nil,Fail(403,"task_scope_denied","凭据不属于此资料维护任务。")}
- task,e:=s.authorTask(ctx,id);if e!=nil{return nil,e};author,e:=s.Author(ctx,task.AuthorID);if e!=nil{return nil,e}
+ task,e:=s.authorTask(ctx,id);if e!=nil{return nil,e};author,e:=s.Author(ctx,task.AuthorID)
+ if e!=nil{
+  var missing *Error;if !errors.As(e,&missing)||missing.Status!=404||task.State=="authorized"{return nil,e}
+  author,e=store.Get[model.Author](ctx,s.DB.DB,"SELECT data FROM author_archives WHERE author_id=? ORDER BY created_at DESC,id DESC LIMIT 1",task.AuthorID);if e!=nil{return nil,Normalize(e)}
+ }
  actions:=[]string{};if task.State=="authorized"&&task.ExpiresAt.After(time.Now())&&task.ExpectedRevision==author.Revision{if len(task.AllowedFields)>0{actions=append(actions,"author.profile.update")};if len(task.CandidateBlocks)>0{actions=append(actions,"author.profile.candidate.submit")}}
  return map[string]any{"task":effectiveAuthorTask(task,time.Now()),"author":author,"nextActions":actions},nil
 }
 
 func(s *Service)CancelAuthorTask(ctx context.Context,w *Write,id string)error{
- if e:=Authorize(w.Principal,"admin","");e!=nil{return e};task,e:=s.authorTask(ctx,id);if e!=nil{return e};task.State="cancelled";raw,e:=store.Encode(task);if e!=nil{return e};q,e:=w.Q();if e!=nil{return e}
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return e};task,e:=s.authorTask(ctx,id);if e!=nil{return e};if task.State!="authorized"{return nil};task.State="cancelled";raw,e:=store.Encode(task);if e!=nil{return e};q,e:=w.Q();if e!=nil{return e}
  _,e=q.ExecContext(ctx,"UPDATE author_tasks SET state=?,data=? WHERE id=?",task.State,raw,id);return e
 }
 

@@ -157,37 +157,18 @@ fun AppearanceScreen(model: LibraryViewModel) {
 }
 
 @Composable
-fun AuthorDetailScreen(model: LibraryViewModel, id: String) {
-    val author by model.author.collectAsStateWithLifecycle()
+internal fun AuthorManagementTools(model: LibraryViewModel, item: Author) {
     val busy by model.busy.collectAsStateWithLifecycle()
-    var edit by rememberSaveable(id) { mutableStateOf(false) }
-    var deleting by rememberSaveable(id) { mutableStateOf(false) }
-    var merging by rememberSaveable(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { if (author?.id != id) model.openAuthor(id) }
-    val item = author?.takeIf { it.id == id }
-    if (item == null) { TextButton(onClick = { model.openAuthor(id) }, enabled = !busy) { Text("读取作者 · 重试") }; return }
-    Column(Modifier.fillMaxSize()) {
-        ContentCard(Modifier.padding(horizontal = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                AuthorAvatar(item.id, item.name, 64.dp)
-                Text(item.name, style = MaterialTheme.typography.headlineSmall)
-            }
-            if (item.aliases.isNotEmpty()) Text(item.aliases.joinToString(" / "))
-            if (item.biography.isNotBlank()) Text(item.biography, Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()))
-            item.sources.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-            AuthorProfileSummary(item.id)
-            TextButton(onClick = { model.navigate("profile:${item.id}") }) { Text("完整资料、账号与候选") }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = model::followAuthor, enabled = !busy) { Text(if (item.followed) "取消关注" else "关注作者") }
-                if (item.kind != "cos") TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑名称与基本信息") }
-            }
-            if (item.kind != "cos") Row {
-                TextButton(onClick = { model.loadAuthors(); merging = true }, enabled = !busy) { Text("合并重复作者") }
-                TextButton(onClick = { deleting = true }, enabled = !busy) { Text("删除作者", color = MaterialTheme.colorScheme.error) }
-            }
-        }
-        MediaBrowser(model, "author:$id", author = id)
-    }
+    var edit by rememberSaveable(item.id) { mutableStateOf(false) }
+    var deleting by rememberSaveable(item.id) { mutableStateOf(false) }
+    var merging by rememberSaveable(item.id) { mutableStateOf(false) }
+    if (item.kind == "cos") return
+    QimengSettingsCard { Column(Modifier.padding(16.dp)) {
+        Text("作者管理", style = MaterialTheme.typography.titleMedium)
+        TextButton(onClick = { edit = true }, enabled = !busy) { Text("编辑名称与基本信息") }
+        TextButton(onClick = { model.loadAuthors(); merging = true }, enabled = !busy) { Text("合并重复作者") }
+        TextButton(onClick = { deleting = true }, enabled = !busy) { Text("删除作者") }
+    } }
     if (edit) {
         var name by rememberSaveable { mutableStateOf(item.name) }
         var aliases by rememberSaveable { mutableStateOf(item.aliases.joinToString("\n")) }

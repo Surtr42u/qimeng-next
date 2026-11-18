@@ -61,7 +61,7 @@ class Config:
             raise ToolError("CONFIG_INVALID", "QIMENG_AI_STATE_DIR 必须是可信私有绝对目录")
         permissions = frozenset(filter(None, env.get("QIMENG_AI_PERMISSIONS", "read").split(",")))
         if not permissions <= {"read", "delegate", "ingest", "research", "organize", "author.profile.write",
-                               "source.cleanup", "local.read", "local.research", "local.recycle"}:
+                               "source.cleanup", "asset.metadata.write", "local.read", "local.research", "local.recycle"}:
             raise ToolError("CONFIG_INVALID", "QIMENG_AI_PERMISSIONS 含未知权限")
         try:
             raw_storages = json.loads(env.get("QIMENG_AI_STORAGES", "{}"))

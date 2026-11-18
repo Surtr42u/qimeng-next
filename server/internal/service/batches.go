@@ -62,6 +62,7 @@ func(s *Service)Context(ctx context.Context,p model.Principal,id,cursor string,l
     limitations=append(limitations,"尚未配置独立备份目标，来源保留。")
    case d.Batch.BackupState=="covered"||d.Batch.BackupState=="partially_covered":
     actions=appendUnique(actions,"backup.protection.query")
+    if d.Batch.BackupState=="partially_covered"&&p.Has("ingest"){actions=appendUnique(actions,"backup.protect")}
     if p.Has("source.cleanup")&&d.Batch.CleanupState!="recycled"{actions=appendUnique(actions,"source.recycle")}
    case d.Batch.BackupState=="awaiting_external_backup":
     actions=appendUnique(actions,"backup.protection.query")

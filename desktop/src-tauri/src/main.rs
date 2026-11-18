@@ -94,7 +94,7 @@ fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> 
 enum WindowAction { Minimize, ToggleMaximize, Close, Drag }
 
 #[tauri::command]
-fn window_action(window: WebviewWindow, action: WindowAction) -> Result<(), String> {
+async fn window_action(window: WebviewWindow, action: WindowAction) -> Result<(), String> {
     if window.label() != active_label() { return Err("此窗口不能操作主窗口".into()); }
     match action {
         WindowAction::Minimize => window.minimize(),
@@ -110,7 +110,7 @@ fn check_local_window(window: &WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn current_connection(app: tauri::AppHandle, window: WebviewWindow) -> Result<Option<Connection>, String> {
+async fn current_connection(app: tauri::AppHandle, window: WebviewWindow) -> Result<Option<Connection>, String> {
     check_local_window(&window)?;
     let directory = app.path().app_config_dir().map_err(|_| "无法定位配置目录")?;
     connection::load(&directory)

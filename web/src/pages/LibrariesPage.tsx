@@ -13,6 +13,7 @@ import { ErrorNotice, Loading } from "../components/Feedback";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { UnsavedGuard } from "../lib/navigation";
 import { newId } from "../lib/id";
+import { MoreLibraries } from "../components/MoreLibraries";
 
 export function LibrariesPage() {
   const query = useLibraries(true);
@@ -33,6 +34,7 @@ export function LibrariesPage() {
       {query.isPending ? <div className="settings-card"><p className="rank-note">正在读取媒体库…</p></div> : (
         <div className="manage-library-list">
           {query.data?.items.map(library => <LibraryCard key={library.id} library={library} blocked={blocked} onRemove={() => { setScanRetry(current => current?.library.id === library.id ? undefined : current); setNotice("已移除「" + library.name + "」的登记，磁盘原件保留。"); }} />)}
+          <MoreLibraries query={query} />
           {!query.isError && !query.data?.items.length && <div className="settings-card manage-empty"><FolderOpen aria-hidden /><h3>先登记一个媒体文件夹</h3><p>填入服务器可访问的目录；登记成功后会申请扫描。</p><a href="#register-library">添加第一个库 →</a></div>}
         </div>
       )}

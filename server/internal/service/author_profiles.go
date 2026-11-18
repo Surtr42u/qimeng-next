@@ -85,6 +85,7 @@ func (s *Service) UpdateAuthorProfile(ctx context.Context,w *Write,authorID,bloc
  now:=time.Now().UTC();current.Revision++;current.Source="human";current.UpdatedAt=&now;current.CandidateID=in.CandidateID
  q,err:=w.Q();if err!=nil { return current,err }
  if err=saveProfileBlock(ctx,q,current);err!=nil { return current,err }
+ if err=clearUnverifiedSubscription(ctx,q,current);err!=nil{return current,err}
  if in.CandidateID!="" {
   candidate.State="applied";candidate.AppliedRevision=current.Revision
   if err=saveProfileCandidate(ctx,q,candidate);err!=nil { return current,err }

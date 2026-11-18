@@ -24,7 +24,25 @@ func(s *Service)projectExplicitAuthor(ctx context.Context,q store.Querier,a mode
 func(s *Service)initializeAuthorTextLinks(ctx context.Context)error{
  // Existing explicit links are projected once after schema expansion. New
  // associations use the same transaction helper at their actual write boundary.
- for{rows,e:=s.DB.DB.QueryContext(ctx,"SELECT asset_id,author_id FROM asset_author_overrides WHERE removed=0 AND list_id='' ORDER BY asset_id,author_id LIMIT 128");if e!=nil{return e};type pair struct{asset,author string};pending:=[]pair{};for rows.Next(){var value pair;if e=rows.Scan(&value.asset,&value.author);e!=nil{rows.Close();return e};pending=append(pending,value)};e=rows.Err();rows.Close();if e!=nil{return e};if len(pending)==0{return nil};tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e};for _,value:=range pending{asset,e:=store.Get[model.Asset](ctx,tx,"SELECT data FROM assets WHERE id=?",value.asset);if e!=nil{tx.Rollback();return e};author,e:=store.Get[model.Author](ctx,tx,"SELECT data FROM authors WHERE id=?",value.author);if e!=nil{tx.Rollback();return e};if e=s.projectExplicitAuthor(ctx,tx,asset,author);e!=nil{tx.Rollback();return e}};if e=tx.Commit();e!=nil{return e}}
+ type pair struct{asset,author string};last:=pair{}
+ for{
+  rows,e:=s.DB.DB.QueryContext(ctx,"SELECT asset_id,author_id FROM asset_author_overrides WHERE removed=0 AND list_id='' AND (asset_id,author_id)>(?,?) ORDER BY asset_id,author_id LIMIT 128",last.asset,last.author);if e!=nil{return e}
+  pending:=[]pair{};for rows.Next(){var value pair;if e=rows.Scan(&value.asset,&value.author);e!=nil{rows.Close();return e};pending=append(pending,value)};e=rows.Err();rows.Close();if e!=nil{return e}
+  if len(pending)==0{return nil}
+  tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e}
+  for _,v:=range pending{a,e:=store.Get[model.Asset](ctx,tx,"SELECT data FROM assets WHERE id=?",v.asset);if e==nil{e=s.projectLegacyAuthor(ctx,tx,a,v.author)};if e!=nil{tx.Rollback();return e};last=v}
+  if e=tx.Commit();e!=nil{return e}
+ }
+}
+func(s *Service)projectLegacyAuthor(ctx context.Context,q store.Querier,a model.Asset,id string)error{
+ if id=="unknown"{return nil}
+ author,e:=store.Get[model.Author](ctx,q,"SELECT data FROM authors WHERE id=?",id);if e!=nil{return e};if author.Kind!="regular"{return nil}
+ if _,e=authorlist.Names(author.Name);e!=nil{
+  // Historical display names are not always representable in the TXT grammar.
+  // Retain the identity and relation in SQLite/qnext, never create a wrong block.
+  _,e=q.ExecContext(ctx,"INSERT OR IGNORE INTO asset_author_overrides(asset_id,author_id,removed,list_id) VALUES(?,?,0,'')",a.ID,id);return e
+ }
+ return s.projectExplicitAuthor(ctx,q,a,author)
 }
 func(s *Service)recordExplicitAuthorSet(ctx context.Context,q store.Querier,before []string,a model.Asset)error{
  selected:=map[string]bool{};for _,id:=range a.AuthorIDs{selected[id]=true;if id=="unknown"{continue};author,e:=store.Get[model.Author](ctx,q,"SELECT data FROM authors WHERE id=?",id);if e!=nil{return e};if author.Kind=="regular"{if e=s.projectExplicitAuthor(ctx,q,a,author);e!=nil{return e}}}

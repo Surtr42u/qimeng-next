@@ -29,6 +29,8 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await page.getByRole('button', { name: '建立此范围的接入' }).click();
   await expect(page.getByLabel('一次性显示的接入凭据')).toHaveValue(syntheticSecret);
   expect(record?.canIngest).toBe(false);
+  expect(record?.canResearchAssets).toBe(false);
+  expect(record?.assetFields).toEqual([]);
   expect(record?.candidateBlocks).toEqual([]);
   expect(record?.allAuthors).toBe(false);
   const storage = await page.evaluate(() => [JSON.stringify(localStorage), JSON.stringify(sessionStorage)].join('\n'));

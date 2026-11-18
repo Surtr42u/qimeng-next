@@ -9,6 +9,7 @@ import (
  "time"
  "unicode/utf8"
 
+ "qimeng.local/next/server/internal/authorlist"
  legacy "qimeng.local/next/server/internal/migration"
  "qimeng.local/next/server/internal/model"
  "qimeng.local/next/server/internal/store"
@@ -28,9 +29,18 @@ func(s *Service)matchV2Media(ctx context.Context,sourceID string,in legacy.Media
  }
  return model.Asset{},"ambiguous_media",nil
 }
+func v2AuthorKind(source legacy.Author)string{
+ if !strings.HasPrefix(source.AuthorID,"cos_"){return "regular"}
+ // A manually named regular creator can itself have a first name beginning
+ // with cos_. In the legacy grammar directory identities add that prefix to
+ // the normalized name, whereas regular identities use the normalized name.
+ names,e:=authorlist.Names(source.DisplayName)
+ if e==nil&&authorlist.IdentityKey(names[0])==source.AuthorID{return "regular"}
+ return "cos"
+}
 func(s *Service)planV2Author(ctx context.Context,sourceID string,source legacy.Author,kind,override string,ordinal int)(V2MigrationAuthor,error){
  result:=V2MigrationAuthor{Ordinal:ordinal,SourceAuthorID:source.AuthorID,Name:source.DisplayName,Kind:kind,State:"conflict",Reason:""}
- if kind=="mixed"{result.Reason="author_crosses_partitions";return result,nil};if strings.TrimSpace(source.DisplayName)==""||utf8.RuneCountInString(source.DisplayName)>200||strings.ContainsRune(source.DisplayName,'\x00'){result.Reason="invalid_author_name";return result,nil}
+ if strings.TrimSpace(source.DisplayName)==""||utf8.RuneCountInString(source.DisplayName)>200||strings.ContainsRune(source.DisplayName,'\x00'){result.Reason="invalid_author_name";return result,nil}
  unknown,e:=s.Author(ctx,"unknown");if e!=nil{return result,e};if source.DisplayName==unknown.Name{result.AuthorID=unknown.ID;result.State="existing";result.ExpectedRevision=unknown.Revision;result.Reason="unknown_placeholder";return result,nil}
  id:=override
  if id==""{e=s.DB.DB.QueryRowContext(ctx,"SELECT author_id FROM migration_author_aliases WHERE source_id=? AND source_author_id=?",sourceID,source.AuthorID).Scan(&id);if e!=nil&&!errors.Is(e,sql.ErrNoRows){return result,e};if id==""{id=source.AuthorID}}
@@ -48,8 +58,8 @@ func(s *Service)PrepareV2Migration(ctx context.Context,w *Write,inputID string,i
  mediaByKey:=map[string]legacy.Media{};for _,source:=range input.Data.MediaFiles{mediaByKey[source.RecordKey]=source}
  mediaOverrides:=map[string]string{};for _,mapping:=range in.MediaMappings{if _,ok:=mediaByKey[mapping.RecordKey];!ok{return plan,Fail(400,"unknown_record_key","映射引用了输入中不存在的媒体。")};if _,duplicate:=mediaOverrides[mapping.RecordKey];duplicate{return plan,Fail(400,"duplicate_mapping","同一源记录不能提供多个映射。")};mediaOverrides[mapping.RecordKey]=mapping.AssetID}
  authorsByID:=map[string]legacy.Author{};for _,source:=range input.Data.Authors{authorsByID[source.AuthorID]=source};authorOverrides:=map[string]string{};for _,mapping:=range in.AuthorMappings{if _,ok:=authorsByID[mapping.SourceAuthorID];!ok||mapping.AuthorID==""{return plan,Fail(400,"unknown_author_mapping","作者映射须引用有效源身份和明确目标。")};if _,duplicate:=authorOverrides[mapping.SourceAuthorID];duplicate{return plan,Fail(400,"duplicate_mapping","同一源作者不能提供多个映射。")};authorOverrides[mapping.SourceAuthorID]=mapping.AuthorID}
- kinds:=map[string]string{};refs:=map[string][]string{};for _,ref:=range input.Data.AuthorMediaRefs{kind:="regular";if mediaByKey[ref.RecordKey].IsCOS{kind="cos"};if old:=kinds[ref.AuthorID];old!=""&&old!=kind{kinds[ref.AuthorID]="mixed"}else{kinds[ref.AuthorID]=kind};refs[ref.RecordKey]=appendUnique(refs[ref.RecordKey],ref.AuthorID)}
- authors:=[]V2MigrationAuthor{};authorPlans:=map[string]V2MigrationAuthor{};for index,source:=range input.Data.Authors{kind:=kinds[source.AuthorID];if kind==""{kind="regular";if strings.HasPrefix(source.AuthorID,"cos_"){kind="cos"}};candidate,e:=s.planV2Author(ctx,metadata.SourceID,source,kind,authorOverrides[source.AuthorID],index);if e!=nil{return plan,e};authors=append(authors,candidate);authorPlans[source.AuthorID]=candidate;if candidate.State=="conflict"{migrationIssue(&plan,candidate.Reason)}}
+ refs:=map[string][]string{};for _,ref:=range input.Data.AuthorMediaRefs{refs[ref.RecordKey]=appendUnique(refs[ref.RecordKey],ref.AuthorID)}
+ authors:=[]V2MigrationAuthor{};authorPlans:=map[string]V2MigrationAuthor{};for index,source:=range input.Data.Authors{candidate,e:=s.planV2Author(ctx,metadata.SourceID,source,v2AuthorKind(source),authorOverrides[source.AuthorID],index);if e!=nil{return plan,e};authors=append(authors,candidate);authorPlans[source.AuthorID]=candidate;if candidate.State=="conflict"{migrationIssue(&plan,candidate.Reason)}}
  proposedNames:=map[string][]int{};for index,author:=range authors{if author.State=="create"{key:=author.Kind+"\x00"+author.Name;proposedNames[key]=append(proposedNames[key],index)}};for _,indices:=range proposedNames{if len(indices)<2{continue};for _,index:=range indices{authors[index].State="conflict";authors[index].Reason="ambiguous_source_authors";authorPlans[authors[index].SourceAuthorID]=authors[index];migrationIssue(&plan,"ambiguous_source_authors")}}
  tags:=map[string][]string{};for _,ref:=range input.Data.MediaTagRefs{tags[ref.RecordKey]=appendUnique(tags[ref.RecordKey],strings.TrimSpace(ref.TagName))}
  likes:=map[string]legacy.Like{};for _,value:=range input.Data.Likes{likes[value.RecordKey]=value}
@@ -64,9 +74,15 @@ func(s *Service)PrepareV2Migration(ctx context.Context,w *Write,inputID string,i
    for _,name:=range incoming{var deleted int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE((SELECT deleted FROM tags WHERE name=?),0)",name).Scan(&deleted);e!=nil{return plan,e};if deleted!=0{item.TagAction="conflict";item.Tags.Action="conflict";item.Tags.Reason="tag_deleted";break}}
    if item.TagAction=="conflict"{item.Issues=append(item.Issues,item.Tags.Reason)}
    if like,ok:=likes[source.RecordKey];ok{var reason string;item.LikeAction,reason,e=decideLegacyLikes(ctx,s.DB.DB,a.ID,metadata.SourceID,likeSourceKey(source),like);if e!=nil{return plan,e};if reason!=""{item.Issues=append(item.Issues,reason)}}
-   conflict:=false;for _,id:=range refs[source.RecordKey]{author:=authorPlans[id];if author.State=="conflict"{conflict=true;continue};item.AuthorIDs=appendUnique(item.AuthorIDs,author.AuthorID)}
+   conflict:=false
+   if len(refs[source.RecordKey])>0&&a.COSDirectoryAuthorID!=""&&a.COSDirectoryAuthorID!="unknown"{item.AuthorIDs=append(item.AuthorIDs,a.COSDirectoryAuthorID)}
+   for _,id:=range refs[source.RecordKey]{author:=authorPlans[id];if author.State=="conflict"||author.Kind=="cos"&&author.AuthorID!=a.COSDirectoryAuthorID{conflict=true;continue};item.AuthorIDs=appendUnique(item.AuthorIDs,author.AuthorID)}
    if len(item.AuthorIDs)>1{real:=[]string{};for _,id:=range item.AuthorIDs{if id!="unknown"{real=append(real,id)}};item.AuthorIDs=real}
-   if conflict{item.AuthorsAction="conflict";item.Issues=append(item.Issues,"unresolved_author_identity")}else if len(item.AuthorIDs)>0&&!legacy.SameTags(a.AuthorIDs,item.AuthorIDs){if a.AuthorsRevision==1&&len(a.AuthorIDs)==1&&a.AuthorIDs[0]=="unknown"{item.AuthorsAction="apply"}else{item.AuthorsAction="conflict";item.Issues=append(item.Issues,"existing_author_relationships_kept")}}
+   if conflict||len(item.AuthorIDs)>20{item.AuthorsAction="conflict";item.Issues=append(item.Issues,"unresolved_author_identity")}else if len(item.AuthorIDs)>0&&!legacy.SameTags(a.AuthorIDs,item.AuthorIDs){
+    untouched:=len(a.AuthorIDs)==1&&(a.AuthorIDs[0]=="unknown"&&a.AuthorsRevision==1||a.COSDirectoryAuthorID!=""&&a.AuthorIDs[0]==a.COSDirectoryAuthorID)
+    if untouched{var explicit bool;if e=s.DB.DB.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM asset_author_overrides WHERE asset_id=?)",a.ID).Scan(&explicit);e!=nil{return plan,e};untouched=!explicit}
+    if untouched{item.AuthorsAction="apply"}else{item.AuthorsAction="conflict";item.Issues=append(item.Issues,"existing_author_relationships_kept")}
+   }
    targets[a.ID]=append(targets[a.ID],index)
   }
   items=append(items,item)

@@ -1,3 +1,4 @@
+import { MoreLibraries } from "../components/MoreLibraries";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -19,6 +20,9 @@ import { UnsavedGuard } from "../lib/navigation";
 import { dateTime } from "../lib/format";
 
 type Policy = Schema<"AIDelegationPolicy">;
+const assetFieldNames: Record<Schema<"AssetMaintenanceField">, string> = {
+  authors: "作者关联", taxonomy: "出处与角色", tags: "标签", rename: "文件名",
+};
 const fieldNames = {
   name: "作者名称",
   biography: "简短介绍",
@@ -40,6 +44,8 @@ const initialPolicy: Policy = {
   allowClear: false,
   canIngest: false,
   canResearch: false,
+  canResearchAssets: false,
+  assetFields: [],
   canOrganize: false,
   canRecycleSources: false,
   maxResearchCalls: 0,
@@ -244,6 +250,8 @@ function DelegationForm({
     setPolicy((current) => {
       const next = { ...current, ...patch };
       if (!next.canIngest || !next.libraryIds.length) next.canRecycleSources = false;
+      if (!next.canResearch || !next.libraryIds.length) next.canResearchAssets = false;
+      if (!next.libraryIds.length) next.assetFields = [];
       return next;
     });
   const hasAuthorWrites =
@@ -258,6 +266,7 @@ function DelegationForm({
       className="panel form-stack section-space"
       onSubmit={(event) => {
         event.preventDefault();
+        if (!policy.label.trim() || (step > 0 && !rangeReady) || create.isPending) return;
         if (step < 2) setStep(step + 1);
         else create.mutate(policy);
       }}
@@ -382,9 +391,9 @@ function DelegationForm({
           </>
         ) : step === 1 ? (
           <>
-            {(policy.canIngest || policy.canOrganize) && (
               <fieldset className="profile-account-row">
                 <legend>允许写入的媒体库</legend>
+                <MoreLibraries query={libraries} />
                 <ErrorNotice
                   error={libraries.error}
                   retry={() => void libraries.refetch()}
@@ -418,8 +427,9 @@ function DelegationForm({
                   备份核验后允许回收来源
                 </label>
                 <p className="muted">仅限已选媒体库；服务端核验独立备份与本批内容后移入来源回收区，不永久删除。</p>
+                <label className="check-label"><input type="checkbox" disabled={!policy.canResearch || !policy.libraryIds.length} checked={!!policy.canResearchAssets} onChange={event => change({ canResearchAssets: event.target.checked })} />研究已入库作品的媒体预览</label>
+                <fieldset className="profile-account-row" disabled={!policy.libraryIds.length}><legend>允许维护所选库中的作品字段</legend>{(Object.keys(assetFieldNames) as Schema<"AssetMaintenanceField">[]).map(field => <label className="check-label" key={field}><input type="checkbox" checked={!!policy.assetFields?.includes(field)} onChange={() => change({ assetFields: toggle(policy.assetFields ?? [], field) })} />{assetFieldNames[field]}</label>)}</fieldset>
               </fieldset>
-            )}
             {hasAuthorWrites && (
               <fieldset className="profile-account-row form-stack">
                 <legend>允许维护的作者</legend>
@@ -670,6 +680,7 @@ function PolicySummary({ policy }: { policy: Policy }) {
           {policy.canRecycleSources ? " · 备份核验后可回收来源" : ""}
         </dd>
       </div>
+      <div><dt>已有作品</dt><dd>{policy.canResearchAssets ? "可研究所选库的媒体预览" : "未授权研究媒体预览"} · {(policy.assetFields ?? []).map(field => assetFieldNames[field]).join("、") || "未授权修改作品字段"}{(policy.canResearchAssets || !!policy.assetFields?.length) && " · " + policy.libraryIds.length + " 个库"}</dd></div>
       <div>
         <dt>研究</dt>
         <dd>

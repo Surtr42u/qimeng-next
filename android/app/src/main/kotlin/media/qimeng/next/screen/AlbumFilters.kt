@@ -2,6 +2,7 @@ package media.qimeng.next.screen
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -18,26 +19,30 @@ private val dimensions = listOf("partitions" to "分区", "works" to "作品", "
 
 @Composable
 internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls, rows: Map<String, FacetRowState>,
-                          onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit) {
-    QimengTitleRow(title, total?.let { "$it 文件" }.orEmpty(), onBack = onBack,
+                          onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit, authorKind: String? = null) {
+    if (authorKind != null) Text("本地作品 · ${total?.let { "筛选结果 $it 个文件" } ?: "正在读取"}", Modifier.padding(horizontal = 16.dp),
+        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    else QimengTitleRow(title, total?.let { "$it 文件" }.orEmpty(), onBack = onBack,
         titleStyle = if (onBack == null) MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
             else MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
         onFilterClick = if (onBack == null) ({ controls.showFilters.value = true }) else null, filterActive = controls.panel != FilterPanelDraft(),
         columns = controls.columns.intValue.takeIf { onBack == null },
         onToggleColumns = if (onBack == null) ({ controls.columns.intValue = if (controls.columns.intValue >= 5) 2 else controls.columns.intValue + 1 }) else null)
-    val shadow = if (onBack == null) Modifier.softDaylightShadow(QimengShapes.pill) else Modifier
-    QimengChipRow(dimensions.map { (row, label) ->
+    val shadow = if (onBack == null && authorKind == null) Modifier.softDaylightShadow(QimengShapes.pill) else Modifier
+    val shown = when (authorKind) { null -> dimensions; "cos" -> dimensions.drop(2); else -> dimensions.drop(1) }
+    val currentRow = controls.row.takeIf { value -> shown.any { it.first == value } } ?: shown.first().first
+    QimengChipRow(shown.map { (row, label) ->
         val count = rows[row]?.totalOptions?.let { if (row == "partitions" || row == "types") (it - 1).coerceAtLeast(0) else it }
-        val text = if (row == "types" && controls.row == row && !controls.expanded)
+        val text = if (row == "types" && currentRow == row && !controls.expanded)
             "${rows[row]?.items?.find { it.id == (controls.type.value ?: "all") }?.name ?: "全部"} ▼"
         else count?.let { "$label ($it)" } ?: label
-        QimengPill(text, controls.row == row)
+        QimengPill(text, currentRow == row)
     }, onPillClick = { index ->
-        val next = dimensions[index].first
-        controls.expanded = next != controls.row || !controls.expanded
+        val next = shown[index].first
+        controls.expanded = next != currentRow || !controls.expanded
         controls.row = next
-    }, dividerBeforeIndex = 3, pillModifier = shadow, modifier = Modifier.padding(horizontal = 16.dp))
-    val row = controls.row
+    }, dividerBeforeIndex = shown.lastIndex, pillModifier = shadow, modifier = Modifier.padding(horizontal = 16.dp).padding(top = if (authorKind == null) 0.dp else 8.dp))
+    val row = currentRow
     val state = rows[row] ?: return
     if (!controls.expanded) return
     val dynamic = row == "works" || row == "roles"

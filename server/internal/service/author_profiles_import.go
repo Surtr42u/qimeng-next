@@ -149,6 +149,12 @@ func RestoreImportedAuthorProfile(ctx context.Context,q store.Querier,authorID,n
  archive.BlockCount=len(archive.Blocks)
  if err=saveProfileArchive(ctx,q,archive);err!=nil { return result,err }
  if author.Placeholder { result.Issues=append(result.Issues,"placeholder_profile_archived");return result,nil }
+ if feed:=profileString(prepared.profile.FeedURL);feed!=""{
+  if _,valid:=validateAvatarURL(feed);valid==nil{
+   existing,e:=savedAuthorUpdates(ctx,q,authorID);if e!=nil{return result,e}
+   if existing.Revision==0{existing.FeedURL=feed;existing.Revision=1;if e=saveAuthorUpdates(ctx,q,existing);e!=nil{return result,e}}
+  }
+ }
  for _,incoming:=range archive.Blocks {
   current,err:=profileBlock(ctx,q,authorID,incoming.Block);if err!=nil { return result,err }
   if prepared.profile.Status=="verified" && current.Revision==0 {

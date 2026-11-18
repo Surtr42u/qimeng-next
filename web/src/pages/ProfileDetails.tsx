@@ -1,3 +1,5 @@
+import { SubscriptionEditor } from "./CreatorSubscription";
+import { useAuthorUpdates } from "../data/author-updates";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -51,6 +53,7 @@ function ProfileGroup({
 
 export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
   const query = useAuthorProfile(author.id);
+  const feed = useAuthorUpdates(author.id);
   const identity = useAuthor(author.id);
   const candidates = useAuthorProfileCandidates(author.id);
   const [editing, setEditing] = useState<
@@ -71,7 +74,7 @@ export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
   };
   const block = profile?.blocks.find(
     (item) =>
-      item.block === (editing === "subscription" ? "accounts" : editing),
+      item.block === editing,
   );
   const pending =
     candidates.data?.pages
@@ -82,7 +85,7 @@ export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
       className="rank-card creator-profile creator-details"
       aria-label="作者档案"
     >
-      {editing && block ? (
+      {editing === "subscription" ? <SubscriptionEditor id={author.id} name={author.name} avatar={x?.avatar} verified={accounts?.values.identityStatus === "verified"} close={close} /> : editing && block ? (
         <ProfileBlockEditor
           key={editing}
           block={block}
@@ -91,7 +94,6 @@ export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
           close={close}
           authorName={author.name}
           avatar={x?.avatar}
-          presentation={editing === "subscription" ? "subscription" : undefined}
         />
       ) : editing === "avatar" && x ? (
         <ProfileAvatarEditor
@@ -237,19 +239,8 @@ export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
                 disabled={!profile.editable}
                 edit={() => setEditing("subscription")}
               >
-                <p>
-                  {accounts?.values.accounts?.some((item) => item.publishingUrl)
-                    ? "已配置作品发布来源"
-                    : "尚未配置作品发布订阅"}
-                </p>
-                <p className="creator-group-label">订阅检查 · 已关闭</p>
-                {accounts?.values.accounts
-                  ?.filter((item) => item.publishingUrl)
-                  .map((item, index) => (
-                    <ProfileLink key={index} value={item.publishingUrl}>
-                      查看发布来源 ↗
-                    </ProfileLink>
-                  ))}
+                <ErrorNotice error={feed.error} stale={!!feed.data} retry={() => void feed.refetch()} />
+                {feed.data ? <><p>{feed.data.feedUrl ? "已配置作品发布来源" : "尚未配置作品发布订阅"}</p><p className="creator-group-label">订阅检查 · {feed.data.trackUpdates ? "已开启" : "已关闭"}</p>{feed.data.feedUrl && <ProfileLink value={feed.data.feedUrl}>查看订阅来源 ↗</ProfileLink>}</> : feed.isPending && <Loading />}
               </ProfileGroup>
             </div>
           )}

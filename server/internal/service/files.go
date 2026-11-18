@@ -27,6 +27,7 @@ type fileIntent struct {
  COSWork *model.CosWork `json:"cosWork,omitempty"`
  State string
  SpellingOnly bool `json:"spellingOnly,omitempty"`
+ MaintenanceTask *AssetMaintenanceTask `json:"assetMaintenanceTask,omitempty"`
 }
 func assetPath(a model.Asset)string{if a.Trashed{if a.StorageLayoutVersion>=2{return "library-trash/"+a.LibraryID+"/"+a.ID+"/"+a.FileName};return "trash/"+a.ID+"/"+a.FileName};return "libraries/"+a.LibraryID+"/"+a.RelativePath}
 func(s *Service)safe(pathname string)error{
@@ -98,6 +99,11 @@ func(s *Service)commitFile(ctx context.Context,q store.Querier,j *fileIntent)err
   if e:=store.SaveAsset(ctx,q,j.After);e!=nil{return e}
   if e:=s.finalizeAuthorTextForFile(ctx,q,j);e!=nil{return e}
  }
+ if j.Kind=="move"{
+  if j.MaintenanceTask!=nil {
+   if e:=saveAssetMaintenance(ctx,q,*j.MaintenanceTask);e!=nil{return e}
+  }else if e:=protectHumanField(ctx,q,j.After.ID,"rename");e!=nil{return e}
+ }
  var receipt any=j.After
  if j.UploadID!=""{
   u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};u.AssetID=j.After.ID;u.PublishedContentVersion=j.After.ContentVersion;u.State="ingested";u.ErrorCode="";u.ErrorMessage="";if e=store.SaveUpload(ctx,q,u);e!=nil{return e}
@@ -137,11 +143,15 @@ func(s *Service)recoverIntents(ctx context.Context)error{
  return nil
 }
 func(s *Service)Move(ctx context.Context,w *Write,id,target string,rev int64)(model.Asset,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};if a.Revision!=rev{return a,Conflict(a.Revision)}
+ if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};return s.moveAsset(ctx,w,a,target,rev,nil)
+}
+func(s *Service)moveAsset(ctx context.Context,w *Write,a model.Asset,target string,rev int64,task *AssetMaintenanceTask)(model.Asset,error){
+ if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};if a.Revision!=rev{return a,Conflict(a.Revision)}
  if !domain.ValidMediaPath(target)||target==""{return a,Fail(400,"invalid_path","目标相对路径无效。")};_,mime,ok:=domain.MediaType(target);if !ok||mime!=a.MimeType{return a,Fail(400,"extension_mismatch","改名不能改变媒体格式扩展名。")}
  if target==a.RelativePath{return a,nil};if e=s.checkPath(ctx,a.LibraryID,target,a.ID);e!=nil{return a,e}
  old:=a;a.RelativePath=target;a.FileName=path.Base(target);a.Revision++;a.UpdatedAt=time.Now().UTC()
- return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"move",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a})
+ if task!=nil{task.ExpectedRevision=a.Revision;task.UsedUpdates++}
+ return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"move",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a,MaintenanceTask:task})
 }
 func(s *Service)Trash(ctx context.Context,w *Write,id string,rev int64)(model.Asset,error){
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=rev{return a,Conflict(a.Revision)};if a.Trashed{return a,nil};old:=a;a.Trashed=true;a.StorageLayoutVersion=2;a.Revision++;a.UpdatedAt=time.Now().UTC();return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"trash",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a})

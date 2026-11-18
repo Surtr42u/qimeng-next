@@ -98,6 +98,7 @@ type Author struct {
  FollowingUpdatedAt *time.Time `json:"followingUpdatedAt,omitempty"`
  FileCount int64 `json:"fileCount"`
  ViewCount int64 `json:"viewCount"`
+ TXTOrder *int64 `json:"txtOrder,omitempty"`
  FieldStatus map[string]string `json:"fieldStatus"`
  CreatedAt time.Time `json:"createdAt"`
  UpdatedAt time.Time `json:"updatedAt"`
@@ -282,6 +283,7 @@ type Principal struct {
  Scopes []string `json:"scopes"`
  BatchID string `json:"batchId,omitempty"`
  AuthorTaskID string `json:"authorTaskId,omitempty"`
+ AssetTaskID string `json:"assetTaskId,omitempty"`
  ParentDelegationID string `json:"parentDelegationId,omitempty"`
  Generation int64 `json:"generation,omitempty"`
  ExpiresAt time.Time `json:"expiresAt"`

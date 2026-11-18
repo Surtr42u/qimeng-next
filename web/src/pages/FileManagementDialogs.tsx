@@ -1,10 +1,11 @@
+import { DirectoryTree } from "../components/DirectoryTree";
 import { useEffect, useRef, useState } from 'react';
 import { Dialog } from 'radix-ui';
 import { FolderPlus } from 'lucide-react';
 import { useCreateDirectory, useDirectories } from '../data/catalog';
 import { useFileActions } from '../data/file-actions';
 import type { FileJob, FileTarget } from '../data/file-actions';
-import { ErrorNotice, Loading } from '../components/Feedback';
+import { ErrorNotice } from '../components/Feedback';
 import { UnsavedGuard } from '../lib/navigation';
 import { newId } from '../lib/id';
 
@@ -64,14 +65,7 @@ export function MoveFilesDialog({ libraryId, directory, targets, close, report }
         <Dialog.Title className="detail-dialog-title">{batch ? `批量移动 ${targets.length} 个文件` : '整理文件'}</Dialog.Title>
         <Dialog.Description className="detail-dialog-desc">{batch ? '选择目标目录后逐个移动；与目标位置已有文件同名时该文件将被拒绝，不影响其余文件。' : '选择目标目录或修改文件名；目标位置已有同名文件时将被拒绝。'}</Dialog.Description>
         <div className="move-dir-box">
-          <div className="pill-row"><button className="pill" disabled={locked} onClick={() => { setDestination(''); restartDraft(); }}>库根</button>{destination && <button className="pill" disabled={locked} onClick={() => { setDestination(destination.split('/').slice(0, -1).join('/')); restartDraft(); }}>上一级</button>}</div>
-          <ul className="dir-tree-list">
-            <li><button className="dir-node selected" disabled={locked}><span className="dir-name">{destination || '库根'}</span></button></li>
-            {listing.data?.pages.flatMap(page => page.items).map(item => <li key={item.relativePath}><button className="dir-node" disabled={locked} onClick={() => { setDestination(item.relativePath); restartDraft(); }}><span className="dir-name">{item.name}</span></button></li>)}
-          </ul>
-          {listing.isPending && <Loading text="目录加载中…" />}
-          <ErrorNotice error={listing.error} stale={!!listing.data} retry={() => void listing.refetch()} />
-          {listing.hasNextPage && <button className="pill" disabled={listing.isFetchingNextPage || locked} onClick={() => void listing.fetchNextPage()}>更多目录</button>}
+          <DirectoryTree libraryId={libraryId} selected={destination} disabled={locked} onSelect={path => { setDestination(path); restartDraft(); }} />
         </div>
         {!batch && <label className="move-name-row"><span>文件名</span><input className="tag-input" value={name} disabled={locked} placeholder="新文件名（含扩展名）" onChange={event => { setName(event.target.value); restartDraft(); }} /></label>}
         <FileJobsPanel jobs={actions.jobs} running={actions.running} action="移动" />

@@ -1,8 +1,9 @@
+import { DirectoryTree } from "../components/DirectoryTree";
+import { MoreLibraries } from "../components/MoreLibraries";
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { FolderInput, FolderPlus, Trash2 } from 'lucide-react';
+import { FolderInput, Trash2 } from 'lucide-react';
 import { useLibraries } from '../data/manage';
-import { useDirectories } from '../data/catalog';
 import { useAssets } from '../data/media';
 import type { Asset } from '../data/media';
 import { useFileActions } from '../data/file-actions';
@@ -20,7 +21,6 @@ export function FileManagementPage() {
   const [params, setParams] = useSearchParams();
   const libraryId = params.get('libraryId') ?? '';
   const directory = params.get('directory') ?? '';
-  const directories = useDirectories(libraryId, directory, !!libraryId);
   const [createUnder, setCreateUnder] = useState<{ libraryId: string; parent: string } | null>(null);
   useEffect(() => setCreateUnder(null), [libraryId, directory]);
   const change = (nextDirectory: string, nextLibrary = libraryId) => setParams({ libraryId: nextLibrary, directory: nextDirectory });
@@ -29,16 +29,10 @@ export function FileManagementPage() {
     <ErrorNotice error={libraries.error} stale={!!libraries.data} retry={() => void libraries.refetch()} />
     <div className="rank-card">
       <div className="rank-head"><h3>目录浏览</h3><span className="f-years"><Select value={libraryId} onValueChange={value => change('', value)}><SelectTrigger aria-label="选择库" placeholder="选择库…" /><SelectContent>{libraries.data?.items.map(library => <SelectItem key={library.id} value={library.id}>{library.name}</SelectItem>)}</SelectContent></Select></span></div>
+      <MoreLibraries query={libraries} />
       <p className="rank-note">选择目录查看文件；目录可新建子目录，文件操作支持重命名、移动和移入回收站。</p>
       {!libraryId ? <p className="grid-empty">先在上方选择一个库。</p> : <>
-        <ErrorNotice error={directories.error} stale={!!directories.data} retry={() => void directories.refetch()} />
-        {directory && <div className="pill-row"><button className="pill" onClick={() => change('')}>库根</button><button className="pill" onClick={() => change(directory.split('/').slice(0, -1).join('/'))}>上一级</button></div>}
-        <ul className="dir-tree-list">
-          <li><div className="dir-row"><button className="dir-node selected"><span className="dir-name">{directory || '库根'}</span></button><span className="dir-actions"><button className="dir-action-btn" title="在此目录下新建子目录" onClick={() => setCreateUnder({ libraryId, parent: directory })}><FolderPlus width={14} height={14} />新建子目录</button></span></div></li>
-          {directories.data?.pages.flatMap(page => page.items).map(item => <li key={item.relativePath}><div className="dir-row" style={{ paddingLeft: 16 }}><button className="dir-node" onClick={() => change(item.relativePath)}><span className="dir-name">{item.name}</span></button><span className="dir-actions"><button className="dir-action-btn" title="在此目录下新建子目录" onClick={() => setCreateUnder({ libraryId, parent: item.relativePath })}><FolderPlus width={14} height={14} />新建子目录</button></span></div></li>)}
-        </ul>
-        {directories.isPending && <Loading text="目录加载中…" />}
-        {directories.hasNextPage && <button className="pill" disabled={directories.isFetchingNextPage} onClick={() => void directories.fetchNextPage()}>更多目录</button>}
+        <DirectoryTree key={libraryId} libraryId={libraryId} selected={directory} onSelect={path => change(path)} onCreate={parent => setCreateUnder({ libraryId, parent })} />
         <DirectoryFiles key={`${libraryId}:${directory}`} libraryId={libraryId} directory={directory} />
         {createUnder !== null && <CreateDirectoryDialog libraryId={createUnder.libraryId} parent={createUnder.parent} close={() => setCreateUnder(null)} />}
       </>}

@@ -126,7 +126,8 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                  source: String = "assets", seed: Long = 1, period: String = "week", onRefresh: (() -> Unit)? = null,
                  collectionId: String? = null, initialTag: String? = null, albumTitle: String? = null,
                  controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true,
-                 pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false) {
+                 pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false,
+                 authorKind: String? = null, leading: (@Composable () -> Unit)? = null) {
     val state by model.assets(key).collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
     var columns by controls.columns
@@ -151,13 +152,15 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     Column(Modifier.fillMaxSize()) {
         var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
+        var filters: (@Composable () -> Unit)? = null
         if (albumTitle != null) {
             val facets: media.qimeng.next.FacetViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
             val values by facets.rows.collectAsStateWithLifecycle()
             rows = values
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
-            AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, rows,
-                onBack = if (bottomDock) null else model::back, fetch = facets::fetch)
+            filters = { AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, values,
+                onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind) }
+            if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
                 FilterChip(controls.type.value == value, { controls.type.value = value }, label = { Text(label) })
@@ -175,7 +178,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         } }
         if (state.loading && !state.loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
         val entries = if (state.loadedQuery == query) state.items else emptyList()
-        val sectionMode = when { source == "history" -> "history"; favorite == true || caption -> "partitions"; else -> group }
+        val sectionMode = when { source == "history" -> "history"; authorKind != null || favorite == true || caption -> "partitions"; else -> group }
         val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }
@@ -201,6 +204,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                         } while (event.changes.any { it.pressed })
                     }
                 }) {
+                if (leading != null) item(key = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading(); filters?.invoke() }
                 sections.forEach { section ->
                     section.header?.let { label -> item(key = "group:${section.key}", span = { GridItemSpan(maxLineSpan) }) {
                         Text(label, Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),

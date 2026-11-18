@@ -1297,6 +1297,30 @@ paths:
       responses:
         '200': {description: Owner-authorized extension without resetting consumption, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedBudget'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/updates:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAuthorUpdates
+      description: Read saved subscription and the most recent explicitly requested feed items. This read does not contact the source.
+      responses:
+        '200': {description: Saved works feed, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdates'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setAuthorUpdates
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdatesInput'}}}}
+      responses:
+        '200': {description: Owner-managed subscription, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdates'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /authors/{id}/updates/check:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: checkAuthorUpdates
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
+      responses:
+        '200': {description: Entries from the saved public RSS or Atom feed, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdates'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /authors/{id}/profile:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
@@ -1388,6 +1412,50 @@ paths:
       operationId: getAuthorProfileArchive
       responses:
         '200': {description: Complete preserved blocks; original candidate records are paged by archiveId, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorProfileArchive'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAssetMaintenanceTask
+      responses:
+        '200': {description: Current target and authorized fields, content: {application/json: {schema: {$ref: '#/components/schemas/AssetMaintenanceTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/materials:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getAssetTaskMaterials
+      description: Reads bounded previews of the exact registered asset version. Requires an explicitly granted asset research task.
+      responses:
+        '200': {description: Version-bound previews, content: {application/json: {schema: {$ref: '#/components/schemas/ResearchMaterials'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/metadata:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    patch:
+      operationId: applyAssetTaskMetadata
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: Fill authorized missing metadata for this one asset using explicit evidence. Human changes and intentionally empty fields are protected.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetMaintenanceUpdate'}}}}
+      responses:
+        '200': {description: Applied facts and task progress, content: {application/json: {schema: {$ref: '#/components/schemas/AssetMaintenanceTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/evidence:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listAssetTaskEvidence
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      description: Read prior applied evidence for this task's exact asset version, including completed tasks.
+      responses:
+        '200': {description: Evidence at the applied asset revision, content: {application/json: {schema: {$ref: '#/components/schemas/AssetMaintenanceEvidencePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/rename:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: renameAssetForTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: Rerun the server naming preview for this asset and publish only the identical approved namespace and target.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTaskRename'}}}}
+      responses:
+        '200': {description: Renamed asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
         default: {$ref: '#/components/responses/Error'}
   /uploads/{id}/research-materials:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1482,11 +1550,13 @@ components:
   schemas:
     ResearchArtifact:
       type: object
-      required: [id, artifactRef, uploadId, sourceSha256, sha256, mimeType, size, positionSeconds, expiresAt]
+      required: [id, artifactRef, sourceSha256, sha256, mimeType, size, positionSeconds, expiresAt]
       properties:
         id: {type: string}
         artifactRef: {type: string}
         uploadId: {type: string}
+        assetId: {type: string}
+        contentVersion: {type: integer, format: int64}
         sourceSha256: {type: string}
         sha256: {type: string}
         mimeType: {type: string, enum: [image/jpeg]}
@@ -1495,9 +1565,11 @@ components:
         expiresAt: {type: string, format: date-time}
     ResearchMaterials:
       type: object
-      required: [uploadId, sourceSha256, width, height, durationMs, probeState, artifacts, businessWrites, limitations]
+      required: [sourceSha256, width, height, durationMs, probeState, artifacts, businessWrites, limitations]
       properties:
         uploadId: {type: string}
+        assetId: {type: string}
+        contentVersion: {type: integer, format: int64}
         sourceSha256: {type: string}
         width: {type: integer}
         height: {type: integer}
@@ -1532,6 +1604,8 @@ components:
         allowClear: {type: boolean}
         canIngest: {type: boolean}
         canResearch: {type: boolean}
+        canResearchAssets: {type: boolean, default: false, description: Separately permit previews for existing media in the selected libraries}
+        assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
         canOrganize: {type: boolean}
         canRecycleSources: {type: boolean, default: false, description: Separate opt-in to source recycling after independently verified backup; never permanent deletion. Requires an intake library scope.}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
@@ -1566,9 +1640,12 @@ components:
       type: object
       required: [kind, label, credentialSecret]
       properties:
-        kind: {type: string, enum: [intake, author]}
+        kind: {type: string, enum: [intake, author, asset]}
         label: {type: string, minLength: 1, maxLength: 80}
         libraryId: {type: string}
+        assetId: {type: string}
+        expectedContentVersion: {type: integer, format: int64, minimum: 1}
+        assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
         batchId: {type: string}
         mode: {type: string, enum: [ordinary, intelligent]}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
@@ -1589,10 +1666,72 @@ components:
       required: [taskId, kind, credential]
       properties:
         taskId: {type: string}
-        kind: {type: string, enum: [intake, author]}
+        kind: {type: string, enum: [intake, author, asset]}
         batch: {$ref: '#/components/schemas/Batch'}
         authorTask: {$ref: '#/components/schemas/AuthorTask'}
+        assetTask: {$ref: '#/components/schemas/AssetMaintenanceTask'}
         credential: {$ref: '#/components/schemas/Session'}
+    AssetMaintenanceFields:
+      type: array
+      uniqueItems: true
+      maxItems: 4
+      items: {$ref: '#/components/schemas/AssetMaintenanceField'}
+    AssetMaintenanceField:
+      type: string
+      enum: [authors, taxonomy, tags, rename]
+    AssetMaintenanceTask:
+      type: object
+      required: [id, assetId, libraryId, contentVersion, hash, expectedRevision, assetFields, research, usedUpdates, maxUpdates, expiresAt]
+      properties:
+        id: {type: string}
+        assetId: {type: string}
+        libraryId: {type: string}
+        contentVersion: {type: integer, format: int64}
+        hash: {type: string}
+        expectedRevision: {type: integer, format: int64}
+        assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
+        research: {type: boolean}
+        usedUpdates: {type: integer}
+        maxUpdates: {type: integer}
+        expiresAt: {type: string, format: date-time}
+    AssetMaintenanceUpdate:
+      type: object
+      required: [expectedRevision, evidence]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        authorIds: {type: array, maxItems: 20, items: {type: string}}
+        sourceIds: {type: array, maxItems: 20, items: {type: string}}
+        characterIds: {type: array, maxItems: 50, items: {type: string}}
+        tags: {type: array, maxItems: 100, items: {type: string}}
+        evidence: {type: array, minItems: 1, maxItems: 12, items: {$ref: '#/components/schemas/AssetMaintenanceEvidence'}}
+    AssetMaintenanceEvidence:
+      type: object
+      required: [field, url, observation]
+      properties:
+        field: {type: string, enum: [authors, taxonomy, tags]}
+        url: {type: string, format: uri, maxLength: 2000}
+        observation: {type: string, minLength: 1, maxLength: 2000}
+    AssetMaintenanceRecord:
+      type: object
+      required: [taskId, revision, evidence]
+      properties:
+        taskId: {type: string}
+        revision: {type: integer, format: int64}
+        evidence: {type: array, maxItems: 12, items: {$ref: '#/components/schemas/AssetMaintenanceEvidence'}}
+    AssetMaintenanceEvidencePage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AssetMaintenanceRecord'}}
+        nextCursor: {type: string}
+    AssetTaskRename:
+      type: object
+      required: [expectedRevision, namespaceFingerprint, target, preview]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        namespaceFingerprint: {type: string}
+        target: {type: string}
+        preview: {$ref: '#/components/schemas/NamingPreviewInput'}
     ActivityRankingItem:
       type: object
       required: [id, name, views, plays, seconds, assets, value]
@@ -1861,6 +2000,7 @@ components:
         batchId: {type: string}
         authorTaskId: {type: string}
         parentDelegationId: {type: string}
+        assetTaskId: {type: string}
         generation: {type: integer, format: int64}
         expiresAt: {type: string, format: date-time}
     LibraryLocation:
@@ -2130,6 +2270,7 @@ components:
             followingUpdatedAt: {type: string, format: date-time}
             fileCount: {type: integer, format: int64}
             viewCount: {type: integer, format: int64}
+            txtOrder: {type: integer, format: int64, minimum: 1, description: First occurrence among active numbered lists}
             fieldStatus: {type: object, additionalProperties: {type: string, enum: [missing, candidate, confirmed]}}
             createdAt: {type: string, format: date-time}
             updatedAt: {type: string, format: date-time}
@@ -2876,6 +3017,31 @@ components:
         updatedAt: {type: string, format: date-time, nullable: true}
         candidateId: {type: string}
         avatar: {$ref: '#/components/schemas/AuthorProfileAvatar'}
+    AuthorUpdatesInput:
+      type: object
+      required: [expectedRevision, trackUpdates, feedUrl]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 0}
+        trackUpdates: {type: boolean}
+        feedUrl: {type: string, maxLength: 4096}
+    AuthorUpdateEntry:
+      type: object
+      required: [id, title, url]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        url: {type: string, format: uri}
+        publishedAt: {type: string, format: date-time}
+    AuthorUpdates:
+      type: object
+      required: [authorId, revision, trackUpdates, feedUrl, items]
+      properties:
+        authorId: {type: string}
+        revision: {type: integer, format: int64}
+        trackUpdates: {type: boolean}
+        feedUrl: {type: string}
+        checkedAt: {type: string, format: date-time}
+        items: {type: array, maxItems: 30, items: {$ref: '#/components/schemas/AuthorUpdateEntry'}}
     AuthorProfile:
       type: object
       required: [authorId, editable, blocks]
@@ -2953,6 +3119,7 @@ components:
           properties:
             blocks: {type: array, items: {$ref: '#/components/schemas/AuthorProfileBlock'}}
             originalImport: {type: object, additionalProperties: true, description: Opaque imported profile preserved without claiming confirmed field conversion}
+            subscription: {$ref: '#/components/schemas/AuthorUpdates'}
     AuthorProfileArchivePage:
       type: object
       required: [items]

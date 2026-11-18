@@ -28,6 +28,7 @@ export function HomePage() {
     ranked && instance.capabilities.rankings,
   );
   const query = ranked ? rankings : recommendations;
+  const expired = !ranked && recommendations.expired;
   const items = ranked
     ? (rankings.data?.pages.flatMap((page) =>
         page.items.map((item) => item.asset),
@@ -79,7 +80,7 @@ export function HomePage() {
         error={query.error}
         stale={items.length > 0}
         retry={() =>
-          void (query.isFetchNextPageError
+          void (expired ? recommendations.restart() : query.isFetchNextPageError
             ? query.fetchNextPage()
             : query.refetch())
         }
@@ -103,7 +104,7 @@ export function HomePage() {
         )
       )}
       <AutoPageSentinel
-        enabled={query.hasNextPage && !query.isPlaceholderData}
+        enabled={query.hasNextPage && !query.isPlaceholderData && !expired}
         loading={query.isFetchingNextPage}
         failed={query.isFetchNextPageError}
         load={() => query.fetchNextPage({ cancelRefetch: false })}
@@ -114,13 +115,13 @@ export function HomePage() {
             className="pill"
             type="button"
             disabled={query.isFetchingNextPage}
-            onClick={() => void query.fetchNextPage({ cancelRefetch: false })}
+            onClick={() => void (expired ? recommendations.restart() : query.fetchNextPage({ cancelRefetch: false }))}
           >
-            {query.isFetchingNextPage ? "加载中…" : "加载更多"}
+            {query.isFetchingNextPage ? "加载中…" : expired ? "从第一页继续" : "加载更多"}
           </button>
         </div>
       ) : (
-        !query.isPending &&
+        !query.isPending && !query.isError &&
         items.length > 0 && (
           <p className="grid-empty">
             {ranked ? "到底了" : "这一批已浏览完，可以换一批继续发现。"}

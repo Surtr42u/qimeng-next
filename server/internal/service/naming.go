@@ -53,7 +53,10 @@ func(s *Service)SuggestNames(ctx context.Context,libraryID,directory,query,media
  return map[string]any{"policyVersion":NamingPolicyVersion,"items":suggestions,"truncated":len(values)>len(suggestions)},nil
 }
 func(s *Service)PreviewNames(ctx context.Context,libraryID string,in NamingPreviewInput)(NamingPreview,error){
- s.mu.Lock();defer s.mu.Unlock();out:=NamingPreview{PolicyVersion:NamingPolicyVersion,Items:[]NamingPreviewItem{}};if _,e:=s.library(ctx,libraryID);e!=nil{return out,e};if len(in.Items)<1||len(in.Items)>100||!domain.ValidMediaPath(in.Directory){return out,Fail(400,"invalid_preview","命名预览需要有效目录和 1–100 项输入。")}
+ s.mu.Lock();defer s.mu.Unlock();return s.previewNamesLocked(ctx,libraryID,in)
+}
+func(s *Service)previewNamesLocked(ctx context.Context,libraryID string,in NamingPreviewInput)(NamingPreview,error){
+ out:=NamingPreview{PolicyVersion:NamingPolicyVersion,Items:[]NamingPreviewItem{}};if _,e:=s.library(ctx,libraryID);e!=nil{return out,e};if len(in.Items)<1||len(in.Items)>100||!domain.ValidMediaPath(in.Directory){return out,Fail(400,"invalid_preview","命名预览需要有效目录和 1–100 项输入。")}
  taxonomy:=model.Asset{};if e:=s.resolveTaxonomy(ctx,&taxonomy,in.SourceIDs,in.CharacterIDs);e!=nil{return out,e};family:=domain.NamingFamily(taxonomy.Source,taxonomy.Characters,in.Family);directory:=in.Directory
  var sequence collectionSequence
  if in.Intent=="append_pages"||in.Intent=="append_drama"{var e error;sequence,e=s.appendSequence(ctx,in.CollectionID,in.Directory,family);if e!=nil{return out,e};if sequence.Collection.LibraryID!=libraryID{return out,Fail(409,"collection_library_mismatch","集合属于其他库。")};if (in.Intent=="append_pages"&&sequence.Collection.Kind!="image_set")||(in.Intent=="append_drama"&&sequence.Collection.Kind!="short_drama"){return out,Fail(409,"collection_kind_conflict","命名意图与集合类型不一致。")};family=sequence.Family;directory=sequence.Directory}

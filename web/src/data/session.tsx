@@ -34,7 +34,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
     retry: false,
     staleTime: 0,
   });
-  const previousId = useRef<string | undefined>(undefined);
+  const previousScope = useRef<readonly string[] | undefined>(undefined);
   useEffect(() => {
     const expired = () => {
       void session.refetch();
@@ -43,12 +43,15 @@ export function SessionGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("qimeng-session-expired", expired);
   }, [session.refetch]);
   useEffect(() => {
-    if (previousId.current && instance.data?.id !== previousId.current) {
-      void queryClient.cancelQueries({ queryKey: ["remote"] });
-      queryClient.removeQueries({ queryKey: ["remote"] });
+    const old = previousScope.current;
+    const authenticated = !(session.error instanceof ApiError && session.error.status === 401);
+    const current = instance.data && session.data && authenticated ? ["remote", instance.data.id, session.data.id] : undefined;
+    if (old && (!current || old[1] !== current[1] || old[2] !== current[2])) {
+      void queryClient.cancelQueries({ queryKey: old });
+      queryClient.removeQueries({ queryKey: old });
     }
-    previousId.current = instance.data?.id;
-  }, [instance.data?.id]);
+    previousScope.current = current;
+  }, [instance.data?.id, session.data?.id, session.error]);
   if (!instance.data)
     return (
       <div className="connection-screen">
@@ -91,6 +94,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
   }
   return (
     <SessionContext.Provider
+      key={JSON.stringify([instance.data.id, session.data.id])}
       value={{ instance: instance.data, session: session.data }}
     >
       {instance.isError && (

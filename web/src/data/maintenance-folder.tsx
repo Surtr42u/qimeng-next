@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, useSyncExterna
 import type { ReactNode } from "react";
 import { api, read } from "./client";
 import { createCheckpoint, downloadArchiveStream, getBackup, requestExport } from "./backups";
-import { archiveOriginal, resumeRotation, rotate, readGeneration, verifyGeneration, pickFolder, folderLock, stageMaterials } from "./maintenance-files";
+import { archiveOriginal, resumeRotation, rotate, readGeneration, verifyGeneration, pickFolder, folderLock, releaseMaterials, stageMaterials } from "./maintenance-files";
 import type { Directory, Materials } from "./maintenance-files";
 import { localRead, localWrite } from "./storage";
 import { useSession } from "./session";
@@ -101,6 +101,7 @@ class MaintenanceFolder {
           const materials = await stageMaterials(root, master, report, signal);
           const after = await anchor();
           if (after.instanceId !== this.instanceId || after.businessRevision !== checkpoint.businessRevision) {
+            await releaseMaterials(root, materials, signal);
             await this.store({ ...binding, job: undefined }); this.update({ status: "读取作者总表时资料变化，将重新取快照。" }); return;
           }
           job.materials = materials; await this.store(binding);

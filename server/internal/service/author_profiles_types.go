@@ -128,4 +128,5 @@ type ProfileArchive struct {
  ProfileArchiveSummary
  Blocks []AuthorProfileBlock `json:"blocks"`
  OriginalImport json.RawMessage `json:"originalImport,omitempty"`
+ Subscription *AuthorUpdates `json:"subscription,omitempty"`
 }

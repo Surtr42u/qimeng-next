@@ -1,3 +1,4 @@
+import { MoreLibraries } from "../components/MoreLibraries";
 import { useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useScan, useCancelScan, useScans } from "../data/maintenance";
@@ -62,6 +63,7 @@ export function ScansPage() {
             ))}
           </select>
         </label>
+        <MoreLibraries query={libraries} />
         <label>
           扫描状态
           <select

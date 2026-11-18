@@ -143,14 +143,27 @@ export async function resumeRotation(root: Directory, instanceId: string, downlo
     if (!file) throw new Error("待提交的作者资料缺失。");
     return file.stream();
   }, signal);
+  await releaseMaterials(root, { stage: job.stage, hashes: job.next.hashes }, signal);
   await root.removeEntry(journalName);
-  // Remove only the files this operation created. The parent may contain user files.
-  const staging = await (await root.getDirectoryHandle(stageRoot)).getDirectoryHandle(job.stage);
-  for (const part of parts.filter(part => part !== "archive")) await staging.removeEntry(layout[part][1]);
-  await (await root.getDirectoryHandle(stageRoot)).removeEntry(job.stage);
   return job.next;
 }
 export type Materials = { stage: string; hashes: Record<"master" | "report" | "index", string> };
+export async function releaseMaterials(root: Directory, materials: Materials, signal: AbortSignal) {
+  const parent = await root.getDirectoryHandle(stageRoot);
+  let stage: FileSystemDirectoryHandle;
+  try { stage = await parent.getDirectoryHandle(materials.stage); }
+  catch (error) { if (missing(error)) return; throw error; }
+  for (const part of ["master", "report", "index"] as const) {
+    const name = layout[part][1];
+    const file = await fileAt(stage, [name]);
+    if (!file) continue;
+    if (await digest(file, signal) !== materials.hashes[part]) throw new Error("暂存资料出现外部修改，已保留原文件。");
+    await stage.removeEntry(name);
+  }
+  const iterable = stage as FileSystemDirectoryHandle & { values(): AsyncIterable<FileSystemHandle> };
+  for await (const _entry of iterable.values()) return;
+  await parent.removeEntry(materials.stage);
+}
 export async function stageMaterials(root: Directory, master: ReadableStream<Uint8Array>, report: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<Materials> {
   const stage = newId();
   const hashes = { master: "", report: "", index: "" };

@@ -41,6 +41,7 @@ def dispatch(runtime, name, arguments, state):
     except Exception:
         raise ToolError("TASK_CREDENTIAL_SAVE_FAILED", "任务已创建，但本地执行凭据未确认保存；沿原operationId重试", uncertain=True) from None
     return {key: value for key, value in result.items() if key != "credential"} | {
-        "next": "后续工具调用携带taskId；接收任务读取task.context，作者维护读取author.task.context。",
+        "next": {"intake": "携带 taskId 读取 task.context。", "author": "携带 taskId 读取 author.task.context。",
+                 "asset": "携带 taskId 读取 asset.task.context。在授权范围内使用 asset.research.materials、asset.metadata.apply 和 Go 命名预览。"}[result["kind"]],
         "credentialManagedBy": "trusted-executor",
     }

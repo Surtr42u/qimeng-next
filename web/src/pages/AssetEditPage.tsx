@@ -47,7 +47,7 @@ function AssetAuthorDraft({ asset, authors }: { asset: Asset; authors: Schema<"A
   const linksChanged = !sameIds(baselineIds, selectedIds) || pending.length > 0;
   const dirty = linksChanged || Object.keys(sources).length > 0;
   const back = () => navigate("/asset/" + encodeURIComponent(asset.id), { replace: true, state: location.state });
-  useEffect(() => { if (saved && !dirty) navigate("/asset/" + encodeURIComponent(asset.id), { replace: true, state: location.state }); }, [saved, dirty, asset.id, navigate, location.state]);
+  useEffect(() => { if (saved && !dirty && !save.isPending) navigate("/asset/" + encodeURIComponent(asset.id), { replace: true, state: location.state }); }, [saved, dirty, save.isPending, asset.id, navigate, location.state]);
   const remove = (id: string) => {
     setSelectedIds(values => values.filter(value => value !== id));
     setSources(values => { const next = { ...values }; delete next[id]; return next; });

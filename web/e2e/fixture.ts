@@ -132,12 +132,15 @@ export async function mockLibrary(page: Page) {
     }
     if (path === "/libraries")
       return respond(route, {
+        totalMatched: 1,
         items: [
           {
             id: "synthetic-library",
             name: "合成媒体库",
             kind: "regular",
             enabled: true,
+            fileCount: state.assets.length,
+            scanState: "idle",
             revision: 1,
             createdAt: "2026-01-01T00:00:00Z",
           },
@@ -145,6 +148,8 @@ export async function mockLibrary(page: Page) {
       });
     if (path === "/storages")
       return respond(route, { items: [{ id: "data", available: true }] });
+    if (path === "/local-sync/status") return respond(route, { enabled: false, root: "", intervalSeconds: 60, paused: false, running: false, lastError: "", syncedTotal: 0, counts: { waitingStable: 0, failed: 0, ignored: 0 }, items: [], recentSynced: [] });
+    if (path === "/authors/synthetic-author/updates") return respond(route, { authorId: "synthetic-author", revision: 0, trackUpdates: false, feedUrl: "", items: [] });
     if (path === "/acquisition-vocabulary")
       return respond(route, {
         revision: 1,

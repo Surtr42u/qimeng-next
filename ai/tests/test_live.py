@@ -14,6 +14,49 @@ from mcp import Client, StdioServerParameters
 
 @unittest.skipUnless(os.environ.get("QIMENG_TEST_BASE") == "http://127.0.0.1:18481", "requires cloud isolated Go service")
 class LiveMCP(unittest.IsolatedAsyncioTestCase):
+    async def test_scanned_file_research_and_metadata_use_the_asset_grant(self):
+        self.assertEqual(os.environ.get("CI"), "true")
+        import subprocess
+        library = self.request("POST", "/libraries", {"name": "Existing original", "kind": "regular"}, key="mcp-scan-library")
+        original = Path(os.environ["QIMENG_DATA_DIR"]) / "libraries" / library["id"] / "archive-source.png"
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=cyan:s=18x20", "-frames:v", "1", str(original)], check=True)
+        scan = self.request("POST", "/libraries/" + library["id"] + "/scans", {"expectedRevision": library["revision"]}, key="mcp-scan-existing")
+        for _ in range(100):
+            scan = self.request("GET", "/scans/" + scan["id"])
+            if scan["state"] not in {"queued", "running"}:
+                break
+            await asyncio.sleep(0.1)
+        self.assertEqual(scan["state"], "completed")
+        asset, = self.request("GET", "/assets?libraryId=" + library["id"])["items"]
+        grant = self.request("POST", "/ai/delegations", {
+            "label":"Existing work task","libraryIds":[library["id"]],"authorIds":[],"allAuthors":False,
+            "allowedFields":[],"candidateBlocks":[],"canIngest":False,"canOrganize":False,"canResearch":True,
+            "canResearchAssets":True,"assetFields":["tags"],"maxResearchCalls":2,"maxUpdates":1,"maxTasksPerDay":2,"validDays":1})
+        with tempfile.TemporaryDirectory() as directory:
+            async with Client(self.process(Path(directory), grant["credential"]["token"], "read,delegate,research,asset.metadata.write")) as client:
+                async def call(name, args):
+                    r = await client.call_tool(name,args)
+                    self.assertFalse(r.is_error,r.content)
+                    return r
+                start = await call("task.start",{"operationId":"scanned-asset-start","body":{
+                    "kind":"asset","label":"Read the existing work","assetId":asset["id"],"expectedRevision":asset["revision"],
+                    "expectedContentVersion":asset["contentVersion"],"assetFields":["tags"]}})
+                task_id = start.structured_content["taskId"]
+                target = {"taskId":task_id,"id":task_id}
+                material = (await call("asset.research.materials",target)).structured_content
+                self.assertEqual(material["assetId"],asset["id"])
+                self.assertNotIn("uploadId",material)
+                picture = await call("platform.artifact.read",{"taskId":task_id,"artifactRef":material["artifacts"][0]["artifactRef"]})
+                self.assertTrue(any(part.type=="image" for part in picture.content))
+                update = {**target,"Idempotency-Key":"scanned-asset-tags","body":{"expectedRevision":asset["revision"],"tags":["fixture"],
+                          "evidence":[{"field":"tags","url":"https://example.org/fixture","observation":"Synthetic sample verified."}]}}
+                await call("asset.metadata.apply",update)
+                await call("asset.metadata.apply",update)
+                records = (await call("asset.evidence.query",target)).structured_content
+                self.assertEqual(len(records["items"]),1)
+                self.assertEqual(self.request("GET","/assets/"+asset["id"])["tags"],["fixture"])
+        self.request("DELETE","/ai/delegations/"+grant["delegation"]["id"])
+
     async def test_persistent_permission_creates_and_resumes_task_across_hosts(self):
         if os.environ.get("CI") != "true":
             self.fail("live tests must run in cloud")

@@ -149,15 +149,15 @@ export function useTags() {
       : undefined,
   };
 }
-export function useHistory() {
+export function useHistory(tzOffsetMinutes: number) {
   const key = useRemoteKey();
   return useInfiniteQuery({
-    queryKey: [...key, "history"],
+    queryKey: [...key, "history", tzOffsetMinutes],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       read(
         api.GET("/history", {
-          params: { query: { cursor: pageParam, limit: 50 } },
+          params: { query: { cursor: pageParam, limit: 50, tzOffsetMinutes, dateCounts: !pageParam } },
           signal,
         }),
       ),

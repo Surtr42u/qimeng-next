@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAsset } from "../data/media";
 import type { Asset } from "../data/media";
-import { useLibraries, useSettings } from "../data/manage";
+import { useLibrary, useSettings } from "../data/manage";
 import { useUploadQueue } from "../data/upload";
 import { QueuedPreparationError } from '../data/upload-queue';
 import { PageHeading, Loading, ErrorNotice } from "../components/Feedback";
@@ -14,7 +14,7 @@ import { UnsavedGuard } from "../lib/navigation";
 export function ReplacePage() {
   const { id = "" } = useParams();
   const asset = useAsset(id);
-  const libraries = useLibraries();
+  const library = useLibrary(asset.data?.libraryId);
   const upload = useUploadQueue();
   const settings = useSettings();
   const [file, setFile] = useState<File>();
@@ -41,8 +41,7 @@ export function ReplacePage() {
           replaceAssetId: target.id,
           expectedContentVersion: target.contentVersion,
         },
-        libraries.data?.items.find((library) => library.id === target.libraryId)
-          ?.name ?? "原媒体库",
+        library.data?.name ?? "原媒体库",
       );
       setFile(undefined);
       setConfirmation(undefined);
@@ -63,10 +62,10 @@ export function ReplacePage() {
         subtitle="只替换明确选择的目标，保留资产身份、作者、标签、收藏与历史。"
       />
       <ErrorNotice
-        error={asset.error ?? libraries.error ?? settings.error}
+        error={asset.error ?? library.error ?? settings.error}
         retry={() => {
           void asset.refetch();
-          void libraries.refetch();
+          if (asset.data?.libraryId) void library.refetch();
           void settings.refetch();
         }}
       />

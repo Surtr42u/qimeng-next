@@ -10,8 +10,8 @@ import (
 func(s *Service)resolveAuthors(ctx context.Context,libraryID string,ids []string)([]model.Author,error){
  library,e:=s.library(ctx,libraryID);if e!=nil{return nil,e};if len(ids)>20{return nil,Fail(400,"too_many_authors","每项最多关联 20 位作者。")}
  actual:=[]model.Author{};seen:=map[string]bool{}
- for _,id:=range ids{if seen[id]||id=="unknown"{continue};seen[id]=true;a,e:=s.Author(ctx,id);if e!=nil{return nil,e};if a.Kind=="cos"&&library.Kind!="cos"{return nil,Fail(409,"author_kind_conflict","目录 COS 身份只能属于相应库；常规作者可作为额外关联。")};actual=append(actual,a)}
- if len(actual)==0{a,e:=s.Author(ctx,"unknown");if e!=nil{return nil,e};actual=append(actual,a)}
+ for _,id:=range ids{if seen[id]||id=="unknown"{continue};seen[id]=true;a,e:=store.Get[model.Author](ctx,s.DB.DB,"SELECT data FROM authors WHERE id=?",id);if e!=nil{return nil,Normalize(e)};if a.Kind=="cos"&&library.Kind!="cos"{return nil,Fail(409,"author_kind_conflict","目录 COS 身份只能属于相应库；常规作者可作为额外关联。")};actual=append(actual,a)}
+ if len(actual)==0{a,e:=store.Get[model.Author](ctx,s.DB.DB,"SELECT data FROM authors WHERE id='unknown'");if e!=nil{return nil,e};actual=append(actual,a)}
  return actual,nil
 }
 // Editing regular creator associations cannot remove or manufacture the fixed

@@ -19,6 +19,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { bytes, dateTime } from "../lib/format";
 import { newId } from "../lib/id";
 import { UnsavedGuard } from "../lib/navigation";
+import { MoreLibraries } from "../components/MoreLibraries";
 
 export { LibrariesPage } from "./LibrariesPage";
 
@@ -93,6 +94,7 @@ export function CollectionsPage() {
             error={libraries.error}
             retry={() => void libraries.refetch()}
           />
+          <MoreLibraries query={libraries} />
           <label>
             作品名称
             <input

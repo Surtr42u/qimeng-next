@@ -22,6 +22,8 @@ type DelegationPolicy struct {
  AllowClear bool `json:"allowClear"`
  CanIngest bool `json:"canIngest"`
  CanResearch bool `json:"canResearch"`
+ CanResearchAssets bool `json:"canResearchAssets,omitempty"`
+ AssetFields []string `json:"assetFields,omitempty"`
  CanOrganize bool `json:"canOrganize"`
  CanRecycleSources bool `json:"canRecycleSources"`
  MaxResearchCalls int `json:"maxResearchCalls"`
@@ -41,6 +43,9 @@ type DelegatedTaskStart struct {
  Mode string `json:"mode"`
  MaxResearchCalls *int `json:"maxResearchCalls"`
  AuthorID string `json:"authorId"`
+ AssetID string `json:"assetId"`
+ ExpectedContentVersion int64 `json:"expectedContentVersion"`
+ AssetFields []string `json:"assetFields"`
  ExpectedRevision int64 `json:"expectedRevision"`
  AllowedFields []string `json:"allowedFields"`
  CandidateBlocks []string `json:"candidateBlocks"`
@@ -48,7 +53,7 @@ type DelegatedTaskStart struct {
  MaxUpdates int `json:"maxUpdates"`
  CredentialSecret string `json:"credentialSecret"`
 }
-type DelegatedTask struct { TaskID string `json:"taskId"`;Kind string `json:"kind"`;Batch *model.Batch `json:"batch,omitempty"`;AuthorTask *AuthorTask `json:"authorTask,omitempty"`;Credential model.Principal `json:"credential"` }
+type DelegatedTask struct { TaskID string `json:"taskId"`;Kind string `json:"kind"`;Batch *model.Batch `json:"batch,omitempty"`;AuthorTask *AuthorTask `json:"authorTask,omitempty"`;AssetTask *AssetMaintenanceTask `json:"assetTask,omitempty"`;Credential model.Principal `json:"credential"` }
 
 func containsString(values []string,want string)bool{for _,value:=range values{if value==want{return true}};return false}
 func withinStrings(values,allowed []string)bool{for _,value:=range values{if !containsString(allowed,value){return false}};return true}
@@ -89,6 +94,7 @@ func(s *Service)CreateDelegation(ctx context.Context,w *Write,in DelegationPolic
  if !withinStrings(in.AllowedFields,[]string{"name","biography","homepage","aliases"})||!withinStrings(in.CandidateBlocks,[]string{"x","basic","accounts"}){return result,Fail(400,"invalid_fields","授权资料字段或资料块无效。")}
  if !in.CanResearch&&len(in.CandidateBlocks)>0{return result,Fail(400,"research_required","提交资料候选需要明确研究权限。")}
  if in.CanRecycleSources&&!in.CanIngest{return result,Fail(400,"intake_scope_required","来源回收须独立授权并绑定允许的接收库。")}
+ if e=validateAssetPolicy(&in);e!=nil{return result,e}
  if len(in.LibraryIDs)==0&&(in.CanIngest||in.CanOrganize){return result,Fail(400,"library_required","入库整理须明确选择允许的库。")}
  if !in.AllAuthors&&len(in.AuthorIDs)==0&&(len(in.AllowedFields)>0||len(in.CandidateBlocks)>0){return result,Fail(400,"author_scope_required","资料维护须指定作者或明确选择全部作者。")}
  for _,id:=range in.LibraryIDs{if _,e=s.library(ctx,id);e!=nil{return result,e}}
@@ -143,12 +149,17 @@ func(s *Service)StartDelegatedTask(ctx context.Context,w *Write,in DelegatedTask
   task,err:=s.prepareAuthorTask(ctx,w.ID("author-task"),AuthorTaskCreate{AuthorID:in.AuthorID,ExpectedRevision:in.ExpectedRevision,AllowedFields:fields,CandidateBlocks:in.CandidateBlocks,AllowClear:in.AllowClear,MaxUpdates:updates,ExpiresInSeconds:3600});if err!=nil{return result,err}
   if d.ExpiresAt.Before(task.ExpiresAt){task.ExpiresAt=d.ExpiresAt};result.TaskID=task.ID;result.AuthorTask=&task;p.AuthorTaskID=task.ID;p.ExpiresAt=task.ExpiresAt
   if len(task.AllowedFields)>0{p.Scopes=append(p.Scopes,"author.profile.write")};if len(task.CandidateBlocks)>0{p.Scopes=append(p.Scopes,"research")}
- default:return result,Fail(400,"invalid_task_kind","任务类别必须是intake或author。")
+ case "asset":
+  task,err:=s.prepareAssetMaintenance(ctx,w.ID("asset-task"),d,in);if err!=nil{return result,err}
+  result.TaskID=task.ID;result.AssetTask=&task;p.AssetTaskID=task.ID;p.ExpiresAt=task.ExpiresAt
+  if task.Research{p.Scopes=append(p.Scopes,"research")};if len(task.AssetFields)>0{p.Scopes=append(p.Scopes,"asset.metadata.write")}
+ default:return result,Fail(400,"invalid_task_kind","任务类别必须是 intake、author 或 asset。")
  }
  q,e:=w.Q();if e!=nil{return result,e}
  if result.Kind=="intake"&&!isNewBatch{if _,e=q.ExecContext(ctx,"DELETE FROM credentials WHERE json_extract(data,'$.batchId')=?",result.TaskID);e!=nil{return result,e}}
  if isNewBatch{if e=store.SaveBatch(ctx,q,*result.Batch);e!=nil{return result,e}}
  if result.AuthorTask!=nil{if e=saveAuthorTask(ctx,q,*result.AuthorTask);e!=nil{return result,e}}
+ if result.AssetTask!=nil{if e=saveAssetMaintenance(ctx,q,*result.AssetTask);e!=nil{return result,e}}
  if e=saveDelegatedCredential(ctx,q,p,in.CredentialSecret);e!=nil{return result,e}
  if _,e=q.ExecContext(ctx,"INSERT INTO delegated_tasks(task_id,delegation_id,credential_id,kind,created_day,max_calls,deadline) VALUES(?,?,?,?,?,?,?)",result.TaskID,d.ID,p.ID,result.Kind,today,d.MaxCallsPerTask,limitExpiry(d,time.Duration(d.TaskSeconds)*time.Second).Format(time.RFC3339Nano));e!=nil{return result,e}
  result.Credential=p;return result,nil
@@ -164,6 +175,7 @@ func(s *Service)ResumeDelegatedTask(ctx context.Context,w *Write,id,secret strin
  switch result.Kind{
  case "intake":b,err:=s.Batch(ctx,id);if err!=nil{return result,err};if b.State=="cancelled"{return result,Fail(409,"task_cancelled","任务已取消。")};result.Batch=&b;p.ExpiresAt=limitExpiry(d,24*time.Hour)
  case "author":task,err:=s.authorTask(ctx,id);if err!=nil{return result,err};if task.State!="authorized"||!task.ExpiresAt.After(time.Now()){return result,Fail(409,"author_task_stale","资料任务已完成、取消或到期，请按当前资料修订创建新任务。")};result.AuthorTask=&task;p.ExpiresAt=task.ExpiresAt
+ case "asset":task,err:=s.assetMaintenance(ctx,id);if err!=nil{return result,err};if !task.ExpiresAt.After(time.Now()){return result,Fail(409,"asset_task_expired","作品任务已到期。")};result.AssetTask=&task;p.ExpiresAt=task.ExpiresAt
  default:return result,Fail(409,"task_kind_invalid","任务记录无效。")
  }
  p.Generation++;q,e:=w.Q();if e!=nil{return result,e};if e=saveDelegatedCredential(ctx,q,p,secret);e!=nil{return result,e};result.TaskID=id;result.Credential=p;return result,nil
@@ -184,7 +196,7 @@ func(s *Service)RenewDelegatedBudget(ctx context.Context,w *Write,id string,in D
 }
 func(s *Service)ReserveDelegatedCall(ctx context.Context,w *Write,id string)(DelegatedBudget,error){
  var budget DelegatedBudget;var credentialID,text string
- if w.Principal.ParentDelegationID==""||w.Principal.BatchID!=id&&w.Principal.AuthorTaskID!=id{return budget,Fail(403,"task_scope_denied","预算只属于当前受限任务凭据。")}
+ if w.Principal.ParentDelegationID==""||w.Principal.BatchID!=id&&w.Principal.AuthorTaskID!=id&&w.Principal.AssetTaskID!=id{return budget,Fail(403,"task_scope_denied","预算只属于当前受限任务凭据。")}
  e:=s.DB.DB.QueryRowContext(ctx,"SELECT credential_id,calls,max_calls,deadline FROM delegated_tasks WHERE task_id=?",id).Scan(&credentialID,&budget.Calls,&budget.MaxCalls,&text);if e!=nil{return budget,Normalize(e)}
  if credentialID!=w.Principal.ID{return budget,Fail(403,"task_scope_denied","执行器未持有该任务凭据。")};budget.Deadline,e=time.Parse(time.RFC3339Nano,text);if e!=nil{return budget,e}
  if budget.Calls>=budget.MaxCalls||!budget.Deadline.After(time.Now()){return budget,Fail(429,"task_budget_exhausted","任务预算耗尽，服务端进度保留；由可信端核对后决定续期。")}

@@ -152,7 +152,7 @@ class State:
             raise ToolError("TASK_RESPONSE_INVALID", "服务未返回可绑定的任务身份", uncertain=True)
         generation = credential.get("generation")
         if (not isinstance(generation, int) or generation < 1 or
-                identifier not in (credential.get("batchId"), credential.get("authorTaskId")) or "token" in credential):
+                identifier not in (credential.get("batchId"), credential.get("authorTaskId"), credential.get("assetTaskId")) or "token" in credential):
             raise ToolError("TASK_RESPONSE_INVALID", "派生凭据未绑定正确任务", uncertain=True)
         with self.transaction() as db:
             previous = db.execute("SELECT generation FROM task_credentials WHERE task=?", (identifier,)).fetchone()

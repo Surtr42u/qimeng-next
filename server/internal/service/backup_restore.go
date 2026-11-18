@@ -54,7 +54,7 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
   "DELETE FROM author_list_mirror",
   "DELETE FROM detached_upload_roots",
   "UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
-  "UPDATE author_tasks SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='authorized'",
+  "UPDATE author_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE state='authorized'",
   "UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",
   "UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')",
   "UPDATE backups SET data=json_set(json_remove(data,'$.archiveHash','$.archiveBytes','$.exportedAt'),'$.state','snapshot_not_included','$.exportState','unavailable','$.exportError','backup_snapshot_not_included')",

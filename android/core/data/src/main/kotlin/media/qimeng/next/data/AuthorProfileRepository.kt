@@ -23,6 +23,14 @@ import java.util.UUID
 
 class AuthorProfileRepository internal constructor(private val context: Context, private val settings: SecureSettings, private val provider: ApiProvider) {
     private fun target() = settings.session.value ?: error("请先登录服务器")
+    suspend fun feed(target: Session, id: String): AuthorFeed = provider.api(target).getAuthorUpdates(id).bodyOrThrow().asFeed()
+    suspend fun saveFeed(target: Session, base: AuthorFeed, enabled: Boolean, url: String, key: String): AuthorFeed =
+        provider.api(target).setAuthorUpdates(id = base.authorId, idempotencyKey = key,
+            authorUpdatesInput = media.qimeng.next.sdk.model.AuthorUpdatesInput(expectedRevision = base.revision, trackUpdates = enabled, feedUrl = url))
+            .bodyOrThrow().asFeed()
+    suspend fun checkFeed(target: Session, base: AuthorFeed, key: String): AuthorFeed =
+        provider.api(target).checkAuthorUpdates(id = base.authorId, idempotencyKey = key,
+            revisionRequest = media.qimeng.next.sdk.model.RevisionRequest(base.revision)).bodyOrThrow().asFeed()
     suspend fun profile(id: String): ProfileDocument {
         val target = target()
         val value = provider.api(target).getAuthorProfile(id).bodyOrThrow()
@@ -101,3 +109,6 @@ private fun AuthorProfileAvatar.toModel(target: Session): ProfileAvatar {
     require(sameOrigin(origin, resolved) && resolved.encodedPath.startsWith("/api/v1/profile-avatars/")) { "拒绝加载非当前服务器的头像" }
     return ProfileAvatar(resolved.toString(), "${target.baseUrl}:${target.instanceId}:avatar:$sourceHash:$contentHash", this.origin.value, sourceUrl, fetchedAt)
 }
+
+private fun media.qimeng.next.sdk.model.AuthorUpdates.asFeed() = AuthorFeed(authorId, revision, trackUpdates, feedUrl, checkedAt,
+    items.map { AuthorUpdateItem(it.id, it.title, it.url.toString(), it.publishedAt) })

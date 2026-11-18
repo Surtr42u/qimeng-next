@@ -8,6 +8,14 @@ function localDate(value: string, offset: number) {
     ? new Date(timestamp + offset * 60_000)
     : undefined;
 }
+export function dateGroup(value: string, offset: number, now: number) {
+  const key = localDate(value, offset)?.toISOString().slice(0, 10) ?? "";
+  const today = new Date(now + offset * 60_000).toISOString().slice(0, 10);
+  const day = Date.parse(key + "T00:00:00Z");
+  const distance = (Date.parse(today + "T00:00:00Z") - day) / 86_400_000;
+  const label = distance === 0 ? "今天" : distance === 1 ? "昨天" : distance > 1 && distance < 7 ? "周" + "日一二三四五六"[new Date(day).getUTCDay()] : key;
+  return { key, label };
+}
 export function albumGroups(
   assets: Asset[],
   counts: Schema<"DateCountBucket">[] | undefined,

@@ -26,12 +26,26 @@ func mergeAuthorProfiles(ctx context.Context,q store.Querier,sourceID,targetID,a
   now:=time.Now().UTC();source.UpdatedAt=&now
   if err=saveProfileBlock(ctx,q,source);err!=nil { return nil,err }
  }
+ if archive.Subscription!=nil{
+  current,err:=savedAuthorUpdates(ctx,q,targetID);if err!=nil{return nil,err}
+  if current.Revision==0{
+   inherited:=*archive.Subscription;inherited.AuthorID=targetID;inherited.Revision=1
+   account,err:=profileBlock(ctx,q,targetID,"accounts");if err!=nil{return nil,err}
+   if profileString(account.Values.IdentityStatus)!="verified"{inherited.TrackUpdates=false;inherited.CheckedAt=nil;inherited.Items=[]AuthorUpdateEntry{}}
+   if err=saveAuthorUpdates(ctx,q,inherited);err!=nil{return nil,err}
+  }
+ }
  return archive.Conflicts,nil
 }
 
 func archiveAuthorProfile(ctx context.Context,q store.Querier,authorID,targetID,archiveID,reason string)(ProfileArchive,error) {
  archive:=ProfileArchive{ProfileArchiveSummary:ProfileArchiveSummary{ID:archiveID,AuthorID:authorID,TargetAuthorID:targetID,Reason:reason,CreatedAt:time.Now().UTC(),Conflicts:[]string{}},Blocks:[]AuthorProfileBlock{}}
  author,err:=store.Get[model.Author](ctx,q,"SELECT data FROM authors WHERE id=?",authorID);if err!=nil { return archive,err };archive.AuthorName=author.Name
+ subscription,err:=savedAuthorUpdates(ctx,q,authorID);if err!=nil{return archive,err}
+ if subscription.Revision>0{
+  archive.Subscription=&subscription
+  if targetID!=""{target,err:=savedAuthorUpdates(ctx,q,targetID);if err!=nil{return archive,err};if target.Revision>0&&(target.TrackUpdates!=subscription.TrackUpdates||target.FeedURL!=subscription.FeedURL){archive.Conflicts=append(archive.Conflicts,"profile.subscription")}}
+ }
  archive.Blocks,err=store.List[AuthorProfileBlock](ctx,q,"SELECT data FROM author_profile_blocks WHERE author_id=? ORDER BY block",authorID);if err!=nil { return archive,err }
  archive.BlockCount=len(archive.Blocks)
  if err=q.QueryRowContext(ctx,"SELECT COUNT(*) FROM author_profile_candidates WHERE author_id=? AND archive_id=''",authorID).Scan(&archive.CandidateCount);err!=nil { return archive,err }

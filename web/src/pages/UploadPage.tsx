@@ -9,10 +9,12 @@ import { isQueueTerminal, QueuedPreparationError } from "../data/upload-queue";
 import { AcquisitionSourceField } from "../components/AcquisitionSourceField";
 import { AuthorSuggestField } from "../components/AuthorSuggestField";
 import { ManagePageHeader } from "../components/LegacyManageHeader";
+import { MoreLibraries } from "../components/MoreLibraries";
 import { ErrorNotice, Loading } from "../components/Feedback";
 import { droppedFiles } from "../lib/drop-files";
 import { UploadDestinationCard } from "./UploadDestinationCard";
 import { UploadRow } from "./UploadQueueList";
+import { ServerImportPanel } from "./ServerImportPanel";
 import { NamingControls } from "./NamingControls";
 import { previewNamingFiles } from "../data/naming";
 import type { NamingFilePreview } from "../data/naming";
@@ -112,7 +114,7 @@ export function UploadPage() {
       <div className="upload-workbench">
         <div className="upload-layout">
           <div className="upload-setup">
-            <UploadDestinationCard key={libraryId} libraries={libraries.data?.items ?? []} libraryId={libraryId} directory={directory} targetsReady={targetsReady && !busy} onLibrary={chooseLibrary} onDirectory={setDirectory} />
+            <UploadDestinationCard key={libraryId} libraries={libraries.data?.items ?? []} libraryId={libraryId} directory={directory} targetsReady={targetsReady && !busy} onLibrary={chooseLibrary} onDirectory={setDirectory} more={<MoreLibraries query={libraries} />} />
             <details className="chart-card upload-metadata-card">
               <summary><span className="upload-step">02</span><span><strong>作者与来源</strong><small>{author ? author.name + " · " + sources.length + " 个来源" : authorDraft ? "作者待确认 · 请选择建议中的已有作者" : "可选 · 不指定作者也能上传"}</small></span><ChevronDown aria-hidden /></summary>
               <div className="upload-metadata-body">
@@ -163,6 +165,7 @@ export function UploadPage() {
           {!upload.initialized && settings.data ? <Loading text="正在恢复队列…" /> : !entries.length ? <div className="upload-queue-empty"><ListChecks aria-hidden /><div><strong>暂无上传任务</strong><p>添加文件后，在这里查看进度、结果和恢复操作。</p></div></div> : <ul className="upload-task-list">{entries.map(entry => <UploadRow key={entry.id} entry={entry} />)}</ul>}
         </section>
       </div>
+      <ServerImportPanel />
     </div>
   );
 }

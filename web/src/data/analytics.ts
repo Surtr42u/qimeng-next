@@ -10,6 +10,8 @@ import { useRemoteKey } from "./session";
 import { queryClient } from "./query";
 import type { paths } from "../api/generated/schema";
 import { deduplicateAssetPages } from "./media";
+import type { InfiniteData } from "@tanstack/react-query";
+import { ApiError } from "../lib/errors";
 
 export type StatsRange = NonNullable<
   paths["/stats/overview"]["get"]["parameters"]["query"]
@@ -24,8 +26,9 @@ export function useRecommendations(
   enabled: boolean,
 ) {
   const key = useRemoteKey();
-  return useInfiniteQuery({
-    queryKey: [...key, "recommendations", seed, kind, mediaType],
+  const queryKey = [...key, "recommendations", seed, kind, mediaType];
+  const query = useInfiniteQuery({
+    queryKey,
     placeholderData: keepPreviousData,
     initialPageParam: undefined as string | undefined,
     enabled,
@@ -42,6 +45,13 @@ export function useRecommendations(
     staleTime: 60_000,
     select: (data) => ({ ...data, pages: deduplicateAssetPages(data.pages) }),
   });
+  const expired = query.error instanceof ApiError && query.error.status === 409 && query.error.code === "recommendation_expired";
+  const restart = () => {
+    // Retain the first page while requesting a new order without the expired cursor.
+    queryClient.setQueryData<InfiniteData<Schema<"RecommendationPage">>>(queryKey, old => old ? { pages: old.pages.slice(0, 1), pageParams: [undefined] } : old);
+    return query.refetch();
+  };
+  return { ...query, expired, restart };
 }
 export function useRankings(
   period: RankingPeriod,

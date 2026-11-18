@@ -11,6 +11,9 @@ data class ProfileBlock(val block: String, val revision: Long, val values: Profi
     val source: String, val updatedAt: String?, val avatar: ProfileAvatar?)
 data class ProfileDocument(val target: Session, val authorId: String, val editable: Boolean, val blocks: List<ProfileBlock>)
 data class ProfileSummary(val avatar: ProfileAvatar?, val biographyOriginal: String, val biographyZh: String)
+data class AuthorUpdateItem(val id: String, val title: String, val url: String, val publishedAt: String?)
+data class AuthorFeed(val authorId: String, val revision: Long, val enabled: Boolean, val url: String,
+    val checkedAt: String?, val items: List<AuthorUpdateItem>)
 data class ProfileCandidate(val id: String, val block: String, val baseRevision: Long, val state: String,
     val values: ProfileValues, val evidence: List<ProfileEvidence>, val createdAt: String)
 data class ProfileArchive(val id: String, val authorId: String, val authorName: String, val reason: String,

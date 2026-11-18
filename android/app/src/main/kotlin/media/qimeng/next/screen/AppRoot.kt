@@ -72,9 +72,11 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = rememberGlassBackdrop()
                 val detailRoute = route.startsWith("asset:")
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || route in setOf("server", "libraries", "upload", "authors")) Modifier else Modifier.statusBarsPadding())) {
+                val ownTopBar = route in setOf("server", "libraries", "upload", "authors") || route.startsWith("author:") ||
+                    route.startsWith("profile:") || route.startsWith("profile-archive:")
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().captureGlassBackdrop(backdrop)) {
-                        if (!detailRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "server", "favorites", "libraries", "upload", "history", "authors")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && !ownTopBar && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "favorites", "history")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -88,7 +90,7 @@ fun AppRoot(model: LibraryViewModel) {
                         SingleSceneHost(if (route == "main") "tab:$tab" else route, preferences.reducedMotion, Modifier.weight(1f)) {
                             when {
                                 route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'))
-                                route.startsWith("author:") -> AuthorDetailScreen(model, route.substringAfter(':'))
+                                route.startsWith("author:") -> AuthorCollectionScreen(model, route.substringAfter(':'))
                                 route.startsWith("profile:") -> AuthorProfileScreen(route.substringAfter(':'), model)
                                 route.startsWith("profile-archive:") -> AuthorProfileScreen(route.split(':')[1], model, archiveId = route.split(':')[2])
                                 route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'))

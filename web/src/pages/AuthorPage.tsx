@@ -1,3 +1,4 @@
+import { SavedUpdates } from "./CreatorSubscription";
 import { useState } from "react";
 import {
   Link,
@@ -190,16 +191,7 @@ export function AuthorPage() {
       {showUpdates ? (
         <section className="rank-card creator-updates" aria-label="作者新作">
           <h3>作者新作</h3>
-          {profile.isPending ? (
-            <Loading />
-          ) : profile.error ? (
-            <ErrorNotice
-              error={profile.error}
-              retry={() => void profile.refetch()}
-            />
-          ) : (
-            <p>尚未接入可用的作品发布订阅，可前往作者发布页查看新作。</p>
-          )}
+          <SavedUpdates id={id} />
           <div className="creator-profile-actions">
             {accounts
               .filter((account) => account.publishingUrl)

@@ -51,14 +51,14 @@ func withAvatarSlot(ctx context.Context)(func(),error) {
 
 // The early receipt read avoids re-downloading a changed remote resource after a
 // lost response. Run revalidates identity, input and revision under the write lock.
-func (s *Service) avatarReceipt(ctx context.Context,p model.Principal,operation,key string,input []byte)(Result,bool,error) {
+func (s *Service) operationReceipt(ctx context.Context,p model.Principal,operation,key string,input []byte)(Result,bool,error) {
  if err:=Authorize(p,"admin","");err!=nil { return Result{},false,err }
- if len(key)<8 || len(key)>128 { return Result{},false,Fail(400,"idempotency_required","头像操作必须提供稳定幂等键。") }
+ if len(key)<8 || len(key)>128 { return Result{},false,Fail(400,"idempotency_required","此操作必须提供稳定幂等键。") }
  var previous string;var result Result
  err:=s.DB.DB.QueryRowContext(ctx,"SELECT input_hash,response,status FROM idempotency WHERE principal_id=? AND operation=? AND key=?",p.ID,operation,key).Scan(&previous,&result.Body,&result.Status)
  if errors.Is(err,sql.ErrNoRows) { return Result{},false,nil }
  if err!=nil { return Result{},false,err }
- if previous!=digest(input) { return Result{},false,Fail(409,"idempotency_conflict","同一幂等键的头像输入已经改变。") }
+ if previous!=digest(input) { return Result{},false,Fail(409,"idempotency_conflict","同一幂等键的输入已经改变。") }
  // Even a replay must pass the queued-write revocation check.
  result,err=s.Run(ctx,p,operation,key,input,func(*Write)(any,int,error){return nil,0,Fail(409,"receipt_changed","操作回执发生变化，请重新回读。")})
  return result,true,err
@@ -66,7 +66,7 @@ func (s *Service) avatarReceipt(ctx context.Context,p model.Principal,operation,
 
 func (s *Service) FetchAuthorProfileAvatar(ctx context.Context,p model.Principal,authorID,key string,input []byte,in ProfileAvatarFetch)(Result,error) {
  operation:="POST /api/v1/authors/"+authorID+"/profile/avatar-from-url"
- if result,exists,err:=s.avatarReceipt(ctx,p,operation,key,input);err!=nil || exists { return result,err }
+ if result,exists,err:=s.operationReceipt(ctx,p,operation,key,input);err!=nil || exists { return result,err }
  if _,err:=s.editableProfile(ctx,p,authorID,"x",in.ExpectedRevision);err!=nil { return Result{},err }
  ctx,cancel:=context.WithTimeout(ctx,10*time.Second);defer cancel()
  release,err:=withAvatarSlot(ctx);if err!=nil { return Result{},err };defer release()
@@ -83,7 +83,7 @@ func (s *Service) UploadAuthorProfileAvatar(ctx context.Context,p model.Principa
  // The original content digest and expected block version are the complete
  // immutable input, independent of the multipart or transport representation.
  input:=[]byte(digest(body)+":"+strconv.FormatInt(revision,10))
- if result,exists,err:=s.avatarReceipt(ctx,p,operation,key,input);err!=nil || exists { return result,err }
+ if result,exists,err:=s.operationReceipt(ctx,p,operation,key,input);err!=nil || exists { return result,err }
  if _,err:=s.editableProfile(ctx,p,authorID,"x",&revision);err!=nil { return Result{},err }
  ctx,cancel:=context.WithTimeout(ctx,10*time.Second);defer cancel()
  release,err:=withAvatarSlot(ctx);if err!=nil { return Result{},err };defer release()

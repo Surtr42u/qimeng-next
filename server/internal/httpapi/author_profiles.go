@@ -16,6 +16,12 @@ func profileRevision(r *http.Request)(int64,error) {
 }
 
 func (a *API) authorProfileRoutes() {
+ a.get("/authors/{id}/updates",func(r *http.Request)(any,error){return a.s.AuthorUpdates(r.Context(),r.PathValue("id"))})
+ write[service.AuthorUpdatesInput](a,"PUT","/authors/{id}/updates",true,func(r *http.Request,w *service.Write,in service.AuthorUpdatesInput)(any,int,error){v,e:=a.s.SetAuthorUpdates(r.Context(),w,r.PathValue("id"),in);return v,200,e})
+ a.mux.HandleFunc("POST /api/v1/authors/{id}/updates/check",a.auth(func(w http.ResponseWriter,r *http.Request){
+  in,raw,e:=decode[service.AuthorUpdateCheck](w,r);if e!=nil{fail(w,e);return}
+  v,e:=a.s.CheckAuthorUpdates(r.Context(),principal(r),r.PathValue("id"),r.Header.Get("Idempotency-Key"),raw,in);if e!=nil{fail(w,e);return};result(w,v)
+ }))
  a.get("/authors/{id}/profile",func(r *http.Request)(any,error){
   return a.s.AuthorProfile(r.Context(),principal(r),r.PathValue("id"))
  })
