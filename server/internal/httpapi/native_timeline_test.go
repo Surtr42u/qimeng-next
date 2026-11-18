@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -52,15 +53,18 @@ func TestNativeTimelineRequiresChosenTargetAndBothContentVersions(t *testing.T) 
 		}, 201), &m)
 		return m
 	}
-	deliver := func(mark service.TimelineMark, key string) service.NativePlan {
-		t.Helper()
-		var task service.DeviceApplyTask
-		decode(t, source.json("POST", "/device/native-deliveries", key, service.NativePublish{
+	selection := func(mark service.TimelineMark) service.NativePublish {
+		return service.NativePublish{
 			TargetDeviceID: "mark-phone", TargetInstanceID: target.s.InstanceID,
 			Items: []service.NativeSelection{{Kind: "timelineMark", SourceObjectID: mark.ID, ExpectedRevision: mark.Revision,
 				NativeVideoBinding: service.NativeVideoBinding{SourceAssetID: original.ID, SourceContentVersion: original.ContentVersion,
 					TargetAssetID: chosen.ID, TargetContentVersion: chosen.ContentVersion}}},
-		}, 201), &task)
+		}
+	}
+	deliver := func(mark service.TimelineMark, key string) service.NativePlan {
+		t.Helper()
+		var task service.DeviceApplyTask
+		decode(t, source.json("POST", "/device/native-deliveries", key, selection(mark), 201), &task)
 		base := "/device/apply-tasks/" + task.ID
 		if res := source.request("POST", base+"/claim", key+"-claim", secret, []byte(`{"expectedRevision":1}`), nil); res.Code != 200 {
 			t.Fatal(res.Code, res.Body.String())
@@ -91,6 +95,31 @@ func TestNativeTimelineRequiresChosenTargetAndBothContentVersions(t *testing.T) 
 		return page.Items
 	}
 	first := makeMark("native-source-marker", "Opening")
+	var published service.DeviceApplyTask
+	decode(t, source.json("POST", "/device/native-deliveries", "native-mark-delivery", selection(first), 201), &published)
+	func() {
+		ctx := context.Background()
+		owner, err := source.s.Authenticate(ctx, testSecret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := selection(first)
+		for range 2 {
+			proof, err := source.s.InspectNativePublish(ctx, owner, in)
+			if err != nil || proof == nil {
+				t.Fatal("could not hold a genuine video verification slot", err)
+			}
+			defer proof.Close()
+		}
+		source.json("POST", "/device/native-deliveries", "native-new-while-busy", in, 429)
+		var replay service.DeviceApplyTask
+		decode(t, source.json("POST", "/device/native-deliveries", "native-mark-delivery", in, 201), &replay)
+		if replay.ID != published.ID || replay.Segments[0].PackageID != published.Segments[0].PackageID {
+			t.Fatal("completed publication lost its original receipt", replay)
+		}
+		in.TTLSeconds = 600
+		source.json("POST", "/device/native-deliveries", "native-mark-delivery", in, 409)
+	}()
 	plan := deliver(first, "native-mark-delivery")
 	done := commit(plan, "native-mark-applied")
 	retry := commit(deliver(first, "native-mark-other-transport"), "native-mark-replayed")

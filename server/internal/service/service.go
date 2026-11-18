@@ -406,24 +406,9 @@ func (s *Service) Run(ctx context.Context, p model.Principal, operation, key str
 	if err != nil {
 		return result, err
 	}
-	if key != "" && (len(key) < 8 || len(key) > 128) {
-		return result, Fail(400, "invalid_idempotency_key", "幂等键长度应为 8–128。")
-	}
 	hash := digest(input)
-	if key != "" {
-		var previous string
-		var status int
-		var body []byte
-		e := s.DB.DB.QueryRowContext(ctx, "SELECT input_hash,response,status FROM idempotency WHERE principal_id=? AND operation=? AND key=?", p.ID, operation, key).Scan(&previous, &body, &status)
-		if e == nil {
-			if previous != hash {
-				return result, Fail(409, "idempotency_conflict", "同一幂等键的输入已经改变。")
-			}
-			return Result{body, status}, nil
-		}
-		if !errors.Is(e, sql.ErrNoRows) {
-			return result, e
-		}
+	if existing, found, err := s.matchingReceipt(ctx, p.ID, operation, key, hash); err != nil || found {
+		return existing, err
 	}
 	w := &Write{s: s, ctx: ctx, Principal: p, operation: operation, key: key, inputHash: hash}
 	committed := false

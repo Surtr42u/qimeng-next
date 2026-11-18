@@ -30,14 +30,23 @@ func nativeVideoMutation[T any](a *API, w http.ResponseWriter, r *http.Request, 
 		fail(w, err)
 		return
 	}
-	proofs, err := inspect(input)
+	raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
+	operation := r.Method + " " + r.URL.Path
+	replay, found, err := a.s.ReplayBeforeInspection(r.Context(), principal(r), "admin", operation, key, raw)
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	if found {
+		result(w, replay)
+		return
+	}
+	proofs, inspectionErr := inspect(input)
 	defer proofs.Close()
-	raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
-	out, err := a.s.Run(r.Context(), principal(r), r.Method+" "+r.URL.Path, key, raw, func(tx *service.Write) (any, int, error) {
+	out, err := a.s.Run(r.Context(), principal(r), operation, key, raw, func(tx *service.Write) (any, int, error) {
+		if inspectionErr != nil {
+			return nil, 0, inspectionErr
+		}
 		v, err := apply(tx, input, proofs)
 		return v, status, err
 	})
