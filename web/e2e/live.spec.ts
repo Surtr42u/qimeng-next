@@ -297,7 +297,11 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     const current = await (await page.request.get(`/api/v1/assets/${encodeURIComponent(videoId)}`)).json();
     return current.positionContentVersion === videoData.contentVersion ? Math.abs(current.positionMs - resumeMs) : Infinity;
   }).toBeLessThan(80);
+  const restoredDetail = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/assets/${encodeURIComponent(videoId)}` && response.request().method() === "GET");
   await page.reload();
+  const restoredAsset = await (await restoredDetail).json();
+  expect(restoredAsset.positionContentVersion).toBe(videoData.contentVersion);
+  expect(Math.abs(restoredAsset.positionMs - resumeMs)).toBeLessThan(80);
   await expect.poll(() => page.locator("video").evaluate((el, expected) =>
     Math.abs((el as HTMLVideoElement).currentTime * 1000 - expected), resumeMs)).toBeLessThan(80);
   // The original Web presents timeline marks on the player. Authoring uses the real
