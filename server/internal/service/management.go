@@ -329,6 +329,9 @@ func (s *Service) SaveMark(ctx context.Context, w *Write, assetID, markID string
 		if old.Revision != in.ExpectedRevision {
 			return m, Conflict(old.Revision)
 		}
+		if old.ContentVersion != in.ContentVersion {
+			return m, Fail(409, "content_changed", "标记属于之前的视频版本；可为当前版本新建标记。")
+		}
 		m.ID = old.ID
 		m.Revision = old.Revision + 1
 		m.CreatedAt = old.CreatedAt

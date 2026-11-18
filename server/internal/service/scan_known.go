@@ -10,7 +10,7 @@ import (
 )
 
 func (signature scanSignature) sameSizeAndTime(info os.FileInfo) bool {
-	return signature.RelativePath != "" && signature.Mtime != nil && signature.Size == info.Size() &&
+	return signature.RelativePath != "" && signature.Hash != "" && signature.Mtime != nil && signature.Size == info.Size() &&
 		signature.Mtime.Equal(info.ModTime())
 }
 
