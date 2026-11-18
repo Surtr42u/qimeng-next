@@ -26,6 +26,6 @@ pwsh -NoProfile -File tests/run-desktop-smoke.ps1
 
 只有手动调度完整工作流并勾选 `refresh_locks` 时，作业才先刷新 npm 和 Cargo 锁。Tauri CLI 从授权复用的品牌图在云端生成各平台尺寸。Windows 云产物还包括 Go 服务与离线恢复工具。
 
-自动单测覆盖地址、完整 origin 和本地连接页边界。Windows 云测试以普通桌面用户运行同次 NSIS 安装包，使用独立 WebView2 资料目录、两个合成站点和原生窗口状态，核验媒体分段读取、标题栏三键、服务器切换、退出与卸载。在默认提升权限的云机器上，一次性 Windows 任务以普通用户权限运行这项测试，结束后移除。WebView2 150 起会忽略高权限程序收到的用户调试环境变量。`f2b884b` 已完成打包，窗口自动检查停在连接 WebView2。后续窗口结果见[当前状态](../docs/status.md)。[微软对 WebView2 150 行为的说明](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645) · [Playwright WebView2 连接办法](https://playwright.dev/docs/webview2)
+自动单测覆盖地址、完整 origin 和本地连接页边界。Windows 云测试将同次 NSIS 安装包、Node 和测试脚本放到独立目录，用两个合成站点、独立 WebView2 资料目录和原生窗口状态核验媒体分段读取、标题栏、服务器切换、退出与卸载。GitHub 托管机的运行账号有管理员权限时，脚本创建临时普通用户执行测试，结束后清理任务、账号和暂存目录。`89edb6a` 已打包，当次使用运行器自身账号的窗口检查停在权限核对。逐次结果见[当前状态](../docs/status.md)。[微软对 WebView2 150 行为的说明](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645) · [Playwright WebView2 连接办法](https://playwright.dev/docs/webview2)
 
 官方依据：[Tauri capabilities](https://v2.tauri.app/security/capabilities/)、[窗口导航与新窗口](https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html)、[托盘](https://v2.tauri.app/learn/system-tray/)、[Opener](https://v2.tauri.app/plugin/opener/)、[图标](https://v2.tauri.app/develop/icons/)。
