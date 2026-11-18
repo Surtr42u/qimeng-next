@@ -1,5 +1,7 @@
 # 来源与实现纪律
 
+2026-11-18 公开前复核了 7 个远端分支和待发布的 Git 内容、当时全部 52 次云运行的日志及 293 件保留产物的目录。测试报告、网络跟踪和合成图片按内容及来源复核，构建二进制按来源和样本核验。两份带临时测试会话的旧附件已在保存校验副本后撤下。公开时 GitHub 密钥扫描和推送保护均已开启。新制品的范围与提交前隐私检查见[安全说明](../SECURITY.md)。
+
 本仓库 2026-11-17 从空目录初始化，依据用户已确认产品要求重新实现。参考项目为 [Surtr42u/qimeng-media，d0215962](https://github.com/Surtr42u/qimeng-media/tree/d0215962)，只作业务规则、公式、使用教训、界面布局与验收依据，不复制业务源码或历史补丁实现。
 
 工程规范参考旧项目在代码所有权、按风险验证和专题文档维护上的经验。新仓采用当前实际模块、云端流程和用户选择，规则正文位于[开发与维护](../CONTRIBUTING.md)，实际依赖约束位于[架构](architecture.md#module-boundaries)。[旧仓协作规范](https://github.com/Surtr42u/qimeng-media/blob/d0215962/AI_README_FIRST.md) · [旧仓模块边界](https://github.com/Surtr42u/qimeng-media/blob/d0215962/docs/ARCHITECTURE.md)
