@@ -63,7 +63,7 @@ func TestTaxonomyUpgradeKeepsMembershipOrderUnboundTextAndDeliberateAbsence(t *t
 	defer db.Close()
 	ctx := context.Background()
 	type selection struct {
-		Source                             string
+		Source                              string
 		SourceIDs, CharacterIDs, Characters []string
 	}
 	read := func(id string) selection {

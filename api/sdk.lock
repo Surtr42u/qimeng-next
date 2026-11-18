@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "openapiSha256": "317809b45a1424973d500b9da225df2391f1ea72d12cf8ccd9aa065ff930f6e1",
+  "openapiSha256": "22b9e697b81d19d14cf92fca0ea932f9f336ec9d3fc16d91c6bb934aa28fcce5",
   "generators": {
     "kotlin": "7.27.0",
     "go": "v2.8.2",
@@ -8,7 +8,7 @@
     "python": "tools/generate_sdks.py"
   },
   "files": {
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt": "7b974fc4f2d2de13e267f2d8d4ac6a71de7ac84611bc8124de51e82b75439854",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt": "e3c8b26043115554afc1622f3a403aa3427c9b53d9d9820226e30a39c2f1fd49",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/auth/ApiKeyAuth.kt": "42d967a37b4d28fab15819f17313a273f9346740791c3302ef6c1ddec7c99076",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/auth/HttpBearerAuth.kt": "b9629c5d42794c2c96e7d69f6b782a56f62fc39513509f619d6cebb21ddd5292",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/infrastructure/ApiClient.kt": "d9a51509612ee3d92eaf14b40142e36a54132cec91956df0e23d20c15c1d2170",
@@ -86,7 +86,7 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/Batch.kt": "fdd0df5c4f7d80ba22ef0e00554778d8d68864ab6099477f05edebeff9357116",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchCreate.kt": "57189612d5b1de5dcbc87f41b19f2f153cdbd6457b12eb7577afff436090cb39",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchDetail.kt": "c71a40fd516c4e112d67247e4b3d64b0795fa963ffb20fe5fe5340ee9cdbfb5c",
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInput.kt": "b33bf6a870965195aae968eeab29ad8454e905082483ae728305cc595bcf6c3c",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInput.kt": "c2efe96ec9f3b48d1569318b4ad0445cedc60879f12ae8d7c9b5248b0c3f8b7a",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInputCancel.kt": "9a5eb32063f436315e4e611ef5b767357c977051aee8ea98c6e75db35a43e53d",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchInputsSet.kt": "a5ed2087219b0edf81bf934fba338fab0ca185a127cec636ac47aea6800ce5d2",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/BatchItem.kt": "78a4af5a47d9d1e7010f8a6df9627733034e964fead7cefef0ea0e608296f36a",
@@ -142,7 +142,7 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/InputDirectoryTargets.kt": "7156888923e77307dda74471bd55218b9ad3407b2fb4d37c96c0edcc421ee648",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/Instance.kt": "6a1d5dad58146345b04b38182857e8c198e3cba423687c1b0791761ab8b27af1",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/InstanceCapabilities.kt": "f5bc91912a17dff3c5dfb58062a44b27181a10a1433dc0f013b4fc93984bcec4",
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/IntakeInput.kt": "15708a79c6200d909f04f470bb98610b3e49fb6431fe07a2166e40a372f4c2d1",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/IntakeInput.kt": "84c4f07cd54dbc7bca8d6c1d677adca33a60546819f36dadbde30efba370d5f6",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/InterestChange.kt": "e732c2ccb47d65fed9a7376824aafb5b9b12dcd9a31f2ed0a1d418806016ba79",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/IssueSourceCleanupPermitRequest.kt": "05ed9e4a772e7a393ec2d231f420d999b482af7b6443871a751281191ca9bc04",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/Library.kt": "ffbc5434a5b426e9ce6dc7eb45482a14597b327cb5ce09d64551c40e05774869",
@@ -265,8 +265,8 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateAuthorMappingsInner.kt": "82601b4020ed75bbf9242e837074542cb51ac996ea5eee53739b75a8939b0e05",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateMediaMappingsInner.kt": "d11e83e6bdcb004d856c6d77f85eb744f12f07d6fbcd5fb985e0ca7197f13f99",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2ProfileBlockPlan.kt": "2cd827fbaa9c3e8409d7a412c01a882ad8b16cc9ee2c48aaf391d79f3a100bdd",
-    "api/generated/python/operations.json": "7a5ee6e31e173d55e92ffd60a507ca017c7b6768d83517df61f9ac3bc5a8f926",
-    "server/internal/transport/generated/api.gen.go": "c6866290bdd9637f5417b275b342565749a11f89ef60ef30837736ad2dd56a4d",
-    "web/src/api/generated/schema.d.ts": "cdf0aa8d2f5a9c52aab3ed8ad71d464e63708d67f792cf448d7b6ac3e576d3ad"
+    "api/generated/python/operations.json": "3fa38d8571b4c64edb2cc3270126884f70946428c1e4b0f7d4e0a5927695f8bc",
+    "server/internal/transport/generated/api.gen.go": "da6cab67d49d426f850b886b5de9ff19e83817ad01172b852088109e640b8774",
+    "web/src/api/generated/schema.d.ts": "e13a241487baf20bf10578a37114b2b142703e07297c457e43e1e2e0a73bd6c7"
   }
 }
