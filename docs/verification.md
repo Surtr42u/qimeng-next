@@ -37,11 +37,34 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 | 原样复扫 | 78.21 ms | 323.71 ms | 236.38 ms | 27.0% |
 | 少量外部改动后复扫 | 120.92 ms | 435.75 ms | 341.76 ms | 21.6% |
 
-本次优化后的三个中位耗时分别为安装版的 2.82、3.02、2.83 倍。按表中的版本顺序，首扫期间 Linux 进程写入中位数为 135.09、354.48、350.68 MiB。截至首扫完成的进程峰值 RSS 中位数为 121.3、28.6、29.0 MiB，其中包含启动和鉴权。安装版在扫描前设置密码时执行了 64 MiB 的 Argon2id 派生。Next 使用配置令牌。两种鉴权方式影响进程高水位。[安装版口令派生参数](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/auth/password.go)
+逐资产提交的 b3847e3 在这场对照中的三个中位耗时分别为安装版的 2.82、3.02、2.83 倍。按表中的版本顺序，首扫期间 Linux 进程写入中位数为 135.09、354.48、350.68 MiB。截至首扫完成的进程峰值 RSS 中位数为 121.3、28.6、29.0 MiB，其中包含启动和鉴权。安装版在扫描前设置密码时执行了 64 MiB 的 Argon2id 派生。Next 使用配置令牌。两种鉴权方式影响进程高水位。[安装版口令派生参数](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/auth/password.go)
+
+将小图入库改为有界事务后，在另一台同规格运行器上重新轮换运行三个版本。下表只比较这一场各自三轮的中位数。[小批提交同机数据](https://github.com/Surtr42u/qimeng-next/actions/runs/44322029440)
+
+| 同场指标 | 安装版 7459740 | 逐项提交 b3847e3 | 小批提交 efa6234 |
+|---|---:|---:|---:|
+| 首次入库 | 2,083.18 ms | 5,296.18 ms | 1,146.53 ms |
+| 首扫进程写入 | 135.11 MiB | 350.84 MiB | 58.12 MiB |
+| 原样复扫 | 61.18 ms | 188.55 ms | 189.31 ms |
+| 少量改动后复扫 | 100.81 ms | 266.05 ms | 279.44 ms |
+
+在这批小 PNG 上，小批提交使首扫较 b3847e3 缩短 78.4%，写入减少 83.4%，首扫较安装版缩短 45.0%。原样复扫中位数接近上轮实现，小批变动比 b3847e3 慢 5.0%，写入从 3.83 MiB 增至 5.63 MiB。
 
 三版均关闭文件监听、设 24 小时轮询，Next 的注册对账在投放原件前完成。三轮均在 30 秒缩略图静默期内结束，缓存无产物。运行器缺少 ffmpeg/ffprobe，安装版启动时的工具检查在计时前。Next 扫描 PNG 时会读取图片头并计算内容哈希。冷磁盘、大图、视频、有历史数据的库、NAS 与手机性能尚待对应环境测量。性能工作流可手动填写较早 Next 提交的完整 SHA，在同一台运行器上重做三方比对。[复跑工作流](../.github/workflows/scan-comparison.yml) · [优化前 CPU 样本](https://github.com/Surtr42u/qimeng-next/actions/runs/44312664840)
 
 旧版此前两万行的测量覆盖内存索引构建或 SQL 快照装载，完整扫描的耗时还包括文件遍历、变更处理与持久化。[旧版扫描说明](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/README.md#媒体库后台扫描)
+
+#### 手动扫描逐段核对
+
+| 阶段 | 安装版 7459740 | Next |
+|---|---|---|
+| 遍历与复扫 | 手动首扫、复扫都遍历整个目录树。先按库一次读取 ID、相对路径、大小、mtime、行更新时间五列，在内存中记录哪些路径见过。已知路径大小和按毫秒格式化的 mtime 相同便跳过，无需逐文件 SQL。[快照、遍历与短路](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/scanner.go#L271) | 手动请求同样遍历整库，目录每次读取 128 项，批量取该页路径签名，在受信根内核对文件元数据和保存的 mtime。普通库未变文件跳过内容读取，COS 目录归属不完整时仍需处理。[目录遍历](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scans.go#L291) · [签名查询](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scan_progress.go#L101) |
+| 文件内容与元信息 | 扫描路径没有媒体内容哈希。图片和动图按路径、大小与 mtime 入库，尺寸交给后台回填；视频在库锁外调用 ffprobe。入库前重新核对大小和 mtime。[单文件入库](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/scanner.go#L451) · [尺寸回填](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/thumbnailwarmup/service.go#L259) | 新路径或大小、mtime 有变化时，将该文件从头读到 EOF 计算 SHA-256，各种大小使用同一规则。随后读取 PNG/JPEG/GIF 图片头，其他受支持格式在工具可用时探测。发布前还核对文件身份、大小和 mtime。[触发条件](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scans.go#L398) · [哈希读取](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/files.go#L77) · [媒体探测](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/thumbnail.go#L68) |
+| 改写、移动与缺件 | 同路径覆盖元信息，保留首次分配的资产 ID。对已消失路径，将本轮新增项按“大小 + mtime”分组，复核后选择最新有效候选合并；找不到候选时删除消失资产的索引和相应 TXT 作品行。已记录事件独立保留。[路径更新](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/store/queries/assets.sql#L21) · [匹配、复核与删除](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/reconcile.go#L23) | 同路径保留 ID，哈希变化才增加内容版本。遇新路径按同库哈希和大小查候选，恰有一个原路径消失时沿用它的 ID；仍在场的相同内容可保留各自身份，多个失踪候选或超出候选上限时记录歧义。孤立缺件记录问题并保留资产。[候选、版本与修订](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scans.go#L466) |
+| 事务、进度与写入 | 常规库按单资产事务写媒体及角色，进度通过事件总线节流发送。WAL 使用 FULL 同步。[事务](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/enrich.go#L155) · [进度](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/scanner.go#L516) · [数据库配置](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/store/store.go#L115) | b3847e3 也逐资产提交，并将资产、关系和进度一起落库。efa6234 对常规库中新发现且不超过 1 MiB 的 PNG/JPEG/GIF，最多先准备 32 项。写入阶段遇到 20 毫秒预算边界便在文件间释放写锁，保留 WAL/FULL。文件哈希与图片探测在事务外完成。已知路径、同内容候选、未决发布走逐项复核，故障回滚失败项并保存已完成前缀。[原逐项提交](https://github.com/Surtr42u/qimeng-next/blob/b3847e36cd0b6ef38389bd0b0ce14497a64c8285/server/internal/service/scans.go#L550) · [小批提交](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scan_batch.go#L87) · [数据库配置](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/store/sqlite_portable.go#L15) |
+| 自动处理 | 已有路径的写通知可局部处理，大小和 mtime 都相同直接结束。未知路径、删除、改名、目录变化或局部处理失败会请求整库对账，另有独立轮询。[局部更新](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/watch_update.go#L17) · [轮询](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/background.go#L118) | 已有文件写通知也可按路径处理，大小与 mtime 相同时仍读内容核对哈希。新增、改名、删除和目录变化合并整库对账，缩略图另由后台补齐。对照试验关闭监听，手动复扫不承担监控事件的实测含义。[通知分类](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/library_watch.go#L248) · [写通知哈希](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scans.go#L403) · [缩略图主管](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/preview_maintenance.go#L19) |
+
+按上述条件和固定样本推算，Next 首扫送入 SHA-256 的字节数为 6,496,256，原样手动复扫为 0，小批变动的 28 个路径合计 88,816 字节。此处按文件长度计算哈希输入量，操作系统页缓存会影响物理磁盘读取。试验采集了进程写入字节，没有逐次追踪 fsync，也未将端到端差额拆成哈希、目录系统调用和 SQL 各自的耗时。旧版可借鉴的做法包括按窄字段批量读取、用目录差集筛小缺件候选、将耗时探测放在写锁外，以及在提交时复核原件和当前记录。[合成数据与计时脚本](../tools/scan-comparison/compare.py)
 
 <a id="change-evidence"></a>
 ## 按改动选择云端证据
