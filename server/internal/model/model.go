@@ -262,18 +262,18 @@ type PlanCreate struct {
 	Items            []PlanInput `json:"items"`
 }
 type PlanItem struct {
-	UploadID     string   `json:"uploadId"`
-	FileName     string   `json:"fileName"`
-	RelativePath string   `json:"relativePath"`
-	AuthorID     string   `json:"authorId"`
-	AuthorIDs    []string `json:"authorIds"`
-	SourceIDs    []string `json:"sourceIds"`
-	CharacterIDs []string `json:"characterIds"`
-	CollectionID string   `json:"collectionId,omitempty"`
-	Page         int      `json:"page,omitempty"`
-	ExpectedHash string   `json:"expectedHash"`
-	NamingFamily string   `json:"namingFamily,omitempty"`
-	NamespaceFingerprint string `json:"namespaceFingerprint,omitempty"`
+	UploadID             string   `json:"uploadId"`
+	FileName             string   `json:"fileName"`
+	RelativePath         string   `json:"relativePath"`
+	AuthorID             string   `json:"authorId"`
+	AuthorIDs            []string `json:"authorIds"`
+	SourceIDs            []string `json:"sourceIds"`
+	CharacterIDs         []string `json:"characterIds"`
+	CollectionID         string   `json:"collectionId,omitempty"`
+	Page                 int      `json:"page,omitempty"`
+	ExpectedHash         string   `json:"expectedHash"`
+	NamingFamily         string   `json:"namingFamily,omitempty"`
+	NamespaceFingerprint string   `json:"namespaceFingerprint,omitempty"`
 }
 type PlanSummary struct {
 	ID          string `json:"id"`

@@ -56,13 +56,13 @@ type nativeProfile struct {
 }
 
 type nativeItem struct {
-	Kind           string         `json:"kind"`
-	SourceObjectID string         `json:"sourceObjectId"`
-	Block          string         `json:"block,omitempty"`
-	SourceRevision int64          `json:"sourceRevision"`
-	Label          string         `json:"label"`
-	Profile        *nativeProfile `json:"profile,omitempty"`
-	Text           *string        `json:"text,omitempty"`
+	Kind           string          `json:"kind"`
+	SourceObjectID string          `json:"sourceObjectId"`
+	Block          string          `json:"block,omitempty"`
+	SourceRevision int64           `json:"sourceRevision"`
+	Label          string          `json:"label"`
+	Profile        *nativeProfile  `json:"profile,omitempty"`
+	Text           *string         `json:"text,omitempty"`
 	Timeline       *nativeTimeline `json:"timeline,omitempty"`
 }
 
@@ -254,7 +254,7 @@ func (s *Service) PublishNativeDelivery(ctx context.Context, w *Write, in Native
 	segment := DeviceApplySegment{Kind: nativeSegment, Bytes: int64(len(raw)), SHA256: hash, PackageID: hash, SourceInstanceID: s.InstanceID, TargetInstanceID: in.TargetInstanceID}
 	return s.PublishDeviceApply(ctx, w, PreparedDevicePackage{
 		manifest: DeviceApplyManifest{TargetDeviceID: in.TargetDeviceID, ProtocolVersion: 2, TTLSeconds: in.TTLSeconds, Segments: []DeviceApplySegment{segment}},
-		files: map[string]DevicePackageFile{nativeSegment: {Reader: bytes.NewReader(raw), Size: segment.Bytes}},
+		files:    map[string]DevicePackageFile{nativeSegment: {Reader: bytes.NewReader(raw), Size: segment.Bytes}},
 	})
 }
 
