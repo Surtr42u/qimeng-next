@@ -1,8 +1,14 @@
-name: Prepare locked toolchain and SDKs
+name: Cloud verification
 on:
   workflow_dispatch:
+    inputs:
+      refresh_locks:
+        description: Refresh dependency locks and collect the resulting files
+        type: boolean
+        default: false
   push:
-    branches: ['codex/bootstrap/**']
+    branches: [main, 'codex/bootstrap/**']
+  pull_request:
 permissions:
   contents: read
 concurrency:
@@ -23,12 +29,15 @@ jobs:
         with: {python-version: '3.13'}
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with: {distribution: temurin, java-version: '17'}
-      - name: Resolve pinned development tools in cloud
+      - name: Install pinned development tools
         run: |
           python -m pip install PyYAML==6.0.3 uv==0.13.8
+      - name: Refresh JavaScript locks on explicit request
+        if: inputs.refresh_locks
+        run: |
           npm --prefix web install --package-lock-only --ignore-scripts
           npm --prefix tools/mcp-compat install --package-lock-only --ignore-scripts
-          npm --prefix web ci
+      - run: npm --prefix web ci
       - name: Generate protocol clients
         run: python tools/generate_sdks.py
       - name: Resolve Go module checksums
@@ -51,6 +60,18 @@ jobs:
             server/internal/transport/generated/
             ai/requirements.lock
             tools/mcp-compat/package-lock.json
+  lock-check:
+    needs: generate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: generated-contracts-and-locks, path: .}
+      - name: Match SDK sources and dependency locks to this commit
+        run: |
+          git ls-files --error-unmatch api/sdk.lock server/go.mod server/go.sum web/package-lock.json ai/requirements.lock tools/mcp-compat/package-lock.json desktop/package-lock.json desktop/src-tauri/Cargo.lock
+          git diff --exit-code -- api/sdk.lock server/go.mod server/go.sum web/package-lock.json ai/requirements.lock tools/mcp-compat/package-lock.json
   server-runtime:
     needs: generate
     runs-on: ubuntu-24.04
@@ -367,8 +388,10 @@ jobs:
           go build -trimpath -o ../build/qimeng-backup.exe ./cmd/qimeng-backup
           if ($LASTEXITCODE -ne 0) { throw 'Windows backup utility build failed' }
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        if: ${{ !cancelled() }}
         with: {python-version: '3.13'}
       - name: Verify Windows trusted source recycle semantics
+        if: ${{ !cancelled() }}
         env: {PYTHONPATH: ai/src}
         run: |
           python -m pip install --require-hashes -r tools/mcp-compat/windows-recycle.lock
@@ -379,14 +402,16 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: desktop
         run: |
-          npm install --package-lock-only --ignore-scripts
-          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency resolution failed' }
+          if ('${{ inputs.refresh_locks }}' -eq 'true') {
+            npm install --package-lock-only --ignore-scripts
+            if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency resolution failed' }
+            cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+            if ($LASTEXITCODE -ne 0) { throw 'Cargo dependency resolution failed' }
+          }
           npm ci
           if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency install failed' }
           npm run icons
           if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed' }
-          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw 'Cargo dependency resolution failed' }
           cargo test --manifest-path src-tauri/Cargo.toml --locked
           if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed' }
           npm run build

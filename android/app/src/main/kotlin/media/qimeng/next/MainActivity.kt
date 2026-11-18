@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
+        // Consume the new transient grants without replacing the entry intent retained across recreation.
         receiveShare(intent)
     }
 

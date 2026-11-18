@@ -148,7 +148,7 @@ func(s *Service)Move(ctx context.Context,w *Write,id,target string,rev int64)(mo
 func(s *Service)moveAsset(ctx context.Context,w *Write,a model.Asset,target string,rev int64,task *AssetMaintenanceTask)(model.Asset,error){
  if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")};if a.Revision!=rev{return a,Conflict(a.Revision)}
  if !domain.ValidMediaPath(target)||target==""{return a,Fail(400,"invalid_path","目标相对路径无效。")};_,mime,ok:=domain.MediaType(target);if !ok||mime!=a.MimeType{return a,Fail(400,"extension_mismatch","改名不能改变媒体格式扩展名。")}
- if target==a.RelativePath{return a,nil};if e=s.checkPath(ctx,a.LibraryID,target,a.ID);e!=nil{return a,e}
+ if target==a.RelativePath{return a,nil};if e:=s.checkPath(ctx,a.LibraryID,target,a.ID);e!=nil{return a,e}
  old:=a;a.RelativePath=target;a.FileName=path.Base(target);a.Revision++;a.UpdatedAt=time.Now().UTC()
  if task!=nil{task.ExpectedRevision=a.Revision;task.UsedUpdates++}
  return s.runFile(ctx,w,fileIntent{ID:w.ID("file"),Kind:"move",Source:assetPath(old),Target:assetPath(a),Before:&old,After:a,MaintenanceTask:task})

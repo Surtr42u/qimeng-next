@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.model.Author
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
 import media.qimeng.next.ui.component.*

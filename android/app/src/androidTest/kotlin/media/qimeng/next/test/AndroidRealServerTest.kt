@@ -132,7 +132,7 @@ class AndroidRealServerTest {
         compose.onNodeWithTag("navigation:home").performClick()
         compose.onNodeWithTag("media-browser:home:0").performTouchInput { swipeDown() }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
-        screenshot("real-server-home.png")
+        screenshotWithMedia("real-server-home.png")
         compose.onNodeWithContentDescription(picture.name).performClick()
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("标签").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("标签").performClick()
@@ -150,16 +150,20 @@ class AndroidRealServerTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
         compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
-        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
         compose.onNodeWithContentDescription("进入全屏").performClick()
         compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
-        screenshot("real-server-video-fullscreen.png")
+        screenshotWithMedia("real-server-video-fullscreen.png")
+        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
+        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
         compose.onNodeWithContentDescription("退出全屏").performClick()
         val recommendation = runBlocking { graph.media.assets(AssetQuery(source = "recommendations", seed = 42)) }
         assertTrue(recommendation.items.any { it.id == picture.id })
-        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        compose.onNodeWithContentDescription("返回").performClick()
+        repeat(2) {
+            if (compose.onAllNodesWithTag("navigation:albums").fetchSemanticsNodes().isEmpty()) {
+                compose.activityRule.scenario.onActivity { activity -> activity.onBackPressedDispatcher.onBackPressed() }
+                compose.waitForIdle()
+            }
+        }
         compose.onNodeWithTag("navigation:albums").performClick()
         compose.waitUntil(30_000) { compose.onAllNodesWithText("2 文件").fetchSemanticsNodes().isNotEmpty() }
         screenshot("real-server-albums.png")
@@ -203,6 +207,25 @@ class AndroidRealServerTest {
     private fun screenshot(name: String) {
         compose.waitForIdle()
         saveScreenshot(name)
+    }
+    private fun screenshotWithMedia(name: String) {
+        compose.waitUntil(30_000) {
+            media.qimeng.next.testsupport.captureCloudScreenshot(name) { bitmap ->
+                // Both the PNG and H.264 fixtures contain saturated colors; the surrounding UI and shutter are neutral.
+                val readable = if (bitmap.config == Bitmap.Config.HARDWARE) requireNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false)) else bitmap
+                try {
+                    var colored = 0
+                    for (y in readable.height / 8 until readable.height * 7 / 8 step 8) for (x in 8 until readable.width - 8 step 8) {
+                        val pixel = readable.getPixel(x, y)
+                        val r = Color.red(pixel); val g = Color.green(pixel); val b = Color.blue(pixel)
+                        if (maxOf(r, g, b) - minOf(r, g, b) > 75) colored++
+                    }
+                    colored >= 30
+                } finally {
+                    if (readable !== bitmap) readable.recycle()
+                }
+            }
+        }
     }
     private fun saveScreenshot(name: String) {
         media.qimeng.next.testsupport.captureCloudScreenshot(name)

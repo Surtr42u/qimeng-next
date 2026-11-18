@@ -6,6 +6,10 @@
 
 本地允许源码阅读与编辑、静态差异检查、Git 提交/推送和读取云端日志。需要设备或 NAS 才能证明的行为单列，不能用 CI 冒充。
 
+推送主分支和提交 PR 自动运行 Cloud verification。OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随该次检查提供；仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 会将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 同时使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
+
+需要更新 JavaScript／Rust 依赖时，在 Actions 手动运行并勾选 `refresh_locks`。协议变更可直接取同一提交的 `generated-contracts-and-locks` 更新来源锁；若锁有差异，独立的功能测试仍能给出诊断。带新锁的提交须通过完整检查才可交付。
+
 ## 必须覆盖的实际行为
 
 - 普通上传独立于 AI，重试沿用操作身份；断线、并发重放、换输入及源变化可区分。

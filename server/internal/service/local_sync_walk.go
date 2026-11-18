@@ -31,7 +31,7 @@ func openSyncSource(root *os.Root,name string)(*os.File,os.FileInfo,error){
  parts:=strings.Split(name,"/");var entry os.FileInfo
  for i:=range parts{
   var e error;entry,e=root.Lstat(strings.Join(parts[:i+1],"/"))
-  if e!=nil{return nil,nil,e};if entry.Mode()&os.ModeSymlink!=0{return nil,nil,Fail(409,"local_sync_link","投放目录中的链接已跳过。")}
+  if e!=nil{return nil,nil,e};if syncPathLink(entry){return nil,nil,Fail(409,"local_sync_link","投放目录中的链接已跳过。")}
  }
  if !entry.IsDir()&&!entry.Mode().IsRegular(){return nil,nil,Fail(409,"local_sync_special_file","投放目录只读取普通文件。")}
  f,e:=root.OpenFile(name,os.O_RDONLY|syncReadFlags,0);if e!=nil{return nil,nil,e};info,e:=f.Stat()
