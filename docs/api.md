@@ -32,6 +32,16 @@
 
 请求与文本查证共享任务调用和研究预算。单次最长 95 秒，并受任务截止时间约束；响应上限 256 KiB。同一幂等键重复提交只取得原回执，处理中为 202。应答丢失可按 `GET /operations/{key}?operation=lookupResearchImage` 或查询 ID 核销。成功回执的 `items` 只收录真实候选链接，`imageHints` 单列无链接的域名与标题，二者最多各 20 项。空结果为 `not_found`。伴随服务的 `BUSY` 为 `rate_limited`，`BLOCKED_BOT` 为 `blocked`；浏览器未就绪、未到结果页、超时或摘要不符均为 `unavailable`。已中断的任务保留 `interrupted`。所有 Lens 线索的 `evidenceKind` 都是 `lead`，确认作品归属仍须独立核实。
 
+## 已提交智能批次的发现与认领
+
+常驻执行器持有本人签发的长期凭据，且获准接收和整理时，可读 `GET /ai/delegations/current/ready-batches`。服务只在本授权的已启用库中查找显式选择智能模式的批次，并要求该批次的研究上限在授权范围内。清单须已封存，每个原始选择均已完成传输或有明确终态，且至少有一个可处理的已验收新文件。已拒绝、已取消和已发布的条目保留在原清单中；同批的正常条目可以继续。普通上传、仅剩冲突的批次、在途发布、已有任务或活动中的人工处理凭据均不会触发新的自动认领。
+
+无工作时返回 `{"items":[]}`。有工作时，`items` 按创建时间和批次 ID 返回最多 16 项，每项提供 `batchId`、`libraryId`、`manifestFingerprint` 和 `maxResearchCalls`。只读轮询不会授予凭据或扣除调用额度。每日新任务额度用尽时返回 429 `delegation_daily_limit`，原有任务、提交回执与接续入口仍可用。
+
+执行器将清单摘要作为 `readyManifestFingerprint` 交给既有 `POST /ai/delegated-tasks`，同时提供 `kind=intake`、`mode=intelligent`、所选库和批次 ID。认领前须在本机私有存储持久保存自己的幂等键与由可信执行器生成的凭据材料。服务在签发事务边界重新检查授权、库、预算、清单指纹和待处理项；成功的 `taskId` 即原批次 ID。两个执行器同时认领时，只有一个取得任务，另一个收到 409 `task_already_claimed`。批次已取消或清单失效返回 409 `batch_not_claimable`。后续轮询可继续处理其他批次。
+
+认领应答丢失时，用同一长期凭据、原键和相同正文重试，或读 `GET /operations/{key}`。成功回执的操作标识为 `POST /api/v1/ai/delegated-tasks`；若该键还有其他用途，核销时以 `operation` 查询参数传入这个完整值。重启后用已保存的任务凭据接续，轮换凭据走原父授权的 `POST /ai/delegated-tasks/{id}/resume`。准备和发布沿用同一个持久计划、指纹与提交键，逐项状态以服务端回执为准。已有明确任务可以先签发再上传，这一用法保留原申请流程。
+
 ## 显式设备维护包
 
 PC 或 NAS 的管理员在 `POST /device/credentials` 登记目标设备及客户端生成的 32 字节独立随机凭据（无填充 base64url）。服务只返回凭据 ID、设备标签、显示名和到期时间。轮换须提供当前凭据 ID。设备可用 `GET /sessions/current` 核对本人的设备身份与 `device.apply` 权限，登记端的媒体目录和管理接口另需本人会话。
