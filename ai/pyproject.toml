@@ -12,6 +12,9 @@ dependencies = ["mcp==2.3.0", "httpx==0.28.1", "jsonschema==4.26.0"]
 [project.scripts]
 qai = "qimeng_ai.cli:main"
 
+[project.optional-dependencies]
+windows-recycle = ["pywin32==312; sys_platform == 'win32'"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

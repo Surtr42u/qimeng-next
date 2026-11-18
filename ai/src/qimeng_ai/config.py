@@ -35,6 +35,7 @@ class Config:
     timeout: int
     storages: dict[str, Path]
     allow_media_to_model: bool
+    recycle_storages: frozenset[str] = frozenset()
 
     @classmethod
     def load(cls, env=None) -> "Config":
@@ -59,7 +60,8 @@ class Config:
         if not directory.is_absolute():
             raise ToolError("CONFIG_INVALID", "QIMENG_AI_STATE_DIR 必须是可信私有绝对目录")
         permissions = frozenset(filter(None, env.get("QIMENG_AI_PERMISSIONS", "read").split(",")))
-        if not permissions <= {"read", "delegate", "ingest", "research", "organize", "author.profile.write", "local.read", "local.research"}:
+        if not permissions <= {"read", "delegate", "ingest", "research", "organize", "author.profile.write",
+                               "source.cleanup", "local.read", "local.research", "local.recycle"}:
             raise ToolError("CONFIG_INVALID", "QIMENG_AI_PERMISSIONS 含未知权限")
         try:
             raw_storages = json.loads(env.get("QIMENG_AI_STORAGES", "{}"))
@@ -79,6 +81,13 @@ class Config:
             if source_root.is_relative_to(private_root) or private_root.is_relative_to(source_root):
                 raise ToolError("CONFIG_INVALID", "来源存储与执行器私有状态目录必须完全分离")
             storages[name] = Path(value)
+        try:
+            recycle = json.loads(env.get("QIMENG_AI_RECYCLE_STORAGES", "[]"))
+        except ValueError:
+            raise ToolError("CONFIG_INVALID", "可回收存储应为逻辑存储名的 JSON 数组") from None
+        if (not isinstance(recycle, list) or len(recycle) > 100
+                or any(not isinstance(key, str) or key not in storages for key in recycle)):
+            raise ToolError("CONFIG_INVALID", "可回收存储须明确选自已配置的来源存储")
         if positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576) < 2048:
             raise ToolError("CONFIG_INVALID", "输出预算至少2048字节，以容纳执行结果和恢复引用")
         return cls(origin, token, directory, env.get("QIMENG_AI_TASK_ID", "interactive"), permissions,
@@ -87,4 +96,4 @@ class Config:
                    positive(env, "QIMENG_AI_MAX_UNCHANGED", 3, 100),
                    positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576),
                    positive(env, "QIMENG_AI_TIMEOUT", 120, 1800), storages,
-                   env.get("QIMENG_AI_ALLOW_MEDIA_TO_MODEL", "false").lower() in {"1", "true"})
+                   env.get("QIMENG_AI_ALLOW_MEDIA_TO_MODEL", "false").lower() in {"1", "true"}, frozenset(recycle))

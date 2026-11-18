@@ -52,7 +52,25 @@ func(s *Service)Context(ctx context.Context,p model.Principal,id,cursor string,l
  if d.Batch.ManifestState=="legacy_unverified"{items=d.Items[o:end]}else{inputs=d.Inputs[o:end];selected:=map[string]bool{};for _,input:=range inputs{selected[input.UploadID]=true};for _,item:=range d.Items{if selected[item.Upload.ID]{items=append(items,item)}}}
  actions:=[]string{};if d.Batch.State!="cancelled"&&d.Batch.State!="completed"{for _,item:=range d.Items{switch item.Upload.State{case "receiving":actions=appendUnique(actions,"appendUpload","completeUpload");case "staged":actions=appendUnique(actions,"preparePlan");if item.ResearchOutcome==""&&d.Batch.ResearchCalls<d.Batch.MaxResearchCalls{actions=appendUnique(actions,"submitResearch")};case "duplicate":actions=appendUnique(actions,"awaitUserDuplicateDecision")}};if len(d.Plans)>0{actions=appendUnique(actions,"getPlan","commitPlan")}}
  if d.Batch.State=="cancelled"||d.Batch.ManifestState=="legacy_unverified"{actions=[]string{}}else if d.Batch.ManifestState=="open"{actions=[]string{"intake.register"}}else if d.Batch.ManifestState=="sealed"{for _,input:=range d.Inputs{if input.State=="pending"{actions=appendUnique(actions,"upload.file")}}}
- result:=map[string]any{"batch":d.Batch,"policyVersion":"2","nextActions":actions,"remainingResearchCalls":d.Batch.MaxResearchCalls-d.Batch.ResearchCalls,"inputs":inputs,"items":items,"limitations":[]string{"研究候选不等于确认归属；未知作者可入其他搁置。","批次外、人工修正、替换与删除不在新增授权内。","外部模型调用消费由可信执行器控制并回报；服务端不声称限制未接入的外部消费。","独立备份和来源回收尚未接线，来源必须保留。"}}
+ limitations:=[]string{"研究候选需按证据核实，未知作者可入其他搁置。","批次外、替换和删除需要独立授权。","模型费用由提供遥测的宿主记录。"}
+ if d.Batch.ManifestState=="sealed"&&d.Batch.State!="cancelled"{
+  hasIngested:=false
+  for _,input:=range d.Inputs{if input.State=="ingested"{hasIngested=true;break}}
+  if hasIngested{
+   switch {
+   case s.Config.DefaultBackupTarget=="":
+    limitations=append(limitations,"尚未配置独立备份目标，来源保留。")
+   case d.Batch.BackupState=="covered"||d.Batch.BackupState=="partially_covered":
+    actions=appendUnique(actions,"backup.protection.query")
+    if p.Has("source.cleanup")&&d.Batch.CleanupState!="recycled"{actions=appendUnique(actions,"source.recycle")}
+   case d.Batch.BackupState=="awaiting_external_backup":
+    actions=appendUnique(actions,"backup.protection.query")
+   case p.Has("ingest"):
+    actions=appendUnique(actions,"backup.protect")
+   }
+  }
+ }
+ result:=map[string]any{"batch":d.Batch,"policyVersion":"2","nextActions":actions,"remainingResearchCalls":d.Batch.MaxResearchCalls-d.Batch.ResearchCalls,"inputs":inputs,"items":items,"limitations":limitations}
  if end<total{result["nextCursor"]=nextCursor(end,key)};return result,nil
 }
 func appendUnique(values []string,more ...string)[]string{for _,v:=range more{found:=false;for _,x:=range values{if x==v{found=true;break}};if !found{values=append(values,v)}};return values}

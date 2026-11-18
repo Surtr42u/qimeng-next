@@ -75,6 +75,8 @@ class Runtime:
         result.extend(tool_definitions())
         from .intake import tool_definitions as intake_definitions
         result.extend(intake_definitions())
+        from .cleanup import tool_definitions as cleanup_definitions
+        result.extend(cleanup_definitions())
         from .research import tool_definitions as research_definitions
         result.extend(research_definitions())
         from .delegation import tool_definitions as delegation_definitions
@@ -143,7 +145,7 @@ class Runtime:
                     "tools": [{key: tool[key] for key in ("name", "description", "scope", "readOnly")}
                               for tool in self.tools()],
                     "workflow": ["platform.permissions", "task.start", "task.context", "intake.register", "upload.file", "research.materials", "research.submit", "naming.suggest", "naming.preview",
-                                 "plan.prepare", "plan.read", "plan.commit", "task.read"],
+                                 "plan.prepare", "plan.read", "plan.commit", "task.read", "backup.protect", "backup.protection.read", "source.recycle"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",
                               "计划在Go服务端持久化；用原计划ID和fingerprint提交。",
                               "候选与已核实身份分开；作者未知归其他搁置，不周期研究。",
@@ -167,6 +169,9 @@ class Runtime:
         if name == "intake.register":
             from .intake import register
             return register(self, arguments)
+        if name == "source.recycle":
+            from .cleanup import recycle
+            return recycle(self, arguments)
         if name == "platform.artifact.read":
             from .research import read_artifact
             return read_artifact(self, arguments["artifactRef"])

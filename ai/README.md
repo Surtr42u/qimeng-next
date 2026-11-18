@@ -20,6 +20,7 @@
 | `QIMENG_AI_TASK_ID` | 传统单任务预算的稳定ID；默认interactive使用每日控制通道预算，新工作流按taskId另记业务预算 |
 | `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予delegate/ingest/research/organize/author.profile.write/local.read/local.research |
 | `QIMENG_AI_STORAGES` | JSON对象，逻辑名映射可信本地根；模型只看到逻辑名与相对路径 |
+| `QIMENG_AI_RECYCLE_STORAGES` | 允许移入回收站的逻辑来源名数组，默认空。每个名称必须已经出现在来源存储配置中 |
 | `QIMENG_AI_MAX_CALLS/MAX_SECONDS/MAX_UNCHANGED` | 默认100次/900秒/3次相同结果；预算持久保存 |
 | `QIMENG_AI_OUTPUT_BYTES` | 默认12288，限制展示结果；不含协议外壳或宿主重复呈现 |
 | `QIMENG_AI_TIMEOUT` | 单HTTP请求默认120秒；超时可能已有副作用，先回读 |
@@ -53,6 +54,10 @@
 作者资料维护采用单独的明确授权任务：可信客户端用 `POST /author-tasks` 指定作者、读取修订、允许字段、是否允许清空、次数及有效期，随后签发只绑定该任务的 `read,author.profile.write` 凭据。模型通过 `author.task.context` 获取需要的信息，使用稳定幂等键执行 `author.profile.update`。正常用户界面仍直接使用本人会话编辑；只有向AI委托时才需要此范围授权。AI修改字段标为candidate，不冒充人工核实；无关字段保留。
 
 ## 可信端维护
+
+配置独立备份目标并取得本人授权后，`backup.protect` 保护本批已经入库的输入。用 `backup.protection.read` 核对目标、原始清单、内容版本和读回结果。要回收来源，还需给该任务单独授予 `source.cleanup`，在执行器配置 `local.read,local.recycle` 并选中允许回收的来源存储。`source.recycle` 接收原批次、输入、`fileRef` 和保护记录，校验登记时的实体文件、SHA‑256 和当前租约。文件内容相同、来源目录不同的另一文件会被拒绝。回执丢失时沿用原操作键重试。
+
+Linux 使用同卷的 [Freedesktop 回收站](https://specifications.freedesktop.org/trash/latest/)，保留原路径和可恢复内容。Windows 的可选组件 `windows-recycle` 使用 [Windows Shell 回收操作](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postdeleteitem)，在执行器私有目录同卷保留临时恢复链接并核对系统返回的回收站对象。来源不满足这些条件时报告保留。若系统操作已经启动而本地缺少最终证据，执行器保留未决日志，停止再次移动。通过另一设备选择且无法核实原文件身份的输入，应在持有该来源的设备处理。
 
 已安装经过云端验证的工具包后，`qai mcp`启动stdio，`qai catalog`查询目录；`qai call <tool>`从stdin读取JSON。`qai admin status`查询持久预算；`admin reconcile <key>`先请求服务端权威回读再核销；`admin renew --calls N --seconds N`只能提高上限，保留调用数、开始时间和未决项。这些管理能力不注册为模型工具。
 

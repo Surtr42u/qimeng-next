@@ -55,6 +55,9 @@ class State:
               CREATE TABLE IF NOT EXISTS executor_secrets (operation TEXT PRIMARY KEY, secret TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS task_credentials (task TEXT PRIMARY KEY, secret TEXT NOT NULL,
                 generation INTEGER NOT NULL, metadata TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS cleanup_journal (
+                permit TEXT PRIMARY KEY, operation TEXT UNIQUE NOT NULL, binding TEXT NOT NULL,
+                stage TEXT NOT NULL, outcome TEXT, created REAL NOT NULL);
             """)
             # Local execution metadata is versioned independently of generated API schemas.
             # An SDK update must not grant a fresh task budget or erase unresolved writes.
@@ -170,7 +173,8 @@ class State:
             row = db.execute("SELECT tool FROM pending WHERE task=? AND key=?", (self.config.task_id, key)).fetchone()
         if row is None:
             raise ToolError("PENDING_NOT_FOUND", "没有该任务的未决操作")
-        return key + ":complete" if row["tool"] == "upload.file" else key
+        suffix = {"upload.file": ":complete", "source.recycle": ":receipt"}.get(row["tool"], "")
+        return key + suffix
 
     def reconcile(self, key: str, authoritative: dict) -> dict:
         if authoritative.get("state") != "committed" or authoritative.get("idempotencyKey") != self.receipt_key(key):

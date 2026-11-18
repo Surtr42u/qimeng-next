@@ -63,7 +63,7 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
             raw = response.read()
             return json.loads(raw) if raw else None
 
-    def process(self, root, token, permissions):
+    def process(self, root, token, permissions, extra_environment=None):
         source = root / "input"
         source.mkdir(exist_ok=True)
         return StdioServerParameters(command=sys.executable, args=["-m", "qimeng_ai.cli", "mcp"], env={
@@ -73,7 +73,54 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
             "QIMENG_AI_STORAGES": json.dumps({"input": str(source)}),
             "QIMENG_AI_PERMISSIONS": permissions, "QIMENG_AI_MAX_SECONDS": "900",
             "QIMENG_AI_ALLOW_MEDIA_TO_MODEL": "true",
+            **(extra_environment or {}),
         })
+
+    async def test_protected_original_goes_to_the_native_trash_only_once(self):
+        self.assertEqual(os.environ.get("CI"), "true")
+        import subprocess
+        library = self.request("POST", "/libraries", {"name": "Protected synthetic input", "kind": "regular"}, key="mcp-protection-library")
+        batch = self.request("POST", "/batches", {"libraryId": library["id"], "mode": "ordinary", "label": "Source disposition"}, key="mcp-protection-batch")
+        credential = self.request("POST", "/credentials", {"label": "Source cleanup fixture", "batchId": batch["id"],
+                                                            "scopes": ["read", "ingest", "source.cleanup"]})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "input").mkdir()
+            source = root / "input/chosen.png"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0x476842:s=44x28",
+                            "-frames:v", "1", str(source)], check=True)
+            expected = source.read_bytes()
+            env = {"QIMENG_AI_RECYCLE_STORAGES": '["input"]', "XDG_DATA_HOME": str(root/"xdg")}
+            async with Client(self.process(root, credential["token"], "read,ingest,local.read,local.recycle,source.cleanup", env)) as client:
+                async def call(name, args):
+                    response = await client.call_tool(name, args)
+                    self.assertFalse(response.is_error, response.content)
+                    return response.structured_content
+                listed = {item.name for item in (await client.list_tools()).tools}
+                self.assertFalse({"issueSourceCleanupPermit", "recordSourceCleanupReceipt"} & listed)
+                sealed = await call("intake.register", {"batchId": batch["id"], "storage":"input", "operationId":"protect-manifest"})
+                item = sealed["inputs"][0]
+                ingested = await call("upload.file", {"batchId":batch["id"], "libraryId":library["id"], "inputId":item["inputId"],
+                                      "fileRef":item["fileRef"], "operationId":"protect-upload", "mode":"ordinary", "fileName":"chosen.png"})
+                self.assertEqual(ingested["status"], "ingested")
+                protection = await call("backup.protect", {"id":batch["id"], "Idempotency-Key":"protect-batch-input"})
+                for _ in range(60):
+                    protection = self.request("GET", "/batches/"+batch["id"]+"/protections/"+protection["id"])
+                    if protection["state"] not in {"queued","running"}:
+                        break
+                    await asyncio.sleep(.25)
+                self.assertEqual(protection["state"], "completed", protection.get("errorCode"))
+                self.assertTrue(source.is_file())
+                args = {"batchId":batch["id"], "protectionId":protection["id"], "inputId":item["inputId"],
+                        "fileRef":item["fileRef"], "operationId":"native-recycle-protected"}
+                self.assertEqual((await call("source.recycle", args))["outcome"], "recycled")
+                source.write_bytes(b"new synthetic file with the old name")
+                self.assertEqual((await call("source.recycle", args))["outcome"], "recycled")
+                self.assertEqual(source.read_bytes(), b"new synthetic file with the old name")
+                trashed, = (root/"xdg/Trash/files").iterdir()
+                self.assertEqual(trashed.read_bytes(), expected)
+                result = await call("task.read", {"id":batch["id"]})
+                self.assertEqual(result["batch"]["cleanupState"], "recycled")
 
     async def test_stdio_intake_and_author_maintenance(self):
         if os.environ.get("CI") != "true":

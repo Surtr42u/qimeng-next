@@ -2,6 +2,10 @@
 set -euo pipefail
 if [[ "${CI:-}" != "true" ]]; then echo 'MCP integration is cloud-only.' >&2; exit 2; fi
 export QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-mcp"
+independent_target=$(mktemp -d /dev/shm/qimeng-cloud-mcp-XXXXXXXX)
+export QIMENG_BACKUP_TARGETS
+QIMENG_BACKUP_TARGETS=$(jq -cn --arg path "$independent_target" '{proof:{path:$path,failureDomain:"temporary-cloud-volume"}}')
+export QIMENG_DEFAULT_BACKUP_TARGET=proof
 export QIMENG_LISTEN='127.0.0.1:18481'
 export QIMENG_TIMEZONE='Asia/Shanghai'
 export QIMENG_AI_CONFIGURED='true'

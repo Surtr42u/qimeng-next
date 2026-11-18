@@ -1,0 +1,2 @@
+# Official pywin32 build 312, CPython 3.13 on Windows amd64.
+pywin32==312 --hash=sha256:c53e878d15a1c44788082bfe712a905433473aa38f86375b7cf8b45e3acbaaf9

@@ -78,6 +78,12 @@ def _inventory(runtime, arguments: dict) -> list[str]:
     return references
 
 
+def original_input_id(batch_id: str, ordinal: int, record: dict) -> str:
+    source_key = json.dumps([record["storage"], record["relative"], record["identity"]],
+                            ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256((batch_id + "\0" + str(ordinal) + "\0" + source_key).encode("utf-8")).hexdigest()[:32]
+
+
 def register(runtime, arguments: dict) -> dict:
     references = _inventory(runtime, arguments)
     inputs, bindings = [], []
@@ -86,11 +92,9 @@ def register(runtime, arguments: dict) -> dict:
     for ordinal, reference in enumerate(references):
         with open_reference(runtime, reference) as (_, info):
             record = runtime.state.read("r_" + reference[2:], kind="file")
-            source_key = json.dumps([record["storage"], record["relative"], record["identity"]],
-                                    ensure_ascii=False, separators=(",", ":"))
             # Repeated selections remain separate inputs. Go will report actual
             # duplicate content rather than silently shortening the user's list.
-            identifier = hashlib.sha256((arguments["batchId"] + "\0" + str(ordinal) + "\0" + source_key).encode("utf-8")).hexdigest()[:32]
+            identifier = original_input_id(arguments["batchId"], ordinal, record)
             item = {"id": identifier, "originalFileName": Path(record["relative"]).name,
                     "sourceRelativePath": record["relative"], "size": info.st_size}
             inputs.append(item)
