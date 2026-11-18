@@ -439,7 +439,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed' }
           npm run build
           if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
-          pwsh -NoProfile -File tests/run-desktop-smoke.ps1
+          node tests/cloud-webview.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Native WebView2 window smoke failed' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

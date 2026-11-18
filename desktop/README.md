@@ -21,11 +21,11 @@ npm ci
 npm run icons
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run build
-pwsh -NoProfile -File tests/run-desktop-smoke.ps1
+node tests/cloud-webview.mjs
 ```
 
 只有手动调度完整工作流并勾选 `refresh_locks` 时，作业才先刷新 npm 和 Cargo 锁。Tauri CLI 从授权复用的品牌图在云端生成各平台尺寸。Windows 云产物还包括 Go 服务与离线恢复工具。
 
-自动单测覆盖地址、完整 origin 和本地连接页边界。Windows 云测试将同次 NSIS 安装包、Node 和测试脚本放到独立目录，用两个合成站点、独立 WebView2 资料目录和原生窗口状态核验媒体分段读取、标题栏、服务器切换、退出与卸载。GitHub 托管机的运行账号有管理员权限时，脚本在现有桌面以 Windows 的 Basic User 权限启动子进程，子进程先核对实际权限。测试结束后清理暂存目录。逐次结果见[当前状态](../docs/status.md)。[微软对 WebView2 150 行为的说明](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645) · [Playwright WebView2 连接办法](https://playwright.dev/docs/webview2)
+自动单测覆盖地址、完整 origin 和本地连接页边界。Windows 云测试安装同次 NSIS 安装包，使用独立的 WebView2 资料目录。测试通过 Windows UI Automation 在真实连接窗口填写地址、点击保存和标题栏按钮，用两个回环合成站点核对媒体分段读取与会话，再从原生窗口核对最大化、最小化、切换服务器后关闭旧窗口，以及主窗退出和卸载。Windows 逐次验收见[当前状态](../docs/status.md)。[Windows UI Automation](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-overview)
 
 官方依据：[Tauri capabilities](https://v2.tauri.app/security/capabilities/)、[窗口导航与新窗口](https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html)、[托盘](https://v2.tauri.app/learn/system-tray/)、[Opener](https://v2.tauri.app/plugin/opener/)、[图标](https://v2.tauri.app/develop/icons/)。
