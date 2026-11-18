@@ -23,7 +23,7 @@ class TaskActions(unittest.TestCase):
             context = {"batch": {"id": "fixture-batch"}, "inputs": [{"id": "duplicate-file", "state": "duplicate"},
                        {"id": "new-file", "state": "staged"}],
                        "nextActions": ["awaitUserDuplicateDecision", "preparePlan", "submitResearch", "unknownFutureOperation"]}
-            presented = present_batch_actions(executor, context, executor.tools())
+            presented = present_batch_actions(executor, context, executor.tools(discovery=False))
             self.assertEqual(presented["nextActions"], ["plan.prepare"])
             self.assertEqual(presented["actionWaits"], [
                 {"reason": "user_duplicate_decision", "inputIds": ["duplicate-file"]},
