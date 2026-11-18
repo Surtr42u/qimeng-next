@@ -15,6 +15,10 @@
 
 ## 维护与验收
 
+原生数据基础合入主分支的提交为 `5538fa3`，稳定标签和集合别名合入于 `3d48afc`。两批分别通过当时的 23 项检查。单次拖动、收藏、今日赞、人工修改标签和作者都有各自的写入入口。应用详情由 Go 组装，手机离线与 PC/NAS 使用同样的写入规则。[原生数据与多端验收](https://github.com/Surtr42u/qimeng-next/pull/1) · [别名查询与回执](https://github.com/Surtr42u/qimeng-next/pull/2)
+
+`f86bc47` 的真实 Go 入口覆盖明确清空出处与角色后再扫描、清单里有效媒体与空文件及不支持格式并存、AI 修改已入库作品的标签。独立 stdio 执行器另用合成视频检验单帧查证，重发同一请求只使用一次研究预算。[Go 双驱动与事务用例](https://github.com/Surtr42u/qimeng-next/actions/runs/44388037007/job/135098878152) · [MCP、Pi 与 CLI](https://github.com/Surtr42u/qimeng-next/actions/runs/44388037007/job/135099345899)
+
 Web 的 `8df9cd4` 在 Chromium、移动 Chromium 和 WebKit 共通过 107 项浏览器用例。浏览器目录写入演练只在支持所需 OPFS 接口的 Chromium 执行，WebKit 跳过这一项。设备配对、跨实例资料交付和用户实际拖动视频使用独立的真实服务作业验收。[浏览器回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44356165266/job/134985901182)
 
 维护者从[开发与维护](../CONTRIBUTING.md)进入。公开后的主分支 `89edb6a` 通过 Go 格式、模块引用、文档、迁移历史及密钥扫描。Web 的展示层依赖检查、浏览器测试和真实服务联调也在该提交通过。[工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305960995) · [Web 检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058447) · [真实服务联调](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134821281600)
