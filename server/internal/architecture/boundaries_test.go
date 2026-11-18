@@ -61,9 +61,16 @@ func importProblem(owner, imported string) string {
 }
 
 func TestProductionImportBoundaries(t *testing.T) {
+	manifest, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(strings.Split(string(manifest), "\n"), "module "+strings.TrimSuffix(internalPrefix, "/internal/")) {
+		t.Fatal("module identity changed; update the internal import boundary")
+	}
 	source := os.DirFS("..")
 	files := token.NewFileSet()
-	err := fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

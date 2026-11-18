@@ -41,5 +41,8 @@ func (a *API) delegationRoutes() {
 		CredentialSecret string `json:"credentialSecret"`
 	}](a, "POST", "/ai/delegated-tasks/{id}/resume", true, func(r *http.Request, w *service.Write, in struct {
 		CredentialSecret string `json:"credentialSecret"`
-	}) (any, int, error) { v, e := a.s.ResumeDelegatedTask(r.Context(), w, r.PathValue("id"), in.CredentialSecret); return v, 200, e })
+	}) (any, int, error) {
+		v, e := a.s.ResumeDelegatedTask(r.Context(), w, r.PathValue("id"), in.CredentialSecret)
+		return v, 200, e
+	})
 }

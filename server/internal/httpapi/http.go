@@ -249,7 +249,7 @@ type eventCreateRequest struct {
 
 func (a *API) routes() {
 	a.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if e := a.s.DB.DB.PingContext(r.Context()); e != nil {
+		if e := a.s.CheckReadiness(r.Context()); e != nil {
 			fail(w, e)
 			return
 		}
@@ -346,14 +346,20 @@ func (a *API) routes() {
 	}](a, "PUT", "/assets/{id}/tags", true, func(r *http.Request, w *service.Write, in struct {
 		ExpectedRevision int64    `json:"expectedRevision"`
 		Tags             []string `json:"tags"`
-	}) (any, int, error) { v, e := a.s.UpdateTags(r.Context(), w, r.PathValue("id"), in.ExpectedRevision, in.Tags); return v, 200, e })
+	}) (any, int, error) {
+		v, e := a.s.UpdateTags(r.Context(), w, r.PathValue("id"), in.ExpectedRevision, in.Tags)
+		return v, 200, e
+	})
 	write[struct {
 		Favorite bool `json:"favorite"`
 		Liked    bool `json:"liked"`
 	}](a, "PUT", "/assets/{id}/reaction", true, func(r *http.Request, w *service.Write, in struct {
 		Favorite bool `json:"favorite"`
 		Liked    bool `json:"liked"`
-	}) (any, int, error) { v, e := a.s.Reaction(r.Context(), w, r.PathValue("id"), in.Favorite, in.Liked); return v, 200, e })
+	}) (any, int, error) {
+		v, e := a.s.Reaction(r.Context(), w, r.PathValue("id"), in.Favorite, in.Liked)
+		return v, 200, e
+	})
 	write[eventCreateRequest](a, "POST", "/assets/{id}/events", false, func(r *http.Request, w *service.Write, in eventCreateRequest) (any, int, error) {
 		v, e := a.s.RecordEvent(r.Context(), w, r.PathValue("id"), model.Event{EventID: in.EventID, Kind: in.Kind, ContentVersion: in.ContentVersion, PositionMs: in.PositionMs, SessionID: in.SessionID, Seconds: in.Seconds, OccurredAt: in.OccurredAt})
 		return v, 200, e
@@ -409,7 +415,10 @@ func (a *API) routes() {
 	}](a, "POST", "/assets/{id}/move", true, func(r *http.Request, w *service.Write, in struct {
 		ExpectedRevision int64  `json:"expectedRevision"`
 		RelativePath     string `json:"relativePath"`
-	}) (any, int, error) { v, e := a.s.Move(r.Context(), w, r.PathValue("id"), in.RelativePath, in.ExpectedRevision); return v, 200, e })
+	}) (any, int, error) {
+		v, e := a.s.Move(r.Context(), w, r.PathValue("id"), in.RelativePath, in.ExpectedRevision)
+		return v, 200, e
+	})
 	write[struct{}](a, "DELETE", "/assets/{id}", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		rev, e := revision(r)
 		if e != nil {
@@ -571,7 +580,10 @@ func (a *API) batchRoutes() {
 		ManifestFingerprint string `json:"manifestFingerprint"`
 	}](a, "POST", "/batches/{id}/inputs/{inputId}/cancel", true, func(r *http.Request, w *service.Write, in struct {
 		ManifestFingerprint string `json:"manifestFingerprint"`
-	}) (any, int, error) { v, e := a.s.CancelBatchInput(r.Context(), w, r.PathValue("id"), r.PathValue("inputId"), in.ManifestFingerprint); return v, 200, e })
+	}) (any, int, error) {
+		v, e := a.s.CancelBatchInput(r.Context(), w, r.PathValue("id"), r.PathValue("inputId"), in.ManifestFingerprint)
+		return v, 200, e
+	})
 	write[revisionBody](a, "POST", "/batches/{id}/cancel", false, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
 		v, e := a.s.CancelBatch(r.Context(), w, r.PathValue("id"), in.ExpectedRevision)
 		return v, 200, e

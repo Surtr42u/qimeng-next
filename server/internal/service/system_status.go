@@ -48,6 +48,11 @@ func (s *systemSamples) init() {
 	}
 }
 
+// CheckReadiness reports whether the catalog serving current requests is reachable.
+func (s *Service) CheckReadiness(ctx context.Context) error {
+	return s.DB.DB.PingContext(ctx)
+}
+
 func (s *Service) SystemStatus(ctx context.Context, p model.Principal) (SystemStatus, error) {
 	if err := Authorize(p, "admin", ""); err != nil {
 		return SystemStatus{}, err

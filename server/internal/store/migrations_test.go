@@ -9,10 +9,10 @@ import (
 
 func TestMigrationHistoryIsValidatedBeforePendingSteps(t *testing.T) {
 	for _, scenario := range []struct {
-		name       string
-		laterFile  string
-		laterSQL   string
-		wantErr    string
+		name      string
+		laterFile string
+		laterSQL  string
+		wantErr   string
 	}{
 		{"newer version", "0099_future.sql", "SELECT 1", "requires a newer server"},
 		{"changed history", "0003_existing.sql", "SELECT 2", "checksum changed"},
@@ -25,7 +25,7 @@ func TestMigrationHistoryIsValidatedBeforePendingSteps(t *testing.T) {
 			defer db.Close()
 			base := &fstest.MapFile{Data: []byte("CREATE TABLE library(id INTEGER)")}
 			original := fstest.MapFS{
-				"migrations/0001_base.sql":          base,
+				"migrations/0001_base.sql":         base,
 				"migrations/" + scenario.laterFile: {Data: []byte(scenario.laterSQL)},
 			}
 			if err := applySchema(db, original); err != nil {

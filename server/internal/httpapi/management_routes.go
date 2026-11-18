@@ -46,7 +46,10 @@ func (a *API) managementRoutes() {
 		RelativePath string `json:"relativePath"`
 	}](a, "POST", "/libraries/{id}/directories", true, func(r *http.Request, w *service.Write, in struct {
 		RelativePath string `json:"relativePath"`
-	}) (any, int, error) { v, e := a.s.CreateDirectory(r.Context(), w, r.PathValue("id"), in.RelativePath); return v, 201, e })
+	}) (any, int, error) {
+		v, e := a.s.CreateDirectory(r.Context(), w, r.PathValue("id"), in.RelativePath)
+		return v, 201, e
+	})
 	a.get("/tag-vocabulary", func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
@@ -58,14 +61,20 @@ func (a *API) managementRoutes() {
 		Name string `json:"name"`
 	}](a, "POST", "/tags", true, func(r *http.Request, w *service.Write, in struct {
 		Name string `json:"name"`
-	}) (any, int, error) { v, e := a.s.CreateTag(r.Context(), w, in.Name); return v, 201, e })
+	}) (any, int, error) {
+		v, e := a.s.CreateTag(r.Context(), w, in.Name)
+		return v, 201, e
+	})
 	write[struct {
 		Name             string `json:"name"`
 		ExpectedRevision int64  `json:"expectedRevision"`
 	}](a, "PATCH", "/tags/{tag}", true, func(r *http.Request, w *service.Write, in struct {
 		Name             string `json:"name"`
 		ExpectedRevision int64  `json:"expectedRevision"`
-	}) (any, int, error) { v, e := a.s.ChangeTag(r.Context(), w, r.PathValue("tag"), in.Name, in.ExpectedRevision, false); return v, 200, e })
+	}) (any, int, error) {
+		v, e := a.s.ChangeTag(r.Context(), w, r.PathValue("tag"), in.Name, in.ExpectedRevision, false)
+		return v, 200, e
+	})
 	write[struct{}](a, "DELETE", "/tags/{tag}", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		rev, e := revision(r)
 		if e != nil {

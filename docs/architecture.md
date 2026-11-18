@@ -26,6 +26,14 @@ SQLite 位于服务本地磁盘。单服务排他锁、SQLite WAL、外键、FUL
 
 Go 的具体包引用由[依赖检查](../server/internal/architecture/boundaries_test.go)约束。检查解析生产源码的真实 import，也覆盖非当前操作系统的源文件。新增顶层模块时一起明确所有权和允许的引用。Web 与 Android 的具体约束分别维护在[Web](../web/README.md)和[Android](../android/README.md)。跨对象的事务范围、调用时序和用户意图仍需结合真实入口评审。
 
+### 当前有效的取舍
+
+| 选择 | 依据、代价与复查条件 |
+|---|---|
+| 一个 Go 服务持有库写入权 | 编号、权限、文件发布和回执可以在同一实例核对。写入会竞争同一协调锁。若实际大批量任务拖慢交互写入，先量锁等待和磁盘耗时，再决定是否缩小临界区。[业务写入入口](../server/internal/service/service.go) |
+| Android 的本机宿主独立于普通客户端 | 手机离线时仍使用同一 API。代价是两种 APK 和额外的原生打包验证。退役本机能力前需验证手机独有资料迁出、纯客户端连接目标实例以及独立服务的发布。[运行边界与剥离条件](runtime-separation.md) |
+| OpenAPI 是跨端协议正文 | 多语言客户端可以追溯到同一输入。代价是改字段后必须重新生成、更新锁并核对各端兼容性。生成器或模板升级需查看实际签名差异。[协议](../api/openapi.yaml) · [固定生成流程](../tools/generate_sdks.py) · [SDK 来源锁](../api/sdk.lock) |
+
 ## 身份与修订
 
 资产 ID 与文件名、相对路径及哈希独立。资产 `revision`、标签集合 `tagsRevision`、作者关系 `authorsRevision` 与文件 `contentVersion` 表达不同变化。作者是独立身份，资产关系为多对多；`authorId` 仅是兼容主显示字段。常规与 COS 作者身份不合并，但 COS 文件允许附普通作者；浏览分区按是否存在 COS 作者关联判断。“其他搁置”是未知占位，关联真实作者后自动去除占位，不触发后台研究。
