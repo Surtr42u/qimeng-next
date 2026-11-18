@@ -1,0 +1,64 @@
+import { test, expect } from "@playwright/test";
+import { createHash, randomUUID } from "node:crypto";
+
+test.use({ screenshot: "off", trace: "off", video: "off" });
+test("a browser sends a selected author list and displays the independent receiver's original receipt", async ({ page, request }) => {
+  const source = process.env.QIMENG_E2E_BASE_URL;
+  const receiver = process.env.QIMENG_E2E_RECEIVER;
+  expect([process.env.CI, source, receiver]).toEqual(["true", "http://127.0.0.1:18481", "http://127.0.0.1:18482"]);
+  const owner = (value: string) => ({ Authorization: `Bearer ${value}`, "Idempotency-Key": randomUUID() });
+  const sourceOwner = process.env.QIMENG_E2E_TOKEN!;
+  const receiverOwner = process.env.QIMENG_E2E_RECEIVER_TOKEN!;
+  const targetInstance = (await (await request.get(receiver + "/api/v1/instance")).json()).id;
+  const device = "browser-" + randomUUID().slice(0, 8);
+  const listName = device + ".txt";
+  const list = await request.post(source + "/api/v1/author-lists", { headers: owner(sourceOwner),
+    data: { name: listName, content: "1  Cloud artist\n作品\nframe.png\n", expectedRevision: 0 } });
+  expect(list.ok()).toBe(true);
+  const listId = (await list.json()).list.id;
+  await page.goto("/");
+  await page.getByLabel("管理密码", { exact: true }).fill(sourceOwner);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "为你推荐" })).toBeVisible();
+  await page.goto("/manage/backup");
+  await page.getByText("发送资料到另一台设备", { exact: true }).click();
+  await page.getByLabel("目标设备标识").fill(device);
+  await page.getByText("首次配对这台接收设备", { exact: true }).click();
+  await page.getByRole("button", { name: "生成首次配对令牌" }).click();
+  const secret = await page.getByLabel("设备专用令牌").inputValue();
+  await page.getByRole("button", { name: "已保存，关闭令牌" }).click();
+  await page.getByLabel("接收实例 ID").fill(targetInstance);
+  await page.getByLabel("选择来源作者 TXT").selectOption(listId);
+  const published = page.waitForResponse(response => response.url().endsWith("/device/native-deliveries") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "发送所选资料" }).click();
+  const result = await published;
+  expect(result.status()).toBe(201);
+  const task = await result.json();
+  const path = source + "/api/v1/device/apply-tasks/" + task.id;
+  const segment = task.segments[0];
+  const claim = await request.post(path + "/claim", { headers: owner(secret), data: { expectedRevision: task.revision } });
+  expect(claim.ok()).toBe(true);
+  const download = await request.get(path + "/segments/nativeSelection", { headers: { Authorization: `Bearer ${secret}` } });
+  expect(download.ok()).toBe(true);
+  const contents = await download.body();
+  expect(createHash("sha256").update(contents).digest("hex")).toBe(segment.packageId);
+  const local = receiver + "/api/v1/native-deliveries/imports";
+  const stage = await request.post(local, { headers: { ...owner(receiverOwner), "Content-Type": "application/octet-stream" },
+    params: { sourceInstanceId: segment.sourceInstanceId, targetInstanceId: targetInstance, packageId: segment.packageId, conflictPolicy: "keep" }, data: contents });
+  expect(stage.ok()).toBe(true);
+  const plan = await stage.json();
+  const commit = () => request.post(local + "/" + plan.id + "/commit", { headers: owner(receiverOwner), data: { fingerprint: plan.fingerprint } });
+  const first = await commit();
+  expect(first.ok()).toBe(true);
+  const retry = await commit();
+  expect(retry.ok()).toBe(true);
+  const applied = await retry.json();
+  expect(applied.items[0].receiptId).toBe((await first.json()).items[0].receiptId);
+  expect(applied.state).toBe("applied");
+  const targetText = await request.get(receiver + "/api/v1/author-lists/" + applied.items[0].targetObjectId + "/content", { headers: owner(receiverOwner) });
+  expect(await targetText.text()).toContain("frame.png");
+  const report = await request.post(path + "/result", { headers: owner(secret), data: { expectedRevision: (await claim.json()).revision,
+    state: "applied", results: [{ kind: segment.kind, state: "applied", sha256: segment.sha256, receiptId: plan.id }] } });
+  expect(report.ok()).toBe(true);
+  await expect(page.getByText(plan.id, { exact: true })).toBeVisible({ timeout: 10000 });
+});

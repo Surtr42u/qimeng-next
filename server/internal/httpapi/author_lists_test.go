@@ -124,6 +124,54 @@ func TestAuthorListsCrossListUnionsAndExplicitRemovals(t *testing.T) {
 	}
 }
 
+func TestExplicitEmptyAuthorsSurviveNewFilenameRuleAndRebuild(t *testing.T) {
+	f := setup(t)
+	const from = "unmatched.png"
+	const to = "new-rule.png"
+	importList(t, f, "declare-before-human-clear", "scope.txt", "1  Proposed artist\n作品\n"+to+"\n", 0)
+	u, original := f.upload(from, 92, nil)
+	a := *f.complete(u).Asset
+	if a.AuthorID != "unknown" {
+		t.Fatal("neutral filename unexpectedly matched", a.AuthorID)
+	}
+	base := "/assets/" + a.ID
+	decode(t, f.json("PATCH", base, "explicitly-clear-unknown-author", map[string]any{"expectedRevision": a.Revision,
+		"expectedAuthorsRevision": a.AuthorsRevision, "authorIds": []string{}}, 200), &a)
+	root, err := f.s.Root.LibraryPath(f.library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(filepath.Join(root, from), filepath.Join(root, to)); err != nil {
+		t.Fatal(err)
+	}
+	scan := f.scan("rescan-after-cleared-author-rename")
+	if scan.Moved != 1 {
+		t.Fatal("synthetic rename did not preserve asset identity", scan)
+	}
+	read := func() model.Asset {
+		t.Helper()
+		var got model.Asset
+		decode(t, f.json("GET", base, "", nil, 200), &got)
+		if !slices.Equal(got.AuthorIDs, []string{"unknown"}) || got.AuthorsRevision != a.AuthorsRevision || got.RelativePath != to {
+			t.Fatal("a filename rule overwrote the explicit empty selection", got.AuthorIDs, got.AuthorsRevision, got.RelativePath)
+		}
+		return got
+	}
+	read()
+	f.json("POST", "/author-lists/rebuild", "rebuild-after-cleared-author-rename", struct{}{}, 200)
+	current := read()
+	var proposed string
+	if err = f.s.DB.DB.QueryRow("SELECT author_id FROM author_list_matches WHERE asset_id=?", a.ID).Scan(&proposed); err != nil || proposed == "" || proposed == "unknown" {
+		t.Fatal("matching declaration was discarded instead of remaining evidence", proposed, err)
+	}
+	decode(t, f.json("PATCH", base, "explicitly-confirm-proposed-author", map[string]any{"expectedRevision": current.Revision,
+		"expectedAuthorsRevision": current.AuthorsRevision, "authorIds": []string{proposed}}, 200), &current)
+	if current.AuthorID != proposed || current.AuthorsRevision <= a.AuthorsRevision {
+		t.Fatal("explicitly confirming the author could not supersede the prior clear")
+	}
+	assertNativeOriginal(t, f, a.ID, 1, original)
+}
+
 func TestNamedAuthorAtomicCASUploadSourcesAndReimportChoice(t *testing.T) {
 	f := setup(t)
 	list := importList(t, f, "name-active-list", "合成.txt", "1  Existing\n来源  初始渠道\n作品\nunmatched.png\n", 0)

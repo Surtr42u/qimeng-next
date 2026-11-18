@@ -101,14 +101,17 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 	files := []authorlist.File{}
 	assetIDs := []string{}
 	fixed := map[string][]string{}
+	manualEmpty := map[string]bool{}
 	exists := map[string]bool{}
-	rows, e = q.QueryContext(ctx, "SELECT id,file_name,COALESCE(json_extract(data,'$.cosDirectoryAuthorId'),'') FROM assets ORDER BY id")
+	rows, e = q.QueryContext(ctx, `SELECT a.id,a.file_name,coalesce(json_extract(a.data,'$.cosDirectoryAuthorId'),''),
+		EXISTS(SELECT 1 FROM asset_human_fields f WHERE f.asset_id=a.id AND f.field='authors') FROM assets a ORDER BY a.id`)
 	if e != nil {
 		return result, e
 	}
 	for rows.Next() {
 		var id, name, directoryAuthor string
-		if e = rows.Scan(&id, &name, &directoryAuthor); e != nil {
+		var cleared bool
+		if e = rows.Scan(&id, &name, &directoryAuthor, &cleared); e != nil {
 			rows.Close()
 			return result, e
 		}
@@ -117,7 +120,12 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 		for _, author := range current[id] {
 			if kinds[author] == "cos" {
 				fixed[id] = appendUnique(fixed[id], author)
+			} else if author != "unknown" {
+				cleared = false
 			}
+		}
+		if cleared {
+			manualEmpty[id] = true
 		}
 		if kinds[directoryAuthor] == "cos" {
 			fixed[id] = appendUnique(fixed[id], directoryAuthor)
@@ -229,7 +237,7 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 	}
 	matchedAssets := map[string]bool{}
 	for _, match := range matches {
-		if !removed[match.AssetID][match.AuthorID] && match.AuthorID != "unknown" {
+		if !manualEmpty[match.AssetID] && !removed[match.AssetID][match.AuthorID] && match.AuthorID != "unknown" {
 			desired[match.AssetID] = appendUnique(desired[match.AssetID], match.AuthorID)
 			matchedAssets[match.AssetID] = true
 		}
@@ -287,8 +295,12 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 // Upload/scan do not rebuild or scan every stored TXT for each new file.
 func (s *Service) matchAuthorListsForAsset(ctx context.Context, q store.Querier, a *model.Asset, newRegularScan bool) error {
 	var cos int
+	var manualEmpty bool
 	if !newRegularScan {
-		if e := q.QueryRowContext(ctx, "SELECT count(*) FROM asset_authors x JOIN authors au ON au.id=x.author_id WHERE x.asset_id=? AND json_extract(au.data,'$.kind')='cos'", a.ID).Scan(&cos); e != nil {
+		if e := q.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE json_extract(au.data,'$.kind')='cos'),
+			count(*) FILTER(WHERE au.id!='unknown' AND coalesce(json_extract(au.data,'$.kind'),'')!='cos')=0 AND
+			EXISTS(SELECT 1 FROM asset_human_fields WHERE asset_id=?1 AND field='authors')
+			FROM asset_authors x JOIN authors au ON au.id=x.author_id WHERE x.asset_id=?1`, a.ID).Scan(&cos, &manualEmpty); e != nil {
 			return e
 		}
 	}
@@ -327,6 +339,11 @@ func (s *Service) matchAuthorListsForAsset(ctx context.Context, q store.Querier,
 				return e
 			}
 		}
+	}
+	if manualEmpty {
+		// Keep the matching declaration as evidence without changing the
+		// owner's explicitly cleared regular-author set or its fixed COS identity.
+		return nil
 	}
 	rows, e := q.QueryContext(ctx, `WITH ids AS (
  SELECT x.author_id FROM asset_authors x JOIN authors c ON c.id=x.author_id WHERE x.asset_id=? AND json_extract(c.data,'$.kind')='cos'

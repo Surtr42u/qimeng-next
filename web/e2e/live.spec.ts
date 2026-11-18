@@ -119,11 +119,17 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     page.getByRole("button", { name: "保存标签", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "编辑", exact: true }).click();
-  await page.getByLabel("查找作者", { exact: true }).fill(authorName);
-  await page
-    .getByRole("group", { name: "作者联想", exact: true })
-    .getByText(authorName, { exact: true })
-    .click();
+  const lookup = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/authors" && url.searchParams.get("q") === authorName;
+  }, { timeout: 10000 });
+  const authorField = page.getByLabel("查找作者", { exact: true });
+  await authorField.fill(authorName);
+  const suggestions = await lookup;
+  expect(suggestions.status()).toBe(200);
+  expect((await suggestions.json()).items.some((item: { id: string }) => item.id === authorId)).toBe(true);
+  await expect(authorField).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("group", { name: "作者联想", exact: true }).getByText(authorName, { exact: true }).click({ timeout: 10000 });
   const newName = "CI 新建作者 " + suffix;
   await page.getByLabel("查找作者", { exact: true }).fill(newName);
   await page.getByRole("button", { name: "新建：" + newName + " 保存时创建" }).click();

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "openapiSha256": "769c24143dfceacad9c31e190fcfdfe366f6db313046badb6ef0593aa9770212",
+  "openapiSha256": "4bde029b4b7441ef8d6f33b08e110671d72f13ec5c8ac1da59e29dfaffd69443",
   "generators": {
     "kotlin": "7.27.0",
     "go": "v2.8.2",
@@ -131,7 +131,7 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/Directory.kt": "4562f301a9827715f80b629c62a6a9e939e1f6a06350d650aed14d4086fc07c0",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/DirectoryPage.kt": "5215d9c34d0a8f01e6b181d7db3453b654573f62caad38f9d613666e72e707f2",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/Error.kt": "1e4c4c23e0f865d904a1df162fcd6fa3745b61727afc9fe0bfcbfa837ffa03a0",
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/EventCreate.kt": "f566f45c0da2f47f12c7dae074cce395423d67ba8f3164195843fffd8f5c70c5",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/EventCreate.kt": "00b74bb2e06d637bf7bb08171ddf3eab321c5c9e281bcb2567669165d644e33c",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/GetBackupChangeState200Response.kt": "1cf0f66ecf685d49b612e5825f90d99e1871f7f8e26b09ba97734e4f564edb26",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/HistoryEvent.kt": "3f13e565bafd0513df568fa26b6ffd2b4f184a1184839bbbb6eabb36bdfe53bd",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/HistoryPage.kt": "6c7d686f01a7cafb648c3bcc3e4d65255896de6faebb0f25f34c530a6f2e42dc",
@@ -263,8 +263,8 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateAuthorMappingsInner.kt": "82601b4020ed75bbf9242e837074542cb51ac996ea5eee53739b75a8939b0e05",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateMediaMappingsInner.kt": "d11e83e6bdcb004d856c6d77f85eb744f12f07d6fbcd5fb985e0ca7197f13f99",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2ProfileBlockPlan.kt": "2cd827fbaa9c3e8409d7a412c01a882ad8b16cc9ee2c48aaf391d79f3a100bdd",
-    "api/generated/python/operations.json": "4d5b35c0b432e6b57d0d9b0eb9731fcefb628b8b2a25a808b23baff1e5d986d0",
-    "server/internal/transport/generated/api.gen.go": "2df9094ab564507eacbb7c2742d7762f26a37a1579520ed67d3431599aaa3814",
-    "web/src/api/generated/schema.d.ts": "bf0349e3438d260561808f9f51f93f3bc7fbfaee336ed0d38f541bfb974bce6a"
+    "api/generated/python/operations.json": "b94fc6354bfcc4a5a440d9158517ff78523be74d26323c7c77ee6679a621b26f",
+    "server/internal/transport/generated/api.gen.go": "ac329e6fd8e9e086becd3f91adde4c1ff93c8a447a75e6320cf4c671b806138a",
+    "web/src/api/generated/schema.d.ts": "358487212a5b48c79ae9273240b48288bec9f400b00412a746fe816259d4a2df"
   }
 }

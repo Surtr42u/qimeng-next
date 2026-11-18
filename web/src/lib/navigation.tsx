@@ -37,11 +37,18 @@ export function usePageRestoration() {
     previousState.current = location.state;
     currentKey.current = key;
     const saved = direction === "POP" ? positions.get(key) : undefined;
+    const focusBeforeRestore = document.activeElement;
+    const canRestoreFocus = () => {
+      const active = document.activeElement;
+      return !active || active === document.body ||
+        (active === focusBeforeRestore && !active.matches("input, textarea, select, [contenteditable=true]"));
+    };
     let cancelled = false;
     let observer: ResizeObserver | undefined;
     const container = document.querySelector<HTMLElement>("[data-scroll-root]");
     if (overlay || returningToList) {
       const frame = requestAnimationFrame(() => {
+        if (!canRestoreFocus()) return;
         if (overlay) document.querySelector<HTMLElement>(".asset-overlay [data-page-heading]")?.focus({ preventScroll: true });
         else if (saved?.focusHref) Array.from(document.querySelectorAll<HTMLAnchorElement>(".overlay-backdrop a[href]")).find(link => link.getAttribute("href") === saved.focusHref)?.focus({ preventScroll: true });
       });
@@ -64,7 +71,7 @@ export function usePageRestoration() {
         Math.abs((container?.scrollTop ?? window.scrollY) - saved.y) <= 1 &&
         (!saved.focusHref || focusTarget)
       ) {
-        focusTarget?.focus({ preventScroll: true });
+        if (canRestoreFocus()) focusTarget?.focus({ preventScroll: true });
         cancelled = true;
         observer?.disconnect();
       }
@@ -87,7 +94,7 @@ export function usePageRestoration() {
     });
     window.addEventListener("keydown", cancel, { once: true });
     const focusFrame = requestAnimationFrame(() => {
-      if (direction !== "POP" && pathChanged)
+      if (direction !== "POP" && pathChanged && canRestoreFocus())
         document
           .querySelector<HTMLElement>("[data-page-heading]")
           ?.focus({ preventScroll: true });

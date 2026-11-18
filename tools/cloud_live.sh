@@ -21,10 +21,17 @@ export PYTHONPATH="$GITHUB_WORKSPACE/ai/src"
 chmod +x "$RUNNER_TEMP/server-artifact/build/qimeng-next"
 "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-live.log" 2>&1 &
 service_pid=$!
-trap 'kill "$service_pid" 2>/dev/null || true; wait "$service_pid" 2>/dev/null || true' EXIT
+export QIMENG_E2E_RECEIVER='http://127.0.0.1:18482'
+export QIMENG_E2E_RECEIVER_TOKEN='synthetic-receiver-only-owner-credential-18482'
+QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-live-receiver" QIMENG_LISTEN='127.0.0.1:18482' \
+  QIMENG_ADMIN_TOKEN="$QIMENG_E2E_RECEIVER_TOKEN" QIMENG_STORAGE_ROOTS='{}' \
+  "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-live-receiver.log" 2>&1 &
+receiver_pid=$!
+trap 'kill "$service_pid" "$receiver_pid" 2>/dev/null || true; wait "$service_pid" 2>/dev/null || true; wait "$receiver_pid" 2>/dev/null || true' EXIT
 ready=false
 for attempt in $(seq 1 30); do
-  if curl --fail --silent "$QIMENG_TEST_BASE/healthz" > /dev/null; then ready=true; break; fi
+  if curl --fail --silent "$QIMENG_TEST_BASE/healthz" > /dev/null &&
+     curl --fail --silent "$QIMENG_E2E_RECEIVER/healthz" > /dev/null; then ready=true; break; fi
   if ! kill -0 "$service_pid" 2>/dev/null; then cat "$RUNNER_TEMP/qimeng-next-live.log"; exit 1; fi
   sleep 1
 done
