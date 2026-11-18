@@ -137,6 +137,7 @@ func(s *Service) ApplyAssetMaintenance(ctx context.Context,w *Write,id string,in
 	notMissing:=func()error{return Fail(409,"asset_field_occupied","该字段已填写或曾被清空，本任务只补全缺失资料。")}
 	if in.AuthorIDs!=nil&&(len(*in.AuthorIDs)==0||a.AuthorID!="unknown"||containsString(*in.AuthorIDs,"unknown")){return t,notMissing()}
 	if in.SourceIDs!=nil||in.CharacterIDs!=nil {
+		a.TaxonomyDerived=false;a.TaxonomyCandidates=nil
 		sources,characters:=a.SourceIDs,a.CharacterIDs
 		if in.SourceIDs!=nil{if len(*in.SourceIDs)==0||len(sources)>0||a.Source!=""{return t,notMissing()};sources=*in.SourceIDs}
 		if in.CharacterIDs!=nil{if len(*in.CharacterIDs)==0||len(characters)>0||len(a.Characters)>0{return t,notMissing()};characters=*in.CharacterIDs}

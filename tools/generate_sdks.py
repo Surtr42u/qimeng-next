@@ -95,7 +95,7 @@ def kotlin() -> None:
         "--global-property", "apiTests=false,modelTests=false,apiDocs=false,modelDocs=false")
     interface = ROOT / "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt"
     generated = interface.read_text(encoding="utf-8")
-    for operation in ("downloadBackupArchive", "exportAuthorList", "exportBackupAuthorDocuments", "exportMasterAuthorList"):
+    for operation in ("downloadBackupArchive", "exportAuthorList", "exportBackupAuthorDocuments", "exportMasterAuthorList", "getDeviceApplySegment"):
         signature = "suspend fun " + operation + "("
         start = generated.index(signature)
         annotations = generated[generated.rfind("*/", 0, start):start]

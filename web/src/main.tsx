@@ -6,7 +6,10 @@ import { App, RouteError } from "./app/App";
 import { queryClient } from "./data/query";
 import { BrowsePage } from "./pages/BrowsePage";
 import { AssetOverlayLayout } from "./app/AssetOverlayLayout";
+import { LegacyBookmark } from "./app/LegacyBookmark";
+import { TagCollectionPage } from "./pages/TagCollectionPage";
 import { VocabularyPage } from "./pages/VocabularyPage";
+import { SourceRulesPage } from "./pages/SourceRulesPage";
 import { ReplacePage } from "./pages/ReplacePage";
 import { ScanPage, ScansPage } from "./pages/ScanPage";
 import { AuthorTasksPage, AuthorTaskPage } from "./pages/AuthorTaskPages";
@@ -47,10 +50,12 @@ const router = createBrowserRouter([
     element: <App />,
     errorElement: <RouteError />,
     children: [{ errorElement: <RouteError />, children: [
+      { path: "/app/*", element: <LegacyBookmark /> },
       { element: <AssetOverlayLayout />, children: [
         { path: "/", element: null }, { path: "/album", element: null }, { path: "/asset/:id", element: <AssetPage /> },
       ] },
       { path: "/search", element: <BrowsePage /> },
+      { path: "/collection/tag/:name", element: <TagCollectionPage /> },
       { path: "/asset/:id/edit", element: <AssetEditPage /> },
       { path: "/asset/:id/replace", element: <ReplacePage /> },
       { path: "/mine", element: <MinePage /> },
@@ -59,6 +64,7 @@ const router = createBrowserRouter([
       { path: "/data/rankings", element: <ActivityRankingPage /> },
       { path: "/manage", element: <ManagePage /> },
       { path: "/manage/vocabulary", element: <VocabularyPage /> },
+      { path: "/manage/vocabulary/rules", element: <SourceRulesPage /> },
       { path: "/manage/acquisition", element: <AcquisitionVocabularyPage /> },
       { path: "/manage/files", element: <FileManagementPage /> },
       { path: "/manage/upload", element: <UploadPage /> },

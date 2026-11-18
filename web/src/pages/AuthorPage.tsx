@@ -30,8 +30,8 @@ export function AuthorPage() {
   const types = useAssetFacets(filters, "types");
   const follow = useUpdateAuthor(id);
   const items = assets.data?.pages.flatMap((page) => page.items) ?? [];
-  const fileCount =
-    author.data?.fileCount ?? assets.data?.pages[0]?.totalMatched ?? "—";
+  const fileCount = author.data?.fileCount ?? "—";
+  const matchingCount = assets.isPlaceholderData ? "—" : assets.data?.pages[0]?.totalMatched ?? fileCount;
   const x = profile.data?.blocks.find((block) => block.block === "x");
   const accounts =
     profile.data?.blocks.find((block) => block.block === "accounts")?.values
@@ -74,7 +74,7 @@ export function AuthorPage() {
         <h2 data-page-heading tabIndex={-1}>
           作者主页
         </h2>
-        <p>作者 · {fileCount} 个文件</p>
+        <p>作者 · {matchingCount} 个文件</p>
       </div>
       <ErrorNotice
         error={author.error}

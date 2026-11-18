@@ -72,6 +72,17 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
   await page.getByRole("button", { name: "更新全部归档" }).click();
   await expect(page.getByText("当前资料已是最新一代。", { exact: true })).toBeVisible();
   expect(created).toBe(1);
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const output = await (await root.getFileHandle(".绮梦手机轮换.json", { create: true })).createWritable();
+    await output.write("synthetic-mobile-rotation"); await output.close();
+  });
+  revision = "2";
+  await page.getByRole("button", { name: "更新全部归档" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "请先在手机完成" })).toBeVisible();
+  expect(created).toBe(1);
+  expect(await text("当前", "备份", "影库备份.qnext")).toBe(archive("1"));
+  await page.evaluate(async () => (await navigator.storage.getDirectory()).removeEntry(".绮梦手机轮换.json"));
   revision = "2"; failNextDownload = true;
   await page.getByRole("button", { name: "更新全部归档" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "没有收到成功确认" })).toBeVisible();

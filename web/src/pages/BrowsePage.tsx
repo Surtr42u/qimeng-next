@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { listNavigation } from "../lib/detail-navigation";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { X } from "lucide-react";
 import { useAssets, mediaCards, useTags } from "../data/media";
@@ -87,7 +88,8 @@ export function AlbumsView({ backdropSearch }: { backdropSearch?: string } = {})
   const types = useAssetFacets(filters, "types");
   const tags = usePanelTags();
   const [panelOpen, setPanelOpen] = useState(false);
-  const items = query.data?.pages.flatMap((page) => page.items) ?? [];
+  const items = useMemo(() => query.data?.pages.flatMap(page => page.items) ?? [], [query.data]);
+  const navigation = useMemo(() => listNavigation(items), [items]);
   const first = query.data?.pages[0];
   const groups = albumGroups(items, first?.dateCounts, filters.tzOffsetMinutes, Date.now(), first?.unknownDateCount);
   const active =
@@ -168,7 +170,7 @@ export function AlbumsView({ backdropSearch }: { backdropSearch?: string } = {})
                 </span>
               </h3>
             )}
-            <MediaGrid items={mediaCards(group.items)} navigationIds={items.map(item => item.id)} />
+            <MediaGrid items={mediaCards(group.items)} navigation={navigation} />
           </section>
         ))
       )}

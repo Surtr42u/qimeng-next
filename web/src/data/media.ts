@@ -39,6 +39,7 @@ export function useAssets(filters: AssetFilters, enabled = true) {
     placeholderData: (previous, query) => {
       const before = query?.queryKey.at(-1) as AssetFilters | undefined;
       return before?.q === filters.q &&
+        before?.tag === filters.tag &&
         before?.authorId === filters.authorId &&
         before?.libraryId === filters.libraryId &&
         before?.collectionId === filters.collectionId &&

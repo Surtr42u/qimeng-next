@@ -89,11 +89,12 @@ describe("durable upload behavior", () => {
     queue.dispose();
   });
   it('keeps intelligent staged rows and unarchived source copies until their own work finishes', async () => {
-    const stored = { ...storedUpload('staged', 'intelligent'), archiveBinding: 'synthetic-folder', archiveState: 'failed' as const };
+    const stored = { ...storedUpload('staged', 'intelligent'), archiveBinding: 'synthetic-folder', archiveState: 'complete' as const, archiveNote:'同名文件已保留，本次未覆盖归档' };
     mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? [stored] : []));
     const queue = await initialized();
     await queue.clearFinished();
     expect(queue.getSnapshot().entries[0]?.phase).toBe('staged');
+    expect(queue.getSnapshot().entries[0]?.archiveState).toBe('failed');
     expect(mocks.post).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled();
     queue.dispose();
   });

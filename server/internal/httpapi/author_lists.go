@@ -4,6 +4,7 @@ import (
  "crypto/sha256"
  "fmt"
  "net/http"
+ "unicode/utf8"
 
  "qimeng.local/next/server/internal/service"
 )
@@ -11,7 +12,12 @@ import (
 func(a *API)authorListRoutes(){
  a.get("/author-lists",func(r *http.Request)(any,error){if e:=service.Authorize(principal(r),"admin","");e!=nil{return nil,e};n,e:=limit(r);if e!=nil{return nil,e};return a.s.AuthorLists(r.Context(),r.URL.Query().Get("cursor"),n)})
  a.get("/author-lists/{id}",func(r *http.Request)(any,error){if e:=service.Authorize(principal(r),"admin","");e!=nil{return nil,e};return a.s.AuthorList(r.Context(),r.PathValue("id"))})
- write[service.AuthorListInput](a,"POST","/author-lists",true,func(r *http.Request,w *service.Write,in service.AuthorListInput)(any,int,error){v,e:=a.s.ImportAuthorList(r.Context(),w,in);return v,200,e})
+ // JSON escape sequences may be longer than the contractual decoded text,
+ // including twelve bytes for one escaped supplementary Unicode character.
+ writeScoped[service.AuthorListInput](a,"admin","POST","/author-lists",true,func(r *http.Request,w *service.Write,in service.AuthorListInput)(any,int,error){
+  if utf8.RuneCountInString(in.Content)>1<<20{return nil,0,service.Fail(413,"author_list_too_large","作者清单超过协议字符上限。")}
+  v,e:=a.s.ImportAuthorList(r.Context(),w,in);return v,200,e
+ },(12<<20)+(4<<10))
  write[struct{}](a,"POST","/author-lists/rebuild",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){v,e:=a.s.RebuildAuthorLists(r.Context(),w);return v,200,e})
  write[struct{}](a,"DELETE","/author-lists/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){revision,e:=revision(r);if e!=nil{return nil,0,e};return nil,204,a.s.DeleteAuthorList(r.Context(),w,r.PathValue("id"),revision)})
  for _,pattern:=range []string{"/author-lists/master","/author-lists/{id}/content"}{

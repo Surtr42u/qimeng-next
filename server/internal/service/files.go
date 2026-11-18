@@ -45,7 +45,10 @@ func(s *Service)safe(pathname string)error{
 }
 func(s *Service)ensureParent(name string)error{if e:=s.safe(name);e!=nil{return e};return s.Root.MkdirAll(path.Dir(name),0700)}
 func(s *Service)hashFile(name string)(string,int64,error){
- if e:=s.safe(name);e!=nil{return "",0,e};f,e:=s.Root.Open(name);if e!=nil{return "",0,e};defer f.Close();h:=sha256.New();n,e:=io.Copy(h,f);if e!=nil{return "",n,e};return hex.EncodeToString(h.Sum(nil)),n,nil
+ return s.hashFileContext(context.Background(),name)
+}
+func(s *Service)hashFileContext(ctx context.Context,name string)(string,int64,error){
+ if e:=s.safe(name);e!=nil{return "",0,e};f,e:=s.Root.Open(name);if e!=nil{return "",0,e};defer f.Close();var input io.Reader=f;if ctx.Done()!=nil{input=scanReader{ctx:ctx,source:f}};h:=sha256.New();n,e:=io.Copy(h,input);if e!=nil{return "",n,e};return hex.EncodeToString(h.Sum(nil)),n,nil
 }
 func(s *Service)verify(name,hash string,size int64)error{actual,n,e:=s.hashFile(name);if e!=nil{return e};if actual!=hash||n!=size{return Fail(409,"content_mismatch","文件内容发生变化，已保留文件供恢复核对。")};return nil}
 func(s *Service)linkNoReplace(source,target string)error{
@@ -125,6 +128,10 @@ func(s *Service)commitFile(ctx context.Context,q store.Querier,j *fileIntent)err
   if _,e:=q.ExecContext(ctx,"DELETE FROM assets WHERE id=?",j.After.ID);e!=nil{return e}
  }else{
   if e:=store.SaveAsset(ctx,q,j.After);e!=nil{return e}
+  if j.Kind!="trash"{
+   if j.Kind=="ingest"&&j.UploadID!=""{u,e:=store.Get[model.Upload](ctx,q,"SELECT data FROM uploads WHERE id=?",j.UploadID);if e!=nil{return e};if u.ExplicitTaxonomy{if e=protectHumanField(ctx,q,j.After.ID,"taxonomy");e!=nil{return e}}}
+   changed,e:=s.applySourceRules(ctx,q,&j.After);if e!=nil{return e};if changed{if e=store.SaveAsset(ctx,q,j.After);e!=nil{return e}}
+  }
   if e:=s.finalizeAuthorTextForFile(ctx,q,j);e!=nil{return e}
  }
  if j.Kind=="move"{

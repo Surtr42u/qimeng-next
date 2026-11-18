@@ -57,7 +57,7 @@ const groups = [
       {
         title: "词表维护",
         sub: "出处组、角色别名与停用词，不是获取渠道",
-        to: "/manage/vocabulary",
+        to: "/manage/vocabulary/rules",
         Icon: BookOpen,
       },
     ],

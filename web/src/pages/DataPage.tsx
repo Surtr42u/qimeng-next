@@ -342,7 +342,7 @@ function DashboardRank({
     navigate(
       kind === "authors"
         ? `/authors/${encodeURIComponent(item.id)}`
-        : `/album?tags=${encodeURIComponent(item.name)}`,
+        : `/collection/tag/${encodeURIComponent(item.name)}`,
     );
   return (
     <section className="rank-card" aria-label={title}>

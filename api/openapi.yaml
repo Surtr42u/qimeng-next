@@ -9,6 +9,109 @@ security:
   - bearerAuth: []
   - sessionCookie: []
 paths:
+  /device/credentials:
+    post:
+      operationId: createDeviceCredential
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceCredentialInput'}}}}
+      responses:
+        '201': {description: Device-scoped credential descriptor, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceCredential'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /device/credentials/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getDeviceCredential
+      responses:
+        '200': {description: Current credential for the device label, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceCredential'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /device/apply-tasks:
+    get:
+      operationId: listDeviceApplyTasks
+      parameters:
+        - {name: targetDeviceId, in: query, required: true, schema: {type: string}}
+        - {name: state, in: query, schema: {$ref: '#/components/schemas/DeviceApplyState'}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200': {description: Device-bound task page, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: publishDeviceApplyTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: Owner publishes the precise bytes described by the JSON manifest to an explicitly registered device.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [manifest]
+              properties:
+                manifest: {type: string, description: JSON encoding of DeviceApplyManifest}
+                masterTxt: {type: string, format: binary}
+                v2Backup: {type: string, format: binary}
+      responses:
+        '201': {description: Published package, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /device/apply-tasks/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getDeviceApplyTask
+      responses:
+        '200': {description: Task manifest and result, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /device/apply-tasks/{id}/claim:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: claimDeviceApplyTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
+      responses:
+        '200': {description: Active claim for this device, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /device/apply-tasks/{id}/segments/{kind}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+      - {name: kind, in: path, required: true, schema: {$ref: '#/components/schemas/DeviceSegmentKind'}}
+    get:
+      operationId: getDeviceApplySegment
+      parameters:
+        - {name: Range, in: header, schema: {type: string}}
+        - {name: If-Range, in: header, schema: {type: string}}
+      responses:
+        '200':
+          description: Complete verified segment
+          headers:
+            ETag: {schema: {type: string}}
+            X-Content-SHA256: {schema: {type: string}}
+          content: {application/octet-stream: {schema: {type: string, format: binary}}}
+        '206':
+          description: Resumable contiguous byte range
+          headers:
+            ETag: {schema: {type: string}}
+            X-Content-SHA256: {schema: {type: string}}
+            Content-Range: {schema: {type: string}}
+          content: {application/octet-stream: {schema: {type: string, format: binary}}}
+        '416': {description: Invalid requested byte range}
+        default: {$ref: '#/components/responses/Error'}
+  /device/apply-tasks/{id}/result:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: reportDeviceApplyTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyReport'}}}}
+      responses:
+        '200': {description: Immutable device result, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /device/apply-tasks/{id}/cancel:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: cancelDeviceApplyTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
+      responses:
+        '200': {description: Owner cancelled further use, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /metrics:
     get:
       operationId: getServiceMetrics
@@ -525,6 +628,19 @@ paths:
       responses:
         '204': {description: Mark deleted}
         default: {$ref: '#/components/responses/Error'}
+  /sources/custom-groups:
+    get:
+      operationId: getCustomSourceGroups
+      responses:
+        '200': {description: Owner-editable additions to the frozen filename vocabulary and current reconciliation status, content: {application/json: {schema: {$ref: '#/components/schemas/SourceRuleSettings'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setCustomSourceGroups
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SourceRuleUpdate'}}}}
+      responses:
+        '200': {description: New active rule revision and durable background reconciliation, content: {application/json: {schema: {$ref: '#/components/schemas/SourceRuleSettings'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /sources:
     get:
       operationId: listSources
@@ -634,6 +750,7 @@ paths:
         - {$ref: '#/components/parameters/Cursor'}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
         - {name: q, in: query, schema: {type: string}}
+        - {name: exactName, in: query, schema: {type: string, maxLength: 200}, description: Exact displayed name for existing creator bookmarks; identical names retain distinct IDs}
         - {name: following, in: query, schema: {type: boolean}}
         - {name: kind, in: query, schema: {type: string, enum: [regular, cos]}}
         - {name: sort, in: query, schema: {type: string, enum: [default, views, files, addedAsc, addedDesc], default: default}}
@@ -1608,6 +1725,115 @@ components:
       description: Explicit failure. 409 means re-read current state; retry unchanged idempotent operations with the same key.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    DeviceCredentialInput:
+      type: object
+      required: [deviceId, label, credentialSecret]
+      properties:
+        deviceId: {type: string, minLength: 1, maxLength: 100}
+        label: {type: string, minLength: 1, maxLength: 80}
+        credentialSecret: {type: string, writeOnly: true, description: 32 random bytes in unpadded base64url}
+        replaceCredentialId: {type: string}
+    DeviceCredential:
+      type: object
+      required: [id, deviceId, label, expiresAt]
+      properties:
+        id: {type: string}
+        deviceId: {type: string}
+        label: {type: string}
+        expiresAt: {type: string, format: date-time}
+    DeviceSegmentKind: {type: string, enum: [masterTxt, v2Backup]}
+    DeviceApplyState: {type: string, enum: [pending, claimed, applied, partial, failed, cancelled, expired]}
+    DeviceApplySegment:
+      type: object
+      required: [kind, bytes, sha256]
+      properties:
+        kind: {$ref: '#/components/schemas/DeviceSegmentKind'}
+        bytes: {type: integer, format: int64, minimum: 1, maximum: 67108864}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        expectedLocalRevision: {type: integer, format: int64, minimum: 0, description: Required for masterTxt. Zero creates a previously absent device fragment}
+        sourceId: {type: string, pattern: '^[A-Za-z0-9._-]{8,128}$', description: Required for v2Backup. Stable identity of the installation whose portable backup was exported}
+    DeviceApplyManifest:
+      type: object
+      required: [targetDeviceId, protocolVersion, segments]
+      properties:
+        targetDeviceId: {type: string}
+        protocolVersion: {type: integer, minimum: 1, maximum: 1}
+        ttlSeconds: {type: integer, minimum: 300, maximum: 604800, default: 86400}
+        segments: {type: array, minItems: 1, maxItems: 2, items: {$ref: '#/components/schemas/DeviceApplySegment'}}
+    DeviceApplyOutcome:
+      type: object
+      required: [kind, state]
+      properties:
+        kind: {$ref: '#/components/schemas/DeviceSegmentKind'}
+        state: {type: string, enum: [applied, partial, failed, skipped]}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Device-verified digest required for applied or partial}
+        receiptId: {type: string, description: Local fragment or migration plan ID required for applied or partial}
+        code: {type: string, maxLength: 100, description: Bounded reason code for unapplied or partial work}
+    DeviceApplyReport:
+      type: object
+      required: [expectedRevision, state, results]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        state: {type: string, enum: [applied, partial, failed]}
+        results: {type: array, minItems: 1, maxItems: 2, items: {$ref: '#/components/schemas/DeviceApplyOutcome'}}
+    DeviceApplyTask:
+      type: object
+      required: [id, targetDeviceId, protocolVersion, state, revision, segments, createdAt, expiresAt]
+      properties:
+        id: {type: string}
+        targetDeviceId: {type: string}
+        protocolVersion: {type: integer}
+        state: {$ref: '#/components/schemas/DeviceApplyState'}
+        revision: {type: integer, format: int64}
+        segments: {type: array, items: {$ref: '#/components/schemas/DeviceApplySegment'}}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        claimedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time}
+        results: {type: array, items: {$ref: '#/components/schemas/DeviceApplyOutcome'}}
+    DeviceApplyPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/DeviceApplyTask'}}
+        nextCursor: {type: string}
+    SourceRuleCharacter:
+      type: object
+      required: [canonical, aliases]
+      properties:
+        canonical: {type: string, minLength: 1, maxLength: 100}
+        aliases: {type: array, maxItems: 32, items: {type: string, minLength: 1, maxLength: 100}}
+    SourceRuleGroup:
+      type: object
+      required: [canonical, variants, characters]
+      properties:
+        canonical: {type: string, minLength: 1, maxLength: 100}
+        variants: {type: array, maxItems: 64, items: {type: string, minLength: 1, maxLength: 100}}
+        characters: {type: array, maxItems: 128, items: {$ref: '#/components/schemas/SourceRuleCharacter'}}
+    SourceRuleLayer:
+      type: object
+      required: [groups, stopWords]
+      properties:
+        groups: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/SourceRuleGroup'}}
+        stopWords: {type: array, maxItems: 256, items: {type: string, minLength: 1, maxLength: 100}}
+    SourceRuleUpdate:
+      allOf:
+        - {$ref: '#/components/schemas/SourceRuleLayer'}
+        - type: object
+          required: [expectedRevision]
+          properties: {expectedRevision: {type: integer, format: int64, minimum: 1}}
+    SourceRuleSettings:
+      allOf:
+        - {$ref: '#/components/schemas/SourceRuleLayer'}
+        - type: object
+          required: [revision, rebuildState, processed, matched, ambiguous]
+          properties:
+            revision: {type: integer, format: int64, minimum: 1}
+            rebuildState: {type: string, enum: [pending, running, completed, failed]}
+            processed: {type: integer, format: int64}
+            matched: {type: integer, format: int64}
+            ambiguous: {type: integer, format: int64}
+            errorCode: {type: string}
     SystemStatus:
       type: object
       required: [instanceId, version, goVersion, startedAt, sampledAt, uptimeSeconds, receivedBytes, sentBytes, mounts, trashCount, clientErrorCount]
@@ -2151,6 +2377,7 @@ components:
         authorTaskId: {type: string}
         parentDelegationId: {type: string}
         assetTaskId: {type: string}
+        deviceId: {type: string, description: Target bound to a device.apply credential}
         generation: {type: integer, format: int64}
         expiresAt: {type: string, format: date-time}
     LibraryLocation:
@@ -2318,6 +2545,8 @@ components:
         favoritedAt: {type: string, format: date-time, description: Known time of the current favorite; repeated true preserves this time and a new false-to-true transition replaces it}
         cosWorkId: {type: string}
         cosDirectoryAuthorId: {type: string, description: Directory-derived author relationship maintained during COS path moves}
+        taxonomyDerived: {type: boolean, description: Existing taxonomy was derived from a filename rule}
+        taxonomyCandidates: {type: array, items: {type: string}, description: Ambiguous rule matches retained for manual review}
         contentVersion: {type: integer, format: int64}
         authorId: {type: string}
         authorName: {type: string}
@@ -2522,6 +2751,7 @@ components:
             assetId: {type: string}
             hash: {type: string}
             publishedContentVersion: {type: integer, format: int64, minimum: 1, description: Version actually published by this upload. Absent before ingestion or when a legacy receipt cannot prove it.}
+            explicitTaxonomy: {type: boolean, description: The owner explicitly supplied taxonomy, including an empty selection}
             errorCode: {type: string}
             errorMessage: {type: string}
             createdAt: {type: string, format: date-time}

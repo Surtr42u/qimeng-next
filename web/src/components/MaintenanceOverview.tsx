@@ -81,14 +81,14 @@ export function MaintenanceOverview({ monitor, trashLabel, logsLabel }: {
       <section className="chart-card monitor-span-2">
         <CardHeading icon={<FolderSearch aria-hidden="true" />}>常用维护</CardHeading>
         <div className="monitor-shortcuts">
-          <Link className="monitor-shortcut" to="/manage/files"><FolderSearch aria-hidden="true" /><span><strong>文件管理</strong><small>目录、注册与扫描</small></span><ChevronRight aria-hidden="true" /></Link>
+          <Link className="monitor-shortcut" to="/manage"><FolderSearch aria-hidden="true" /><span><strong>文件管理</strong><small>目录、注册与扫描</small></span><ChevronRight aria-hidden="true" /></Link>
           <Link className="monitor-shortcut" to="/manage/trash"><Trash2 aria-hidden="true" /><span><strong>回收站</strong><small>{trashLabel}</small></span><ChevronRight aria-hidden="true" /></Link>
         </div>
       </section>
       <section className="chart-card monitor-span-2">
         <CardHeading icon={<Activity aria-hidden="true" />}>入库与异常</CardHeading>
         <div className="monitor-shortcuts">
-          <Link className="monitor-shortcut" to="/manage/upload"><Upload aria-hidden="true" /><span><strong>上传文件</strong><small>指定作者与来源</small></span><ChevronRight aria-hidden="true" /></Link>
+          <Link className="monitor-shortcut" to="/manage/upload?from=service"><Upload aria-hidden="true" /><span><strong>上传文件</strong><small>指定作者与来源</small></span><ChevronRight aria-hidden="true" /></Link>
           <Link className="monitor-shortcut" to="/maintenance/client-errors"><FileWarning aria-hidden="true" /><span><strong>客户端异常</strong><small>{logsLabel}</small></span><ChevronRight aria-hidden="true" /></Link>
         </div>
       </section>

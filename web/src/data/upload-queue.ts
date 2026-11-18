@@ -96,6 +96,7 @@ export class UploadQueue {
     });
   }
   private restored(entry: QueueEntry): QueueEntry {
+    const archiveConflict = !!entry.archiveBinding && entry.archiveState === 'complete' && entry.archiveNote === '同名文件已保留，本次未覆盖归档';
     const interrupted = entry.archiveState === 'writing' || entry.archiveState === 'waiting' && ['ingested', 'staged'].includes(entry.phase);
     const unconfirmed = entry.phase === 'staged' && entry.request.mode === 'ordinary' || entry.phase === 'ingested' && !entry.assetId;
     const full = !!entry.uploadId && entry.size > 0 && entry.offset === entry.size;
@@ -104,7 +105,7 @@ export class UploadQueue {
       if (phase === 'paused' || phase === 'failed') phase = full ? phase : 'waiting_file';
       else phase = entry.uploadId && (unconfirmed || full) ? 'queued' : 'waiting_file';
     }
-    return { ...entry, phase, ...(interrupted ? { archiveState: 'failed' as const, archiveNote: '重选原文件可继续核对本地归档。' } : {}) };
+    return { ...entry, phase, ...(archiveConflict ? { archiveState: 'failed' as const, archiveNote: '归档处的同名文件内容不同。请保留原件，移开冲突文件后重试。' } : interrupted ? { archiveState: 'failed' as const, archiveNote: '重选原文件可继续核对本地归档。' } : {}) };
   }
   private persistBatch(batch: UploadBatchPreparation) {
     const snapshot = structuredClone(batch);

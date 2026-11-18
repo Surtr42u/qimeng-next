@@ -28,6 +28,7 @@ func(s *Service)Upload(ctx context.Context,p model.Principal,id string)(model.Up
  if e!=nil&&!errors.Is(e,sql.ErrNoRows){return u,e};if state=="committed"{u.ErrorCode="cleanup_pending";u.ErrorMessage="媒体已入库，旧版或临时文件清理待恢复。"}else if state=="prepared"{u.ErrorCode="publication_pending";u.ErrorMessage="发布已经开始，须沿原操作身份恢复。"};return u,nil
 }
 func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(model.Upload,error){
+ explicitTaxonomy:=w.Principal.Has("admin")&&(in.SourceIDs!=nil||in.CharacterIDs!=nil)
  if e:=Authorize(w.Principal,"ingest",in.BatchID);e!=nil{return model.Upload{},e}
  if e:=s.uploadsAllowed(ctx);e!=nil{return model.Upload{},e}
  library,e:=s.library(ctx,in.LibraryID);if e!=nil{return model.Upload{},e};if !library.Enabled{return model.Upload{},Fail(409,"library_disabled","目标库已停用，不能接收新上传。")}
@@ -60,7 +61,7 @@ func(s *Service)CreateUpload(ctx context.Context,w *Write,in model.UploadInput)(
  if e:=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM uploads WHERE state='receiving'").Scan(&active);e!=nil{return model.Upload{},e}
  if e:=s.DB.DB.QueryRowContext(ctx,"SELECT COALESCE(sum(json_extract(u.data,'$.size')-json_extract(u.data,'$.offset')),0) FROM uploads u JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId') WHERE u.state='receiving' AND COALESCE(json_extract(l.data,'$.storageId'),'data')=?",library.StorageID).Scan(&reserved);e!=nil{return model.Upload{},e}
  if active>=MaxActiveUploads{return model.Upload{},Fail(429,"upload_capacity","同时接收的上传已满，请稍后重试。")};diskPath,e:=s.Root.LibraryPath(in.LibraryID);if e!=nil{return model.Upload{},e};free,e:=freeBytes(diskPath);if e!=nil{return model.Upload{},e};if in.Size>free-s.Config.ReserveBytes-reserved{return model.Upload{},Fail(507,"insufficient_storage","可用空间不足以保留上传与存储余量。")}
- u:=model.Upload{UploadInput:in,ID:w.ID("upload"),State:"receiving",CreatedAt:time.Now().UTC()}
+ u:=model.Upload{UploadInput:in,ID:w.ID("upload"),State:"receiving",ExplicitTaxonomy:explicitTaxonomy,CreatedAt:time.Now().UTC()}
  s.Root.RegisterUpload(u.ID,u.LibraryID);if e=s.ensureParent(uploadPath(u.ID));e!=nil{return u,e}
  f,e:=s.Root.OpenFile(uploadPath(u.ID),os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600)
  if errors.Is(e,os.ErrExist){if e=s.safe(uploadPath(u.ID));e!=nil{return u,e};info,se:=s.Root.Stat(uploadPath(u.ID));if se!=nil{return u,se};if info.Size()!=0{return u,Fail(409,"upload_orphan_conflict","同操作残留内容需要核对。")};f,e=s.Root.OpenFile(uploadPath(u.ID),os.O_WRONLY,0600)}

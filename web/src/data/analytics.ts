@@ -57,10 +57,11 @@ export function useRankings(
   period: RankingPeriod,
   enabled: boolean,
   mediaType?: Schema<"Asset">["mediaType"],
+  limit = 48,
 ) {
   const key = useRemoteKey();
   return useInfiniteQuery({
-    queryKey: [...key, "rankings", period, mediaType],
+    queryKey: [...key, "rankings", period, mediaType, limit],
     placeholderData: keepPreviousData,
     initialPageParam: undefined as string | undefined,
     enabled,
@@ -68,7 +69,7 @@ export function useRankings(
       read(
         api.GET("/rankings", {
           params: {
-            query: { period, mediaType, cursor: pageParam, limit: 48 },
+            query: { period, mediaType, cursor: pageParam, limit },
           },
           signal,
         }),

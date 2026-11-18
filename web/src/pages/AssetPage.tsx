@@ -120,6 +120,7 @@ function AssetDetail({ asset, navigation, go, openViewer }: {
             {asset.width && asset.height ? <span>{asset.width}×{asset.height}</span> : null}
             <span>{date || "日期未记录"}</span>
             {asset.source && <span>{asset.source}</span>}
+            {!!asset.taxonomyCandidates?.length && <span>待核对的出处或角色：{asset.taxonomyCandidates.join("、")}</span>}
           </p>
           <div className="detail-actions">
             <button

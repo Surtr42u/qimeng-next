@@ -3,6 +3,12 @@ export type DetailNavigation = {
   ids: string[];
   index: number;
 };
+export function listNavigation(items: readonly { id: string }[]) {
+  const ids = items.map(item => item.id);
+  const positions = new Map<string, number>();
+  ids.forEach((id, index) => { if (!positions.has(id)) positions.set(id, index); });
+  return { ids, positions };
+}
 
 export const isAssetDetail = (path: string) => /^\/asset\/[^/]+$/.test(path);
 export function backdropLocation(value: unknown) {

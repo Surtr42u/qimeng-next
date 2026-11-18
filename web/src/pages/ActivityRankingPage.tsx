@@ -1,199 +1,50 @@
-import { Link, useSearchParams } from "react-router-dom";
-import { LegacySegments as SegmentedControl } from "../components/LegacySegments";
-import { useActivityRanking } from "../data/analytics";
-import type { ActivityRankingKind, StatsRange } from "../data/analytics";
-import type { Schema } from "../data/client";
-import {
-  ErrorNotice,
-  Loading,
-  EmptyState,
-  PageHeading,
-} from "../components/Feedback";
-import { activityWindows, useActivityRange } from "../lib/activity-window";
+import { useEffect } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useActivityRanking, useRankings, type RankingPeriod, type StatsRange } from "../data/analytics";
+import { mediaCards } from "../data/media";
+import { Preview } from "../components/MediaGrid";
+import { ErrorNotice, Loading } from "../components/Feedback";
+import { WorkspaceHeading } from "../components/LegacyPageHeading";
+import { activityWindows } from "../lib/activity-window";
 import { readableDuration } from "../lib/format";
 
-const kinds = [
-  { value: "authors", label: "作者" },
-  { value: "tags", label: "标签" },
-  { value: "assets", label: "内容" },
-] as const;
-const titles = { authors: "常看作者", tags: "常看标签", assets: "常看内容" };
-
-export function ActivityTopCards({ range }: { range: StatsRange }) {
-  return (
-    <div className="data-panels section-space">
-      {kinds.map((kind) => (
-        <ActivityTopCard key={kind.value} kind={kind.value} range={range} />
-      ))}
-    </div>
-  );
-}
-
-function ActivityTopCard({
-  kind,
-  range,
-}: {
-  kind: ActivityRankingKind;
-  range: StatsRange;
-}) {
-  const query = useActivityRanking(kind, range, "views", 5);
-  const items = query.data?.pages[0]?.items ?? [];
-  return (
-    <section className="panel">
-      <div className="section-heading">
-        <h2>{titles[kind]}</h2>
-        <Link
-          className="text-link"
-          to={`/data/rankings?kind=${kind}&range=${range}`}
-        >
-          完整榜单
-        </Link>
-      </div>
-      <ErrorNotice
-        error={query.error}
-        stale={items.length > 0}
-        retry={() => void query.refetch()}
-      />
-      {query.isPending ? (
-        <Loading />
-      ) : items.length ? (
-        <RankingRows kind={kind} items={items} />
-      ) : (
-        !query.isError && <p className="muted">此窗口没有相应活动记录。</p>
-      )}
-    </section>
-  );
-}
-
+const periods: Record<string, RankingPeriod> = { "7d": "week", "30d": "month", "90d": "quarter", all: "all" };
 export function ActivityRankingPage() {
-  const [params, setParams] = useSearchParams();
-  const { range, change } = useActivityRange();
-  const kind = (
-    kinds.some((item) => item.value === params.get("kind"))
-      ? params.get("kind")
-      : "authors"
-  ) as ActivityRankingKind;
-  const metric =
-    params.get("metric") === "seconds" && kind === "assets"
-      ? "seconds"
-      : "views";
-  const query = useActivityRanking(kind, range, metric);
-  const items = query.data?.pages.flatMap((page) => page.items) ?? [];
-  const select = (key: string, value: string) =>
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.set(key, value);
-        return next;
-      },
-      { replace: true },
-    );
-  return (
-    <>
-      <Link className="back-link" to={`/data?range=${range}`}>
-        返回数据总览
-      </Link>
-      <PageHeading
-        title="浏览活动榜单"
-        subtitle="按服务端记录的窗口活动排序，与每日点赞榜分别统计。"
-        action={
-          <SegmentedControl
-            label="榜单窗口"
-            value={range ?? "7d"}
-            options={activityWindows}
-            onChange={change}
-          />
-        }
-      />
-      <div className="actions section-space">
-        <SegmentedControl
-          label="榜单对象"
-          value={kind}
-          options={kinds}
-          onChange={(value) => select("kind", value)}
-        />
-        {kind === "assets" && (
-          <SegmentedControl
-            label="内容榜排序"
-            value={metric}
-            options={[
-              { value: "views", label: "浏览次数" },
-              { value: "seconds", label: "详情停留" },
-            ]}
-            onChange={(value) => select("metric", value)}
-          />
-        )}
-      </div>
-      <ErrorNotice
-        error={query.error}
-        stale={items.length > 0}
-        retry={() => void query.refetch()}
-      />
-      {query.isPending ? (
-        <Loading />
-      ) : items.length ? (
-        <section className="panel">
-          <RankingRows kind={kind} items={items} metric={metric} />
-        </section>
-      ) : (
-        !query.isError && <EmptyState title="此窗口没有活动排名" />
-      )}
-      {query.hasNextPage && (
-        <button
-          className="button section-space"
-          disabled={query.isFetchingNextPage}
-          onClick={() => void query.fetchNextPage()}
-        >
-          加载更多排名
-        </button>
-      )}
-    </>
-  );
+  const [params] = useSearchParams();
+  const requested = params.get("kind");
+  const kind = requested === "tags" || requested === "assets" || requested === "content" ? requested : "authors";
+  const rangeParam = params.get("range");
+  const range = activityWindows.find(option => option.value === (rangeParam === "day" ? "30d" : rangeParam)) ?? activityWindows[3];
+  const title = kind === "tags" ? "标签榜" : kind === "authors" ? "作者榜" : "内容榜";
+  return <div className="page personal-workspace data-workspace" id="page-ranks">
+    <WorkspaceHeading title={title} description={range.label + " · 前 " + (kind === "content" ? 200 : 50) + " 项"}
+      actions={<Link className="workspace-link" to={"/data?range=" + range.value}>返回数据</Link>} />
+    <div className="rank-card">{kind === "content" ? <HeatRank period={periods[range.value]!} />
+      : <ActivityRank kind={kind} range={range.value} duration={kind === "assets" && params.get("metric") === "seconds"} />}</div>
+  </div>;
 }
-
-function RankingRows({
-  kind,
-  items,
-  metric = "views",
-}: {
-  kind: ActivityRankingKind;
-  items: Schema<"ActivityRankingItem">[];
-  metric?: "views" | "seconds";
-}) {
-  return (
-    <ol className="activity-ranking-list">
-      {items.map((item) => {
-        const target =
-          kind === "authors"
-            ? `/authors/${encodeURIComponent(item.id)}`
-            : kind === "tags"
-              ? `/album?tag=${encodeURIComponent(item.name)}`
-              : item.asset
-                ? `/asset/${encodeURIComponent(item.asset.id)}`
-                : undefined;
-        return (
-          <li key={item.id}>
-            <div>
-              {target ? (
-                <Link className="text-link" to={target}>
-                  {item.name}
-                </Link>
-              ) : (
-                <span>{item.name}</span>
-              )}
-              <p className="muted">
-                {item.assets} 份内容 · 播放 {item.plays} 次 · 停留{" "}
-                {readableDuration(item.seconds)}
-              </p>
-            </div>
-            <strong>
-              {metric === "seconds"
-                ? readableDuration(item.value)
-                : `${item.views} 次`}
-            </strong>
-          </li>
-        );
-      })}
-    </ol>
-  );
+function ActivityRank({ kind, range, duration }: { kind: "tags" | "authors" | "assets"; range: StatsRange; duration: boolean }) {
+  const query = useActivityRanking(kind, range, duration ? "seconds" : "views", 50);
+  const navigate = useNavigate();
+  const rows = query.data?.pages[0]?.items ?? [];
+  return <><p className="rank-note">{duration ? "按详情停留" : "按窗口浏览"}</p>
+    <ErrorNotice error={query.error} stale={!!query.data} retry={() => void query.refetch()} />
+    {query.isPending ? <Loading /> : rows.length ? <ul>{rows.map(item => {
+      const path = kind === "tags" ? "/collection/tag/" + encodeURIComponent(item.name) : kind === "authors" ? "/authors/" + encodeURIComponent(item.id) : item.asset ? "/asset/" + encodeURIComponent(item.asset.id) : undefined;
+      return <li key={item.id} role={path ? "button" : undefined} tabIndex={path ? 0 : undefined} onClick={() => {if(path)navigate(path);}} onKeyDown={event=>{if(path&&(event.key==="Enter"||event.key===" ")){event.preventDefault();navigate(path);}}}>
+        <span className="rank-name">{item.name}</span><b>{duration ? readableDuration(item.value) : item.views.toLocaleString("zh-CN")}</b>
+      </li>;})}</ul> : !query.isError && <p className="rank-note">暂无数据</p>}
+  </>;
+}
+function HeatRank({ period }: { period: RankingPeriod }) {
+  const navigate = useNavigate();
+  const query = useRankings(period, true, undefined, 100);
+  const items = query.data?.pages.flatMap(page => page.items.map(row => row.asset)).slice(0,200) ?? [];
+  useEffect(() => { if(items.length<200 && query.hasNextPage && !query.isPlaceholderData && !query.isFetching && !query.isError)void query.fetchNextPage(); }, [items.length,query.hasNextPage,query.isPlaceholderData,query.isFetching,query.isError,query.fetchNextPage]);
+  return <><p className="rank-note">按热度</p>
+    <ErrorNotice error={query.error} stale={!!query.data} retry={() => void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch())} />
+    {query.isPending || query.isPlaceholderData ? <Loading /> : items.length ? <div className="rank-cards">{mediaCards(items).map(item => {
+      const open=()=>navigate("/asset/"+encodeURIComponent(item.id));return <div className="rank-item" key={item.id} role="button" tabIndex={0} onClick={open} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}}}><div className="rank-cover"><Preview item={item} /></div><p className="rank-title">{item.title}</p></div>;
+    })}</div> : !query.isError && <p className="rank-note">暂无数据</p>}
+  </>;
 }

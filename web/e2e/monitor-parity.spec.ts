@@ -31,7 +31,8 @@ test("old monitoring cards use actual samples, typed diagnostics, paged mounts a
   await expect(page.getByRole("heading", { name: "服务与维护" })).toBeVisible();
   await expect(page.getByRole("region", { name: "接收 / 下行" }).locator(".monitor-value")).toHaveText("1 KB/s", { timeout: 10000 });
   await expect(page.getByRole("link", { name: /回收站.*7 条待处理/ })).toBeVisible();
-  await expect(page.getByRole("link", { name: /文件管理/ })).toHaveAttribute("href", "/manage/files");
+  await expect(page.getByRole("link", { name: /文件管理/ })).toHaveAttribute("href", "/manage");
+  await expect(page.getByRole("link", { name: /上传文件/ })).toHaveAttribute("href", "/manage/upload?from=service");
   await page.getByRole("combobox", { name: "按状态筛选任务" }).click();
   await page.getByRole("option", { name: "运行中" }).click();
   await expect.poll(() => jobStates).toContain("running");

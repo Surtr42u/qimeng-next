@@ -1,6 +1,30 @@
 import { expect, test } from "@playwright/test";
 import { mockLibrary } from "./fixture";
 
+test('a source revision conflict rebases only the edited words before a second explicit save', async ({ page }) => {
+  const state = await mockLibrary(page); let revision=1; let sources=['original']; const writes: unknown[]=[];
+  await page.route('**/api/v1/authors/synthetic-author', route=>{
+    if(route.request().method()==='PATCH'){
+      const body=route.request().postDataJSON();writes.push(body);
+      if(body.expectedRevision!==revision)return route.fulfill({status:409,json:{code:'revision_conflict',message:'来源已变更'}});
+      revision++;sources=body.acquisitionSources;
+    }
+    return route.fulfill({json:{id:'synthetic-author',kind:'regular',name:'合成作者',placeholder:false,revision,acquisitionSources:sources}});
+  });
+  await page.goto('/asset/'+state.assets[0]!.id+'/edit');
+  const editor=page.locator('#page-asset-edit');
+  await editor.getByRole('button',{name:'original',exact:true}).click();
+  const input=editor.getByPlaceholder('新站点或 URL，回车加入');await input.fill('local');await input.press('Enter');
+  revision=2;sources=['original','remote'];
+  await editor.getByRole('button',{name:'保存',exact:true}).click();
+  await editor.getByRole('button',{name:'读取当前版本并保留我的改动'}).click();
+  await expect(editor.getByRole('button',{name:'remote',exact:true})).toHaveAttribute('aria-pressed','true');
+  expect(writes).toHaveLength(1);
+  await editor.getByRole('button',{name:'保存',exact:true}).click();
+  await expect(page).toHaveURL(/\/asset\/synthetic-0$/);
+  expect(writes).toEqual([{expectedRevision:1,acquisitionSources:['local']},{expectedRevision:2,acquisitionSources:['remote','local']}]);
+});
+
 test("saving the complete author set clears the navigation guard before returning to the detail", async ({ page }) => {
   const state = await mockLibrary(page);
   const asset = state.assets[0]!;

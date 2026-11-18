@@ -51,5 +51,6 @@ Web命令见 [web/README](../web/README.md)，桌面见 [desktop/README](../desk
 | 014009f / [44247156398](https://github.com/Surtr42u/qimeng-next/actions/runs/44247156398) | 27 单测、77 浏览器通过。两种 Chromium 真实写入合成 OPFS，验证业务修订不变不轮换、断线续写与上代手改保留。WebKit 跳过目录写入专用用例。Windows 的 Rust 四单测与桌面构建步骤通过。真实 Go+Web 首轮停在作者编辑后的导航，重试遇前次相同合成文件。 |
 | 21c5681 / [44249877808](https://github.com/Surtr42u/qimeng-next/actions/runs/44249877808) | 编译、27 单测及 82 个浏览器用例通过；WebKit 推荐恢复测试因滚动与点击对同一页尾同时生效错过失败提示。其快照已显示新排序的 33 项。修正后由后续运行核验。 |
 | 05d9da5 / [44254344873](https://github.com/Surtr42u/qimeng-next/actions/runs/44254344873) | 27 单测、83 浏览器通过，WebKit 跳过目录写入。三个原生架构开箱包通过空库登录、首页、备份和恢复。Linux x64 增强 NAS 容器对 160×120 合成视频生成 25,339 字节 JPEG 缩略图和三张摘要相符的研究帧。Windows 构建了 NSIS，桌面首轮自动化未找到连接页。真实 Web 完成编辑、上传、播放与时间轴保存，重载时标记未出现。 |
+| f2b884b / [44269316797](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797) | 30 单测和 89 个隔离浏览器用例通过，WebKit 跳过目录写入。实测首页原三项页签、四项侧栏活动样式、详情独立滚动、列表底衬和返回保态。相同视口、相同操作状态的设置截图已与旧基准直接核对，保留新增 AI 接入。首页与相册的媒体图均为合成数据。 |
 
 R22 完整输入清单、稳定操作键与队列恢复见 [Web 数据与状态](../web/README.md)。微软 WebView2、安装包以及 PC/NAS 开箱包的同提交产物以状态页与对应私有运行的证据为准。

@@ -32,19 +32,23 @@ func errorType(err error)string{if err==nil{return "none"};return "io_or_persist
 func respond(w http.ResponseWriter,status int,value any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.Header().Set("Cache-Control","no-store");w.WriteHeader(status);if status!=204{if e:=json.NewEncoder(w).Encode(value);e!=nil{slog.Error("response write failed")}}}
 func result(w http.ResponseWriter,r service.Result){w.Header().Set("Content-Type","application/json; charset=utf-8");w.Header().Set("Cache-Control","no-store");w.WriteHeader(r.Status);if len(r.Body)>0{if _,e:=w.Write(r.Body);e!=nil{slog.Error("response write failed")}}}
 func originOK(r *http.Request,secureOrigin ...bool)bool{o:=r.Header.Get("Origin");if o==""{return true};u,e:=url.Parse(o);if e!=nil{return false};scheme:="http";if r.TLS!=nil||len(secureOrigin)>0&&secureOrigin[0]{scheme="https"};return u.Scheme==scheme&&u.Host==r.Host&&u.User==nil}
-func(a *API)auth(next http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){
+func(a *API)auth(next http.HandlerFunc)http.HandlerFunc{return a.authScope("read",next)}
+func(a *API)authScope(scope string,next http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){
  token:=strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ");if token==r.Header.Get("Authorization")&&token!=""{fail(w,service.Fail(401,"invalid_authorization","仅支持 Bearer 凭据。"));return}
  cookieAuth:=false;if token==""{if c,e:=r.Cookie("qimeng_session");e==nil{token=c.Value;cookieAuth=true}}
  if cookieAuth&&r.Method!="GET"&&r.Method!="HEAD"&&!originOK(r,a.s.Config.SecureCookies){fail(w,service.Fail(403,"origin_denied","请求来源与当前服务不一致。"));return}
- p,e:=a.s.Authenticate(r.Context(),token);if e!=nil{fail(w,e);return};if e=service.Authorize(p,"read","");e!=nil{fail(w,e);return};next(w,r.WithContext(context.WithValue(r.Context(),principalKey{},p)))
+ p,e:=a.s.Authenticate(r.Context(),token);if e!=nil{fail(w,e);return};if scope!=""&&!p.Has(scope){fail(w,service.Fail(403,"scope_denied","凭据没有此操作权限。"));return};next(w,r.WithContext(context.WithValue(r.Context(),principalKey{},p)))
 }}
 func(a *API)get(pattern string,fn func(*http.Request)(any,error)){a.mux.HandleFunc("GET /api/v1"+pattern,a.auth(func(w http.ResponseWriter,r *http.Request){v,e:=fn(r);if e!=nil{fail(w,e);return};respond(w,200,v)}))}
-func decode[T any](w http.ResponseWriter,r *http.Request)(T,[]byte,error){
- var v T;r.Body=http.MaxBytesReader(w,r.Body,1<<20);raw,e:=io.ReadAll(r.Body);if e!=nil{return v,nil,service.Fail(413,"body_too_large","请求正文超出限制。")};if len(raw)==0{raw=[]byte("{}")};d:=json.NewDecoder(strings.NewReader(string(raw)));d.DisallowUnknownFields();if e=d.Decode(&v);e!=nil{return v,nil,service.Fail(400,"invalid_json","请求字段或 JSON 格式无效。")};if d.Decode(new(any))!=io.EOF{return v,nil,service.Fail(400,"invalid_json","请求包含多余 JSON 数据。")};canonical,e:=json.Marshal(v);return v,canonical,e
+func decode[T any](w http.ResponseWriter,r *http.Request,bodyLimit ...int64)(T,[]byte,error){
+ var v T;maxBytes:=int64(1<<20);if len(bodyLimit)>0{maxBytes=bodyLimit[0]};r.Body=http.MaxBytesReader(w,r.Body,maxBytes);raw,e:=io.ReadAll(r.Body);if e!=nil{return v,nil,service.Fail(413,"body_too_large","请求正文超出限制。")};if len(raw)==0{raw=[]byte("{}")};d:=json.NewDecoder(strings.NewReader(string(raw)));d.DisallowUnknownFields();if e=d.Decode(&v);e!=nil{return v,nil,service.Fail(400,"invalid_json","请求字段或 JSON 格式无效。")};if d.Decode(new(any))!=io.EOF{return v,nil,service.Fail(400,"invalid_json","请求包含多余 JSON 数据。")};canonical,e:=json.Marshal(v);return v,canonical,e
 }
 func write[T any](a *API,method,pattern string,idempotent bool,fn func(*http.Request,*service.Write,T)(any,int,error)){
- a.mux.HandleFunc(method+" /api/v1"+pattern,a.auth(func(w http.ResponseWriter,r *http.Request){
-  in,raw,e:=decode[T](w,r);if e!=nil{fail(w,e);return};key:=r.Header.Get("Idempotency-Key");if idempotent&&key==""{fail(w,service.Fail(400,"idempotency_required","此操作必须提供稳定幂等键。"));return}
+ writeScoped(a,"read",method,pattern,idempotent,fn)
+}
+func writeScoped[T any](a *API,scope,method,pattern string,idempotent bool,fn func(*http.Request,*service.Write,T)(any,int,error),bodyLimit ...int64){
+ a.mux.HandleFunc(method+" /api/v1"+pattern,a.authScope(scope,func(w http.ResponseWriter,r *http.Request){
+  in,raw,e:=decode[T](w,r,bodyLimit...);if e!=nil{fail(w,e);return};key:=r.Header.Get("Idempotency-Key");if idempotent&&key==""{fail(w,service.Fail(400,"idempotency_required","此操作必须提供稳定幂等键。"));return}
   // Include query preconditions in the receipt identity as well as the body.
   raw=append(raw,[]byte("\x00"+r.URL.Query().Encode())...)
   out,e:=a.s.Run(r.Context(),principal(r),r.Method+" "+r.URL.Path,key,raw,func(tx *service.Write)(any,int,error){return fn(r,tx,in)});if e!=nil{fail(w,e);return};result(w,out)
@@ -66,7 +70,7 @@ func(a *API)routes(){
   if !originOK(r,a.s.Config.SecureCookies){fail(w,service.Fail(403,"origin_denied","请求来源不匹配。"));return};in,_,e:=decode[service.SessionInput](w,r);if e!=nil{fail(w,e);return};p,e:=a.s.AuthenticateLogin(r.Context(),in);if e!=nil{fail(w,e);return}
   out,e:=a.s.Run(r.Context(),p,"createSession","",nil,func(tx *service.Write)(any,int,error){v,e:=a.s.CreateSession(r.Context(),tx,in.Label,"",nil);return v,201,e});if e!=nil{fail(w,e);return};var session model.Principal;if e=json.Unmarshal(out.Body,&session);e!=nil{fail(w,e);return};http.SetCookie(w,&http.Cookie{Name:"qimeng_session",Value:session.Token,Path:"/",HttpOnly:true,Secure:a.s.Config.SecureCookies,SameSite:http.SameSiteStrictMode,Expires:session.ExpiresAt});result(w,out)
  })
- a.get("/sessions/current",func(r *http.Request)(any,error){return principal(r),nil})
+ a.mux.HandleFunc("GET /api/v1/sessions/current",a.authScope("",func(w http.ResponseWriter,r *http.Request){respond(w,200,principal(r))}))
  a.mux.HandleFunc("DELETE /api/v1/sessions/current",a.auth(func(w http.ResponseWriter,r *http.Request){p:=principal(r);out,e:=a.s.Run(r.Context(),p,"logout","",nil,func(tx *service.Write)(any,int,error){return nil,204,a.s.Revoke(r.Context(),tx,p.ID)});if e!=nil{fail(w,e);return};http.SetCookie(w,&http.Cookie{Name:"qimeng_session",Value:"",Path:"/",HttpOnly:true,Secure:a.s.Config.SecureCookies,SameSite:http.SameSiteStrictMode,MaxAge:-1});result(w,out)}))
  issueSecret[credentialRequest](a,"/credentials",func(r *http.Request,w *service.Write,in credentialRequest)(any,int,error){if (in.BatchID=="")==(in.AuthorTaskID==""){return nil,0,service.Fail(400,"task_required","AI 凭据必须且只能绑定一个接收或资料维护任务。")};v,e:=a.s.CreateSession(r.Context(),w,in.Label,in.BatchID,in.Scopes,in.AuthorTaskID);return v,201,e})
  write[struct{}](a,"DELETE","/credentials/{id}",false,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){return nil,204,a.s.Revoke(r.Context(),w,r.PathValue("id"))})
@@ -74,8 +78,10 @@ func(a *API)routes(){
  a.get("/storages",func(r *http.Request)(any,error){return a.s.Storages(),nil})
  a.libraryLocationRoutes()
  a.localSyncRoutes()
+ a.deviceApplyRoutes()
  a.systemRoutes()
  a.authorListRoutes()
+ a.sourceRuleRoutes()
  write[libraryCreateRequest](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in libraryCreateRequest)(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind,in.StorageID,in.RootRelativePath);return v,201,e})
  a.get("/assets",func(r *http.Request)(any,error){f,e:=assetFilterRequest(r);if e!=nil{return nil,e};return a.s.Assets(r.Context(),f)})
  a.get("/assets/{id}",func(r *http.Request)(any,error){return a.s.Asset(r.Context(),r.PathValue("id"))})
@@ -89,7 +95,7 @@ func(a *API)routes(){
  write[struct{}](a,"DELETE","/assets/{id}",true,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){rev,e:=revision(r);if e!=nil{return nil,0,e};v,e:=a.s.Trash(r.Context(),w,r.PathValue("id"),rev);return v,200,e})
  a.get("/tags",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};return a.s.Tags(r.Context(),r.URL.Query().Get("cursor"),n)})
  a.get("/history",func(r *http.Request)(any,error){f,e:=assetFilterRequest(r);if e!=nil{return nil,e};return a.s.FilteredHistory(r.Context(),f)})
- a.get("/authors",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};f,e:=boolQuery(r,"following");if e!=nil{return nil,e};return a.s.Authors(r.Context(),r.URL.Query().Get("q"),r.URL.Query().Get("cursor"),n,f!=nil&&*f,r.URL.Query().Get("kind"),r.URL.Query().Get("sort"))})
+ a.get("/authors",func(r *http.Request)(any,error){n,e:=limit(r);if e!=nil{return nil,e};f,e:=boolQuery(r,"following");if e!=nil{return nil,e};return a.s.Authors(r.Context(),r.URL.Query().Get("q"),r.URL.Query().Get("cursor"),n,f!=nil&&*f,r.URL.Query().Get("kind"),r.URL.Query().Get("sort"),r.URL.Query().Get("exactName"))})
  a.get("/authors/{id}",func(r *http.Request)(any,error){return a.s.Author(r.Context(),r.PathValue("id"))})
  write[service.AuthorInput](a,"POST","/authors",true,func(r *http.Request,w *service.Write,in service.AuthorInput)(any,int,error){v,e:=a.s.CreateAuthor(r.Context(),w,in);return v,201,e})
  write[service.AuthorUpdate](a,"PATCH","/authors/{id}",true,func(r *http.Request,w *service.Write,in service.AuthorUpdate)(any,int,error){v,e:=a.s.UpdateAuthor(r.Context(),w,r.PathValue("id"),in);return v,200,e})

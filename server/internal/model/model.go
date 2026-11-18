@@ -62,6 +62,8 @@ type Asset struct {
  AcquisitionSources []string `json:"acquisitionSources"`
  Characters []string `json:"characters"`
  CharacterIDs []string `json:"characterIds"`
+ TaxonomyDerived bool `json:"taxonomyDerived,omitempty"`
+ TaxonomyCandidates []string `json:"taxonomyCandidates,omitempty"`
  MetadataSource string `json:"metadataSource"`
  SourceMtime *time.Time `json:"sourceMtime,omitempty"`
  ContentMtime *time.Time `json:"contentMtime,omitempty"`
@@ -150,6 +152,7 @@ type Upload struct {
  State string `json:"state"`
  AssetID string `json:"assetId,omitempty"`
  PublishedContentVersion int64 `json:"publishedContentVersion,omitempty"`
+ ExplicitTaxonomy bool `json:"explicitTaxonomy,omitempty"`
  Hash string `json:"hash,omitempty"`
  ErrorCode string `json:"errorCode,omitempty"`
  ErrorMessage string `json:"errorMessage,omitempty"`
@@ -284,6 +287,7 @@ type Principal struct {
  BatchID string `json:"batchId,omitempty"`
  AuthorTaskID string `json:"authorTaskId,omitempty"`
  AssetTaskID string `json:"assetTaskId,omitempty"`
+ DeviceID string `json:"deviceId,omitempty"`
  ParentDelegationID string `json:"parentDelegationId,omitempty"`
  Generation int64 `json:"generation,omitempty"`
  ExpiresAt time.Time `json:"expiresAt"`

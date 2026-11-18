@@ -62,6 +62,10 @@ type Part = keyof typeof layout;
 const parts = Object.keys(layout) as Part[];
 const stageRoot = ".绮梦下一代暂存";
 const journalName = ".绮梦下一代轮换.json";
+const mobileJournal = ".绮梦手机轮换.json";
+async function checkOtherWriter(root: Directory) {
+  if ((await fileAt(root, [mobileJournal]))?.size) throw new Error("请先在手机完成未结束的归档，再更新或读取这两代资料。");
+}
 const recordName = ".绮梦下一代清单.json";
 const checksum = /^[a-f0-9]{64}$/;
 export type Generation = { instanceId: string; businessRevision: string; backupId: string; hashes: Record<Part, string> };
@@ -122,6 +126,7 @@ async function publish(root: Directory, slot: Slot, old: Generation | undefined,
 }
 type ArchiveStream = (id: string, signal: AbortSignal) => Promise<ReadableStream<Uint8Array> | null>;
 export async function resumeRotation(root: Directory, instanceId: string, download: ArchiveStream, signal: AbortSignal) {
+  await checkOtherWriter(root);
   const job = await readJournal(root);
   if (!job) return;
   if (job.next.instanceId !== instanceId) throw new Error("维护目录中有另一个影库未完成的轮换。");
@@ -182,6 +187,7 @@ export async function stageMaterials(root: Directory, master: ReadableStream<Uin
   return { stage, hashes };
 }
 export async function rotate(root: Directory, identity: Omit<Generation, "hashes">, archiveHash: string, materials: Materials, download: ArchiveStream, signal: AbortSignal) {
+  await checkOtherWriter(root);
   const current = await readGeneration(root, "当前");
   const previous = await readGeneration(root, "上次");
   if ([current, previous].some(value => value && value.instanceId !== identity.instanceId)) throw new Error("目录已绑定另一影库，未覆盖其资料。");
@@ -197,6 +203,8 @@ export async function verifyGeneration(root: Directory, slot: Slot, expected: Ge
   await checkParts(root, slot, expected, undefined, signal, false);
 }
 export async function recoveryFile(root: Directory, slot: Slot, instanceId: string, signal: AbortSignal) {
+  await checkOtherWriter(root);
+  if (await readJournal(root)) throw new Error("请先在浏览器完成未结束的归档，再选择恢复来源。");
   const current = await readGeneration(root, slot);
   if (current) {
     if (current.instanceId !== instanceId) throw new Error("该代资料属于另一个影库。");
@@ -214,6 +222,8 @@ export async function recoveryFile(root: Directory, slot: Slot, instanceId: stri
   return { kind: "v2" as const, file, hash };
 }
 export async function folderAuthorLists(root: Directory) {
+  await checkOtherWriter(root);
+  if (await readJournal(root)) throw new Error("请先完成未结束的归档，再读取当前作者资料。");
   const folder = await (await root.getDirectoryHandle("当前")).getDirectoryHandle("作者资料");
   const index = await fileAt(folder, ["作者片段索引.json"]);
   if (!index) {
@@ -233,7 +243,8 @@ export async function archiveOriginal(root: Directory, libraryName: string, rela
   const path = ["上传归档", libraryName, ...relativeDirectory.split("/").filter(Boolean), file.name];
   const old = await fileAt(root, path);
   if (old) {
-    return old.size === file.size && await digest(old, signal) === expected ? "已有相同原件副本" : "同名文件已保留，本次未覆盖归档";
+    if (old.size === file.size && await digest(old, signal) === expected) return "已有相同原件副本";
+    throw new Error("归档处的同名文件内容不同，已保留该文件。请先移开冲突文件再重试。");
   }
   await writeStream(root, path, file.stream(), expected, signal);
   return "原件副本已归档";

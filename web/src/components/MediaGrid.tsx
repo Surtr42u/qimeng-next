@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { listNavigation } from "../lib/detail-navigation";
 import { Icon } from "./Icon";
 import { useThumbnailURL } from "../data/media";
 
@@ -18,20 +19,21 @@ export type MediaCardModel = {
 export function MediaGrid({
   items,
   search = false,
-  navigationIds = items.map(item => item.id),
+  navigation,
 }: {
   items: readonly MediaCardModel[];
   search?: boolean;
-  navigationIds?: string[];
+  navigation?: ReturnType<typeof listNavigation>;
 }) {
   const location = useLocation();
+  const order = useMemo(() => navigation ?? listNavigation(items), [navigation, items]);
   return (
     <div className="media-grid">
       {items.map((item) => (
         <Link
           key={item.id}
           to={`/asset/${encodeURIComponent(item.id)}`}
-          state={{ returnTo: location.pathname + location.search, ids: navigationIds, index: navigationIds.indexOf(item.id) }}
+          state={{ returnTo: location.pathname + location.search, ids: order.ids, index: order.positions.get(item.id) }}
           className="card media-card"
           aria-label={`打开 ${item.title}`}
           onKeyDown={(event) => {

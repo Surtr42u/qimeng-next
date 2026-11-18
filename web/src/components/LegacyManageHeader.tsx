@@ -17,14 +17,15 @@ export function ManagePageHeader({
 }) {
   const [params] = useSearchParams();
   const fromMine = params.get("from") === "mine";
+  const fromService = params.get("from") === "service";
   return (
     <header className="manage-page-head">
       <Link
         className="manage-back"
-        to={backTo ?? (fromMine ? "/mine" : "/manage")}
+        to={backTo ?? (fromMine ? "/mine" : fromService ? "/maintenance" : "/manage")}
       >
         <ArrowLeft aria-hidden="true" />
-        {backLabel ?? (fromMine ? "返回我的" : "返回数据管理")}
+        {backLabel ?? (fromMine ? "返回我的" : fromService ? "返回服务与维护" : "返回数据管理")}
       </Link>
       <div className="manage-heading">
         <div>

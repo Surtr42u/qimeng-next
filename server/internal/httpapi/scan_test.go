@@ -1,8 +1,10 @@
 package httpapi_test
 
 import (
+ "fmt"
  "os"
  "path"
+ "path/filepath"
  "strconv"
  "testing"
  "time"
@@ -11,8 +13,26 @@ import (
  "qimeng.local/next/server/internal/service"
 )
 
-func(f *fixture)scan(key string)service.ScanJob{
- f.t.Helper();r:=f.json("POST","/libraries/"+f.library+"/scans",key,map[string]any{"expectedRevision":1},202);var job service.ScanJob;decode(f.t,r,&job);deadline:=time.Now().Add(10*time.Second)
+func TestUnchangedLibraryScanCountsEveryFileWithoutPerFileCatalogWrites(t *testing.T){
+ f:=setup(t)
+ root,err:=f.s.Root.LibraryPath(f.library);if err!=nil{t.Fatal(err)}
+ for i:=0;i<140;i++{
+  if err=os.WriteFile(filepath.Join(root,fmt.Sprintf("indexed-%03d.png",i)),pngBytes(t,uint8(i+1)),0600);err!=nil{t.Fatal(err)}
+ }
+ if initial:=f.scan("index-synthetic-scan-pages",45*time.Second);initial.Added!=140||initial.IssueCount!=0{t.Fatal("initial scan",initial)}
+ for i:=0;i<140;i++{
+  if err=os.WriteFile(filepath.Join(root,fmt.Sprintf("note-%03d.txt",i)),[]byte("synthetic"),0600);err!=nil{t.Fatal(err)}
+ }
+ if _,err=f.s.DB.DB.Exec(`CREATE TABLE fixture_scan_writes(n INTEGER); INSERT INTO fixture_scan_writes VALUES(0);
+  CREATE TRIGGER fixture_count_scan_write AFTER UPDATE ON scans BEGIN UPDATE fixture_scan_writes SET n=n+1; END;`);err!=nil{t.Fatal(err)}
+ job:=f.scan("repeat-synthetic-scan-pages")
+ if job.Processed!=280||job.Skipped!=280||job.Added+job.Moved+job.Changed+job.IssueCount!=0{t.Fatal("unchanged scan lost or duplicated entries",job)}
+ var writes int
+ if err=f.s.DB.DB.QueryRow("SELECT n FROM fixture_scan_writes").Scan(&writes);err!=nil||writes>=30{t.Fatalf("unchanged scan used %d progress updates: %v",writes,err)}
+}
+
+func(f *fixture)scan(key string,window ...time.Duration)service.ScanJob{
+ f.t.Helper();r:=f.json("POST","/libraries/"+f.library+"/scans",key,map[string]any{"expectedRevision":1},202);var job service.ScanJob;decode(f.t,r,&job);interval:=10*time.Second;if len(window)>0{interval=window[0]};deadline:=time.Now().Add(interval)
  for time.Now().Before(deadline){r=f.json("GET","/scans/"+job.ID,"",nil,200);decode(f.t,r,&job);if job.State!="queued"&&job.State!="running"{return job};time.Sleep(10*time.Millisecond)};f.t.Fatal("synthetic scan did not finish");return job
 }
 func TestScanRegistersExistingFileAndConservesIdentityAfterExternalMove(t *testing.T){

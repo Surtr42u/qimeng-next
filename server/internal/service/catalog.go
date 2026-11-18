@@ -43,6 +43,7 @@ func(s *Service)UpdateAsset(ctx context.Context,w *Write,id string,in AssetUpdat
  if e:=Authorize(w.Principal,"admin","");e!=nil{return model.Asset{},e};a,e:=s.Asset(ctx,id);if e!=nil{return a,e};if a.Revision!=in.ExpectedRevision{return a,Conflict(a.Revision)}
  if a.Trashed{return a,Fail(409,"asset_trashed","请先恢复媒体。")}
  editAuthors:=in.AuthorID!=nil||in.AuthorIDs!=nil||len(in.NewAuthorNames)>0
+ if in.Source!=nil||in.SourceIDs!=nil||in.Characters!=nil||in.CharacterIDs!=nil{a.TaxonomyDerived=false;a.TaxonomyCandidates=nil}
  before:=a.AuthorIDs
  if in.Note!=nil{if len(*in.Note)>10000{return a,Fail(400,"invalid_note","备注过长。")};a.Note=*in.Note};if in.Source!=nil{if len(*in.Source)>200{return a,Fail(400,"invalid_source","出处名称过长。")};a.Source=*in.Source}
  if in.Characters!=nil{v,e:=cleanStrings(*in.Characters,50,200);if e!=nil{return a,e};a.Characters=v}

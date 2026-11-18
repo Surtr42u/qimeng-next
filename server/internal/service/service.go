@@ -31,7 +31,7 @@ func Fail(status int,code,message string)error{return &Error{Code:code,Message:m
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
 func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};if err!=nil&&strings.Contains(err.Error(),"qimeng_pending_asset"){return Fail(409,"publication_pending","此资产已有未提交的文件操作，请先恢复原操作。")};return err}
 type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64; LocalSync LocalSyncConfig; Scanner *LibraryMonitorConfig }
-type Service struct { Traffic sysmon.Traffic; samples systemSamples; previews previewWork; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner; monitor *libraryMonitor }
+type Service struct { Traffic sysmon.Traffic; samples systemSamples; previews previewWork; sourceRules sourceRuleWorker; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWorkers map[string]scanWorker; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner; monitor *libraryMonitor }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -85,6 +85,7 @@ func New(config Config)(*Service,error){
  if s.monitor!=nil{s.workers.Add(1);go s.runLibraryMonitor()}
  s.workers.Add(1);go s.warmRecommendationOrders()
  s.workers.Add(1);go s.previewWorker()
+ if err=s.startSourceRules(ctx);err!=nil{s.Close();return nil,err}
  return s,nil
 }
 func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.previews.shutdown();s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
