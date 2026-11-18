@@ -250,7 +250,11 @@ func (s *Service) UpdateTags(ctx context.Context, w *Write, id string, revision 
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return model.Asset{}, e
 	}
-	a, e := s.Asset(ctx, id)
+	q, e := w.Q()
+	if e != nil {
+		return model.Asset{}, e
+	}
+	a, e := readAssetOnDay(ctx, q, id, time.Now().Format(time.DateOnly))
 	if e != nil {
 		return a, e
 	}
@@ -260,7 +264,7 @@ func (s *Service) UpdateTags(ctx context.Context, w *Write, id string, revision 
 	if a.TagsRevision != revision {
 		return a, Conflict(a.TagsRevision)
 	}
-	a.Tags, e = s.validateAssetTags(ctx, tags)
+	a.Tags, e = validateAssetTags(ctx, q, tags)
 	if e != nil {
 		return a, e
 	}
@@ -269,23 +273,19 @@ func (s *Service) UpdateTags(ctx context.Context, w *Write, id string, revision 
 	a.UpdatedAt = time.Now().UTC()
 	a.TagSetUpdatedAt = &a.UpdatedAt
 	a.TagSetSource = "human"
-	q, e := w.Q()
-	if e != nil {
-		return a, e
-	}
 	if e = protectHumanField(ctx, q, a.ID, "tags"); e != nil {
 		return a, e
 	}
 	return a, store.SaveAssetTags(ctx, q, a)
 }
-func (s *Service) validateAssetTags(ctx context.Context, tags []string) ([]string, error) {
+func validateAssetTags(ctx context.Context, q store.Querier, tags []string) ([]string, error) {
 	values, e := cleanStrings(tags, 100, 100)
 	if e != nil {
 		return nil, e
 	}
 	for _, tag := range values {
 		var deleted int
-		e = s.DB.DB.QueryRowContext(ctx, store.TagUnavailable, tag).Scan(&deleted)
+		e = q.QueryRowContext(ctx, store.TagUnavailable, tag).Scan(&deleted)
 		if e != nil {
 			return nil, e
 		}

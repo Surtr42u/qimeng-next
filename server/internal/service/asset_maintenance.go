@@ -282,7 +282,7 @@ func (s *Service) ApplyAssetMaintenance(ctx context.Context, w *Write, id string
 		if len(*in.Tags) == 0 || len(a.Tags) > 0 || a.TagSetSource != "" {
 			return t, notMissing()
 		}
-		a.Tags, err = s.validateAssetTags(ctx, *in.Tags)
+		a.Tags, err = validateAssetTags(ctx, q, *in.Tags)
 		if err != nil {
 			return t, err
 		}
