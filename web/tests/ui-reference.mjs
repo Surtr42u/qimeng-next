@@ -47,7 +47,8 @@ function measure(scene) {
     toolbar: selector + " .browse-toolbar", filters: selector + " .filter-card",
     firstDate: selector + " .album-group-title", firstCover: selector + " .card--cover",
     overlay: ".asset-overlay", stage: ".asset-stage", image: ".asset-img-open img",
-    actions: ".detail-actions", detailSide: ".detail-side", author: ".author-card", upNext: ".upnext-card",
+    pager: ".asset-pager", title: ".detail-title", meta: ".detail-meta", actions: ".detail-actions",
+    detailSide: ".detail-side", author: ".author-card", upNext: ".upnext-card",
   };
   const anchors = Object.fromEntries(Object.entries(nodes).map(([name, css]) => {
     const element = document.querySelector(css);

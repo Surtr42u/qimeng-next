@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useSearchSuggestions } from "../data/search";
+import { readSearchHistory, useSearchSuggestions, writeSearchHistory } from "../data/search";
 import { ChevronDownIcon, ClearIcon, SearchIcon } from "./LegacyShellIcons";
 
-const historyKey = "qimeng.search-history";
 const types = {
   source: "出处",
   character: "角色",
@@ -11,19 +10,6 @@ const types = {
   cosWork: "COS作品",
   author: "作者",
 };
-function storedHistory(): string[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(historyKey) ?? "[]");
-    return Array.isArray(value)
-      ? value
-          .filter((item): item is string => typeof item === "string")
-          .slice(0, 20)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 export function LegacySearchBox() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -36,7 +22,7 @@ export function LegacySearchBox() {
   const [debounced, setDebounced] = useState(query.trim());
   const [open, setOpen] = useState(false);
   const [opening, setOpening] = useState(0);
-  const [history, setHistory] = useState(storedHistory);
+  const [history, setHistory] = useState(readSearchHistory);
   const [expanded, setExpanded] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [selected, setSelected] = useState(-1);
@@ -72,7 +58,7 @@ export function LegacySearchBox() {
   const store = (next: string[]) => {
     setHistory(next);
     try {
-      localStorage.setItem(historyKey, JSON.stringify(next));
+      writeSearchHistory(next);
       setStorageError(false);
     } catch {
       setStorageError(true);
@@ -148,9 +134,8 @@ export function LegacySearchBox() {
           <ClearIcon />
         </button>
       )}
-      <button className="shell-search-submit" type="submit" aria-label="搜索">
-        <SearchIcon className="search-icon" />
-      </button>
+      <button className="shell-search-submit" type="submit" aria-label="搜索" />
+      <SearchIcon className="search-icon" />
       {open && (
         <div className="search-pop" id={id}>
           {suggestMode ? (

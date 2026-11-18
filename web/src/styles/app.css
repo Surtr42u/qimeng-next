@@ -848,13 +848,6 @@ a.list-row:hover {
   border-radius: 7px;
   padding: 5px 8px;
 }
-.detail-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin: 20px 0;
-}
 .tag-pool {
   display: flex;
   gap: 8px;
@@ -1560,13 +1553,6 @@ a.list-row:hover {
     padding: 5px;
     min-height: 260px;
     border-radius: 15px;
-  }
-  .detail-actions {
-    gap: 7px;
-  }
-  .detail-actions .button {
-    font-size: 11px;
-    padding: 9px 11px;
   }
   .related-panel {
     max-height: 430px;

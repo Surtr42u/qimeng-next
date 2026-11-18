@@ -16,8 +16,11 @@ test("detail keeps the original two-column frame and image navigation semantics"
     await page.setViewportSize({ width, height: 800 });
     await expect.poll(async () => {
       const stage = await page.locator(".asset-stage").boundingBox();
-      const content = await page.locator("[data-scroll-root]").boundingBox();
-      return stage && content ? stage.x + stage.width <= content.x + content.width + 1 : false;
+      const side = await page.locator(".detail-side").boundingBox();
+      if (!stage || !side) return false;
+      return width === 1440
+        ? stage.x + stage.width < side.x
+        : Math.abs(stage.x - side.x) < 1 && stage.width > side.width && side.y > stage.y + stage.height;
     }).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`parity-detail-${width}.png`), fullPage: false });
   }

@@ -7,7 +7,7 @@ import { ErrorNotice } from "../components/Feedback";
 import { MediaGrid } from "../components/MediaGrid";
 import { AutoPageSentinel } from "../components/AutoPageSentinel";
 import { BrowseToolbar } from "../components/LegacyBrowseToolbar";
-import { RefreshIcon } from "../components/LegacyShellIcons";
+import { RefreshCw } from "lucide-react";
 import { SkeletonGrid } from "../components/LegacyLoading";
 
 export function HomePage({ backdropSearch }: { backdropSearch?: string } = {}) {
@@ -72,7 +72,7 @@ export function HomePage({ backdropSearch }: { backdropSearch?: string } = {}) {
             disabled={query.isFetching || unavailable}
             onClick={refresh}
           >
-            <RefreshIcon />
+            <RefreshCw aria-hidden="true" />
             {ranked ? "刷新榜单" : "换一批"}
           </button>
         }

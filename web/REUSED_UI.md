@@ -2,7 +2,7 @@
 
 授权日期：2026-11-17。用户明确要求“ui可以用旧的，你把旧版ui的背后代码优化一下就行了，不要导致ui有区别只有我同意的那些”。本记录只涉及布局、CSS、图标和纯展示 JSX；业务状态、API、存储及服务端实现不从旧项目迁入。
 
-实际视觉基准为旧仓 d0215962 的云端合成截图，run 43879314935 / artifact web-browser-evidence，已只读保存到 build/reference-ui/d0215962。该目录不是应用素材，不打包进产品。已观察 settings-desktop-actions、creator-profile-card 与 authors-mobile；其余页面按改动逐项对照。
+以已安装提交 `745974081716a9d69a95002a41220e35e743d764` 的真实 Web 为基准。[云端成对对照](https://github.com/Surtr42u/qimeng-next/actions/runs/44281858447) 同时检出两套产品，用相同合成图片打开首页、相册及列表详情，产物包含桌面和窄屏六组原图、并排图、逐像素差异和元素位置。此前同展示源码的 d0215962 提供设置、作者档案和作者列表截图，来自旧仓 run 43879314935 / artifact web-browser-evidence，保存在 build/reference-ui/d0215962。
 
 | 旧项目来源 | 新项目位置 | 复用范围与适配 |
 |---|---|---|
