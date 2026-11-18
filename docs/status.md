@@ -4,9 +4,9 @@
 
 ## 维护与验收
 
-维护者从[开发与维护](../CONTRIBUTING.md)进入。Go 提交格式、模块引用、文档链接及章节、已发布迁移完整性在 `499d656` 的独立工程检查中全部通过。该提交包含已回收的云端格式修正和协议锁。Web 展示层的正反例已在浏览器客户端作业通过。[工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855562) · [Web 检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44284583229/job/134734519002)
+维护者从[开发与维护](../CONTRIBUTING.md)进入。公开后的主分支 `89edb6a` 通过 Go 格式、模块引用、文档、迁移历史及密钥扫描。Web 的展示层依赖检查、浏览器测试和真实服务联调也在该提交通过。[工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305960995) · [Web 检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058447) · [真实服务联调](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134821281600)
 
-数据库启动现先核对已有迁移，再执行待办。云端已证明遇到较新版本或历史校验和变化时，待执行 SQL 和版本记录均未写入。备份用例另发现迁移记录表的原始建表文本需要保留，后续改为与恢复验证共享原定义，并加上旧表兼容用例。私有仓阶段的 `a272913` 未获得运行器。公开后的恢复、研究回执、Android 构建边界及 Windows 真实窗口按新作业分别核验。[数据库回归和原失败记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44285401499/job/134737499815) · [私有仓阶段未开始的作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44287479395)
+数据库启动先核对已有迁移，再执行待办。`89edb6a` 的 Go 云测覆盖历史迁移表定义的备份恢复、较新数据库或校验和冲突时中止、设备分段交付以及研究回执恢复。Linux 的两个 SQLite 驱动和 Windows 原生 Go 步骤均通过。该次 Windows 桌面窗口测试止于云账号权限检查。[Linux 服务端](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058518) · [Windows 分步结果](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134808058701)
 
 ## 当前界面基准
 
@@ -21,18 +21,18 @@ Android 已接回旧版四档导航、首页间距及标签底部弹层。`4105b
 | 范围 | 实际执行结果 |
 |---|---|
 | Go 与文件 | `e9fe1df` 在 Linux 两个 SQLite 驱动及 Windows 通过 Go 检查。覆盖发布恢复、大小写改名、批次独立备份、任务取消和监听。云 Linux 验证了来源的原生回收。Windows 云环境返回来源保留的回执。 |
-| Android 本机 | `35b8950` 在 API 35 云模拟器实际启动内嵌 Go，完成登录、重启读取同一实例和证书更新。Android SQLite 通过 NDK 访问系统支持的文件接口。ARM64 和 x86_64 原生构建分别通过。 |
+| Android 本机 | `89edb6a` 的 ARM64 和 x86_64 原生构建、内嵌 APK 和本机 API 35 作业通过，使用隔离数据核对上传及电源变化后的扫描。[本机模拟器](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134812936078) |
 | Android 客户端 | `f2b884b` 的 APK、JVM、lint、两种原生架构和本机 API 35 仪器通过。后者实际核对了普通上传取得的资产 ID、磁盘原件及断电／接电扫描。联网模拟器的视频全屏画面仍未通过。此轮仍使用修正前的 Android 外观。[本机仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797/job/134686309823) |
 | Web 与桌面 | `e42260c` 的浏览器与真实 Go 联调通过。Windows 在云端已生成安装包和服务端程序，真实 WebView2 窗口的完整回执仍待验证。[真实 Go 与浏览器](https://github.com/Surtr42u/qimeng-next/actions/runs/44278862765/job/134719598585) |
-| PC／NAS 启动包 | `e9fe1df` 在云 Windows x64、Linux x64、Linux ARM64 对各自的服务端包执行了启动、登录与隔离恢复。 |
-| AI 执行器与 MCP | `e9fe1df` 的真实 Go、stdio、Pi、官方 TypeScript SDK 及 Hermes 客户端作业通过。Hermes 使用合成模型响应，记录范围为宿主与工具的协议往返。 |
+| PC／NAS 启动包 | `89edb6a` 的 Windows x64、Linux x64、Linux ARM64 服务端包各自通过启动、登录与隔离恢复。[三个发行包的作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259) |
+| AI 执行器与 MCP | `0325a6d` 的独立 stdio 客户端、Pi、官方 TypeScript SDK 和 Hermes 作业通过。受限合成 TLS 来源验证了研究只执行一次、重放复用回执和预算。Hermes 使用合成模型响应，核对实际宿主的工具发现、结果与拒绝写入。[独立客户端与研究](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037437) · [Hermes 宿主](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037531) |
 | 数据迁移 | 云端使用合成 v2 副本和全新目标目录验证导入、内容身份、历史记录及隔离恢复。真实资料留待独立的迁移验收。 |
 
 可按作业查看 [e9fe1df 集成记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44264832227) 和 [此前的本机启动检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44238104432)。
 
 ## 接手复查
 
-原 Go、Web／桌面、Android 子代理已停止。三位新子代理的启动配置均为 GPT-6.2 Astra / max。各自复查原代码、完成相同领域的待办，主代理负责跨端行为与云端集成。
+本轮由两位 GPT-6.2 Astra / max 子代理分别负责 Go 数据恢复与 AI 工作流、旧版对新版的扫描实测。Android 子代理负责手机的真实消费端和画面对照，主代理整合协议锁、跨端云测及交付证据。
 
 | 已定位的触发条件 | 处理结果与验收范围 |
 |---|---|
@@ -46,8 +46,8 @@ Go 的历史发布恢复和 Windows 文件占用修复已通过。本轮重点�
 
 ## 切换前还需核对
 
-- Android 设备领取的 v2 包目前按合并计划保留已有资料。旧版可选的「应用时覆盖作者资料」仍需支持带指纹和档案修订的明确替换计划，分别回报人工保护项和冲突。
-- 新增的七个公开文本研究来源按部署和任务授权选择。完整 stdio 研究与回执恢复尚需补验，旧版可选的图片外查能力单独核对。
+- 设备领取 v2 包时默认保留已有作者资料，可显式选择覆盖。Go 与 Android 已接入带修订和指纹的计划。切换前核对手机端实际领取、检查点回读、人工修改保护以及重复交付。[迁移说明](migration.md) · [Android 客户端验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44309908039)
+- 七个公开文本研究来源按部署和任务授权选择。真实 stdio 和研究回执已通过合成来源验证。旧版可选的图片外查能力单独核对。
 - 旧 UI 的逐屏行为，尤其是返回原列表、现有材质和选中态。结合普通与智能工作流、续传、播放与筛选记录验收范围。
 - 真实 Go、MCP 客户端、独立卷备份与来源端原生回收的端到端回执，区分回收成功和来源保留。
 - 作者 TXT、两代备份、监听导入、历史媒体维护、发布包与新手运行说明在同一提交的执行结果。
