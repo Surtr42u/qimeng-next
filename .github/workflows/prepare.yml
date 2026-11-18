@@ -430,11 +430,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
         with: {toolchain: '1.100.0'}
       - name: Verify native filesystem semantics
-        id: windows_runtime
         working-directory: server
         run: |
           go test -timeout 8m ./...
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go tests failed' }
+      - name: Build the native Go server and restore utility
+        id: windows_runtime
+        if: ${{ !cancelled() }}
+        working-directory: server
+        run: |
           go build -trimpath -o ../build/qimeng-next.exe ./cmd/qimeng
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go build failed' }
           go build -trimpath -o ../build/qimeng-backup.exe ./cmd/qimeng-backup
