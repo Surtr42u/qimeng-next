@@ -571,6 +571,9 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 		if e != nil {
 			return model.UploadResult{}, e
 		}
+		if e = s.checkPlanResearch(ctx, w.Principal, u, authors); e != nil {
+			return model.UploadResult{}, e
+		}
 		setAuthors(&a, authors)
 		if e = s.resolveTaxonomy(ctx, &a, declaredSources, item.CharacterIDs); e != nil {
 			return model.UploadResult{}, e

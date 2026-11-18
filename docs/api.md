@@ -24,6 +24,8 @@
 
 若实例关闭公开查证，返回 HTTP 403 和 `research_provider_disabled`，请求尚未发出，本地整理可继续。遇到查询应答丢失，可用当前任务凭据读取 `GET /operations/{key}?operation=queryResearchProvider`。原查询仍在进行时返回 HTTP 409 和 `research_query_pending`。终态回执含原键、查询 ID、任务 ID 及结果状态。同一任务续接后可核销原回执。隔离恢复后重新授权的执行器只能核销自身签发的查询。旧开发版本缺少签发记录时，管理员仍可按查询 ID 阅读留存的证据。
 
+智能接收任务对未指定作者的上传提交 `outcome=unknown` 后，准备计划时可省略 `authorIds`，作品会保留 `originalFileName`，其 `authorId` 与 `authorStatus` 均为 `unknown`。若该任务改为指定实名，Go 在准备和实际发布前核对该上传及 SHA-256 对应的最新候选。每个拟关联的作者须有相同稳定 `authorId`、出处链接及说明。只引用已记账的公开查询时，该出处还须来自所引用的平台记录；仅有搜索或图片线索时保留候选。证据不足返回 409 `research_author_unverified`，`details.uploadId` 指明具体输入。已签发计划按项复核，合格项仍能提交。上传时明确选定的身份与入库后的本人编辑沿用各自的作者修订规则。
+
 ### 单帧反向查证
 
 `GET /research/context` 的 `imageLookupEnabled` 表示部署者已配置受信 Lens 伴随服务，`imageLookupAllowed` 表示当前授权或任务允许外发。本人创建长期授权时须指定 `canLookupImages=true`、研究权限、正数预算与媒体范围。接收或作品任务还须主动指定 `allowImageLookup=true`。旧授权、旧任务与省略字段的任务均保持单帧外发关闭。七个文本来源的名单与执行器向模型展示预览的许可分别配置。

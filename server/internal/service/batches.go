@@ -486,13 +486,6 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		if u.BatchID != id || u.State != "staged" || u.Hash == "" || u.ReplaceAssetID != "" {
 			return p, Fail(409, "plan_input_conflict", "计划只能引用本批已完整接收的新文件。")
 		}
-		r, e := store.Get[model.Research](ctx, s.DB.DB, "SELECT data FROM research WHERE upload_id=?", u.ID)
-		if e != nil && !errors.Is(e, sql.ErrNoRows) {
-			return p, e
-		}
-		if e == nil && r.Outcome == "conflict" {
-			return p, Fail(409, "research_conflict", "此项证据冲突，须由用户解决后再准备计划。")
-		}
 		authorIDs := input.AuthorIDs
 		if len(authorIDs) == 0 && input.AuthorID != "" {
 			authorIDs = []string{input.AuthorID}
@@ -502,6 +495,9 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		}
 		authors, e := s.resolveAuthors(ctx, b.LibraryID, authorIDs)
 		if e != nil {
+			return p, e
+		}
+		if e = s.checkPlanResearch(ctx, w.Principal, u, authors); e != nil {
 			return p, e
 		}
 		authorIDs = []string{}
