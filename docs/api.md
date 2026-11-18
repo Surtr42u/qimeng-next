@@ -140,6 +140,8 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 ## 上传与智能批次
 
+标准 CLI 与 MCP 的 `task.context` 将 Go 给出的下一步转换为当前执行器和当前任务凭据均获准使用的工具名。`nextActions` 中的名称可原样传给 `platform.tool.describe`，例如收到智能上传后可按提示读取 `plan.prepare` 或 `research.submit` 的参数。`actionWaits` 单独列出等待事项。重复输入由用户决定，仍在传输的字节由原发送端续传，观察方可以用 `upload.status` 读到当前偏移。缺少许可时会列出对应的本地 scope、服务 scope 或任务绑定。混合批次可以同时有等待项和可执行的下一步。对外 HTTP 的任务状态、修订及写入校验继续以 Go 为准。
+
 本人库管理界面的原有“根目录路径”输入框通过 `POST /storages/resolve-library-root` 解析，body 为 `{rootPath}`，返回 `{storageId,rootRelativePath,rootPath}`。它只读取和验证，不创建目录；必须落在已配置的媒体根内，拒绝控制目录、链接及越界。创建库仍使用现有逻辑位置字段。`GET /libraries/{id}/location` 给本人回显登记根；两个接口均要求 admin，不加入MCP工具映射，一般库列表不暴露本机绝对路径。
 
 先 `POST /uploads` 固定目标、原名、MIME、声明长度、模式、可用来源相对目录/时间与批次。`PUT /uploads/{id}/content` 传原始 bytes，头 `Upload-Offset`，每片最多 8 MiB。`GET /uploads/{id}` 是恢复时的权威偏移。重复分片须字节一致；已封存上传拒绝后续写入。声明总长度参与空间与并发资源预算，没有退回单文件业务大小上限。

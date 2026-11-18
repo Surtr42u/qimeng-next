@@ -99,7 +99,8 @@ class Runtime:
     def call(self, name: str, arguments: dict):
         # 一个执行器内部串行写与引用状态。多进程预算另外由SQLite事务保护。
         with self.lock:
-            definition = next((tool for tool in self.tools() if tool["name"] == name), None)
+            tools = self.tools()
+            definition = next((tool for tool in tools if tool["name"] == name), None)
             if definition is None:
                 raise ToolError("TOOL_UNKNOWN", "工具未注册，不允许任意 HTTP 或脚本调用")
             if definition["scope"] not in self.config.permissions:
@@ -124,6 +125,9 @@ class Runtime:
                 if task_id and name not in RESEARCH_QUERY_OPERATIONS:
                     self.transport.call("reserveDelegatedCall", {"id": task_id, "Idempotency-Key": "call-" + secrets.token_hex(16)})
                 value = self._dispatch(name, arguments, state)
+                if name == "task.context":
+                    from .task_actions import present_batch_actions
+                    value = present_batch_actions(self, value, tools)
             except ToolError as exc:
                 state.finish(request, exc.as_dict(), key, uncertain=exc.uncertain, completed=False)
                 raise
