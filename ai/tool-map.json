@@ -1,5 +1,6 @@
 {
   "getInstance": {"tool": "platform.instance", "scope": "read"},
+  "getCurrentSession": {"tool": "platform.session", "scope": "read"},
   "getCurrentAIDelegation": {"tool": "platform.permissions", "scope": "read"},
   "getResearchProviderContext": {"tool": "research.context", "scope": "read"},
   "queryResearchProvider": {"tool": "research.provider.query", "scope": "research"},

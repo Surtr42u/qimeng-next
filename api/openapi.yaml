@@ -249,6 +249,7 @@ paths:
   /sessions/current:
     get:
       operationId: getCurrentSession
+      description: 读取当前凭据的实际 scopes、有效期与已绑定任务 ID，不返回令牌。作者单任务凭据的 authorTaskId 可用于读取作者维护上下文。具备 delegate 的长期凭据可读取首次授权范围并启动任务。
       responses:
         '200': {description: Session without secret, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -858,6 +859,7 @@ paths:
   /authors:
     get:
       operationId: listAuthors
+      description: 按姓名或词语分页查找作者的稳定 ID 和当前业务修订。exactName 精确匹配显示名，同名作者分别返回。写入权限以具体作者维护任务为准。
       parameters:
         - {$ref: '#/components/parameters/Cursor'}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
@@ -885,6 +887,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     patch:
       operationId: updateAuthor
+      description: 以作者的稳定 ID 更新指定字段。受限凭据先从当前会话取得 authorTaskId，再读作者任务的 author.id、author.revision 与 task.allowedFields。请求只传 expectedRevision 和本次获准修改的字段，省略其余字段。清空需另获 allowClear，作者维护凭据不能写 acquisitionSources。沿用同一幂等键重试。
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorUpdate'}}}}
       responses:
@@ -1472,6 +1475,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
       operationId: getAuthorTask
+      description: 以当前会话返回的 authorTaskId 读取受托作者、当前修订、允许修改的字段、清空许可和剩余写入次数。响应中的 author.id 是实际作者 ID，author.revision 用于本次字段更新。
       responses:
         '200': {description: Maintenance task and current author, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorTaskContext'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -1579,7 +1583,7 @@ paths:
   /ai/delegations/current:
     get:
       operationId: getCurrentAIDelegation
-      description: 全库只读查询保留；libraryIds和authorIds约束任务写入范围，不表示分库读取隔离。模型只能在明确授予的动作与预算内创建受限任务。
+      description: 读取具有 delegate 权限的首次长期授权，其 libraryIds、authorIds、允许动作与预算决定可启动的任务。已有作者单任务凭据通过当前会话及作者维护上下文读取范围。全库只读查询保留。
       responses:
         '200': {description: Effective delegation policy, content: {application/json: {schema: {$ref: '#/components/schemas/AIDelegation'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -3020,7 +3024,7 @@ components:
       type: object
       required: [expectedRevision]
       properties:
-        expectedRevision: {type: integer, format: int64}
+        expectedRevision: {type: integer, format: int64, description: 从当前作者记录读取的修订。只附本次明确修改的字段，省略其他可选字段。}
         name: {type: string, maxLength: 200}
         biography: {type: string, maxLength: 20000}
         homepage: {type: string, maxLength: 2000}
