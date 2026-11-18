@@ -22,7 +22,7 @@ python3.13 -m venv .venv
 .venv/bin/qai --help
 ```
 
-看到 `mcp`、`worker`、`catalog` 等子命令后，在影库「设置 → AI 接入」选择允许的媒体库与动作，签发长期凭据。把下表中的地址、凭据和私有目录配置到运行执行器的账号。在 Pi、Hermes 等宿主的 MCP 配置中，`command` 填刚安装的 `qai.exe` 或 `qai` 的完整路径，`args` 填 `["mcp"]`。只需要在 App 提交后自动整理时，按下文配置 `worker` 的模型地址。[宿主配置示例](../docs/mcp-compatibility.md)
+看到 `mcp`、`worker`、`catalog` 等子命令后，在影库「设置 → AI 接入」选择允许的媒体库与动作，签发长期凭据。把下表中的地址、凭据和私有目录配置到运行执行器的账号。在 Pi、Hermes 等宿主的 MCP 配置中，`command` 填刚安装的 `qai.exe` 或 `qai` 的完整路径，`args` 填 `["mcp"]`。宿主通过管道接收的帮助和结果使用 UTF-8。需要在 App 提交后自动整理时，按下文配置 `worker` 的模型地址。[宿主配置示例](../docs/mcp-compatibility.md)
 
 维护者使用固定版本的 Setuptools 将同提交生成的协议打入 wheel。云端安装检查从下载制品创建新环境，在源码目录外运行入口并核对内置协议摘要。[构建依赖及校验和](../tools/ai-build.lock) · [Setuptools 84.2.1](https://pypi.org/project/setuptools/84.2.1/)
 

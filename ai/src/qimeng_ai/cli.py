@@ -13,6 +13,11 @@ from .runtime import Runtime
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        # A parent application reads UTF-8 from pipes even under a legacy Windows code page.
+        for stream in (sys.stdout, sys.stderr):
+            if not stream.isatty() and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="qai")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("mcp", help="启动标准 stdio MCP 服务")

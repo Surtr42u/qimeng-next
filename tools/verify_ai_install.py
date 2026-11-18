@@ -27,7 +27,10 @@ def main():
             install.extend(["-r", "windows-recycle.lock"])
         subprocess.run(install, cwd=artifact, env=env, check=True)
         subprocess.run([str(python), "-m", "pip", "check"], cwd=temporary, env=env, check=True)
-        subprocess.run([str(qai), "worker", "--help"], cwd=temporary, env=env, check=True)
+        help_text = subprocess.run([str(qai), "worker", "--help"], cwd=temporary, env=env, check=True,
+                                   capture_output=True, encoding="utf-8").stdout
+        if "--once" not in help_text or "批次" not in help_text:
+            raise SystemExit("The installed worker did not emit its UTF-8 command help.")
         result = subprocess.run([str(python), "-I", "-c",
                                  "from qimeng_ai.transport import load_contract; print(load_contract()['openapiSha256'])"],
                                 cwd=temporary, env=env, check=True, text=True, capture_output=True)
