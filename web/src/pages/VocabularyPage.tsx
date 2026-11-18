@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { SegmentedControl } from "@ui/GlassNavigation";
+import { LegacySegments as SegmentedControl } from "../components/LegacySegments";
 import {
   useTagVocabulary,
   useEditTag,

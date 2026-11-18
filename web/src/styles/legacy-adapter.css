@@ -38,14 +38,8 @@
 .layout button.settings-item { color: var(--qm-text-faint); }
 .layout button.settings-item:hover { color: var(--qm-text-soft); }
 .layout .nav-item { text-decoration: none; }
-.layout .sidebar--pages > .qm-selection-lens { border-radius: var(--qm-radius); }
-.layout .sidebar--pages .nav-item.active { background: transparent; box-shadow: none; }
 .layout .main { overflow: hidden; }
 .layout .content { min-height: 0; }
-.layout .content--detail { background: var(--qm-bg); }
-/* The single live route occupies the same canvas as the old fixed detail overlay.
-   Keep scrolling in the shell so returning to a cached list restores its position. */
-.layout .content--detail .asset-overlay { position: static; inset: auto; overflow: visible; padding: 0; background: transparent; }
 .video-player-box { position: relative; }
 .video-player-mount { width: 100%; height: 100%; }
 .asset-image-content { position: relative; width: 100%; }
@@ -58,10 +52,6 @@
 .manage-workspace .upload-options { margin-top: 10px; font-size: 12px; color: var(--qm-text-muted); }
 .manage-workspace .upload-options > summary { cursor: pointer; }
 .manage-workspace .upload-options > div { margin-top: 10px; }
-.qm-route-surface { min-height: 100%; }
-.layout .header .qm-segment { height: 42px; padding: 4px; gap: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-full); background: var(--qm-surface-soft); }
-.layout .header .qm-segment button { min-width: 60px; height: 32px; padding: 0 16px; border-radius: var(--qm-radius-full); font-size: 14px; font-weight: 500; white-space: nowrap; color: var(--qm-text-muted); }
-.layout .header .qm-segment button[aria-selected=true] { color: var(--qm-primary); background: transparent; box-shadow: none; }
 .layout .search input { min-height: 0; }
 .layout .shell-search-submit { position: absolute; inset: 0 0 0 auto; width: 44px; }
 .layout .shell-search-submit .search-icon { top: 50%; transform: translateY(-50%); }
@@ -77,8 +67,6 @@
 .layout .media-card { display: block; color: inherit; }
 .layout .card.media-card { border-radius: 0; }
 .layout .card .media-placeholder { aspect-ratio: 16/9; }
-.layout .page:not([hidden]) { animation: none; }
-.layout .grid > .card, .layout .media-grid > .card { animation: none; }
 .layout .browse-toolbar { margin: 0; }
 .layout [data-page-heading]:focus { outline: none; }
 .layout .card--title.one-line { -webkit-line-clamp: 1; }
@@ -98,7 +86,6 @@
 @media (max-width: 760px) {
   .layout .sidebar { display: flex; width: var(--qm-sidebar-w); padding: var(--qm-space-3) 0; }
   .layout .sidebar--pages { display: flex; }
-  .layout .header .qm-segment { width: auto; }
   .layout .media-grid { grid-template-columns: repeat(auto-fill,minmax(min(100%,230px),1fr)); gap: 24px 20px; }
 }
 @media (max-width: 1000px) {

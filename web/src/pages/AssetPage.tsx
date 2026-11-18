@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, FolderInput, Pencil, Star, ThumbsUp, Trash2 } from "lucide-react";
 import { useAsset, useAssetActions, originalUrl, mediaCardDate, safeMediaUrl, useThumbnailURL } from "../data/media";
@@ -28,6 +28,8 @@ export function AssetPage() {
   const navigation = readDetailNavigation(location.state, id);
   // This intent survives image → video → image within the same detail chain.
   const [viewer, setViewer] = useState(false);
+  const overlay = useRef<HTMLDivElement>(null);
+  useEffect(() => { overlay.current?.scrollTo(0, 0); }, [id]);
   const go = useCallback((delta: -1 | 1) => {
     if (!navigation) return;
     const index = navigation.index + delta;
@@ -35,7 +37,7 @@ export function AssetPage() {
     if (next) navigate(`/asset/${encodeURIComponent(next)}`, { state: { ...navigation, index } });
   }, [navigation, navigate]);
   return (
-    <div className="page asset-overlay" id="page-asset">
+    <div ref={overlay} className="page asset-overlay" id="page-asset">
       {query.isPlaceholderData && <p className="rank-note" role="status">正在读取下一件…</p>}
       <ErrorNotice error={query.error} stale={!!query.data} retry={() => void query.refetch()} />
       {!query.data ? (

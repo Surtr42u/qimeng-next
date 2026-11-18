@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { SegmentedControl } from "@ui/GlassNavigation";
+import { LegacySegments as SegmentedControl } from "../components/LegacySegments";
 import { useActivityRanking } from "../data/analytics";
 import type { ActivityRankingKind, StatsRange } from "../data/analytics";
 import type { Schema } from "../data/client";

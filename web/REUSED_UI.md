@@ -35,7 +35,7 @@
 | web/src/pages/AssetEditPage.tsx、components/manage/AuthorSuggestField.tsx | web/src/pages/AssetEditPage.tsx | 原独立编辑、联想、待新建清单与逐作者来源区；新协议在关联事务里创建或复用作者，保留 COS 固定关联，并按来源的独立回执保留失败草稿。 |
 | web/src/lib/format.ts 的formatBytes/formatCount | web/src/lib/format.ts | 原大小单位与万计数展示；未知值仍明确未知，不以0填充 |
 
-web/src/styles/legacy-base.css 补回旧UI原本消费的浏览器重置规则；legacy-adapter.css 连接新变量与原样式、处理类名冲突，并停用被新连续过渡接管的旧入场动画。没有新增 Web 底栏。独立 GlassNavigation 不改变宿主导航布局；新增 SelectionLens 只在既有侧栏/顶栏的实际选中元素下移动。
+旧 `components/shell/Sidebar.tsx`、`TopBar.tsx` 与 `components/layout/AssetOverlayGroupLayout.tsx` 的表现由 Next `app/App.tsx` 与 `AssetOverlayLayout.tsx` 承接。2026-11-18 恢复原导航高亮、页面入场、卡片错峰、列表底衬及固定详情叠层。`legacy-base.css` 补浏览器重置，`legacy-adapter.css` 处理旧样式与新宿主的选择器边界。Web 使用原四项侧栏。
 
 为恢复相同字形，@fontsource-variable/geist 精确锁为旧项目实际使用的 5.3.0（OFL-1.1）；为复用原页面图标，lucide-react 精确锁为 1.59.0（ISC，React 19 peer 可兼容）。两者已读取官方 npm registry 元数据，锁文件只由云端生成。
 

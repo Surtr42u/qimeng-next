@@ -15,6 +15,7 @@ import {
   useNavigationType,
 } from "react-router-dom";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { backdropLocation, isAssetDetail } from "./detail-navigation";
 
 const positions = new Map<
   string,
@@ -26,15 +27,26 @@ export function usePageRestoration() {
   const key = location.key;
   const currentKey = useRef(key);
   const previousPath = useRef(location.pathname);
+  const previousState = useRef(location.state);
   useLayoutEffect(() => {
     history.scrollRestoration = "manual";
     const pathChanged = previousPath.current !== location.pathname;
+    const overlay = isAssetDetail(location.pathname);
+    const returningToList = isAssetDetail(previousPath.current) && backdropLocation(previousState.current).pathname === location.pathname;
     previousPath.current = location.pathname;
+    previousState.current = location.state;
     currentKey.current = key;
     const saved = direction === "POP" ? positions.get(key) : undefined;
     let cancelled = false;
     let observer: ResizeObserver | undefined;
     const container = document.querySelector<HTMLElement>("[data-scroll-root]");
+    if (overlay || returningToList) {
+      const frame = requestAnimationFrame(() => {
+        if (overlay) document.querySelector<HTMLElement>(".asset-overlay [data-page-heading]")?.focus({ preventScroll: true });
+        else if (saved?.focusHref) Array.from(document.querySelectorAll<HTMLAnchorElement>(".overlay-backdrop a[href]")).find(link => link.getAttribute("href") === saved.focusHref)?.focus({ preventScroll: true });
+      });
+      return () => cancelAnimationFrame(frame);
+    }
     const restore = () => {
       if (cancelled) return;
       (container ?? window).scrollTo({
@@ -62,7 +74,7 @@ export function usePageRestoration() {
     observer = new ResizeObserver(restore);
     if (saved && !cancelled)
       observer.observe(
-        container?.querySelector("[data-route-surface]") ?? document.body,
+        container?.firstElementChild ?? document.body,
       );
     const cancel = () => {
       cancelled = true;

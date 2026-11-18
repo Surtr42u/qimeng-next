@@ -9,9 +9,6 @@ import {
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
-import { GlassOptics, SegmentedControl } from "@ui/GlassNavigation";
-import { RouteSurface } from "@ui/RouteSurface";
-import { SelectionLens } from "@ui/SelectionLens";
 import { SessionGate } from "../data/session";
 import { UploadProvider } from "../data/upload";
 import { MaintenanceFolderProvider } from "../data/maintenance-folder";
@@ -65,7 +62,6 @@ function Shell() {
   const refreshLibrary = useRefreshLibrary();
   usePageRestoration();
   const content = useRef<HTMLElement>(null);
-  const rail = useRef<HTMLElement>(null);
   const knownKeys = useRef<string[]>([]);
   const currentIndex = useRef(0);
   const [online, setOnline] = useState(navigator.onLine);
@@ -138,7 +134,6 @@ function Shell() {
       <a className="skip-link" href="#main-content">
         跳到内容
       </a>
-      <GlassOptics />
       <aside className="sidebar">
         <button
           className="sidebar--back"
@@ -152,16 +147,7 @@ function Shell() {
         >
           <BackIcon />
         </button>
-        <nav
-          className="sidebar--pages qm-selection-host"
-          aria-label="主导航"
-          ref={rail}
-        >
-          <SelectionLens
-            host={rail}
-            selected='[aria-current="page"]'
-            selectionKey={location.pathname}
-          />
+        <nav className="sidebar--pages" aria-label="主导航">
           {navigation.map((item) => (
             <NavLink
               key={item.href}
@@ -217,18 +203,11 @@ function Shell() {
       <div className="main">
         <header className="header" data-qimeng-titlebar="" data-home={home ? "" : undefined}>
           <div className="header--left">
-            {home && (
-              <SegmentedControl
-                label="首页内容"
-                value={tab}
-                options={[
-                  { value: "recommend", label: "推荐" },
-                  { value: "cos", label: "COS" },
-                  { value: "hot", label: "排行榜" },
-                ]}
-                onChange={changeTab}
-              />
-            )}
+            <nav className="tabs" aria-label="首页内容" hidden={!home}>
+              {[["recommend", "推荐"], ["cos", "COS"], ["hot", "排行榜"]].map(([value, label]) => <button
+                key={value} type="button" className={"tab" + (tab === value ? " active" : "")} aria-pressed={tab === value}
+                onClick={() => changeTab(value!)}>{label}</button>)}
+            </nav>
           </div>
           <LegacySearchBox />
           <div className="header--right">
@@ -297,9 +276,7 @@ function Shell() {
             setShowBackTop(event.currentTarget.scrollTop > 400)
           }
         >
-          <RouteSurface transitionKey={location.pathname}>
-            <Outlet />
-          </RouteSurface>
+          <Outlet />
         </main>
       </div>
       {!detail && (

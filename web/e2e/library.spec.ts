@@ -56,7 +56,8 @@ test("rapid navigation retains one page and the selected navigation semantics", 
   });
   for (const name of ["我的", "数据", "首页", "相册"])
     await nav.getByRole("link", { name, exact: true }).click();
-  await expect(page.locator("[data-route-surface]")).toHaveCount(1);
+  await expect(page.locator("#main-content .page")).toHaveCount(1);
+  await expect(page.locator(".qm-selection-lens, .qm-optics, [data-route-surface]")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "相册", exact: true }),
   ).toBeVisible();
@@ -81,6 +82,8 @@ test("return restores browsing position and image viewer restores focus", async 
     .locator("[data-scroll-root]")
     .evaluate((element) => element.scrollTop);
   await card.click();
+  await expect(page.locator(".overlay-backdrop[inert] #page-albums")).toHaveCount(1);
+  await expect(page.locator("#page-asset")).toHaveCSS("position", "fixed");
   await page.getByRole("button", { name: "查看原图并缩放" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.keyboard.press("Escape");

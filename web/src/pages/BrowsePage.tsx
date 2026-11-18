@@ -17,8 +17,9 @@ import { AutoPageSentinel } from "../components/AutoPageSentinel";
 import { SkeletonGrid } from "../components/LegacyLoading";
 import { albumGroups } from "../lib/album-presentation";
 
-export function useBrowseSelection(scope: Partial<AssetFilters> = {}) {
-  const [params, setParams] = useSearchParams();
+export function useBrowseSelection(scope: Partial<AssetFilters> = {}, backdropSearch?: string) {
+  const [current, setParams] = useSearchParams();
+  const params = backdropSearch === undefined ? current : new URLSearchParams(backdropSearch);
   const [tzOffsetMinutes] = useState(() => -new Date().getTimezoneOffset());
   const filters = { ...filtersFromURL(params), ...scope, tzOffsetMinutes };
   const change = (patch: Partial<AssetFilters>) =>
@@ -77,8 +78,8 @@ function usePanelTags() {
     ),
   };
 }
-function AlbumsView() {
-  const { filters, change, reset } = useBrowseSelection();
+export function AlbumsView({ backdropSearch }: { backdropSearch?: string } = {}) {
+  const { filters, change, reset } = useBrowseSelection({}, backdropSearch);
   const query = useAssets({ ...filters, dateCounts: true });
   const partition = useAssetFacets(filters, "partitions");
   const works = useAssetFacets(filters, "works");

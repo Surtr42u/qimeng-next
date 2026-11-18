@@ -5,7 +5,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { App, RouteError } from "./app/App";
 import { queryClient } from "./data/query";
 import { BrowsePage } from "./pages/BrowsePage";
-import { HomePage } from "./pages/HomePage";
+import { AssetOverlayLayout } from "./app/AssetOverlayLayout";
 import { VocabularyPage } from "./pages/VocabularyPage";
 import { ReplacePage } from "./pages/ReplacePage";
 import { ScanPage, ScansPage } from "./pages/ScanPage";
@@ -33,7 +33,6 @@ import { AIAccessPage } from "./pages/AIAccessPage";
 import { AcquisitionVocabularyPage } from "./pages/AcquisitionVocabularyPage";
 import { FileManagementPage } from "./pages/FileManagementPage";
 import "../../ui/react/tokens.css";
-import "../../ui/react/glass.css";
 import "./styles/app.css";
 import "./styles/charts.css";
 import "./styles/preferences.css";
@@ -48,10 +47,10 @@ const router = createBrowserRouter([
     element: <App />,
     errorElement: <RouteError />,
     children: [{ errorElement: <RouteError />, children: [
-      { path: "/", element: <HomePage /> },
-      { path: "/album", element: <BrowsePage /> },
+      { element: <AssetOverlayLayout />, children: [
+        { path: "/", element: null }, { path: "/album", element: null }, { path: "/asset/:id", element: <AssetPage /> },
+      ] },
       { path: "/search", element: <BrowsePage /> },
-      { path: "/asset/:id", element: <AssetPage /> },
       { path: "/asset/:id/edit", element: <AssetEditPage /> },
       { path: "/asset/:id/replace", element: <ReplacePage /> },
       { path: "/mine", element: <MinePage /> },

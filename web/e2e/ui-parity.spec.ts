@@ -48,6 +48,12 @@ test('the existing four-link sidebar and 16:9 covers remain at desktop and narro
   await mockLibrary(page);
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
+    await page.goto('/');
+    const categories = page.getByRole('navigation', { name: '首页内容', exact: true });
+    await expect(categories.getByRole('button')).toHaveText(['推荐', 'COS', '排行榜']);
+    await expect(categories.getByRole('button', { name: '推荐', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#page-home .card').first()).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`parity-home-${viewport.width}.png`), animations: 'disabled' });
     await page.goto('/album');
     const nav = page.getByRole('navigation', { name: '主导航', exact: true });
     await expect(nav.getByRole('link')).toHaveText(['首页', '相册', '我的', '数据']);

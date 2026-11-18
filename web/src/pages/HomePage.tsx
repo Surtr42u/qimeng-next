@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { useRecommendations, useRankings } from "../data/analytics";
 import type { RankingPeriod } from "../data/analytics";
 import { mediaCards } from "../data/media";
@@ -10,8 +10,9 @@ import { BrowseToolbar } from "../components/LegacyBrowseToolbar";
 import { RefreshIcon } from "../components/LegacyShellIcons";
 import { SkeletonGrid } from "../components/LegacyLoading";
 
-export function HomePage() {
-  const [params, setParams] = useSearchParams();
+export function HomePage({ backdropSearch }: { backdropSearch?: string } = {}) {
+  const [current, setParams] = useSearchParams();
+  const params = backdropSearch === undefined ? current : new URLSearchParams(backdropSearch);
   const { instance } = useSession();
   const tab = params.get("tab") ?? "recommend";
   const ranked = tab === "hot" || tab === "rank";
@@ -97,9 +98,8 @@ export function HomePage() {
             {ranked
               ? "暂无上榜内容。"
               : tab === "cos"
-                ? "暂无 COS 内容。"
-                : "还没有内容。"}{" "}
-            {!ranked && <Link to="/manage/libraries">前往库管理</Link>}
+                ? "暂无 COS 内容——先到「维护 → 文件管理」注册 COS 媒体库并扫描。"
+                : "还没有内容——先到「维护 → 文件管理」注册一个媒体库并扫描。"}
           </p>
         )
       )}
@@ -110,16 +110,16 @@ export function HomePage() {
         load={() => query.fetchNextPage({ cancelRefetch: false })}
       />
       {query.hasNextPage ? (
-        <div className="workspace-load-more">
+        <>
           <button
-            className="pill"
+            className={expired ? "pill" : "pill sr-only-focusable"}
             type="button"
             disabled={query.isFetchingNextPage}
             onClick={() => void (expired ? recommendations.restart() : query.fetchNextPage({ cancelRefetch: false }))}
           >
             {query.isFetchingNextPage ? "加载中…" : expired ? "从第一页继续" : "加载更多"}
           </button>
-        </div>
+        </>
       ) : (
         !query.isPending && !query.isError &&
         items.length > 0 && (

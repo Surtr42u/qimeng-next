@@ -20,7 +20,7 @@ try {
   await page.getByLabel("管理密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("heading", { name: "为你推荐", exact: true }).waitFor();
-  await page.getByText("还没有内容。", { exact: false }).waitFor();
+  await page.getByText("还没有内容——先到「维护 → 文件管理」注册一个媒体库并扫描。", { exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, target + "-" + mode + "-home.png") });
   const api = base + "/api/v1";
   const required = async result => { assert(result.ok(), "Packaged API returned " + result.status()); return result; };
