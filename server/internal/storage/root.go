@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -240,6 +241,30 @@ func (r *Root) Open(name string) (*os.File, error) {
 	}
 	return l.root.Open(p)
 }
+
+// OpenDirectoryRoot pins a directory below its configured storage. On Windows
+// the caller's platform check also rejects reparse points that are not exposed
+// through os.ModeSymlink. resolve already rejects symbolic links on every OS.
+func (r *Root) OpenDirectoryRoot(name string, isLink func(os.FileInfo) bool) (*os.Root, error) {
+	l, p, err := r.resolve(name)
+	if err != nil {
+		return nil, err
+	}
+	if runtime.GOOS == "windows" {
+		parts := strings.Split(p, "/")
+		for i := range parts {
+			info, err := l.root.Lstat(strings.Join(parts[:i+1], "/"))
+			if err != nil {
+				return nil, err
+			}
+			if isLink(info) {
+				return nil, fs.ErrPermission
+			}
+		}
+	}
+	return l.root.OpenRoot(p)
+}
+
 func (r *Root) OpenFile(name string, flag int, mode os.FileMode) (*os.File, error) {
 	l, p, e := r.resolve(name)
 	if e != nil {

@@ -7,11 +7,18 @@ data class AuthorImportSummary(val newAuthors: Int, val matched: Int, val change
 data class MissingAuthorWorks(val total: Int, val examples: List<Pair<String, String>>)
 data class MaintenanceFolder(val tree: String? = null, val label: String = "", val automatic: Boolean = false,
     val lastChecked: Long = 0, val message: String? = null, val pending: Boolean = false)
-data class LegacyDocument(val id: String, val sourceId: String, val digest: String, val media: Int, val authors: Int, val events: Int)
-data class MigrationPreview(val id: String, val documentId: String, val fingerprint: String, val state: String, val media: Int,
-    val matched: Int, val skipped: Int, val issues: Int, val checkpoint: String?)
-data class MigrationRow(val key: String, val name: String, val targetId: String?, val state: String, val reason: String, val issues: List<String> = emptyList())
 data class DeviceDeliverySettings(val deviceId: String, val label: String = "", val address: String = "", val configured: Boolean = false,
     val background: Boolean = false, val destination: String? = null, val notice: String? = null, val replaceAuthorProfiles: Boolean = false)
 data class DevicePackage(val id: String, val state: String, val createdAt: String, val results: List<DeviceSegmentResult>)
-data class DeviceSegmentResult(val kind: String, val state: String, val reason: String?, val receipt: String?)
+data class DeviceSegmentResult(val kind: String, val state: String, val reason: String?, val receipt: String?,
+    val native: DevicePackageBinding? = null, val legacy: LegacyReceiptBinding? = null)
+data class DevicePackageBinding(val source: String, val target: String, val packageId: String)
+data class LegacyReceiptBinding(val source: String?, val sha256: String?, val target: String?)
+sealed interface DeviceReceipt {
+    val id: String
+    data class Native(override val id: String, val items: List<DeviceReceiptItem>) : DeviceReceipt
+    data class Legacy(override val id: String, val state: String, val matched: Int, val media: Int, val skipped: Int, val issues: Int,
+        val fingerprint: String, val checkpoint: String?) : DeviceReceipt
+}
+data class DeviceReceiptItem(val label: String, val kind: String, val block: String?, val state: String, val reason: String?, val receipt: String?, val video: DeviceVideoBinding?)
+data class DeviceVideoBinding(val sourceId: String?, val sourceVersion: Long?, val targetId: String?, val targetVersion: Long?, val sha256: String?, val bytes: Long?)

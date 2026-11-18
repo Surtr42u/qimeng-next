@@ -97,7 +97,7 @@ func (s *Service) CommitV2Migration(ctx context.Context, w *Write, id, fingerpri
 		if item.TagAction == "apply" {
 			for _, name := range item.Tags.State.Names {
 				var deleted int
-				if e = s.DB.DB.QueryRowContext(ctx, "SELECT COALESCE((SELECT deleted FROM tags WHERE name=?),0)", name).Scan(&deleted); e != nil {
+				if e = s.DB.DB.QueryRowContext(ctx, store.TagUnavailable, name).Scan(&deleted); e != nil {
 					return plan, e
 				}
 				if deleted != 0 {
@@ -255,7 +255,7 @@ func (s *Service) CommitV2Migration(ctx context.Context, w *Write, id, fingerpri
 		if source.CreatedAtMillis > 0 {
 			created = time.UnixMilli(source.CreatedAtMillis).UTC()
 		}
-		r, e := q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO NOTHING", name, dateKey(created), dateKey(created))
+		r, e := q.ExecContext(ctx, store.InsertAvailableTag, name, dateKey(created), dateKey(created))
 		if e != nil {
 			return plan, e
 		}
@@ -313,6 +313,9 @@ func (s *Service) CommitV2Migration(ctx context.Context, w *Write, id, fingerpri
 		}
 		if favorites[item.RecordKey] && !a.Favorite {
 			if a.FavoriteUpdatedAt == nil {
+				if _, e = q.ExecContext(ctx, "UPDATE asset_records SET favorite=1,favorite_updated_at=? WHERE id=? AND favorite_updated_at IS NULL", dateKey(now), a.ID); e != nil {
+					return plan, e
+				}
 				a.Favorite = true
 				a.FavoriteUpdatedAt = &now
 				changed = true

@@ -1,3 +1,5 @@
+//go:build qimeng_legacy_import
+
 package httpapi_test
 
 import (
@@ -6,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"qimeng.local/next/server/internal/httpapi"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
@@ -24,6 +27,7 @@ func v2Document(t *testing.T, a model.Asset, data map[string]any) []byte {
 }
 func stageV2(t *testing.T, f *fixture, key string, raw []byte) service.V2Import {
 	t.Helper()
+	f.h = httpapi.LegacyImportTestHandler(f.s)
 	r := f.request("POST", "/migration/v2/imports?sourceId=synthetic-installation", key, testSecret, raw, map[string]string{"Content-Type": "application/octet-stream"})
 	if r.Code != 201 {
 		t.Fatalf("stage: %d %s", r.Code, r.Body.String())
@@ -34,7 +38,7 @@ func stageV2(t *testing.T, f *fixture, key string, raw []byte) service.V2Import 
 }
 func planV2(t *testing.T, f *fixture, input service.V2Import, key string) service.V2MigrationPlan {
 	t.Helper()
-	r := f.json("POST", "/migration/v2/imports/"+input.ID+"/plans", key, service.V2PlanCreate{}, 201)
+	r := f.json("POST", "/migration/v2/imports/"+input.ID+"/plans", key, map[string]any{}, 201)
 	var plan service.V2MigrationPlan
 	decode(t, r, &plan)
 	return plan

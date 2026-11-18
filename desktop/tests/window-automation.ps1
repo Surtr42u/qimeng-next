@@ -18,6 +18,18 @@ public static class QimengTestWindow {
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int action);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+    public static bool ClickInWindow(IntPtr owner, int x, int y) {
+        var point = new Point { X = x, Y = y };
+        if (GetAncestor(WindowFromPoint(point), 2) != owner || !SetCursorPos(x, y)) return false;
+        mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+        return true;
+    }
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr device, uint flags);
     public static IntPtr[] Visible(uint owner) {
         var windows = new List<IntPtr>();
@@ -97,7 +109,14 @@ Invoke-Control $maximize
 Invoke-Control (Get-Control 'Minimize one' $button $library)
 [void](Wait-Until 'native minimize' { [QimengTestWindow]::IsIconic($library) })
 [void][QimengTestWindow]::ShowWindow($library, 9)
-Invoke-Control (Get-Control 'Open original' ([System.Windows.Automation.ControlType]::Hyperlink) $library)
+[void][QimengTestWindow]::SetForegroundWindow($library)
+$link = Get-Control 'Open original' ([System.Windows.Automation.ControlType]::Hyperlink) $library
+[void](Wait-Until 'clickable original link in the active library window' {
+    $rect = $link.Element.Current.BoundingRectangle
+    if (!$rect.IsEmpty) {
+        [QimengTestWindow]::ClickInWindow($library, [int]($rect.X + $rect.Width / 2), [int]($rect.Y + $rect.Height / 2))
+    }
+})
 $media = (Get-Control 'Original media proof' $button).Handle
 if ($media -eq $library) { throw 'The original did not open in a separate window.' }
 Write-Output 'Verified native titlebar and original media window.'

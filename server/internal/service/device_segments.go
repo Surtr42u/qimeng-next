@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/authorlist"
-	legacy "qimeng.local/next/server/internal/migration"
 	"qimeng.local/next/server/internal/model"
 )
 
@@ -44,7 +43,8 @@ func checkDevicePackage(ctx context.Context, m DeviceApplyManifest, files map[st
 			return err
 		}
 		f, ok := files[part.Kind]
-		if !ok || seen[part.Kind] || f.Reader == nil || part.Bytes != f.Size || part.Bytes < 1 || !deviceHash.MatchString(part.SHA256) {
+		if !ok || seen[part.Kind] || f.Reader == nil || part.Bytes != f.Size || part.Bytes < 1 || !deviceHash.MatchString(part.SHA256) ||
+			part.PackageID != "" || part.SourceInstanceID != "" || part.TargetInstanceID != "" {
 			return Fail(400, "device_segment_mismatch", "每个声明段须有唯一对应的内容、长度和 SHA-256。")
 		}
 		seen[part.Kind] = true
@@ -54,9 +54,7 @@ func checkDevicePackage(ctx context.Context, m DeviceApplyManifest, files map[st
 				return Fail(400, "invalid_device_txt", "作者总表须在 1 MiB 内，并指定目标片段的预期修订。")
 			}
 		case "v2Backup":
-			if part.Bytes > legacy.MaxInputBytes || !migrationSourceID.MatchString(part.SourceID) || part.ExpectedLocalRevision != nil {
-				return Fail(400, "invalid_device_v2", "v2 备份须在 64 MiB 内，并提供原安装的稳定来源标识。")
-			}
+			return Fail(410, "legacy_delivery_retired", "新设备交付请从源实例选择原生对象。")
 		default:
 			return Fail(400, "invalid_device_segment", "未知设备包段。")
 		}
@@ -67,13 +65,9 @@ func checkDevicePackage(ctx context.Context, m DeviceApplyManifest, files map[st
 		if int64(len(raw)) != part.Bytes || digest(raw) != part.SHA256 {
 			return Fail(409, "device_hash_mismatch", "实际段内容与签发摘要不一致。")
 		}
-		if part.Kind == "masterTxt" {
-			doc, err := authorlist.Parse(string(raw))
-			if err != nil || doc.Format != "blocks" {
-				return Fail(400, "invalid_device_txt", "作者总表段须包含可导入的编号作者块。")
-			}
-		} else if _, err := legacy.DecodeV2(raw); err != nil {
-			return Fail(400, "invalid_device_v2", "所选文件不是受支持的 v2 便携备份。")
+		doc, err := authorlist.Parse(string(raw))
+		if err != nil || doc.Format != "blocks" {
+			return Fail(400, "invalid_device_txt", "作者总表段须包含可导入的编号作者块。")
 		}
 	}
 	return nil

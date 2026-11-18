@@ -3,8 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"database/sql"
-	"errors"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -79,23 +77,7 @@ func (s *Service) operationReceipt(ctx context.Context, p model.Principal, opera
 	if len(key) < 8 || len(key) > 128 {
 		return Result{}, false, Fail(400, "idempotency_required", "此操作必须提供稳定幂等键。")
 	}
-	var previous string
-	var result Result
-	err := s.DB.DB.QueryRowContext(ctx, "SELECT input_hash,response,status FROM idempotency WHERE principal_id=? AND operation=? AND key=?", p.ID, operation, key).Scan(&previous, &result.Body, &result.Status)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, false, nil
-	}
-	if err != nil {
-		return Result{}, false, err
-	}
-	if previous != digest(input) {
-		return Result{}, false, Fail(409, "idempotency_conflict", "同一幂等键的输入已经改变。")
-	}
-	// Even a replay must pass the queued-write revocation check.
-	result, err = s.Run(ctx, p, operation, key, input, func(*Write) (any, int, error) {
-		return nil, 0, Fail(409, "receipt_changed", "操作回执发生变化，请重新回读。")
-	})
-	return result, true, err
+	return s.matchingReceipt(ctx, p.ID, operation, key, digest(input))
 }
 
 func (s *Service) FetchAuthorProfileAvatar(ctx context.Context, p model.Principal, authorID, key string, input []byte, in ProfileAvatarFetch) (Result, error) {

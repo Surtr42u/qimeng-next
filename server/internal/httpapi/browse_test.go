@@ -34,13 +34,13 @@ func TestBrowseUsesOnePredicateForSearchMultipleDimensionsAndFacets(t *testing.T
 	alpha := createAuthor(t, f, "Alpha")
 	beta := createAuthor(t, f, "Beta")
 	gamma := createAuthor(t, f, "Gamma")
-	r := f.json("POST", "/sources", "query-source-one", map[string]any{"name": "原作甲"}, 201)
+	r := f.json("POST", "/sources", "query-source-one", map[string]any{"aliases": []string{}, "name": "原作甲"}, 201)
 	var first service.Source
 	decode(t, r, &first)
-	r = f.json("POST", "/sources", "query-source-two", map[string]any{"name": "原作乙"}, 201)
+	r = f.json("POST", "/sources", "query-source-two", map[string]any{"aliases": []string{}, "name": "原作乙"}, 201)
 	var second service.Source
 	decode(t, r, &second)
-	r = f.json("POST", "/characters", "query-character-one", map[string]any{"name": "朱诺", "sourceId": first.ID}, 201)
+	r = f.json("POST", "/characters", "query-character-one", map[string]any{"aliases": []string{}, "name": "朱诺", "sourceId": first.ID}, 201)
 	var character service.Character
 	decode(t, r, &character)
 	u, _ := f.upload("朱诺 11 (2).png", 81, map[string]any{"authorIds": []string{alpha.ID, beta.ID}, "sourceIds": []string{first.ID}, "characterIds": []string{character.ID}})

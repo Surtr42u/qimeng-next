@@ -90,64 +90,95 @@ func InsertAsset(ctx context.Context, q Querier, a model.Asset) error {
 }
 
 func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) error {
+	if db, ok := q.(*sql.DB); ok {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err = writeAsset(ctx, tx, a, insertOnly); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	a.FileDate = a.EffectiveFileDate()
 	raw, err := Encode(a)
 	if err != nil {
 		return err
 	}
-	var fileDate, favoritedAt any
+	var fileDate, favoritedAt, favoriteUpdatedAt any
 	if a.FileDate != nil {
 		fileDate = a.FileDate.UnixMilli()
 	}
 	if a.Favorite && a.FavoritedAt != nil {
 		favoritedAt = a.FavoritedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	}
-	query := `INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,
-		created_at,updated_at,favorite,liked,trashed,data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-	if !insertOnly {
-		query += ` ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,file_name=excluded.file_name,
-			media_type=excluded.media_type,author_id=excluded.author_id,collection_id=excluded.collection_id,hash=excluded.hash,
-			size=excluded.size,revision=excluded.revision,updated_at=excluded.updated_at,favorite=excluded.favorite,
-			liked=excluded.liked,trashed=excluded.trashed,data=excluded.data,file_date=excluded.file_date,
-			favorited_at=excluded.favorited_at,cos_work_id=excluded.cos_work_id`
+	if a.FavoriteUpdatedAt != nil {
+		favoriteUpdatedAt = a.FavoriteUpdatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	}
-	_, err = q.ExecContext(ctx, query, a.ID, a.LibraryID, a.RelativePath, a.FileName, a.MediaType, a.AuthorID,
-		a.CollectionID, a.Hash, a.Size, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
-		a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, a.Liked, a.Trashed, raw, fileDate, favoritedAt, a.CosWorkID)
+	query := `INSERT INTO asset_records(id,author_id,revision,created_at,updated_at,favorite,favorite_updated_at,
+		data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,json_remove(?,
+		'$.id','$.hash','$.size','$.contentVersion','$.mediaType','$.mimeType','$.width','$.height','$.durationMs','$.probeState',
+		'$.libraryId','$.relativePath','$.fileName','$.contentMtime','$.storageLayoutVersion','$.trashed','$.positionMs','$.positionContentVersion',
+		'$.tags','$.authorId','$.authorIds','$.authorName','$.favorite','$.favoriteUpdatedAt','$.favoritedAt','$.liked','$.likeCount','$.unattributedLikeCount',
+		'$.collectionId','$.page'),?,?,?)`
+	if !insertOnly {
+		query += ` ON CONFLICT(id) DO UPDATE SET author_id=excluded.author_id,
+			revision=excluded.revision,updated_at=excluded.updated_at,data=excluded.data,file_date=excluded.file_date,cos_work_id=excluded.cos_work_id`
+	}
+	_, err = q.ExecContext(ctx, query, a.ID, a.AuthorID, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
+		a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, favoriteUpdatedAt, raw, fileDate, favoritedAt, a.CosWorkID)
+	if err != nil {
+		return err
+	}
+	if err = saveAssetFile(ctx, q, a, insertOnly); err != nil {
+		return err
+	}
+	if a.CollectionID != "" {
+		// An existing member owns its position through its own revision.
+		// Publishing or moving a file must not replay an older position.
+		if _, err = q.ExecContext(ctx, `INSERT INTO collection_members(asset_id,collection_id,position,revision)
+			SELECT ?,?,nullif(?,0),1 WHERE NOT EXISTS(SELECT 1 FROM collection_members WHERE asset_id=?)`,
+			a.ID, a.CollectionID, a.Page, a.ID); err != nil {
+			return err
+		}
+	}
+	if err = saveAssetIDs(ctx, q, a.ID, "asset_authors", "author_id", a.AuthorIDs, insertOnly); err != nil {
+		return err
+	}
+	if err = writeAssetTags(ctx, q, a, !insertOnly); err != nil {
+		return err
+	}
+	if err = saveAssetIDs(ctx, q, a.ID, "asset_sources", "source_id", a.SourceIDs, insertOnly); err != nil {
+		return err
+	}
+	return saveAssetIDs(ctx, q, a.ID, "asset_characters", "character_id", a.CharacterIDs, insertOnly)
+}
+
+// Callers supply literal table/column pairs. Keeping the same membership
+// leaves its row in place, including when a generic file operation is replayed.
+func saveAssetIDs(ctx context.Context, q Querier, assetID, table, column string, ids []string, insertOnly bool) error {
+	if insertOnly && len(ids) == 0 {
+		return nil
+	}
+	raw, err := Encode(ids)
 	if err != nil {
 		return err
 	}
 	if !insertOnly {
-		for _, table := range []string{"asset_authors", "asset_tags", "asset_sources", "asset_characters"} {
-			if _, err = q.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=?", a.ID); err != nil {
-				return err
-			}
-		}
-	}
-	for _, authorID := range a.AuthorIDs {
-		if _, err = q.ExecContext(ctx, "INSERT INTO asset_authors(asset_id,author_id) VALUES(?,?)", a.ID, authorID); err != nil {
+		if _, err = q.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=? AND NOT EXISTS(SELECT 1 FROM json_each(?) j WHERE j.value="+column+")", assetID, raw); err != nil {
 			return err
 		}
 	}
-	for _, tag := range a.Tags {
-		if _, err = q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO NOTHING", tag, a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z")); err != nil {
-			return err
-		}
-		if _, err = q.ExecContext(ctx, "INSERT INTO asset_tags(asset_id,tag) VALUES(?,?)", a.ID, tag); err != nil {
-			return err
-		}
+	cols, values, onConflict := column, "j.value", " DO NOTHING"
+	if table == "asset_authors" {
+		cols += ",ordinal"
+		values += ",CAST(j.key AS INTEGER)"
+		onConflict = " DO UPDATE SET ordinal=excluded.ordinal WHERE ordinal!=excluded.ordinal"
 	}
-	for _, sourceID := range a.SourceIDs {
-		if _, err = q.ExecContext(ctx, "INSERT INTO asset_sources(asset_id,source_id) VALUES(?,?)", a.ID, sourceID); err != nil {
-			return err
-		}
-	}
-	for _, characterID := range a.CharacterIDs {
-		if _, err = q.ExecContext(ctx, "INSERT INTO asset_characters(asset_id,character_id) VALUES(?,?)", a.ID, characterID); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = q.ExecContext(ctx, "INSERT INTO "+table+"(asset_id,"+cols+") SELECT ?,"+values+
+		" FROM json_each(?) j WHERE j.type='text' ON CONFLICT(asset_id,"+column+")"+onConflict, assetID, raw)
+	return err
 }
 func SaveUpload(ctx context.Context, q Querier, u model.Upload) error {
 	raw, err := Encode(u)

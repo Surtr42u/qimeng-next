@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -46,7 +47,7 @@ fun ProfileScreen(model: LibraryViewModel) {
     // Presentation hierarchy and dimensions retained from the existing SettingsScreen.
     val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(scroll) { TabScrollController.events.collect { if (it == 3) scroll.scrollToItem(0) } }
-    LazyColumn(Modifier.fillMaxSize(), state = scroll, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = media.qimeng.next.ui.glass.TabDockDefaults.bottomClearance()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("profile-settings-list"), state = scroll, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = media.qimeng.next.ui.glass.TabDockDefaults.bottomClearance()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Column(Modifier.padding(top = 12.dp)) {
             Text("我的", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             QimengPageIntro("你的收藏、浏览足迹与影库偏好")

@@ -23,12 +23,18 @@ export function VideoPlayer({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const player = useRef<Artplayer | undefined>(undefined);
-  const [initial] = useState({ src, title, poster, initialPosition, progressMatches });
+  const [initial] = useState({ src, title, poster });
+  const resumePoint = useRef({ initialPosition, progressMatches });
+  const restorePosition = useRef<() => void>(undefined);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const callbacks = useRef({ onProgress, onPlay, onPosition });
   const marks = useRef(highlights);
   useEffect(() => { callbacks.current = { onProgress, onPlay, onPosition }; });
+  useEffect(() => {
+    resumePoint.current = { initialPosition, progressMatches };
+    restorePosition.current?.();
+  }, [initialPosition, progressMatches]);
   useEffect(() => {
     marks.current = highlights;
     if (player.current) updateHighlights(player.current, highlights);
@@ -66,17 +72,24 @@ export function VideoPlayer({
       // mounting and clears the container. Publish after all its listeners run.
       if (!disposed && player.current === art) updateHighlights(art, marks.current);
     });
-    const metadata = () => {
+    const video = art.video;
+    const resume = () => {
+      const { initialPosition: position, progressMatches: matches } = resumePoint.current;
+      if (interacted || disposed || resumed || !matches || position <= 0 || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+      const seconds = position / 1000;
+      if (!Number.isFinite(video.duration) || seconds >= video.duration) return;
+      video.currentTime = seconds;
+      resumed = true;
+    };
+    restorePosition.current = resume;
+    video.addEventListener("loadedmetadata", resume);
+    video.addEventListener("durationchange", resume);
+    video.addEventListener("canplay", resume);
+    resume();
+    art.on("video:loadedmetadata", () => {
       updateVideoTrackControls(art);
       renderMarks();
-      if (!resumed && initial.progressMatches && initial.initialPosition > 0) {
-        resumed = true;
-        // A saved position belongs only to this exact content version.
-        const seconds = initial.initialPosition / 1000;
-        if (Number.isFinite(art.duration) && seconds < art.duration) art.seek = seconds;
-      }
-    };
-    art.on("video:loadedmetadata", metadata);
+    });
     art.on("video:durationchange", renderMarks);
     art.on("ready", renderMarks);
     const tracksChanged = () => updateVideoTrackControls(art);
@@ -114,6 +127,10 @@ export function VideoPlayer({
       disposed = true;
       document.removeEventListener("visibilitychange", hidden);
       window.removeEventListener("pagehide", report);
+      restorePosition.current = undefined;
+      video.removeEventListener("loadedmetadata", resume);
+      video.removeEventListener("durationchange", resume);
+      video.removeEventListener("canplay", resume);
       art.video.textTracks.removeEventListener("addtrack", tracksChanged);
       art.video.textTracks.removeEventListener("removetrack", tracksChanged);
       theme.disconnect();

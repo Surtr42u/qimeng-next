@@ -33,7 +33,8 @@ func TestCompleteBackupRestoresIdentityMetadataTrashAndPendingPrefix(t *testing.
 	f := setup(t)
 	u, _ := f.upload("backup-live.png", 171, nil)
 	a := *f.complete(u).Asset
-	r := f.json("PUT", "/assets/"+a.ID+"/reaction", "backup-favorite", map[string]any{"favorite": true, "liked": true}, 200)
+	f.json("PUT", "/assets/"+a.ID+"/favorite", "backup-favorite", map[string]any{"favorite": true}, 200)
+	r := f.json("PUT", "/assets/"+a.ID+"/like/today", "backup-today-like", map[string]any{"liked": true}, 200)
 	decode(t, r, &a)
 	u, _ = f.upload("backup-trash.png", 172, nil)
 	trashed := *f.complete(u).Asset

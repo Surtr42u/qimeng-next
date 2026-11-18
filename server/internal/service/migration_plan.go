@@ -304,7 +304,7 @@ func (s *Service) PrepareV2Migration(ctx context.Context, w *Write, inputID stri
 			item.TagAction = item.Tags.Action
 			for _, name := range incoming {
 				var deleted int
-				if e = s.DB.DB.QueryRowContext(ctx, "SELECT COALESCE((SELECT deleted FROM tags WHERE name=?),0)", name).Scan(&deleted); e != nil {
+				if e = s.DB.DB.QueryRowContext(ctx, store.TagUnavailable, name).Scan(&deleted); e != nil {
 					return plan, e
 				}
 				if deleted != 0 {

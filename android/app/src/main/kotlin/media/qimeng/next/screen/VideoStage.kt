@@ -45,6 +45,7 @@ import kotlinx.coroutines.delay
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.PlaybackHistory
 import media.qimeng.next.model.Asset
 
 /** The sole platform-view bridge uses the official Media3 player; gesture orchestration is new Compose code. */
@@ -62,51 +63,76 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
     var savedPosition by rememberSaveable(asset.id, asset.version) { mutableLongStateOf(if (asset.positionVersion == asset.version) asset.positionMs else 0) }
     var error by remember { mutableStateOf<String?>(null) }
     var staleContent by remember { mutableStateOf(false) }
-    var positionWasUsed by remember(asset.id, asset.version) { mutableStateOf(false) }
+    var playAfterAttach by remember(asset.id, asset.version) { mutableStateOf(false) }
     val player = remember(asset.id, asset.version) {
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient(asset.target))))
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(asset.contentUrl))
-                seekTo(savedPosition)
-                prepare()
-            }
+            .build()
     }
+    var surfaceReady by remember(player) { mutableStateOf(false) }
     // The disposing player's final position belongs to its original content version.
     val playbackAsset = remember(player) { asset }
+    val history = remember(player) {
+        PlaybackHistory(player, { model.recordPlay(playbackAsset, viewingSession) },
+            { position -> model.recordProgress(playbackAsset, position, viewingSession) })
+    }
     LaunchedEffect(activated) { onPlayerActiveChanged(activated) }
     val activity = context.activity()
     val canRotate = asset.width?.let { w -> asset.height?.let { h -> w > h && h > 0 } } == true
+    var orientationBeforeFullscreen by rememberSaveable(asset.id) { mutableStateOf<Int?>(null) }
     DisposableEffect(activity, fullscreen) {
-        val previous = activity?.requestedOrientation
-        if (fullscreen) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        onDispose { if (fullscreen && activity != null && previous != null) activity.requestedOrientation = previous }
+        if (activity != null && fullscreen) {
+            val previous = orientationBeforeFullscreen ?: activity.requestedOrientation
+            orientationBeforeFullscreen = previous
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            onDispose { activity.requestedOrientation = previous }
+        } else {
+            orientationBeforeFullscreen = null
+            onDispose { }
+        }
     }
-    BackHandler(activated && !timeline) { if (fullscreen) fullscreen = false else { player.pause(); activated = false } }
+    BackHandler(activated && !timeline) {
+        if (fullscreen) fullscreen = false else { playAfterAttach = false; player.pause(); activated = false }
+    }
     DisposableEffect(player, owner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
-                savedPosition = player.currentPosition
+                playAfterAttach = false
+                if (player.currentMediaItem != null) savedPosition = player.currentPosition
                 player.pause()
-                if (positionWasUsed) model.recordProgress(playbackAsset, player.currentPosition, viewingSession)
+                history.checkpoint()
             }
         }
         val listener = object : Player.Listener {
+            override fun onSurfaceSizeChanged(width: Int, height: Int) { surfaceReady = width > 0 && height > 0 }
             override fun onPlayerError(failure: PlaybackException) {
                 staleContent = generateSequence<Throwable>(failure) { it.cause }.filterIsInstance<HttpDataSource.InvalidResponseCodeException>().any { it.responseCode == 409 }
                 error = if (staleContent) "媒体内容已更新，请重新读取" else "视频无法播放，请检查网络或媒体格式"
             }
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) { positionWasUsed = true; model.recordPlay(playbackAsset, viewingSession) }
-            }
-            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) positionWasUsed = true
-            }
         }
-        owner.lifecycle.addObserver(observer); player.addListener(listener)
+        owner.lifecycle.addObserver(observer)
+        player.addListener(listener)
+        player.addListener(history)
+        surfaceReady = player.surfaceSize.let { it.width > 0 && it.height > 0 }
         onDispose {
-            savedPosition = player.currentPosition
-            if (positionWasUsed) model.recordProgress(playbackAsset, player.currentPosition, viewingSession)
-            owner.lifecycle.removeObserver(observer); player.removeListener(listener); player.release()
+            if (player.currentMediaItem != null) savedPosition = player.currentPosition
+            history.checkpoint()
+            owner.lifecycle.removeObserver(observer)
+            player.removeListener(listener)
+            player.removeListener(history)
+            player.release()
+        }
+    }
+    LaunchedEffect(player, activated, surfaceReady, playAfterAttach) {
+        // Media3 reports positive dimensions after assigning the attached SurfaceHolder as its output.
+        if (!activated || !surfaceReady || player.surfaceSize.width <= 0 || player.surfaceSize.height <= 0) return@LaunchedEffect
+        if (player.currentMediaItem == null) {
+            player.setMediaItem(MediaItem.fromUri(playbackAsset.contentUrl), savedPosition)
+            player.prepare()
+        }
+        if (playAfterAttach) {
+            playAfterAttach = false
+            if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+            player.play()
         }
     }
     LaunchedEffect(player) {
@@ -114,14 +140,15 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
             delay(10_000)
             if (player.isPlaying) {
                 savedPosition = player.currentPosition
-                model.recordProgress(playbackAsset, savedPosition, viewingSession)
+                history.checkpoint()
             }
         }
     }
     Box(modifier) {
     if (!activated) {
+        val start = { playAfterAttach = true; activated = true }
         Box(Modifier.fillMaxSize().semantics { contentDescription = "视频播放区域" }
-            .pointerInput(player) { detectTapGestures(onTap = { activated = true; player.play() }, onDoubleTap = { activated = true; player.play() }) },
+            .pointerInput(player) { detectTapGestures(onTap = { start() }, onDoubleTap = { start() }) },
             contentAlignment = Alignment.Center) {
             AsyncImage(model = ImageRequest.Builder(context).data(asset.thumbnailUrl)
                 .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail")
@@ -174,7 +201,9 @@ private fun PlayerSurface(player: ExoPlayer, fullscreen: Boolean, canRotate: Boo
             onRelease = { it.player = null }, modifier = Modifier.fillMaxSize())
         // Keep the bottom native seek/control strip available; the stage owns playback gestures.
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.68f)
-            .pointerInput(player) { detectTapGestures(onTap = { showControls = !showControls }, onDoubleTap = { if (player.isPlaying) player.pause() else player.play() }) }
+            .pointerInput(player) { detectTapGestures(onTap = { showControls = !showControls }, onDoubleTap = {
+                if (player.isPlaying) player.pause() else if (player.currentMediaItem != null) player.play()
+            }) }
             .pointerInput(player, fullscreen) {
                 var startX = 0f; var dx = 0f; var dy = 0f; var position = 0L; var brightness = 0.5f; var volume = 0
                 var direction = 0

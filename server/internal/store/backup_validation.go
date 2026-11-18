@@ -117,9 +117,29 @@ func ValidateBackupSchema(ctx context.Context, db *sql.DB) error {
 	if e != nil {
 		return e
 	}
-	defer foreign.Close()
 	if foreign.Next() {
+		foreign.Close()
 		return errors.New("backup database foreign keys are inconsistent")
 	}
-	return foreign.Err()
+	if err := foreign.Err(); err != nil {
+		foreign.Close()
+		return err
+	}
+	if err := foreign.Close(); err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.version == 35 {
+			var incomplete bool
+			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM asset_records AS r
+				LEFT JOIN asset_locations AS l ON l.asset_id=r.id WHERE l.asset_id IS NULL)`).Scan(&incomplete); err != nil {
+				return err
+			}
+			if incomplete {
+				return errors.New("backup asset is missing its original location")
+			}
+			break
+		}
+	}
+	return nil
 }

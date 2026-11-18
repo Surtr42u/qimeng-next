@@ -7,94 +7,116 @@ import (
 	"strings"
 
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
 var devicePackageSlots = make(chan struct{}, 2)
 
-func deviceTransition[T any](a *API, action string, apply func(*http.Request, *service.Write, T) (any, error)) {
-	pattern := "/device/apply-tasks/{id}/" + action
-	a.mux.HandleFunc("POST /api/v1"+pattern, a.authScope("device.apply", func(w http.ResponseWriter, r *http.Request) {
-		input, raw, err := decode[T](w, r)
+func deviceTransition[T any](a *API, w http.ResponseWriter, r *http.Request, id, action string, apply func(*http.Request, *service.Write, T) (any, error)) {
+	if !allowScope(w, r, "device.apply") {
+		return
+	}
+	input, raw, err := decode[T](w, r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if len(key) < 8 || len(key) > 128 {
+		fail(w, service.Fail(400, "idempotency_required", "请提供有效的设备幂等键。"))
+		return
+	}
+	out, err := a.s.Run(r.Context(), principal(r), "deviceTransition", "", nil, func(tx *service.Write) (any, int, error) {
+		v, err := apply(r, tx, input)
 		if err != nil {
-			fail(w, err)
-			return
+			return nil, 0, err
 		}
-		id, key := r.PathValue("id"), r.Header.Get("Idempotency-Key")
-		if len(key) < 8 || len(key) > 128 {
-			fail(w, service.Fail(400, "idempotency_required", "请提供有效的设备幂等键。"))
-			return
-		}
-		out, err := a.s.Run(r.Context(), principal(r), "deviceTransition", "", nil, func(tx *service.Write) (any, int, error) {
-			v, err := apply(r, tx, input)
-			if err != nil {
-				return nil, 0, err
-			}
-			return v, 200, tx.BindDeviceRequest(r.Context(), id, action, key, raw)
-		})
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		result(w, out)
-	}))
+		return v, 200, tx.BindDeviceRequest(r.Context(), id, action, key, raw)
+	})
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	result(w, out)
 }
 
-func (a *API) deviceApplyRoutes() {
-	write[service.DeviceCredentialInput](a, "POST", "/device/credentials", true, func(r *http.Request, w *service.Write, in service.DeviceCredentialInput) (any, int, error) {
+func (a *API) CreateDeviceCredential(w http.ResponseWriter, r *http.Request, params generated.CreateDeviceCredentialParams) {
+	write[service.DeviceCredentialInput](a, w, r, true, func(r *http.Request, w *service.Write, in service.DeviceCredentialInput) (any, int, error) {
 		v, err := a.s.CreateDeviceCredential(r.Context(), w, in)
 		return v, 201, err
 	})
-	a.get("/device/credentials/{id}", func(r *http.Request) (any, error) {
-		return a.s.DeviceCredential(r.Context(), principal(r), r.PathValue("id"))
+}
+
+func (a *API) GetDeviceCredential(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.DeviceCredential(r.Context(), principal(r), id)
 	})
-	deviceGET := func(pattern string, fn func(*http.Request) (any, error)) {
-		a.mux.HandleFunc("GET /api/v1"+pattern, a.authScope("device.apply", func(w http.ResponseWriter, r *http.Request) {
-			v, err := fn(r)
-			if err != nil {
-				fail(w, err)
-				return
-			}
-			respond(w, 200, v)
-		}))
-	}
-	deviceGET("/device/apply-tasks", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListDeviceApplyTasks(w http.ResponseWriter, r *http.Request, params generated.ListDeviceApplyTasksParams) {
+	a.readScoped(w, r, "device.apply", func(r *http.Request) (any, error) {
 		n, err := limit(r)
 		if err != nil {
 			return nil, err
 		}
 		q := r.URL.Query()
-		return a.s.DeviceApplyTasks(r.Context(), principal(r), q.Get("targetDeviceId"), q.Get("state"), q.Get("cursor"), n)
+		protocol := 0
+		if params.ProtocolVersion != nil {
+			protocol = *params.ProtocolVersion
+		}
+		return a.s.DeviceApplyTasks(r.Context(), principal(r), q.Get("targetDeviceId"), q.Get("state"), q.Get("cursor"), n, protocol)
 	})
-	deviceGET("/device/apply-tasks/{id}", func(r *http.Request) (any, error) {
-		return a.s.GetDeviceApplyTask(r.Context(), principal(r), r.PathValue("id"))
+}
+
+func (a *API) GetDeviceApplyTask(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readScoped(w, r, "device.apply", func(r *http.Request) (any, error) {
+		return a.s.GetDeviceApplyTask(r.Context(), principal(r), id)
 	})
-	deviceTransition[revisionBody](a, "claim", func(r *http.Request, w *service.Write, in revisionBody) (any, error) {
-		return a.s.ChangeDeviceClaim(r.Context(), w, r.PathValue("id"), in.ExpectedRevision, false)
+}
+
+func (a *API) ClaimDeviceApplyTask(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ClaimDeviceApplyTaskParams) {
+	deviceTransition[revisionBody](a, w, r, id, "claim", func(r *http.Request, w *service.Write, in revisionBody) (any, error) {
+		return a.s.ChangeDeviceClaim(r.Context(), w, id, in.ExpectedRevision, false)
 	})
-	deviceTransition[service.DeviceApplyReport](a, "result", func(r *http.Request, w *service.Write, in service.DeviceApplyReport) (any, error) {
-		return a.s.ReportDeviceApply(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) ReportDeviceApplyTask(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ReportDeviceApplyTaskParams) {
+	deviceTransition[service.DeviceApplyReport](a, w, r, id, "result", func(r *http.Request, w *service.Write, in service.DeviceApplyReport) (any, error) {
+		return a.s.ReportDeviceApply(r.Context(), w, id, in)
 	})
-	write[revisionBody](a, "POST", "/device/apply-tasks/{id}/cancel", true, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
-		v, err := a.s.ChangeDeviceClaim(r.Context(), w, r.PathValue("id"), in.ExpectedRevision, true)
+}
+
+func (a *API) CancelDeviceApplyTask(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.CancelDeviceApplyTaskParams) {
+	write[revisionBody](a, w, r, true, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
+		v, err := a.s.ChangeDeviceClaim(r.Context(), w, id, in.ExpectedRevision, true)
 		return v, 200, err
 	})
-	a.mux.HandleFunc("GET /api/v1/device/apply-tasks/{id}/segments/{kind}", a.authScope("device.apply", func(w http.ResponseWriter, r *http.Request) {
-		file, err := a.s.DeviceApplyDownload(r.Context(), principal(r), r.PathValue("id"), r.PathValue("kind"))
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		if strings.Contains(r.Header.Get("Range"), ",") {
-			fail(w, service.Fail(416, "single_range_required", "每次只接受一个连续字节范围。"))
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("ETag", `"`+file.Segment.SHA256+`"`)
-		w.Header().Set("X-Content-SHA256", file.Segment.SHA256)
-		http.ServeContent(w, r, file.Segment.Kind, file.CreatedAt, file.Reader)
-	}))
-	a.mux.HandleFunc("POST /api/v1/device/apply-tasks", a.authScope("admin", a.publishDevicePackage))
+}
+
+func (a *API) GetDeviceApplySegment(w http.ResponseWriter, r *http.Request, id generated.Id, kind generated.DeviceSegmentKind, params generated.GetDeviceApplySegmentParams) {
+	if !allowScope(w, r, "device.apply") {
+		return
+	}
+	file, err := a.s.DeviceApplyDownload(r.Context(), principal(r), id, string(kind))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		fail(w, service.Fail(416, "single_range_required", "每次只接受一个连续字节范围。"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("ETag", `"`+file.Segment.SHA256+`"`)
+	w.Header().Set("X-Content-SHA256", file.Segment.SHA256)
+	http.ServeContent(w, r, file.Segment.Kind, file.CreatedAt, file.Reader)
+}
+
+func (a *API) PublishDeviceApplyTask(w http.ResponseWriter, r *http.Request, params generated.PublishDeviceApplyTaskParams) {
+	if allowScope(w, r, "admin") {
+		a.publishDevicePackage(w, r)
+	}
 }
 
 func (a *API) publishDevicePackage(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +152,11 @@ func (a *API) publishDevicePackage(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := make(map[string]service.DevicePackageFile)
 	for kind, headers := range form.File {
-		if len(headers) != 1 || (kind != "masterTxt" && kind != "v2Backup") {
+		if kind == "v2Backup" {
+			fail(w, service.Fail(410, "legacy_delivery_retired", "新设备交付请从源实例选择原生对象。"))
+			return
+		}
+		if len(headers) != 1 || kind != "masterTxt" {
 			fail(w, service.Fail(400, "invalid_device_segment", "每个文件段只能出现一次。"))
 			return
 		}

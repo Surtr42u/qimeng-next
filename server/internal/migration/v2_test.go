@@ -1,3 +1,5 @@
+//go:build qimeng_legacy_import
+
 package migration
 
 import "testing"

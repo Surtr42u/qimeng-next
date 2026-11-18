@@ -128,19 +128,21 @@ function AssetDetail({ asset, navigation, go, openViewer }: {
           <div className="detail-actions">
             <button
               className={`detail-act${asset.liked ? " active" : ""}${likeBounce ? " bounce" : ""}`}
-              aria-label={`${asset.liked ? "今日已赞" : "点赞"} · ${asset.likeCount}`}
-              title={asset.liked ? "今日已赞" : "点赞（每资产每日一次）"}
+              aria-label={`${asset.liked ? "取消今日赞" : "点赞"} · ${asset.likeCount}`}
+              title={asset.liked ? "取消今日赞" : "点赞（每资产每日一次）"}
               aria-pressed={asset.liked}
-              disabled={actions.reaction.isPending || asset.liked}
-              onClick={() => { setLikeBounce(true); actions.reaction.mutate({ favorite: asset.favorite, liked: true }); }}
+              disabled={actions.reaction.isPending}
+              onClick={() => { setLikeBounce(!asset.liked); actions.reaction.mutate({ kind: "todayLike", value: !asset.liked, key: newId() }); }}
               onAnimationEnd={() => setLikeBounce(false)}
             ><ThumbsUp /><b>{count(asset.likeCount)}</b></button>
-            <button className={`detail-act${asset.favorite ? " active" : ""}`} title={asset.favorite ? "取消收藏" : "收藏"} aria-pressed={asset.favorite} disabled={actions.reaction.isPending} onClick={() => actions.reaction.mutate({ favorite: !asset.favorite, liked: false })}><Star /><b>{asset.favorite ? "已收藏" : "收藏"}</b></button>
+            <button className={`detail-act${asset.favorite ? " active" : ""}`} title={asset.favorite ? "取消收藏" : "收藏"} aria-pressed={asset.favorite} disabled={actions.reaction.isPending} onClick={() => actions.reaction.mutate({ kind: "favorite", value: !asset.favorite, key: newId() })}><Star /><b>{asset.favorite ? "已收藏" : "收藏"}</b></button>
             <button className="detail-act" title="编辑关联作者与来源" onClick={() => navigate(`/asset/${encodeURIComponent(asset.id)}/edit`, { state: location.state })}><Pencil /><b>编辑</b></button>
             <button className="detail-act" title="移动到其他目录 / 重命名" onClick={() => setDialog("move")}><FolderInput /><b>整理</b></button>
             <button className="detail-act" title="移入回收站（可在维护页恢复）" onClick={() => setDialog("trash")}><Trash2 /><b>删除</b></button>
           </div>
-          <ErrorNotice error={actions.reaction.error} />
+          <ErrorNotice error={actions.reaction.error} retry={() => {
+            if (actions.reaction.variables) actions.reaction.mutate(actions.reaction.variables);
+          }} />
           <ErrorNotice error={event.error} retry={event.retry} />
           <div className="detail-tags">
             {asset.tags.map(tag => <span className="pill" key={tag}>{tag}</span>)}

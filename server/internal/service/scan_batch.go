@@ -119,9 +119,7 @@ func (s *Service) commitFreshScanPrefix(ctx context.Context, run *scanRun, files
 			break
 		}
 		var reconcile bool
-		itemErr = tx.QueryRowContext(ctx, `SELECT
-			EXISTS(SELECT 1 FROM assets WHERE library_id=? AND relative_path=? AND trashed=0)
-			OR EXISTS(SELECT 1 FROM assets INDEXED BY assets_hash WHERE hash=? AND size=? AND library_id=? AND trashed=0)`,
+		itemErr = tx.QueryRowContext(ctx, freshScanCollisionSQL,
 			library.ID, file.relative, file.hash, file.size, library.ID).Scan(&reconcile)
 		if itemErr != nil {
 			break
@@ -193,3 +191,9 @@ func (s *Service) commitFreshScanPrefix(ctx context.Context, run *scanRun, files
 	s.wakeAuthorMirror()
 	return completed, individual, itemErr
 }
+
+const freshScanCollisionSQL = `SELECT
+ EXISTS(SELECT 1 FROM asset_locations WHERE library_id=? AND relative_path=? AND trashed=0)
+ OR EXISTS(SELECT 1 FROM asset_content_versions AS v INDEXED BY asset_versions_hash
+ CROSS JOIN asset_locations AS l ON l.asset_id=v.asset_id AND l.current_version=v.version
+ WHERE v.hash=? AND v.size=? AND l.library_id=? AND l.trashed=0)`

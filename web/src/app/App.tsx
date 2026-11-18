@@ -68,12 +68,18 @@ function Shell() {
   const [showBackTop, setShowBackTop] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const [themeError, setThemeError] = useState(false);
-  const [windowError, setWindowError] = useState(false);
+  const [windowError, setWindowError] = useState("");
   const desktop = (window as Window & { __QIMENG_DESKTOP__?: boolean }).__QIMENG_DESKTOP__ === true;
   useEffect(() => {
-    const failed = () => setWindowError(true);
+    const failed = (event: Event) => setWindowError(event.type === "qimeng-original-open-error"
+      ? "原件窗口打开失败，请确认影库仍已连接后重试。"
+      : "窗口操作未完成，可从系统托盘打开或退出影库。");
     window.addEventListener("qimeng-window-action-error", failed);
-    return () => window.removeEventListener("qimeng-window-action-error", failed);
+    window.addEventListener("qimeng-original-open-error", failed);
+    return () => {
+      window.removeEventListener("qimeng-window-action-error", failed);
+      window.removeEventListener("qimeng-original-open-error", failed);
+    };
   }, []);
   const home = location.pathname === "/";
   const tab =
@@ -260,7 +266,7 @@ function Shell() {
             网络已断开。当前可能显示缓存内容，管理操作需要恢复连接。
           </div>
         )}
-        {windowError && <div className="connection-warning" role="alert">窗口操作未完成，可从系统托盘打开或退出影库。<button type="button" className="pill" onClick={() => setWindowError(false)}>知道了</button></div>}
+        {windowError && <div className="connection-warning" role="alert">{windowError}<button type="button" className="pill" onClick={() => setWindowError("")}>知道了</button></div>}
         {themeError && (
           <div className="connection-warning" role="status">
             主题已切换，但浏览器无法保存偏好。

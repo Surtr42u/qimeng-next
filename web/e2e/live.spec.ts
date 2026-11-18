@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
 test("same-commit service: login, upload, edit, recommend and play persist through reload", async ({
-  page,
+  page, browser,
 }, testInfo) => {
   test.setTimeout(120_000);
   // This suite is allowed to mutate only its cloud loopback fixture instance.
@@ -119,11 +119,17 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     page.getByRole("button", { name: "保存标签", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "编辑", exact: true }).click();
-  await page.getByLabel("查找作者", { exact: true }).fill(authorName);
-  await page
-    .getByRole("group", { name: "作者联想", exact: true })
-    .getByText(authorName, { exact: true })
-    .click();
+  const lookup = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/v1/authors" && url.searchParams.get("q") === authorName;
+  }, { timeout: 10000 });
+  const authorField = page.getByLabel("查找作者", { exact: true });
+  await authorField.fill(authorName);
+  const suggestions = await lookup;
+  expect(suggestions.status()).toBe(200);
+  expect((await suggestions.json()).items.some((item: { id: string }) => item.id === authorId)).toBe(true);
+  await expect(authorField).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("group", { name: "作者联想", exact: true }).getByText(authorName, { exact: true }).click({ timeout: 10000 });
   const newName = "CI 新建作者 " + suffix;
   await page.getByLabel("查找作者", { exact: true }).fill(newName);
   await page.getByRole("button", { name: "新建：" + newName + " 保存时创建" }).click();
@@ -139,11 +145,39 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     await page.screenshot({ path: testInfo.outputPath("live-synthetic-author-edit.png") });
     throw failure;
   }
-  await page.getByRole("button", { name: "收藏", exact: true }).click();
-  await page.getByRole("button", { name: "点赞 · 0", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "今日已赞 · 1", exact: true }),
-  ).toBeDisabled();
+  const base = new URL(page.url()).origin;
+  const secondSession = await browser.newContext({ baseURL: base });
+  try {
+    const second = await secondSession.newPage();
+    await second.goto("/");
+    await second.getByLabel("管理密码", { exact: true }).fill(token!);
+    await second.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(second.getByRole("heading", { name: "为你推荐" })).toBeVisible();
+    await second.goto(page.url());
+    await expect(second.getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+    const favoriteResponse = page.waitForResponse(r => r.request().method() === "PUT" && r.url().endsWith("/favorite"));
+    await page.getByRole("button", { name: "收藏", exact: true }).click();
+    expect((await favoriteResponse).request().postDataJSON()).toEqual({ favorite: true });
+    // This second browser context still has its original view of the asset.
+    await expect(second.getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+    const likeResponse = second.waitForResponse(r => r.request().method() === "PUT" && r.url().endsWith("/like/today"));
+    await second.getByRole("button", { name: "点赞 · 0", exact: true }).click();
+    const like = await likeResponse;
+    expect(like.request().postDataJSON()).toEqual({ liked: true });
+    expect(await like.json()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
+    const key = await like.request().headerValue("idempotency-key");
+    expect(key).toBeTruthy();
+    const replay = () => second.request.put(like.url(), { headers: { "Idempotency-Key": key!, Origin: base }, data: { liked: true } });
+    expect(await (await replay()).json()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
+    const readBack = async () => (await page.request.get("/api/v1/assets/" + encodeURIComponent(assetId))).json();
+    expect(await readBack()).toMatchObject({ favorite: true, liked: true, likeCount: 1 });
+    await second.getByRole("button", { name: "取消今日赞 · 1", exact: true }).click();
+    await expect(second.getByRole("button", { name: "点赞 · 0", exact: true })).toBeEnabled();
+    expect((await replay()).ok()).toBe(true);
+    expect(await readBack()).toMatchObject({ favorite: true, liked: false, likeCount: 0 });
+  } finally {
+    await secondSession.close();
+  }
   await page.reload();
   await expect(
     page.getByRole("button", { name: "已收藏", exact: true }),
@@ -246,6 +280,36 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     .evaluate((element) => (element as HTMLVideoElement).pause());
   const videoId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!);
   const videoData = await (await page.request.get(`/api/v1/assets/${encodeURIComponent(videoId)}`)).json();
+  const duration = await page.locator("video").evaluate(el => (el as HTMLVideoElement).duration);
+  await page.locator("video").hover();
+  const track = await page.locator(".art-control-progress").boundingBox();
+  expect(track).toBeTruthy();
+  for (const fraction of [0.35, 0.78, 0.52]) {
+    const expected = Math.round(duration * 1000 * fraction);
+    const receipt = page.waitForResponse(r => {
+      if (r.request().method() !== "POST" || !r.url().endsWith("/events")) return false;
+      const value = r.request().postDataJSON();
+      return value.kind === "progress" && Math.abs(value.positionMs - expected) < 80;
+    });
+    const y = track!.y + track!.height / 2;
+    await page.mouse.move(track!.x + track!.width * 0.1, y);
+    await page.mouse.down();
+    await page.mouse.move(track!.x + track!.width * fraction, y, { steps: 4 });
+    await page.mouse.up();
+    expect((await receipt).status()).toBe(200);
+  }
+  const resumeMs = duration * 1000 * 0.52;
+  await expect.poll(async () => {
+    const current = await (await page.request.get(`/api/v1/assets/${encodeURIComponent(videoId)}`)).json();
+    return current.positionContentVersion === videoData.contentVersion ? Math.abs(current.positionMs - resumeMs) : Infinity;
+  }).toBeLessThan(80);
+  const restoredDetail = page.waitForResponse(response => new URL(response.url()).pathname === `/api/v1/assets/${encodeURIComponent(videoId)}` && response.request().method() === "GET");
+  await page.reload();
+  const restoredAsset = await (await restoredDetail).json();
+  expect(restoredAsset.positionContentVersion).toBe(videoData.contentVersion);
+  expect(Math.abs(restoredAsset.positionMs - resumeMs)).toBeLessThan(80);
+  await expect.poll(() => page.locator("video").evaluate((el, expected) =>
+    Math.abs((el as HTMLVideoElement).currentTime * 1000 - expected), resumeMs)).toBeLessThan(80);
   // The original Web presents timeline marks on the player. Authoring uses the real
   // service here; do not add a new detail-page panel just to drive a test.
   const markLabel = 'CI 时间轴 <img src="synthetic-missing" onerror="window.syntheticUnsafe=true">';

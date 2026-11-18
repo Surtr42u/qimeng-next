@@ -4,21 +4,29 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import media.qimeng.next.MainActivity
 import media.qimeng.next.QimengApplication
+import media.qimeng.next.data.DataGraph
+import media.qimeng.next.model.Asset
 import media.qimeng.next.runtime.RuntimePhase
 import media.qimeng.next.embedded.EmbeddedDebugDiagnostics
 import media.qimeng.next.model.AssetQuery
@@ -131,11 +139,30 @@ class EmbeddedRuntimeTest {
             withTimeout(20_000) { while (graph.media.libraryPage().items.any { it.id == library.id }) delay(200) }
             assertTrue("Unregister keeps the original on disk", java.io.File(root, asset.relativePath).isFile)
 
+            val video = uploadTargetVideo(graph)
             compose.activityRule.scenario.onActivity {
                 androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].navigate("maintenance")
             }
             compose.waitUntil(20_000) { compose.onAllNodes(hasText("设备领取") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("设备领取").performClick()
+            compose.onNodeWithText("本机影库标识 ${target.instanceId}").assertExists()
+            assertCopied("本机影库标识", target.instanceId)
+            compose.onNodeWithText("选择本机目标视频").performScrollTo().performClick()
+            fun search(query: String) {
+                compose.waitUntil(20_000) { compose.onAllNodes(hasText("搜索视频") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithTag("device-target-video-search").performScrollTo().performTextReplacement(query)
+                compose.onNodeWithText("搜索视频").performScrollTo().performClick()
+            }
+            search("unmatched-local-mark-fixture")
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("没有符合条件的本机视频").fetchSemanticsNodes().isNotEmpty() }
+            search(video.name)
+            val result = hasText(video.name) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)
+            compose.waitUntil(20_000) { compose.onAllNodes(result and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(result).performScrollTo().performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithContentDescription("复制目标视频 ID").fetchSemanticsNodes().isNotEmpty() }
+            assertCopied("目标视频 ID", video.id)
+            assertCopied("目标内容版本", video.version.toString())
+            compose.onNodeWithText("收起目标视频").performScrollTo().performClick()
             compose.onNodeWithText("生成本机设备令牌").performScrollTo().performClick()
             compose.waitUntil(20_000) { graph.deviceDelivery.view().configured &&
                 compose.onAllNodes(hasTestTag("device-background") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
@@ -159,6 +186,47 @@ class EmbeddedRuntimeTest {
             runtime.stop()
             runtime.configureAddress("https://127.0.0.1:18431/")
             EmbeddedDebugDiagnostics.disable()
+        }
+    }
+
+    private suspend fun uploadTargetVideo(graph: DataGraph): Asset {
+        val library = graph.media.createLibrary("本机标记接收样本", false)
+        val uri = Uri.parse("content://media.qimeng.next.test.fixture/android-synthetic.mp4")
+        copyCloudVideo(uri)
+        val id = graph.uploads.receive(listOf(uri)).single()
+        graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, inputIds = listOf(id))
+        val assetId = withTimeout(60_000) {
+            while (graph.queue.state.value!!.transfers.single { it.id == id }.state != TransferState.SUCCEEDED) {
+                val item = graph.queue.state.value!!.transfers.single { it.id == id }
+                check(item.state != TransferState.FAILED) { "Target video upload failed: ${item.message}" }
+                delay(250)
+            }
+            requireNotNull(graph.queue.state.value!!.transfers.single { it.id == id }.assetId)
+        }
+        return graph.media.asset(assetId)
+    }
+
+    private fun assertCopied(label: String, expected: String) {
+        var focused = false
+        compose.waitUntil(15_000) {
+            compose.activityRule.scenario.onActivity { focused = it.hasWindowFocus() }
+            focused
+        }
+        compose.onNodeWithContentDescription("复制$label").performScrollTo().performClick()
+        var observed: String? = null
+        try {
+            compose.waitUntil(15_000) {
+                compose.activityRule.scenario.onActivity { activity ->
+                    focused = activity.hasWindowFocus()
+                    if (focused) {
+                        val clipboard = requireNotNull(activity.getSystemService(android.content.ClipboardManager::class.java))
+                        observed = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                    }
+                }
+                focused && observed == expected
+            }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("$label 剪贴板读取超时，窗口焦点=$focused，系统已提供文本=${observed != null}", failure)
         }
     }
 

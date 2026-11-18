@@ -50,6 +50,8 @@ Android 普通应用在私有数据目录也会遇到硬链接被拒绝。文件
 
 ## 模块与验证
 
+云端使用 oapi-codegen v2.8.2 从 `api/openapi.yaml` 生成 Go 类型、客户端、标准库服务端接口和内嵌协议。`internal/httpapi.API` 在编译时实现全部接口，运行服务使用生成的路由。kin-openapi v0.153.0 校验 JSON 请求。文件上传与 Range 下载保留流式读写，由真实入口的契约测试覆盖。[生成器](https://github.com/oapi-codegen/oapi-codegen/tree/v2.8.2) · [kin-openapi 版本与 MIT 许可证](https://github.com/getkin/kin-openapi/tree/v0.153.0)
+
 `internal/sourcerules` 从独立 JSON 读取经用户审定的 133 个出处组和 1,394 行角色检索词。原词条来自旧版本 d0215962 的 `server/internal/sourcematcher/source_groups_data.go` 纯数据表。仅转录规范名、变体和角色别名。新匹配代码按归一化最长前缀定位出处，优先采用出处内的角色别名，表未命中时再按文件名和停用词提取。遇到多个同等匹配候选时保留候选名称，并允许以后人工核对。
 
 管理员通过 `/sources/custom-groups` 读取或按修订整体保存追加词层。存储修订、重算游标与进度一并落库，启动后续做未结束部分。普通上传、扫描和文件改名使用同一规则。存量仅更新空白或由规则生成的归属。人工填写与明确清空在单文件修订和持久保护记录中保留，原件和内容版本不参与词表重算。

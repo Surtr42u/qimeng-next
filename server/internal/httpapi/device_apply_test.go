@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"qimeng.local/next/server/internal/httpapi"
 	"qimeng.local/next/server/internal/model"
@@ -52,7 +53,39 @@ func putDevicePackage(t *testing.T, f *fixture, key string, m service.DeviceAppl
 	return task
 }
 
-func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports(t *testing.T) {
+func historicalDevicePackage(t *testing.T, f *fixture, manifest service.DeviceApplyManifest, files map[string][]byte) service.DeviceApplyTask {
+	t.Helper()
+	now := time.Now().UTC()
+	task := service.DeviceApplyTask{ID: "historical-device-package", TargetDeviceID: manifest.TargetDeviceID, ProtocolVersion: 1, Revision: 1,
+		State: "pending", CreatedAt: now, ExpiresAt: now.Add(time.Hour), Segments: manifest.Segments}
+	raw, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.s.DB.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO device_apply_tasks(id,device_id,state,created_at,expires_at,data) VALUES(?,?,?,?,?,?)",
+		task.ID, task.TargetDeviceID, task.State, now.Format(time.RFC3339Nano), task.ExpiresAt.Format(time.RFC3339Nano), string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range task.Segments {
+		data := files[part.Kind]
+		for offset := 0; offset < len(data); offset += 1 << 20 {
+			if _, err = tx.Exec("INSERT INTO device_apply_chunks(task_id,kind,ordinal,payload) VALUES(?,?,?,?)", task.ID, part.Kind, offset>>20, data[offset:min(len(data), offset+(1<<20))]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func TestHistoricalDevicePackageRemainsReadableAndNewV2PublicationIsRetired(t *testing.T) {
 	origin, local := setup(t), setup(t)
 	register := func(device, label, secret, previous string) service.DeviceCredential {
 		t.Helper()
@@ -76,7 +109,7 @@ func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports
 	}
 	u, _ := local.upload("receiver.png", 129, nil)
 	asset := *local.complete(u).Asset
-	raw := v2Document(t, asset, map[string]any{"favorites": []string{"source-record"}})
+	raw := []byte(`{"format":"qimeng_backup","schemaVersion":2,"appIdentifier":"synthetic.legacy","data":{"mediaFiles":[{"recordKey":"source-record","fileName":"receiver.png"}],"favorites":["source-record"],"viewEvents":[]}}`)
 	raw = append(raw, bytes.Repeat([]byte{' '}, (1<<20)+23)...)
 	files := map[string][]byte{"masterTxt": []byte("1  Synthetic receiver author\n作品\nreceiver.png\n" + strings.Repeat("\n", 600<<10)), "v2Backup": raw}
 	rev := int64(0)
@@ -89,13 +122,10 @@ func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports
 		seg.Bytes = int64(len(body))
 		seg.SHA256 = fmt.Sprintf("%x", sha256.Sum256(body))
 	}
-	task := putDevicePackage(t, origin, "publish-real-local-imports", manifest, files, 201)
-	replay := putDevicePackage(t, origin, "publish-real-local-imports", manifest, files, 201)
-	if replay.ID != task.ID || task.State != "pending" || task.TargetDeviceID != "phone" {
-		t.Fatal("package replay or device binding changed")
-	}
+	putDevicePackage(t, origin, "reject-new-v2-publication", manifest, files, 410)
+	task := historicalDevicePackage(t, origin, manifest, files)
 	unverified := manifest
-	unverified.Segments = append([]service.DeviceApplySegment{}, manifest.Segments...)
+	unverified.Segments = append([]service.DeviceApplySegment{}, manifest.Segments[:1]...)
 	unverified.Segments[0].SHA256 = strings.Repeat("f", 64)
 	putDevicePackage(t, origin, "reject-unverified-digest", unverified, files, 409)
 	url := "/device/apply-tasks/" + task.ID
@@ -172,32 +202,28 @@ func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports
 			local.json("POST", "/author-lists", "stale-device-txt", map[string]any{"name": "作者总表.txt", "content": string(got), "expectedRevision": 0}, 409)
 		case "v2Backup":
 			r := local.request("POST", "/migration/v2/imports?sourceId="+seg.SourceID, "device-local-v2-input", testSecret, got, map[string]string{"Content-Type": "application/octet-stream"})
-			if r.Code != 201 {
-				t.Fatal("stage received V2", r.Code)
+			if r.Code != 410 {
+				t.Fatal("ordinary receiver accepted a historical write", r.Code)
 			}
-			var in service.V2Import
-			decode(t, r, &in)
-			plan := planV2(t, local, in, "device-local-v2-plan")
-			decode(t, local.json("POST", "/migration/v2/plans/"+plan.ID+"/commit", "device-local-v2-commit",
-				map[string]any{"fingerprint": plan.Fingerprint, "acceptSkipped": false}, 200), &plan)
-			receipt = plan.ID
+			outcomes = append(outcomes, service.DeviceApplyOutcome{Kind: seg.Kind, State: "skipped", Code: "v2_import_retired"})
+			continue
 		}
 		outcomes = append(outcomes, service.DeviceApplyOutcome{Kind: seg.Kind, State: "applied", SHA256: seg.SHA256, ReceiptID: receipt})
 	}
 	var current model.Asset
 	decode(t, local.json("GET", "/assets/"+asset.ID, "", nil, 200), &current)
-	if !current.Favorite || current.AuthorName != "Synthetic receiver author" {
-		t.Fatal("local authorized metadata was not applied", current)
+	if current.Favorite || current.AuthorName != "Synthetic receiver author" {
+		t.Fatal("receiver failed to distinguish its TXT update from the retired v2 selection")
 	}
-	result := service.DeviceApplyReport{State: "applied", ExpectedRevision: page.Revision, Results: outcomes}
+	result := service.DeviceApplyReport{State: "partial", ExpectedRevision: page.Revision, Results: outcomes}
 	decode(t, request("POST", url+"/result", "real-device-result", newSecret, result, 200), &page)
-	if page.State != "applied" || len(page.Results) != 2 {
+	if page.State != "partial" || len(page.Results) != 2 {
 		t.Fatal("missing device receipt")
 	}
 	request("POST", url+"/result", "resume-real-device-result", newSecret, result, 200)
 	request("GET", url+"/segments/v2Backup", "", newSecret, nil, 409)
 	request("POST", url+"/claim", "resume-device-claim", newSecret, map[string]int{"expectedRevision": 2}, 409)
-	result.Results[1].ReceiptID = "different-local-receipt"
+	result.Results[0].ReceiptID = "different-local-receipt"
 	request("POST", url+"/result", "immutable-device-terminal", newSecret, result, 409)
 
 	waiting := service.DeviceApplyManifest{TargetDeviceID: "phone", ProtocolVersion: 1, Segments: manifest.Segments[:1]}
@@ -222,7 +248,7 @@ func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports
 	defer restored.Close()
 	historical := &fixture{t: t, s: restored, h: httpapi.New(restored)}
 	decode(t, historical.json("GET", url, "", nil, 200), &page)
-	if page.State != "applied" || len(page.Results) != 2 {
+	if page.State != "partial" || len(page.Results) != 2 {
 		t.Fatal("restoration removed the existing result")
 	}
 	decode(t, historical.json("GET", "/device/apply-tasks/"+notTaken.ID, "", nil, 200), &page)

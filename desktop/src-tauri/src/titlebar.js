@@ -9,6 +9,17 @@
   let lastPress;
   document.addEventListener("click", event => {
     if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const link = event.target.closest('a[target="_blank"][href]:not([download])');
+    if (link && event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      const address = new URL(link.href);
+      if (address.origin === location.origin && ["http:", "https:"].includes(address.protocol)) {
+        event.preventDefault();
+        window.__TAURI__.core.invoke("open_original", { address: address.href }).catch(() => {
+          window.dispatchEvent(new Event("qimeng-original-open-error"));
+        });
+        return;
+      }
+    }
     const button = event.target.closest(titlebar + " button[data-window-action]");
     if (button && ["minimize", "toggleMaximize", "close"].includes(button.dataset.windowAction)) {
       event.preventDefault(); send(button.dataset.windowAction);

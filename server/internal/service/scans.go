@@ -200,7 +200,7 @@ func (s *Service) scanProgress(ctx context.Context, id, relative, code string, s
 }
 func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
 	j, e := s.admitScan(ctx, id)
-	run := &scanRun{id: id, lastFlush: time.Now()}
+	run := &scanRun{id: id, lastFlush: time.Now(), manualFull: j.Trigger == "manual" && len(paths) == 0}
 	if e == nil {
 		defer s.releaseScan()
 		run.library, e = s.library(ctx, j.LibraryID)
@@ -294,9 +294,26 @@ func (s *Service) walkLibrary(ctx context.Context, run *scanRun, relative string
 		if e != nil {
 			return e
 		}
-		for _, entry := range entries {
+		unchanged, e := s.knownDirectoryEntries(ctx, run, directory, relative, entries, known)
+		if e != nil {
+			return e
+		}
+		for _, skip := range unchanged {
+			if skip {
+				if e = ctx.Err(); e != nil {
+					return e
+				}
+				if e = s.skipScannedEntry(ctx, run); e != nil {
+					return e
+				}
+			}
+		}
+		for index, entry := range entries {
 			if e := ctx.Err(); e != nil {
 				return e
+			}
+			if unchanged != nil && unchanged[index] {
+				continue
 			}
 			if privateLibraryEntry(entry.Name()) {
 				continue
@@ -370,7 +387,7 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 	if !initial.Mode().IsRegular() {
 		return s.scanProgress(ctx, jobID, relative, "not_regular_file", true)
 	}
-	unchanged := previous.RelativePath != "" && previous.Size == initial.Size() && previous.Mtime != nil && previous.Mtime.Equal(initial.ModTime())
+	unchanged := previous.sameSizeAndTime(initial)
 	if unchanged {
 		depth := strings.Count(relative, "/")
 		unchanged = run.library.Kind != "cos" || depth == 0 || previous.DirectoryAuthor != "" && (depth < 2 || previous.COSWork != "")
@@ -491,25 +508,28 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 		a = model.Asset{ID: ID(), LibraryID: library.ID, OriginalFileName: path.Base(relative), AuthorID: "unknown", AuthorIDs: []string{"unknown"}, AuthorsRevision: 1, AuthorStatus: "unknown", TagsRevision: 1, Revision: 1, ContentVersion: 1, Tags: []string{}, SourceIDs: []string{}, CharacterIDs: []string{}, Characters: []string{}, AcquisitionSources: []string{}, MetadataSource: "scanner", CreatedAt: now}
 	}
 	previousName := a.FileName
+	changedBytes := isNew || a.Hash != file.hash
 	if !isNew {
 		a.Revision++
-		if a.Hash != file.hash {
+		if changedBytes {
 			a.ContentVersion++
 		}
 	}
 	a.RelativePath = relative
 	a.FileName = path.Base(relative)
-	a.Size = file.size
-	a.Hash = file.hash
-	a.MediaType = file.kind
-	a.MimeType = file.probe.MimeType
+	if changedBytes {
+		a.Size = file.size
+		a.Hash = file.hash
+		a.MediaType = file.kind
+		a.MimeType = file.probe.MimeType
+		a.Width = file.probe.Width
+		a.Height = file.probe.Height
+		a.DurationMs = file.probe.DurationMs
+		a.ProbeState = file.probe.ProbeState
+	}
 	a.UpdatedAt = now
 	modified := file.initial.ModTime().UTC()
 	a.ContentMtime = &modified
-	a.Width = file.probe.Width
-	a.Height = file.probe.Height
-	a.DurationMs = file.probe.DurationMs
-	a.ProbeState = file.probe.ProbeState
 	a.ContentURL = "/api/v1/assets/" + a.ID + "/content"
 	a.ThumbnailURL = ""
 	if file.probe.ThumbnailURL != "" {

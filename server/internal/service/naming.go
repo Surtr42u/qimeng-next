@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"path"
 	"sort"
 	"strings"
@@ -38,14 +39,14 @@ type NamingInputItem struct {
 }
 type NamingPreviewInput struct {
 	Intent           string            `json:"intent"`
-	Directory        string            `json:"directory"`
-	Family           string            `json:"family"`
-	MediaType        string            `json:"mediaType"`
-	SourceIDs        []string          `json:"sourceIds"`
-	CharacterIDs     []string          `json:"characterIds"`
-	CollectionID     string            `json:"collectionId"`
-	AssetID          string            `json:"assetId"`
-	ExpectedRevision int64             `json:"expectedRevision"`
+	Directory        string            `json:"directory,omitempty"`
+	Family           string            `json:"family,omitempty"`
+	MediaType        string            `json:"mediaType,omitempty"`
+	SourceIDs        []string          `json:"sourceIds,omitempty"`
+	CharacterIDs     []string          `json:"characterIds,omitempty"`
+	CollectionID     string            `json:"collectionId,omitempty"`
+	AssetID          string            `json:"assetId,omitempty"`
+	ExpectedRevision int64             `json:"expectedRevision,omitempty"`
 	Items            []NamingInputItem `json:"items"`
 }
 type NamingPreviewItem struct {
@@ -106,7 +107,13 @@ func (s *Service) sequence(ctx context.Context, collectionID string) (collection
 		sequence.Number, e = s.nextEpisode(ctx, c.ID)
 		return sequence, e
 	}
-	members, e := store.List[model.Asset](ctx, s.DB.DB, "SELECT data FROM assets WHERE collection_id=? AND trashed=0 ORDER BY relative_path LIMIT 10001", collectionID)
+	sequence.MaxPage, e = s.maximumCollectionPosition(ctx, collectionID)
+	if e != nil {
+		return sequence, e
+	}
+	members, e := store.List[model.Asset](ctx, s.DB.DB, `SELECT json_object('fileName',l.file_name,'relativePath',l.relative_path)
+		FROM collection_members m JOIN asset_locations l ON l.asset_id=m.asset_id
+		WHERE m.collection_id=? AND l.trashed=0 ORDER BY l.relative_path LIMIT 10001`, collectionID)
 	if e != nil {
 		return sequence, e
 	}
@@ -133,9 +140,6 @@ func (s *Service) sequence(ctx context.Context, collectionID string) (collection
 		} else if sequence.Family != work.Family || sequence.Number != work.Number || path.Clean(sequence.Directory) != path.Dir(member.RelativePath) {
 			return sequence, Fail(409, "group_name_conflict", "已有组图包含不同作品号或目录。")
 		}
-		if work.Page > sequence.MaxPage {
-			sequence.MaxPage = work.Page
-		}
 	}
 	names, e := s.directoryNames(ctx, c.LibraryID, sequence.Directory)
 	if e != nil {
@@ -146,6 +150,9 @@ func (s *Service) sequence(ctx context.Context, collectionID string) (collection
 		if ok && domain.NumberClass(name) == "image" && work.Family == sequence.Family && work.Number == sequence.Number && work.Page > sequence.MaxPage {
 			sequence.MaxPage = work.Page
 		}
+	}
+	if sequence.MaxPage == math.MaxInt {
+		return sequence, Fail(409, "collection_position_exhausted", "此集合已用尽可表示的位置。")
 	}
 	return sequence, nil
 }

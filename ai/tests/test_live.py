@@ -30,7 +30,7 @@ class LiveMCP(unittest.IsolatedAsyncioTestCase):
         asset, = self.request("GET", "/assets?libraryId=" + library["id"])["items"]
         grant = self.request("POST", "/ai/delegations", {
             "label":"Existing work task","libraryIds":[library["id"]],"authorIds":[],"allAuthors":False,
-            "allowedFields":[],"candidateBlocks":[],"canIngest":False,"canOrganize":False,"canResearch":True,
+            "allowedFields":[],"candidateBlocks":[],"allowClear":False,"canIngest":False,"canOrganize":False,"canResearch":True,
             "canResearchAssets":True,"assetFields":["tags"],"maxResearchCalls":2,"maxUpdates":1,"maxTasksPerDay":2,"validDays":1})
         with tempfile.TemporaryDirectory() as directory:
             async with Client(self.process(Path(directory), grant["credential"]["token"], "read,delegate,research,asset.metadata.write")) as client:

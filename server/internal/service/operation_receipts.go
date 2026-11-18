@@ -2,10 +2,53 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 
 	"qimeng.local/next/server/internal/model"
 )
+
+// ReplayBeforeInspection checks a completed, principal-bound operation before
+// acquiring media verification resources. A miss does not reserve a key.
+// Run checks the same receipt again under the mutation lock before committing.
+func (s *Service) ReplayBeforeInspection(ctx context.Context, p model.Principal, scope, operation, key string, input []byte) (Result, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.currentWritePrincipal(ctx, p)
+	if err != nil {
+		return Result{}, false, err
+	}
+	if scope != "" {
+		if err = Authorize(current, scope, ""); err != nil {
+			return Result{}, false, err
+		}
+	}
+	return s.matchingReceipt(ctx, current.ID, operation, key, digest(input))
+}
+
+func (s *Service) matchingReceipt(ctx context.Context, principalID, operation, key, hash string) (Result, bool, error) {
+	if key == "" {
+		return Result{}, false, nil
+	}
+	if len(key) < 8 || len(key) > 128 {
+		return Result{}, false, Fail(400, "invalid_idempotency_key", "幂等键长度应为 8–128。")
+	}
+	var previous string
+	var result Result
+	err := s.DB.DB.QueryRowContext(ctx, "SELECT input_hash,response,status FROM idempotency WHERE principal_id=? AND operation=? AND key=?",
+		principalID, operation, key).Scan(&previous, &result.Body, &result.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Result{}, false, nil
+	}
+	if err != nil {
+		return Result{}, false, err
+	}
+	if previous != hash {
+		return Result{}, false, Fail(409, "idempotency_conflict", "同一幂等键的输入已经改变。")
+	}
+	return result, true, nil
+}
 
 // Operation never exposes another principal's receipt. A key may be reused for
 // distinct operations; callers must select the operation rather than guess.

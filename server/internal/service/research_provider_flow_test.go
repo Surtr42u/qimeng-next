@@ -150,7 +150,7 @@ func (f *researchFixture) authorGrant(t *testing.T) (model.Author, service.Deleg
 func (f *researchFixture) authorTask(t *testing.T, a model.Author, grant service.DelegationCreated, label string, repeated byte) (service.DelegatedTask, string) {
 	t.Helper()
 	secret := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{repeated}, 32))
-	in := service.DelegatedTaskStart{Kind: "author", Label: label, AuthorID: a.ID, ExpectedRevision: a.Revision, CandidateBlocks: []string{"basic"}, CredentialSecret: secret}
+	in := map[string]any{"kind": "author", "label": label, "authorId": a.ID, "expectedRevision": a.Revision, "candidateBlocks": []string{"basic"}, "credentialSecret": secret}
 	var task service.DelegatedTask
 	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, label+"-start", in).expect(t, 201, &task)
 	return task, secret
@@ -232,9 +232,9 @@ func TestProviderPolicyMustBeExplicitAndCannotExpand(t *testing.T) {
 	f := researchServer(t, nil, nil)
 	author, grant := f.authorGrant(t)
 	secret := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
-	in := service.DelegatedTaskStart{Kind: "author", Label: "Narrower scope", AuthorID: author.ID, ExpectedRevision: author.Revision, CandidateBlocks: []string{"basic"}, CredentialSecret: secret, ResearchProviders: []string{"pixiv"}}
+	in := map[string]any{"kind": "author", "label": "Narrower scope", "authorId": author.ID, "expectedRevision": author.Revision, "candidateBlocks": []string{"basic"}, "credentialSecret": secret, "researchProviders": []string{"pixiv"}}
 	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, "deny-provider-expansion", in).expect(t, 403, nil)
-	in.ResearchProviders = []string{}
+	in["researchProviders"] = []string{}
 	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, "drop-all-providers", in).expect(t, 201, nil)
 	var narrowed service.PublicResearchContext
 	f.request("GET", "/research/context", secret, "", nil).expect(t, 200, &narrowed)
@@ -245,9 +245,9 @@ func TestProviderPolicyMustBeExplicitAndCannotExpand(t *testing.T) {
 	policy.ResearchProviders = nil
 	var local service.DelegationCreated
 	f.request("POST", "/ai/delegations", researchTestOwner, "", policy).expect(t, 201, &local)
-	in.ResearchProviders = nil
+	delete(in, "researchProviders")
 	secret = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
-	in.CredentialSecret = secret
+	in["credentialSecret"] = secret
 	f.request("POST", "/ai/delegated-tasks", local.Credential.Token, "local-author-research", in).expect(t, 201, nil)
 	var permissions service.PublicResearchContext
 	f.request("GET", "/research/context", secret, "", nil).expect(t, 200, &permissions)
@@ -450,8 +450,8 @@ func TestChargedLookupBecomesOnlyCandidateForOriginalIntake(t *testing.T) {
 	f.request("POST", "/ai/delegations", researchTestOwner, "", policy).expect(t, 201, &grant)
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
 	var task service.DelegatedTask
-	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, "intake-research-start", service.DelegatedTaskStart{
-		Kind: "intake", Label: "Two synthetic originals", LibraryID: library.ID, Mode: "intelligent", CredentialSecret: token}).expect(t, 201, &task)
+	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, "intake-research-start", map[string]any{
+		"kind": "intake", "label": "Two synthetic originals", "libraryId": library.ID, "mode": "intelligent", "credentialSecret": token}).expect(t, 201, &task)
 	batch := "/batches/" + task.TaskID
 	inputs := []model.IntakeInput{{ID: "unidentified", OriginalFileName: "private-input.png"}, {ID: "human-chosen", OriginalFileName: "another-input.png"}}
 	f.request("PUT", batch+"/inputs", researchTestOwner, "intake-research-manifest", model.BatchInputsSet{ExpectedManifestRevision: 1, Inputs: inputs}).expect(t, 200, nil)

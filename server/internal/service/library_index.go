@@ -105,7 +105,10 @@ func (s *Service) DeleteLibrary(ctx context.Context, w *Write, id string, revisi
 			return e
 		}
 	}
-	for _, table := range []string{"assets", "cos_works", "collections", "scans"} {
+	if _, e = q.ExecContext(ctx, "DELETE FROM asset_records WHERE id IN (SELECT asset_id FROM asset_locations WHERE library_id=?)", id); e != nil {
+		return e
+	}
+	for _, table := range []string{"cos_works", "collections", "scans"} {
 		if _, e = q.ExecContext(ctx, "DELETE FROM "+table+" WHERE library_id=?", id); e != nil {
 			return e
 		}

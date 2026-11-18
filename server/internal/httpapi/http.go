@@ -13,22 +13,37 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
 type principalKey struct{}
 type API struct {
-	s   *service.Service
-	mux *http.ServeMux
+	s *service.Service
 }
 
+var _ generated.ServerInterface = (*API)(nil)
+
 func New(s *service.Service) http.Handler {
-	a := &API{s: s, mux: http.NewServeMux()}
-	a.routes()
-	return a.mux
+	a := &API{s: s}
+	return a.routes(a)
+}
+
+func (a *API) routes(operations generated.ServerInterface) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", a.healthz)
+	mux.HandleFunc("GET /metrics", a.auth(a.GetServiceMetrics))
+	contract := embeddedContract()
+	router := &authenticatedRouter{ServeMux: mux, api: a, contract: contract}
+	handler := generated.HandlerWithOptions(operations, generated.StdHTTPServerOptions{
+		BaseURL: contract.baseURL, BaseRouter: router, ErrorHandlerFunc: parameterError,
+	})
+	if router.registered != len(contract.operations) {
+		panic("generated routes are missing OpenAPI operations")
+	}
+	return handler
 }
 func principal(r *http.Request) model.Principal {
 	return r.Context().Value(principalKey{}).(model.Principal)
@@ -87,6 +102,12 @@ func originOK(r *http.Request, secureOrigin ...bool) bool {
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc { return a.authScope("read", next) }
 func (a *API) authScope(scope string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.Context().Value(principalKey{}).(model.Principal); ok {
+			if allowScope(w, r, scope) {
+				next(w, r)
+			}
+			return
+		}
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if token == r.Header.Get("Authorization") && token != "" {
 			fail(w, service.Fail(401, "invalid_authorization", "仅支持 Bearer 凭据。"))
@@ -115,16 +136,22 @@ func (a *API) authScope(scope string, next http.HandlerFunc) http.HandlerFunc {
 		next(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 	}
 }
-func (a *API) get(pattern string, fn func(*http.Request) (any, error)) {
-	a.mux.HandleFunc("GET /api/v1"+pattern, a.auth(func(w http.ResponseWriter, r *http.Request) {
-		v, e := fn(r)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		respond(w, 200, v)
-	}))
+func (a *API) readJSON(w http.ResponseWriter, r *http.Request, fn func(*http.Request) (any, error)) {
+	a.readScoped(w, r, "read", fn)
 }
+
+func (a *API) readScoped(w http.ResponseWriter, r *http.Request, scope string, fn func(*http.Request) (any, error)) {
+	if !allowScope(w, r, scope) {
+		return
+	}
+	v, err := fn(r)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond(w, 200, v)
+}
+
 func decode[T any](w http.ResponseWriter, r *http.Request, bodyLimit ...int64) (T, []byte, error) {
 	var v T
 	maxBytes := int64(1 << 20)
@@ -135,6 +162,9 @@ func decode[T any](w http.ResponseWriter, r *http.Request, bodyLimit ...int64) (
 	raw, e := io.ReadAll(r.Body)
 	if e != nil {
 		return v, nil, service.Fail(413, "body_too_large", "请求正文超出限制。")
+	}
+	if e = validateJSONRequest(r, raw); e != nil {
+		return v, nil, e
 	}
 	if len(raw) == 0 {
 		raw = []byte("{}")
@@ -150,30 +180,31 @@ func decode[T any](w http.ResponseWriter, r *http.Request, bodyLimit ...int64) (
 	canonical, e := json.Marshal(v)
 	return v, canonical, e
 }
-func write[T any](a *API, method, pattern string, idempotent bool, fn func(*http.Request, *service.Write, T) (any, int, error)) {
-	writeScoped(a, "read", method, pattern, idempotent, fn)
+func write[T any](a *API, w http.ResponseWriter, r *http.Request, idempotent bool, fn func(*http.Request, *service.Write, T) (any, int, error)) {
+	writeScoped(a, w, r, "read", idempotent, fn)
 }
-func writeScoped[T any](a *API, scope, method, pattern string, idempotent bool, fn func(*http.Request, *service.Write, T) (any, int, error), bodyLimit ...int64) {
-	a.mux.HandleFunc(method+" /api/v1"+pattern, a.authScope(scope, func(w http.ResponseWriter, r *http.Request) {
-		in, raw, e := decode[T](w, r, bodyLimit...)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		key := r.Header.Get("Idempotency-Key")
-		if idempotent && key == "" {
-			fail(w, service.Fail(400, "idempotency_required", "此操作必须提供稳定幂等键。"))
-			return
-		}
-		// Include query preconditions in the receipt identity as well as the body.
-		raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
-		out, e := a.s.Run(r.Context(), principal(r), r.Method+" "+r.URL.Path, key, raw, func(tx *service.Write) (any, int, error) { return fn(r, tx, in) })
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		result(w, out)
-	}))
+func writeScoped[T any](a *API, w http.ResponseWriter, r *http.Request, scope string, idempotent bool, fn func(*http.Request, *service.Write, T) (any, int, error), bodyLimit ...int64) {
+	if !allowScope(w, r, scope) {
+		return
+	}
+	in, raw, e := decode[T](w, r, bodyLimit...)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if idempotent && key == "" {
+		fail(w, service.Fail(400, "idempotency_required", "此操作必须提供稳定幂等键。"))
+		return
+	}
+	// Include query preconditions in the receipt identity as well as the body.
+	raw = append(raw, []byte("\x00"+r.URL.Query().Encode())...)
+	out, e := a.s.Run(r.Context(), principal(r), r.Method+" "+r.URL.Path, key, raw, func(tx *service.Write) (any, int, error) { return fn(r, tx, in) })
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	result(w, out)
 }
 func limit(r *http.Request) (int, error) {
 	v := r.URL.Query().Get("limit")
@@ -237,211 +268,270 @@ type libraryCreateRequest struct {
 	StorageID        string `json:"storageId"`
 	RootRelativePath string `json:"rootRelativePath"`
 }
-type eventCreateRequest struct {
-	EventID        string     `json:"eventId"`
-	Kind           string     `json:"kind"`
-	ContentVersion int64      `json:"contentVersion"`
-	PositionMs     int64      `json:"positionMs"`
-	SessionID      string     `json:"sessionId,omitempty"`
-	Seconds        float64    `json:"seconds,omitempty"`
-	OccurredAt     *time.Time `json:"occurredAt,omitempty"`
+
+func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
+	if e := a.s.CheckReadiness(r.Context()); e != nil {
+		fail(w, e)
+		return
+	}
+	respond(w, 200, map[string]string{"status": "ok"})
 }
 
-func (a *API) routes() {
-	a.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if e := a.s.CheckReadiness(r.Context()); e != nil {
-			fail(w, e)
-			return
-		}
-		respond(w, 200, map[string]string{"status": "ok"})
+func (a *API) GetInstance(w http.ResponseWriter, r *http.Request) {
+	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "recommendations": true, "rankings": true, "stats": true, "backups": true, "migration": true}})
+}
+
+func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
+	if !originOK(r, a.s.Config.SecureCookies) {
+		fail(w, service.Fail(403, "origin_denied", "请求来源不匹配。"))
+		return
+	}
+	in, _, e := decode[service.SessionInput](w, r)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	p, e := a.s.AuthenticateLogin(r.Context(), in)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	out, e := a.s.Run(r.Context(), p, "createSession", "", nil, func(tx *service.Write) (any, int, error) {
+		v, e := a.s.CreateSession(r.Context(), tx, in.Label, "", nil)
+		return v, 201, e
 	})
-	a.mux.HandleFunc("GET /api/v1/instance", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "recommendations": true, "rankings": true, "stats": true, "backups": true, "migration": true}})
-	})
-	a.mux.HandleFunc("POST /api/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
-		if !originOK(r, a.s.Config.SecureCookies) {
-			fail(w, service.Fail(403, "origin_denied", "请求来源不匹配。"))
-			return
-		}
-		in, _, e := decode[service.SessionInput](w, r)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		p, e := a.s.AuthenticateLogin(r.Context(), in)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		out, e := a.s.Run(r.Context(), p, "createSession", "", nil, func(tx *service.Write) (any, int, error) {
-			v, e := a.s.CreateSession(r.Context(), tx, in.Label, "", nil)
-			return v, 201, e
-		})
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		var session model.Principal
-		if e = json.Unmarshal(out.Body, &session); e != nil {
-			fail(w, e)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{Name: "qimeng_session", Value: session.Token, Path: "/", HttpOnly: true, Secure: a.s.Config.SecureCookies, SameSite: http.SameSiteStrictMode, Expires: session.ExpiresAt})
-		result(w, out)
-	})
-	a.mux.HandleFunc("GET /api/v1/sessions/current", a.authScope("", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, principal(r)) }))
-	a.mux.HandleFunc("DELETE /api/v1/sessions/current", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		p := principal(r)
-		out, e := a.s.Run(r.Context(), p, "logout", "", nil, func(tx *service.Write) (any, int, error) { return nil, 204, a.s.Revoke(r.Context(), tx, p.ID) })
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{Name: "qimeng_session", Value: "", Path: "/", HttpOnly: true, Secure: a.s.Config.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-		result(w, out)
-	}))
-	issueSecret[credentialRequest](a, "/credentials", func(r *http.Request, w *service.Write, in credentialRequest) (any, int, error) {
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	var session model.Principal
+	if e = json.Unmarshal(out.Body, &session); e != nil {
+		fail(w, e)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "qimeng_session", Value: session.Token, Path: "/", HttpOnly: true, Secure: a.s.Config.SecureCookies, SameSite: http.SameSiteStrictMode, Expires: session.ExpiresAt})
+	result(w, out)
+}
+
+func (a *API) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
+	respond(w, 200, principal(r))
+}
+
+func (a *API) DeleteCurrentSession(w http.ResponseWriter, r *http.Request) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	p := principal(r)
+	out, e := a.s.Run(r.Context(), p, "logout", "", nil, func(tx *service.Write) (any, int, error) { return nil, 204, a.s.Revoke(r.Context(), tx, p.ID) })
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "qimeng_session", Value: "", Path: "/", HttpOnly: true, Secure: a.s.Config.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	result(w, out)
+}
+
+func (a *API) CreateCredential(w http.ResponseWriter, r *http.Request) {
+	issueSecret[credentialRequest](a, w, r, func(r *http.Request, w *service.Write, in credentialRequest) (any, int, error) {
 		if (in.BatchID == "") == (in.AuthorTaskID == "") {
 			return nil, 0, service.Fail(400, "task_required", "AI 凭据必须且只能绑定一个接收或资料维护任务。")
 		}
 		v, e := a.s.CreateSession(r.Context(), w, in.Label, in.BatchID, in.Scopes, in.AuthorTaskID)
 		return v, 201, e
 	})
-	write[struct{}](a, "DELETE", "/credentials/{id}", false, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
-		return nil, 204, a.s.Revoke(r.Context(), w, r.PathValue("id"))
+}
+
+func (a *API) RevokeCredential(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	write[struct{}](a, w, r, false, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+		return nil, 204, a.s.Revoke(r.Context(), w, id)
 	})
-	a.get("/libraries", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListLibraries(w http.ResponseWriter, r *http.Request, params generated.ListLibrariesParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.Libraries(r.Context(), r.URL.Query().Get("cursor"), n)
 	})
-	a.get("/storages", func(r *http.Request) (any, error) { return a.s.Storages(), nil })
-	a.libraryLocationRoutes()
-	a.localSyncRoutes()
-	a.deviceApplyRoutes()
-	a.systemRoutes()
-	a.authorListRoutes()
-	a.sourceRuleRoutes()
-	write[libraryCreateRequest](a, "POST", "/libraries", true, func(r *http.Request, w *service.Write, in libraryCreateRequest) (any, int, error) {
+}
+
+func (a *API) ListStorages(w http.ResponseWriter, r *http.Request) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Storages(), nil })
+}
+
+func (a *API) CreateLibrary(w http.ResponseWriter, r *http.Request, params generated.CreateLibraryParams) {
+	write[libraryCreateRequest](a, w, r, true, func(r *http.Request, w *service.Write, in libraryCreateRequest) (any, int, error) {
 		v, e := a.s.CreateLibrary(r.Context(), w, in.Name, in.Kind, in.StorageID, in.RootRelativePath)
 		return v, 201, e
 	})
-	a.get("/assets", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListAssets(w http.ResponseWriter, r *http.Request, params generated.ListAssetsParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		f, e := assetFilterRequest(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.Assets(r.Context(), f)
 	})
-	a.get("/assets/{id}", func(r *http.Request) (any, error) { return a.s.Asset(r.Context(), r.PathValue("id")) })
-	write[service.AssetUpdate](a, "PATCH", "/assets/{id}", false, func(r *http.Request, w *service.Write, in service.AssetUpdate) (any, int, error) {
-		v, e := a.s.UpdateAsset(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) GetAsset(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Asset(r.Context(), id) })
+}
+
+func (a *API) UpdateAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.UpdateAssetParams) {
+	write[service.AssetUpdate](a, w, r, false, func(r *http.Request, w *service.Write, in service.AssetUpdate) (any, int, error) {
+		v, e := a.s.UpdateAsset(r.Context(), w, id, in)
 		return v, 200, e
 	})
+}
+
+func (a *API) UpdateAssetTags(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.UpdateAssetTagsParams) {
 	write[struct {
 		ExpectedRevision int64    `json:"expectedRevision"`
 		Tags             []string `json:"tags"`
-	}](a, "PUT", "/assets/{id}/tags", true, func(r *http.Request, w *service.Write, in struct {
+	}](a, w, r, true, func(r *http.Request, w *service.Write, in struct {
 		ExpectedRevision int64    `json:"expectedRevision"`
 		Tags             []string `json:"tags"`
 	}) (any, int, error) {
-		v, e := a.s.UpdateTags(r.Context(), w, r.PathValue("id"), in.ExpectedRevision, in.Tags)
+		v, e := a.s.UpdateTags(r.Context(), w, id, in.ExpectedRevision, in.Tags)
 		return v, 200, e
 	})
-	write[struct {
-		Favorite bool `json:"favorite"`
-		Liked    bool `json:"liked"`
-	}](a, "PUT", "/assets/{id}/reaction", true, func(r *http.Request, w *service.Write, in struct {
-		Favorite bool `json:"favorite"`
-		Liked    bool `json:"liked"`
-	}) (any, int, error) {
-		v, e := a.s.Reaction(r.Context(), w, r.PathValue("id"), in.Favorite, in.Liked)
+}
+
+func (a *API) SetAssetFavorite(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SetAssetFavoriteParams) {
+	write[generated.AssetFavoriteUpdate](a, w, r, true, a.setAssetFavorite)
+}
+
+func (a *API) SetAssetTodayLike(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SetAssetTodayLikeParams) {
+	write[generated.AssetTodayLikeUpdate](a, w, r, true, a.setAssetTodayLike)
+}
+
+func (a *API) UpdateReaction(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.UpdateReactionParams) {
+	write[generated.ReactionUpdate](a, w, r, true, a.updateReaction)
+}
+
+func (a *API) RecordEvent(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	write[generated.EventCreate](a, w, r, false, func(r *http.Request, w *service.Write, in generated.EventCreate) (any, int, error) {
+		event := model.Event{EventID: in.EventId, Kind: string(in.Kind), ContentVersion: in.ContentVersion, OccurredAt: in.OccurredAt}
+		if in.PositionMs != nil {
+			event.PositionMs = *in.PositionMs
+		} else if event.Kind == "progress" {
+			return nil, 0, service.Fail(400, "missing_progress_position", "播放进度需要明确的毫秒位置。")
+		}
+		if in.SessionId != nil {
+			event.SessionID = *in.SessionId
+		}
+		if in.Seconds != nil {
+			event.Seconds = *in.Seconds
+		}
+		v, e := a.s.RecordEvent(r.Context(), w, id, event)
 		return v, 200, e
 	})
-	write[eventCreateRequest](a, "POST", "/assets/{id}/events", false, func(r *http.Request, w *service.Write, in eventCreateRequest) (any, int, error) {
-		v, e := a.s.RecordEvent(r.Context(), w, r.PathValue("id"), model.Event{EventID: in.EventID, Kind: in.Kind, ContentVersion: in.ContentVersion, PositionMs: in.PositionMs, SessionID: in.SessionID, Seconds: in.Seconds, OccurredAt: in.OccurredAt})
-		return v, 200, e
-	})
-	a.mux.HandleFunc("GET /api/v1/assets/{id}/content", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		v, e := contentVersion(r)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		f, asset, e := a.s.Content(r.Context(), r.PathValue("id"), v)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		defer f.Close()
-		w.Header().Set("Content-Type", asset.MimeType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("ETag", `"`+asset.Hash+`"`)
-		w.Header().Set("Cache-Control", "private, no-cache")
-		http.ServeContent(w, r, asset.FileName, asset.UpdatedAt, f)
-	}))
-	a.mux.HandleFunc("GET /api/v1/assets/{id}/thumbnail", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		v, e := contentVersion(r)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		f, asset, e := a.s.ThumbnailSize(r.Context(), r.PathValue("id"), v, r.URL.Query().Get("size"))
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		defer f.Close()
-		hash := sha256.New()
-		if _, e = io.Copy(hash, f); e != nil {
-			fail(w, e)
-			return
-		}
-		if _, e = f.Seek(0, io.SeekStart); e != nil {
-			fail(w, e)
-			return
-		}
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "private, no-cache")
-		w.Header().Set("ETag", `"thumb-`+hex.EncodeToString(hash.Sum(nil))+`"`)
-		http.ServeContent(w, r, "thumbnail.jpg", asset.UpdatedAt, f)
-	}))
+}
+
+func (a *API) GetAssetContent(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.GetAssetContentParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	v, e := contentVersion(r)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	f, asset, e := a.s.Content(r.Context(), id, v)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", asset.MimeType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("ETag", `"`+asset.Hash+`"`)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	http.ServeContent(w, r, asset.FileName, asset.UpdatedAt, f)
+}
+
+func (a *API) GetAssetThumbnail(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.GetAssetThumbnailParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	v, e := contentVersion(r)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	f, asset, e := a.s.ThumbnailSize(r.Context(), id, v, r.URL.Query().Get("size"))
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, e = io.Copy(hash, f); e != nil {
+		fail(w, e)
+		return
+	}
+	if _, e = f.Seek(0, io.SeekStart); e != nil {
+		fail(w, e)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("ETag", `"thumb-`+hex.EncodeToString(hash.Sum(nil))+`"`)
+	http.ServeContent(w, r, "thumbnail.jpg", asset.UpdatedAt, f)
+}
+
+func (a *API) MoveAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.MoveAssetParams) {
 	write[struct {
 		ExpectedRevision int64  `json:"expectedRevision"`
 		RelativePath     string `json:"relativePath"`
-	}](a, "POST", "/assets/{id}/move", true, func(r *http.Request, w *service.Write, in struct {
+	}](a, w, r, true, func(r *http.Request, w *service.Write, in struct {
 		ExpectedRevision int64  `json:"expectedRevision"`
 		RelativePath     string `json:"relativePath"`
 	}) (any, int, error) {
-		v, e := a.s.Move(r.Context(), w, r.PathValue("id"), in.RelativePath, in.ExpectedRevision)
+		v, e := a.s.Move(r.Context(), w, id, in.RelativePath, in.ExpectedRevision)
 		return v, 200, e
 	})
-	write[struct{}](a, "DELETE", "/assets/{id}", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+}
+
+func (a *API) TrashAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.TrashAssetParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		rev, e := revision(r)
 		if e != nil {
 			return nil, 0, e
 		}
-		v, e := a.s.Trash(r.Context(), w, r.PathValue("id"), rev)
+		v, e := a.s.Trash(r.Context(), w, id, rev)
 		return v, 200, e
 	})
-	a.get("/tags", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListTags(w http.ResponseWriter, r *http.Request, params generated.ListTagsParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.Tags(r.Context(), r.URL.Query().Get("cursor"), n)
 	})
-	a.get("/history", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListHistory(w http.ResponseWriter, r *http.Request, params generated.ListHistoryParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		f, e := assetFilterRequest(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.FilteredHistory(r.Context(), f)
 	})
-	a.get("/authors", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListAuthors(w http.ResponseWriter, r *http.Request, params generated.ListAuthorsParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
@@ -452,16 +542,28 @@ func (a *API) routes() {
 		}
 		return a.s.Authors(r.Context(), r.URL.Query().Get("q"), r.URL.Query().Get("cursor"), n, f != nil && *f, r.URL.Query().Get("kind"), r.URL.Query().Get("sort"), r.URL.Query().Get("exactName"))
 	})
-	a.get("/authors/{id}", func(r *http.Request) (any, error) { return a.s.Author(r.Context(), r.PathValue("id")) })
-	write[service.AuthorInput](a, "POST", "/authors", true, func(r *http.Request, w *service.Write, in service.AuthorInput) (any, int, error) {
+}
+
+func (a *API) GetAuthor(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Author(r.Context(), id) })
+}
+
+func (a *API) CreateAuthor(w http.ResponseWriter, r *http.Request, params generated.CreateAuthorParams) {
+	write[service.AuthorInput](a, w, r, true, func(r *http.Request, w *service.Write, in service.AuthorInput) (any, int, error) {
 		v, e := a.s.CreateAuthor(r.Context(), w, in)
 		return v, 201, e
 	})
-	write[service.AuthorUpdate](a, "PATCH", "/authors/{id}", true, func(r *http.Request, w *service.Write, in service.AuthorUpdate) (any, int, error) {
-		v, e := a.s.UpdateAuthor(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) UpdateAuthor(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.UpdateAuthorParams) {
+	write[service.AuthorUpdate](a, w, r, true, func(r *http.Request, w *service.Write, in service.AuthorUpdate) (any, int, error) {
+		v, e := a.s.UpdateAuthor(r.Context(), w, id, in)
 		return v, 200, e
 	})
-	a.get("/collections", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListCollections(w http.ResponseWriter, r *http.Request, params generated.ListCollectionsParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
@@ -469,99 +571,122 @@ func (a *API) routes() {
 		q := r.URL.Query()
 		return a.s.Collections(r.Context(), q.Get("libraryId"), q.Get("q"), q.Get("cursor"), n)
 	})
-	write[collectionCreateRequest](a, "POST", "/collections", true, func(r *http.Request, w *service.Write, in collectionCreateRequest) (any, int, error) {
+}
+
+func (a *API) CreateCollection(w http.ResponseWriter, r *http.Request, params generated.CreateCollectionParams) {
+	write[collectionCreateRequest](a, w, r, true, func(r *http.Request, w *service.Write, in collectionCreateRequest) (any, int, error) {
 		v, e := a.s.CreateCollection(r.Context(), w, model.Collection{LibraryID: in.LibraryID, Name: in.Name, Kind: in.Kind, Aliases: in.Aliases})
 		return v, 201, e
 	})
-	a.uploadRoutes()
-	a.batchRoutes()
-	a.get("/trash", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListTrash(w http.ResponseWriter, r *http.Request, params generated.ListTrashParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.Assets(r.Context(), service.AssetFilter{Trashed: true, Cursor: r.URL.Query().Get("cursor"), Limit: n})
 	})
-	write[revisionBody](a, "POST", "/trash/{id}/restore", true, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
-		v, e := a.s.Restore(r.Context(), w, r.PathValue("id"), in.ExpectedRevision)
+}
+
+func (a *API) RestoreAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.RestoreAssetParams) {
+	write[revisionBody](a, w, r, true, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
+		v, e := a.s.Restore(r.Context(), w, id, in.ExpectedRevision)
 		return v, 200, e
 	})
-	write[struct{}](a, "DELETE", "/trash/{id}", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+}
+
+func (a *API) PurgeAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.PurgeAssetParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		rev, e := revision(r)
 		if e != nil {
 			return nil, 0, e
 		}
-		return nil, 204, a.s.Purge(r.Context(), w, r.PathValue("id"), rev)
+		return nil, 204, a.s.Purge(r.Context(), w, id, rev)
 	})
-	a.get("/stats", func(r *http.Request) (any, error) { return a.s.Stats(r.Context()) })
-	a.get("/settings", func(r *http.Request) (any, error) { return a.s.Settings(r.Context()) })
-	write[service.SettingsUpdate](a, "PUT", "/settings", true, func(r *http.Request, w *service.Write, in service.SettingsUpdate) (any, int, error) {
+}
+
+func (a *API) GetStats(w http.ResponseWriter, r *http.Request) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Stats(r.Context()) })
+}
+
+func (a *API) GetSettings(w http.ResponseWriter, r *http.Request) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Settings(r.Context()) })
+}
+
+func (a *API) UpdateSettings(w http.ResponseWriter, r *http.Request, params generated.UpdateSettingsParams) {
+	write[service.SettingsUpdate](a, w, r, true, func(r *http.Request, w *service.Write, in service.SettingsUpdate) (any, int, error) {
 		v, e := a.s.UpdateSettings(r.Context(), w, in)
 		return v, 200, e
 	})
-	write[struct{}](a, "POST", "/backups", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+}
+
+func (a *API) CreateBackupManifest(w http.ResponseWriter, r *http.Request, params generated.CreateBackupManifestParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		v, e := a.s.CreateBackup(r.Context(), w)
 		return v, 201, e
 	})
-	a.get("/operations/{key}", func(r *http.Request) (any, error) {
-		return a.s.Operation(r.Context(), principal(r), r.PathValue("key"), r.URL.Query().Get("operation"))
-	})
-	a.analyticsRoutes()
-	a.authorTaskRoutes()
-	a.delegationRoutes()
-	a.researchRoutes()
-	a.managementRoutes()
-	a.scanRoutes()
-	a.authorProfileRoutes()
-	a.namingRoutes()
-	a.migrationRoutes()
-	a.backupRoutes()
-	a.browseRoutes()
 }
-func (a *API) uploadRoutes() {
-	write[model.UploadInput](a, "POST", "/uploads", true, func(r *http.Request, w *service.Write, in model.UploadInput) (any, int, error) {
+
+func (a *API) GetOperation(w http.ResponseWriter, r *http.Request, key string, params generated.GetOperationParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.Operation(r.Context(), principal(r), key, r.URL.Query().Get("operation"))
+	})
+}
+func (a *API) CreateUpload(w http.ResponseWriter, r *http.Request, params generated.CreateUploadParams) {
+	write[model.UploadInput](a, w, r, true, func(r *http.Request, w *service.Write, in model.UploadInput) (any, int, error) {
 		v, e := a.s.CreateUpload(r.Context(), w, in)
 		return v, 201, e
 	})
-	a.get("/uploads/{id}", func(r *http.Request) (any, error) { return a.s.Upload(r.Context(), principal(r), r.PathValue("id")) })
-	write[struct{}](a, "DELETE", "/uploads/{id}", false, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
-		return nil, 204, a.s.CancelUpload(r.Context(), w, r.PathValue("id"))
-	})
-	a.mux.HandleFunc("PUT /api/v1/uploads/{id}/content", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		offset, e := strconv.ParseInt(r.Header.Get("Upload-Offset"), 10, 64)
-		if e != nil {
-			fail(w, service.Fail(400, "offset_required", "必须提供有效 Upload-Offset。"))
-			return
-		}
-		body, e := io.ReadAll(http.MaxBytesReader(w, r.Body, service.MaxChunkBytes))
-		if e != nil {
-			fail(w, service.Fail(413, "chunk_too_large", "单个分片最多 8 MiB。"))
-			return
-		}
-		out, e := a.s.Run(r.Context(), principal(r), "appendUpload:"+r.PathValue("id"), "", nil, func(tx *service.Write) (any, int, error) {
-			v, e := a.s.AppendUpload(r.Context(), tx, r.PathValue("id"), offset, body)
-			return v, 200, e
-		})
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		result(w, out)
-	}))
-	write[struct{}](a, "POST", "/uploads/{id}/complete", true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
-		v, e := a.s.CompleteUpload(r.Context(), w, r.PathValue("id"))
-		return v, 200, e
+}
+
+func (a *API) GetUpload(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Upload(r.Context(), principal(r), id) })
+}
+
+func (a *API) CancelUpload(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	write[struct{}](a, w, r, false, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+		return nil, 204, a.s.CancelUpload(r.Context(), w, id)
 	})
 }
-func (a *API) batchRoutes() {
-	a.get("/batches", func(r *http.Request) (any, error) {
+
+func (a *API) AppendUpload(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.AppendUploadParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	offset := params.UploadOffset
+	body, e := io.ReadAll(http.MaxBytesReader(w, r.Body, service.MaxChunkBytes))
+	if e != nil {
+		fail(w, service.Fail(413, "chunk_too_large", "单个分片最多 8 MiB。"))
+		return
+	}
+	out, e := a.s.Run(r.Context(), principal(r), "appendUpload:"+id, "", nil, func(tx *service.Write) (any, int, error) {
+		v, e := a.s.AppendUpload(r.Context(), tx, id, offset, body)
+		return v, 200, e
+	})
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	result(w, out)
+}
+
+func (a *API) CompleteUpload(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.CompleteUploadParams) {
+	a.completeUploadRequest(w, r, id)
+}
+func (a *API) ListBatches(w http.ResponseWriter, r *http.Request, params generated.ListBatchesParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.Batches(r.Context(), principal(r), r.URL.Query().Get("cursor"), n)
 	})
-	write[batchCreateRequest](a, "POST", "/batches", true, func(r *http.Request, w *service.Write, in batchCreateRequest) (any, int, error) {
+}
+
+func (a *API) CreateBatch(w http.ResponseWriter, r *http.Request, params generated.CreateBatchParams) {
+	write[batchCreateRequest](a, w, r, true, func(r *http.Request, w *service.Write, in batchCreateRequest) (any, int, error) {
 		budget := 8
 		if in.MaxResearchCalls != nil {
 			budget = *in.MaxResearchCalls
@@ -569,61 +694,89 @@ func (a *API) batchRoutes() {
 		v, e := a.s.CreateBatch(r.Context(), w, model.Batch{LibraryID: in.LibraryID, Mode: in.Mode, Label: in.Label, MaxResearchCalls: budget})
 		return v, 201, e
 	})
-	a.get("/batches/{id}", func(r *http.Request) (any, error) {
-		return a.s.BatchDetail(r.Context(), principal(r), r.PathValue("id"))
+}
+
+func (a *API) GetBatch(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.BatchDetail(r.Context(), principal(r), id)
 	})
-	write[model.BatchInputsSet](a, "PUT", "/batches/{id}/inputs", true, func(r *http.Request, w *service.Write, in model.BatchInputsSet) (any, int, error) {
-		v, e := a.s.SetBatchInputs(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) SetBatchInputs(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SetBatchInputsParams) {
+	write[model.BatchInputsSet](a, w, r, true, func(r *http.Request, w *service.Write, in model.BatchInputsSet) (any, int, error) {
+		v, e := a.s.SetBatchInputs(r.Context(), w, id, in)
 		return v, 200, e
 	})
+}
+
+func (a *API) CancelBatchInput(w http.ResponseWriter, r *http.Request, id generated.Id, inputId string, params generated.CancelBatchInputParams) {
 	write[struct {
 		ManifestFingerprint string `json:"manifestFingerprint"`
-	}](a, "POST", "/batches/{id}/inputs/{inputId}/cancel", true, func(r *http.Request, w *service.Write, in struct {
+	}](a, w, r, true, func(r *http.Request, w *service.Write, in struct {
 		ManifestFingerprint string `json:"manifestFingerprint"`
 	}) (any, int, error) {
-		v, e := a.s.CancelBatchInput(r.Context(), w, r.PathValue("id"), r.PathValue("inputId"), in.ManifestFingerprint)
+		v, e := a.s.CancelBatchInput(r.Context(), w, id, inputId, in.ManifestFingerprint)
 		return v, 200, e
 	})
-	write[revisionBody](a, "POST", "/batches/{id}/cancel", false, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
-		v, e := a.s.CancelBatch(r.Context(), w, r.PathValue("id"), in.ExpectedRevision)
+}
+
+func (a *API) CancelBatch(w http.ResponseWriter, r *http.Request, id generated.Id) {
+	write[revisionBody](a, w, r, false, func(r *http.Request, w *service.Write, in revisionBody) (any, int, error) {
+		v, e := a.s.CancelBatch(r.Context(), w, id, in.ExpectedRevision)
 		return v, 200, e
 	})
-	a.get("/ai/tasks/{id}/context", func(r *http.Request) (any, error) {
+}
+
+func (a *API) GetTaskContext(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.GetTaskContextParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
 		}
-		return a.s.Context(r.Context(), principal(r), r.PathValue("id"), r.URL.Query().Get("cursor"), n)
+		return a.s.Context(r.Context(), principal(r), id, r.URL.Query().Get("cursor"), n)
 	})
-	write[model.Research](a, "POST", "/batches/{id}/research", true, func(r *http.Request, w *service.Write, in model.Research) (any, int, error) {
-		v, e := a.s.SubmitResearch(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) SubmitResearch(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SubmitResearchParams) {
+	write[model.Research](a, w, r, true, func(r *http.Request, w *service.Write, in model.Research) (any, int, error) {
+		v, e := a.s.SubmitResearch(r.Context(), w, id, in)
 		return v, 200, e
 	})
-	write[model.PlanCreate](a, "POST", "/batches/{id}/plans", true, func(r *http.Request, w *service.Write, in model.PlanCreate) (any, int, error) {
-		v, e := a.s.PreparePlan(r.Context(), w, r.PathValue("id"), in)
+}
+
+func (a *API) PreparePlan(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.PreparePlanParams) {
+	write[model.PlanCreate](a, w, r, true, func(r *http.Request, w *service.Write, in model.PlanCreate) (any, int, error) {
+		v, e := a.s.PreparePlan(r.Context(), w, id, in)
 		return v, 201, e
 	})
-	a.get("/batches/{id}/plans/{planId}", func(r *http.Request) (any, error) {
-		return a.s.Plan(r.Context(), principal(r), r.PathValue("id"), r.PathValue("planId"))
+}
+
+func (a *API) GetPlan(w http.ResponseWriter, r *http.Request, id generated.Id, planId generated.PlanId) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.Plan(r.Context(), principal(r), id, planId)
 	})
-	a.mux.HandleFunc("POST /api/v1/batches/{id}/plans/{planId}/commit", a.auth(func(w http.ResponseWriter, r *http.Request) {
-		in, _, e := decode[struct {
-			Fingerprint string `json:"fingerprint"`
-		}](w, r)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		key := r.Header.Get("Idempotency-Key")
-		if len(key) < 8 || len(key) > 128 {
-			fail(w, service.Fail(400, "idempotency_required", "提交计划须提供稳定幂等键。"))
-			return
-		}
-		out, e := a.s.CommitPlan(r.Context(), principal(r), r.PathValue("id"), r.PathValue("planId"), in.Fingerprint, key)
-		if e != nil {
-			fail(w, e)
-			return
-		}
-		result(w, out)
-	}))
+}
+
+func (a *API) CommitPlan(w http.ResponseWriter, r *http.Request, id generated.Id, planId generated.PlanId, params generated.CommitPlanParams) {
+	if !allowScope(w, r, "read") {
+		return
+	}
+	in, _, e := decode[struct {
+		Fingerprint string `json:"fingerprint"`
+	}](w, r)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if len(key) < 8 || len(key) > 128 {
+		fail(w, service.Fail(400, "idempotency_required", "提交计划须提供稳定幂等键。"))
+		return
+	}
+	out, e := a.s.CommitPlan(r.Context(), principal(r), id, planId, in.Fingerprint, key)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	result(w, out)
 }

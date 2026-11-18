@@ -50,12 +50,52 @@ paths:
       responses:
         '200': {description: Current credential for the device label, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceCredential'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /device/native-deliveries:
+    post:
+      operationId: publishNativeDelivery
+      description: Owner publishes selected current objects from this Next instance for one device and one target instance.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPublish'}}}}
+      responses:
+        '201': {description: Device task with one validated nativeSelection segment, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /native-deliveries/imports:
+    post:
+      operationId: stageNativeDelivery
+      description: Owner stages the original nativeSelection bytes on the intended target. Repeated transport tasks resolve to the same local plan.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {name: sourceInstanceId, in: query, required: true, schema: {type: string}}
+        - {name: targetInstanceId, in: query, required: true, schema: {type: string}}
+        - {name: packageId, in: query, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+        - {name: conflictPolicy, in: query, required: true, schema: {$ref: '#/components/schemas/NativeDeliveryConflictPolicy'}}
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+      responses:
+        '200': {description: Frozen local preview or existing terminal receipt, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /native-deliveries/imports/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getNativeDelivery
+      responses:
+        '200': {description: Local durable per-item results, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /native-deliveries/imports/{id}/commit:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: commitNativeDelivery
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryCommit'}}}}
+      responses:
+        '200': {description: Original durable receipt and per-item decisions, content: {application/json: {schema: {$ref: '#/components/schemas/NativeDeliveryPlan'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /device/apply-tasks:
     get:
       operationId: listDeviceApplyTasks
       parameters:
         - {name: targetDeviceId, in: query, required: true, schema: {type: string}}
         - {name: state, in: query, schema: {$ref: '#/components/schemas/DeviceApplyState'}}
+        - {name: protocolVersion, in: query, schema: {type: integer, minimum: 1, maximum: 2}}
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
       responses:
@@ -75,7 +115,6 @@ paths:
               properties:
                 manifest: {type: string, description: JSON encoding of DeviceApplyManifest}
                 masterTxt: {type: string, format: binary}
-                v2Backup: {type: string, format: binary}
       responses:
         '201': {description: Published package, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceApplyTask'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -554,10 +593,32 @@ paths:
       responses:
         '200': {description: Asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/favorite:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setAssetFavorite
+      summary: Set this asset's favorite state
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetFavoriteUpdate'}}}}
+      responses:
+        '200': {description: Asset after applying the favorite intent, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{id}/like/today:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: setAssetTodayLike
+      summary: Set or cancel the like for the current day in the server time zone
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTodayLikeUpdate'}}}}
+      responses:
+        '200': {description: Asset with its current daily state and cumulative count, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /assets/{id}/reaction:
     parameters: [{$ref: '#/components/parameters/Id'}]
     put:
       operationId: updateReaction
+      deprecated: true
+      description: Legacy clients may set a favorite when liked is false. A like carrying a conflicting favorite returns 409. Use the dedicated intent routes for new requests.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ReactionUpdate'}}}}
       responses:
@@ -835,6 +896,34 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionCreate'}}}}
       responses:
         '201': {description: Collection, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    patch:
+      operationId: renameCollection
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionRename'}}}}
+      responses:
+        '200': {description: Renamed collection with the same stable ID, content: {application/json: {schema: {$ref: '#/components/schemas/Collection'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections/{id}/members:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: listCollectionMembers
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Ordered collection membership, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionMemberPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /collections/{id}/members/{assetId}/position:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+      - {name: assetId, in: path, required: true, schema: {type: string}}
+    put:
+      operationId: setCollectionMemberPosition
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionPositionUpdate'}}}}
+      responses:
+        '200': {description: Current page or episode number of the selected member, content: {application/json: {schema: {$ref: '#/components/schemas/CollectionMember'}}}}
         default: {$ref: '#/components/responses/Error'}
   /uploads:
     post:
@@ -1243,13 +1332,14 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: stageV2Import
-      description: Administrator-only. Validate and retain the exact v2 document without changing media or metadata. Media originals must first be registered and scanned. sourceId identifies the source installation across repeated exports; appIdentifier is not an installation identity.
+      deprecated: true
+      description: Retired write operation. Existing records can still be read.
       parameters:
         - {$ref: '#/components/parameters/IdempotencyKey'}
         - {name: sourceId, in: query, required: true, schema: {type: string, minLength: 8, maxLength: 128}}
       requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary, description: 'Complete UTF-8 qimeng_backup schemaVersion 2 JSON, at most 64 MiB'}}}}
       responses:
-        '201': {description: Validated immutable input; no business import yet, content: {application/json: {schema: {$ref: '#/components/schemas/V2Import'}}}}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /migration/v2/imports/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1269,10 +1359,11 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
       operationId: prepareV2Migration
+      deprecated: true
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/V2PlanCreate'}}}}
       responses:
-        '201': {description: Read-only plan; unique media matches are proposals until this fingerprint is committed, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /migration/v2/plans/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -1301,13 +1392,14 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
       operationId: commitV2Migration
-      description: Administrator-only reviewed migration. Revalidates revisions and target original hashes, creates a pre-import database checkpoint, then applies metadata atomically. Never changes or deletes original media. Source settings cannot start network work or rewrite storage roots.
+      deprecated: true
+      description: Retired write operation. Prior durable migration results are available through the plan read endpoints.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
         content: {application/json: {schema: {type: object, required: [fingerprint, acceptSkipped], properties: {fingerprint: {type: string}, acceptSkipped: {type: boolean, description: Explicitly accept the unmatched or conflict items listed in this plan}}}}}
       responses:
-        '200': {description: Committed or partial migration with checkpoint and per-record report; repeat returns original plan result, content: {application/json: {schema: {$ref: '#/components/schemas/V2MigrationPlan'}}}}
+        '410': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /recommendations:
     get:
@@ -1833,7 +1925,72 @@ components:
         deviceId: {type: string}
         label: {type: string}
         expiresAt: {type: string, format: date-time}
-    DeviceSegmentKind: {type: string, enum: [masterTxt, v2Backup]}
+    DeviceSegmentKind: {type: string, enum: [masterTxt, v2Backup, nativeSelection], description: v2Backup is a read-only historical segment kind}
+    NativeDeliveryKind: {type: string, enum: [authorProfileBlock, authorList, timelineMark]}
+    NativeDeliveryBlock: {type: string, enum: [x, basic, accounts]}
+    NativeDeliveryConflictPolicy: {type: string, enum: [keep, replace]}
+    NativeDeliveryItemState: {type: string, enum: [ready, applied, preserved, conflict]}
+    NativeDeliveryPlanState: {type: string, enum: [prepared, applied, partial]}
+    NativeDeliverySelection:
+      type: object
+      additionalProperties: false
+      required: [kind, sourceObjectId, expectedRevision]
+      properties:
+        kind: {$ref: '#/components/schemas/NativeDeliveryKind'}
+        sourceObjectId: {type: string, minLength: 1, maxLength: 128}
+        block: {$ref: '#/components/schemas/NativeDeliveryBlock'}
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        sourceAssetId: {type: string, description: Required for timelineMark. Explicit source video owning the selected mark}
+        sourceContentVersion: {type: integer, format: int64, minimum: 1, description: Required current source video version for a timelineMark}
+        targetAssetId: {type: string, description: Required for timelineMark. Explicit recipient video identity chosen by the owner}
+        targetContentVersion: {type: integer, format: int64, minimum: 1, description: Required captured version of the exact recipient video}
+    NativeDeliveryPublish:
+      type: object
+      additionalProperties: false
+      required: [targetDeviceId, targetInstanceId, items]
+      properties:
+        targetDeviceId: {type: string, minLength: 1, maxLength: 100}
+        targetInstanceId: {type: string, minLength: 1, maxLength: 128}
+        ttlSeconds: {type: integer, minimum: 300, maximum: 604800}
+        items: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/NativeDeliverySelection'}}
+    NativeDeliveryItemResult:
+      type: object
+      required: [kind, sourceObjectId, sourceRevision, label, state]
+      properties:
+        kind: {$ref: '#/components/schemas/NativeDeliveryKind'}
+        sourceObjectId: {type: string}
+        sourceRevision: {type: integer, format: int64, minimum: 1}
+        sourceAssetId: {type: string}
+        sourceContentVersion: {type: integer, format: int64, minimum: 1}
+        targetAssetId: {type: string}
+        targetContentVersion: {type: integer, format: int64, minimum: 1}
+        contentSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        contentBytes: {type: integer, format: int64, minimum: 1}
+        label: {type: string}
+        block: {$ref: '#/components/schemas/NativeDeliveryBlock'}
+        targetObjectId: {type: string}
+        targetRevision: {type: integer, format: int64, minimum: 0}
+        state: {$ref: '#/components/schemas/NativeDeliveryItemState'}
+        code: {type: string}
+        receiptId: {type: string, description: Stable per-source-object receipt after commit}
+    NativeDeliveryPlan:
+      type: object
+      required: [id, packageId, sourceInstanceId, targetInstanceId, conflictPolicy, fingerprint, state, items]
+      properties:
+        id: {type: string}
+        packageId: {type: string, pattern: '^[0-9a-f]{64}$'}
+        sourceInstanceId: {type: string}
+        targetInstanceId: {type: string}
+        conflictPolicy: {$ref: '#/components/schemas/NativeDeliveryConflictPolicy'}
+        fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
+        state: {$ref: '#/components/schemas/NativeDeliveryPlanState'}
+        items: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/NativeDeliveryItemResult'}}
+    NativeDeliveryCommit:
+      type: object
+      additionalProperties: false
+      required: [fingerprint]
+      properties:
+        fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
     DeviceApplyState: {type: string, enum: [pending, claimed, applied, partial, failed, cancelled, expired]}
     DeviceApplySegment:
       type: object
@@ -1844,6 +2001,9 @@ components:
         sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
         expectedLocalRevision: {type: integer, format: int64, minimum: 0, description: Required for masterTxt. Zero creates a previously absent device fragment}
         sourceId: {type: string, pattern: '^[A-Za-z0-9._-]{8,128}$', description: Required for v2Backup. Stable identity of the installation whose portable backup was exported}
+        packageId: {type: string, pattern: '^[0-9a-f]{64}$', description: Required for nativeSelection. SHA-256 of the complete native payload}
+        sourceInstanceId: {type: string, description: Native source installation from its authenticated instance endpoint}
+        targetInstanceId: {type: string, description: Receiving installation authorized by this native selection}
     DeviceApplyManifest:
       type: object
       required: [targetDeviceId, protocolVersion, segments]
@@ -2708,12 +2868,26 @@ components:
       properties:
         expectedRevision: {type: integer, format: int64, description: 'Compare Asset.tagsRevision, not the overall revision'}
         tags: {type: array, maxItems: 100, items: {type: string, minLength: 1, maxLength: 100}}
+    AssetFavoriteUpdate:
+      type: object
+      additionalProperties: false
+      required: [favorite]
+      properties:
+        favorite: {type: boolean}
+    AssetTodayLikeUpdate:
+      type: object
+      additionalProperties: false
+      required: [liked]
+      properties:
+        liked: {type: boolean, description: False removes the current day vote while preserving earlier votes and imported unattributed counts.}
     ReactionUpdate:
       type: object
+      additionalProperties: false
       required: [favorite, liked]
       properties: {favorite: {type: boolean}, liked: {type: boolean, description: True requests one daily like. False does not add a like and never undoes accumulated likes.}}
     EventCreate:
       type: object
+      description: Only a progress event updates resume position. A play records that playback started and may also record its observed offset in history.
       required: [eventId, kind, contentVersion]
       properties:
         eventId: {type: string, minLength: 8, maxLength: 128}
@@ -2722,7 +2896,7 @@ components:
         seconds: {type: number, format: double, minimum: 0, maximum: 86400, description: 'Dwell duration; floor to whole seconds, values below one second are rejected for dwell'}
         occurredAt: {type: string, format: date-time, description: 'UTC start of the visible segment; server receipt time if omitted'}
         contentVersion: {type: integer, format: int64, minimum: 1}
-        positionMs: {type: integer, format: int64, minimum: 0}
+        positionMs: {type: integer, format: int64, minimum: 0, description: Required for progress. Zero explicitly seeks to the beginning.}
     HistoryEvent:
       type: object
       required: [eventId, kind, contentVersion, assetId, createdAt]
@@ -2796,6 +2970,35 @@ components:
       type: object
       required: [author, affectedAssets, preservedConflicts]
       properties: {author: {$ref: '#/components/schemas/Author'}, affectedAssets: {type: integer}, preservedConflicts: {type: array, items: {type: string}}}
+    CollectionRename:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, name]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        name: {type: string, minLength: 1, maxLength: 200}
+    CollectionPositionUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, position]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1, description: Revision of this membership}
+        position: {type: integer, minimum: 1}
+    CollectionMember:
+      type: object
+      required: [collectionId, assetId, revision]
+      properties:
+        collectionId: {type: string}
+        assetId: {type: string}
+        revision: {type: integer, format: int64, minimum: 1}
+        position: {type: integer, minimum: 1}
+        reportedPosition: {type: integer, minimum: 1, description: Previously recorded conflicting position awaiting an explicit decision}
+    CollectionMemberPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/CollectionMember'}}
+        nextCursor: {type: string}
     CollectionCreate:
       type: object
       required: [libraryId, name, kind]
@@ -2982,6 +3185,8 @@ components:
         collectionId: {type: string}
         page: {type: integer}
         expectedHash: {type: string}
+        namingFamily: {type: string, description: Canonical naming family used by this item}
+        namespaceFingerprint: {type: string, description: Frozen directory occupancy and referenced naming objects for this item}
     PlanSummary:
       type: object
       required: [id, state, fingerprint]
@@ -3060,8 +3265,13 @@ components:
       properties: {items: {type: array, items: {$ref: '#/components/schemas/Directory'}}, nextCursor: {type: string}, directFileCount: {type: integer, format: int64, minimum: 0, description: Directly indexed files in the queried parent including the library root}}
     Tag:
       type: object
-      required: [name, revision, createdAt, updatedAt]
-      properties: {name: {type: string}, revision: {type: integer, format: int64}, createdAt: {type: string}, updatedAt: {type: string}}
+      required: [id, name, revision, createdAt, updatedAt]
+      properties:
+        id: {type: string, minLength: 1, readOnly: true, description: Stable identity preserved across tag renames}
+        name: {type: string}
+        revision: {type: integer, format: int64}
+        createdAt: {type: string}
+        updatedAt: {type: string}
     TagPage:
       type: object
       required: [items]
@@ -3542,7 +3752,7 @@ components:
         revision: {type: integer, format: int64, minimum: 0}
         values: {$ref: '#/components/schemas/AuthorProfileValues'}
         evidence: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/AuthorProfileEvidence'}}
-        source: {type: string, enum: [empty, human, merged, imported]}
+        source: {type: string, enum: [empty, human, merged, imported, native_delivery]}
         updatedAt: {type: string, format: date-time, nullable: true}
         candidateId: {type: string}
         avatar: {$ref: '#/components/schemas/AuthorProfileAvatar'}

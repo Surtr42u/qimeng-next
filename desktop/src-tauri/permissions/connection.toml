@@ -7,3 +7,8 @@ commands.allow = ["current_connection", "save_connection"]
 identifier = "own-titlebar"
 description = "Operate only the invoking library window. The target is chosen natively."
 commands.allow = ["window_action"]
+
+[[permission]]
+identifier = "open-connected-original"
+description = "Open an HTTP(S) document from the active library's exact origin in its own media window."
+commands.allow = ["open_original"]

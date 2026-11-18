@@ -16,6 +16,7 @@ data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = 
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
     val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false, val publicationId: String? = null)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
+private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     private val graph = (application as QimengApplication).graph
@@ -64,6 +65,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val mutableCapabilities = MutableStateFlow<ServerCapabilities?>(null)
     val capabilities = mutableCapabilities.asStateFlow()
     private val mutableAsset = MutableStateFlow<Asset?>(null)
+    private val reactionRetries = mutableMapOf<String, Pair<ReactionIntent, String>>()
     val asset = mutableAsset.asStateFlow()
     private val mutableAuthor = MutableStateFlow<Author?>(null)
     val author = mutableAuthor.asStateFlow()
@@ -89,6 +91,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val tagVocabulary = mutableTags.asStateFlow()
     private val mutableTagCursor = MutableStateFlow<String?>(null)
     val tagCursor = mutableTagCursor.asStateFlow()
+    private val tagReads = RequestGeneration()
     private val lists = mutableMapOf<String, MutableStateFlow<ListState<Asset>>>()
     private val queries = mutableMapOf<String, AssetQuery>()
     private val listJobs = mutableMapOf<String, Job>()
@@ -120,9 +123,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 pageJobs.values.forEach(Job::cancel); pageJobs.clear()
                 detailJob?.cancel()
                 detailGeneration.next()
+                reactionRetries.clear()
                 lists.values.forEach { it.value = ListState() }
                 mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
                 mutableAssetAuthors.value = emptyList()
+                tagReads.next()
                 mutableTags.value = emptyList(); mutableTagCursor.value = null
                 libraryState.value = ListState(); mutableCapabilities.value = null
                 analyticsJob?.cancel(); reviewJob?.cancel(); collectionJob?.cancel(); rankingJob?.cancel()
@@ -316,9 +321,26 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         return batch.indexOfFirst { it.id == id } to batch.size
     }
 
-    fun changeReaction(favorite: Boolean, liked: Boolean) = action {
-        val current = mutableAsset.value ?: return@action
-        publishAsset(repository.reaction(current, favorite, liked))
+    fun setFavorite(asset: Asset, favorite: Boolean) = applyReaction("favorite", asset, favorite) { key -> repository.setFavorite(asset, favorite, key) }
+    fun setTodayLike(asset: Asset, liked: Boolean) = applyReaction("like", asset, liked) { key -> repository.setTodayLike(asset, liked, key) }
+
+    private fun applyReaction(field: String, asset: Asset, enabled: Boolean, send: suspend (String) -> Asset) = action {
+        if (!sameTarget(asset.target, session.value)) return@action
+        val intent = ReactionIntent(asset.target, asset.id, asset.revision, enabled)
+        val key = reactionRetries[field]?.takeIf { it.first == intent }?.second ?: UUID.randomUUID().toString()
+        // An ambiguous response leaves the key attached to this exact gesture on the displayed revision.
+        reactionRetries[field] = intent to key
+        val updated = try { send(key) } catch (failure: ApiFailure) {
+            if (failure.status in 400..499 && failure.status !in setOf(408, 429) && reactionRetries[field]?.second == key) reactionRetries.remove(field)
+            throw failure
+        }
+        if (reactionRetries[field]?.second == key) reactionRetries.remove(field)
+        publishAsset(updated)
+        if (!sameTarget(updated.target, session.value)) return@action
+        queries.filterValues { it.favorite != null || it.liked != null }.keys.forEach { name ->
+            cancelBrowse(name)
+            lists[name]?.let { it.value = it.value.copy(loaded = false) }
+        }
     }
     fun saveTags(tags: List<String>, expectedRevision: Long, onSaved: () -> Unit) = action {
         val current = mutableAsset.value ?: return@action
@@ -339,8 +361,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun saveAcquisitionSources(asset: Asset, sources: List<String>, onSaved: () -> Unit) = action {
         publishAsset(repository.updateAcquisitionSources(asset, sources)); onSaved()
     }
-    fun loadTags(next: Boolean = false) = action {
-        val page = repository.tags(if (next) mutableTagCursor.value else null)
+    fun loadTags(next: Boolean = false) = action(blocking = false) { readTags(next) }
+
+    private suspend fun readTags(next: Boolean) {
+        val cursor = if (next) (mutableTagCursor.value ?: return) else null
+        val ticket = tagReads.next()
+        val page = repository.tags(cursor)
+        if (!tagReads.isCurrent(ticket)) return
         mutableTags.value = if (next) (mutableTags.value + page.items).distinct() else page.items
         mutableTagCursor.value = page.nextCursor
     }
@@ -350,8 +377,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun createTag(name: String, onSaved: (String) -> Unit) = action { onSaved(repository.createTag(name)) }
     fun refreshTagsState() = action {
         mutableAsset.value?.let { publishAsset(repository.asset(it.id)) }
-        val page = repository.tags()
-        mutableTags.value = page.items; mutableTagCursor.value = page.nextCursor
+        readTags(false)
     }
     fun viewSessionId(): String = saved.get<String>("viewSession") ?: UUID.randomUUID().toString().also { saved["viewSession"] = it }
     fun recordView(asset: Asset, sessionId: String) = graph.recordEvent(asset, "view", sessionId)
@@ -363,9 +389,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun mediaClient(target: Session) = repository.mediaClient(target)
     private fun publishAsset(asset: Asset) {
         if (!sameTarget(asset.target, session.value)) return
-        if (mutableAsset.value?.id == asset.id) mutableAsset.value = asset
+        if (mutableAsset.value?.let { it.id == asset.id && it.revision <= asset.revision } == true) mutableAsset.value = asset
         lists.values.forEach { state -> state.value = state.value.copy(items = state.value.items.map {
-            if (it.id == asset.id) asset.copy(rankingScore = it.rankingScore, lastViewedAt = it.lastViewedAt) else it
+            if (it.id == asset.id && it.revision <= asset.revision) asset.copy(rankingScore = it.rankingScore, lastViewedAt = it.lastViewedAt) else it
         }) }
     }
 

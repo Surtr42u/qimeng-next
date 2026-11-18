@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
 func assetFilterRequest(r *http.Request) (service.AssetFilter, error) {
@@ -81,15 +82,18 @@ func assetFilterRequest(r *http.Request) (service.AssetFilter, error) {
 	}
 	return f, nil
 }
-func (a *API) browseRoutes() {
-	a.get("/assets/facets", func(r *http.Request) (any, error) {
+func (a *API) GetAssetFacets(w http.ResponseWriter, r *http.Request, params generated.GetAssetFacetsParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		f, e := assetFilterRequest(r)
 		if e != nil {
 			return nil, e
 		}
 		return a.s.AssetFacets(r.Context(), f, r.URL.Query().Get("row"), r.URL.Query().Get("facetQ"))
 	})
-	a.get("/search/suggestions", func(r *http.Request) (any, error) {
+}
+
+func (a *API) GetSearchSuggestions(w http.ResponseWriter, r *http.Request, params generated.GetSearchSuggestionsParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e
@@ -100,7 +104,10 @@ func (a *API) browseRoutes() {
 		}
 		return a.s.SearchSuggestions(r.Context(), r.URL.Query().Get("q"), recommended != nil && *recommended, n)
 	})
-	a.get("/cos-works", func(r *http.Request) (any, error) {
+}
+
+func (a *API) ListCosWorks(w http.ResponseWriter, r *http.Request, params generated.ListCosWorksParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, e := limit(r)
 		if e != nil {
 			return nil, e

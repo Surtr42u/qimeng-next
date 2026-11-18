@@ -124,6 +124,54 @@ func TestAuthorListsCrossListUnionsAndExplicitRemovals(t *testing.T) {
 	}
 }
 
+func TestExplicitEmptyAuthorsSurviveNewFilenameRuleAndRebuild(t *testing.T) {
+	f := setup(t)
+	const from = "unmatched.png"
+	const to = "new-rule.png"
+	importList(t, f, "declare-before-human-clear", "scope.txt", "1  Proposed artist\n作品\n"+to+"\n", 0)
+	u, original := f.upload(from, 92, nil)
+	a := *f.complete(u).Asset
+	if a.AuthorID != "unknown" {
+		t.Fatal("neutral filename unexpectedly matched", a.AuthorID)
+	}
+	base := "/assets/" + a.ID
+	decode(t, f.json("PATCH", base, "explicitly-clear-unknown-author", map[string]any{"expectedRevision": a.Revision,
+		"expectedAuthorsRevision": a.AuthorsRevision, "authorIds": []string{}}, 200), &a)
+	root, err := f.s.Root.LibraryPath(f.library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(filepath.Join(root, from), filepath.Join(root, to)); err != nil {
+		t.Fatal(err)
+	}
+	scan := f.scan("rescan-after-cleared-author-rename")
+	if scan.Moved != 1 {
+		t.Fatal("synthetic rename did not preserve asset identity", scan)
+	}
+	read := func() model.Asset {
+		t.Helper()
+		var got model.Asset
+		decode(t, f.json("GET", base, "", nil, 200), &got)
+		if !slices.Equal(got.AuthorIDs, []string{"unknown"}) || got.AuthorsRevision != a.AuthorsRevision || got.RelativePath != to {
+			t.Fatal("a filename rule overwrote the explicit empty selection", got.AuthorIDs, got.AuthorsRevision, got.RelativePath)
+		}
+		return got
+	}
+	read()
+	f.json("POST", "/author-lists/rebuild", "rebuild-after-cleared-author-rename", struct{}{}, 200)
+	current := read()
+	var proposed string
+	if err = f.s.DB.DB.QueryRow("SELECT author_id FROM author_list_matches WHERE asset_id=?", a.ID).Scan(&proposed); err != nil || proposed == "" || proposed == "unknown" {
+		t.Fatal("matching declaration was discarded instead of remaining evidence", proposed, err)
+	}
+	decode(t, f.json("PATCH", base, "explicitly-confirm-proposed-author", map[string]any{"expectedRevision": current.Revision,
+		"expectedAuthorsRevision": current.AuthorsRevision, "authorIds": []string{proposed}}, 200), &current)
+	if current.AuthorID != proposed || current.AuthorsRevision <= a.AuthorsRevision {
+		t.Fatal("explicitly confirming the author could not supersede the prior clear")
+	}
+	assertNativeOriginal(t, f, a.ID, 1, original)
+}
+
 func TestNamedAuthorAtomicCASUploadSourcesAndReimportChoice(t *testing.T) {
 	f := setup(t)
 	list := importList(t, f, "name-active-list", "合成.txt", "1  Existing\n来源  初始渠道\n作品\nunmatched.png\n", 0)
@@ -244,5 +292,54 @@ func TestAuthorMirrorRotationAndExternalEditProtection(t *testing.T) {
 	}
 	if body := listContent(t, f, "/author-lists/master"); !strings.Contains(body, "合成丙") {
 		t.Fatal("mirror failure rolled back author edit")
+	}
+}
+
+func TestDeletedOrMergedCreatorRetainsOriginalMaintenanceTask(t *testing.T) {
+	for _, merged := range []bool{false, true} {
+		f := setup(t)
+		var a model.Author
+		decode(t, f.json("POST", "/authors", "author-with-history", map[string]string{"name": "Archived identity"}, 201), &a)
+		var task service.AuthorTask
+		decode(t, f.json("POST", "/author-tasks", "history-author-grant", map[string]any{"authorId": a.ID, "expectedRevision": a.Revision, "allowClear": false, "allowedFields": []string{"biography"}}, 201), &task)
+		if merged {
+			var target model.Author
+			decode(t, f.json("POST", "/authors", "history-merge-target", map[string]string{"name": "Retained creator"}, 201), &target)
+			f.json("POST", "/authors/merge", "merge-author-with-tasks", map[string]any{"sourceId": a.ID, "targetId": target.ID, "expectedSourceRevision": a.Revision, "expectedTargetRevision": target.Revision}, 200)
+		} else {
+			f.json("DELETE", "/authors/"+a.ID+"?expectedRevision=1", "delete-author-with-tasks", struct{}{}, 204)
+		}
+		var context struct {
+			Task        service.AuthorTask
+			Author      model.Author
+			NextActions []string
+		}
+		decode(t, f.json("GET", "/author-tasks/"+task.ID, "", nil, 200), &context)
+		if context.Task.State != "cancelled" || context.Author.ID != a.ID || context.Task.AuthorID != a.ID || len(context.NextActions) != 0 {
+			t.Fatal("source task was transferred or its audit lost", context)
+		}
+		f.json("POST", "/credentials", "", map[string]any{"label": "stale task", "authorTaskId": task.ID, "scopes": []string{"read", "author.profile.write"}}, 409)
+	}
+}
+
+func TestAddedOrderUsesFirstTXTDeclarationAcrossPages(t *testing.T) {
+	f := setup(t)
+	_ = importList(t, f, "import-order-check", "order.txt", "9  Zeta\n作品\na.png\n\n1  Alpha\n作品\nb.png\n", 0)
+	read := func(url string) model.Page[model.Author] {
+		var p model.Page[model.Author]
+		decode(t, f.json("GET", url, "", nil, 200), &p)
+		return p
+	}
+	asc := read("/authors?sort=addedAsc&limit=1")
+	if len(asc.Items) != 1 || asc.Items[0].Name != "Zeta" || asc.Items[0].TXTOrder == nil || *asc.Items[0].TXTOrder != 1 || asc.NextCursor == "" {
+		t.Fatal("first declaration was not first")
+	}
+	next := read("/authors?sort=addedAsc&limit=1&cursor=" + asc.NextCursor)
+	if next.Items[0].Name != "Alpha" {
+		t.Fatal("TXT ordering cursor skipped an author")
+	}
+	desc := read("/authors?sort=addedDesc&limit=1")
+	if desc.Items[0].Name != "Alpha" {
+		t.Fatal("undocumented rows sorted ahead of the reversed TXT group")
 	}
 }

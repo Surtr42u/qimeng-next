@@ -2,7 +2,6 @@ package media.qimeng.next.screen
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -112,15 +111,7 @@ internal fun MaintenanceCard(icon: ImageVector, title: String, content: @Composa
 
 @Composable
 private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewModel) {
-    var document by remember(state.target) { mutableStateOf<Uri?>(null) }
-    var source by rememberSaveable(state.target?.instanceId) { mutableStateOf("") }
-    var accept by rememberSaveable(state.plan?.fingerprint) { mutableStateOf(false) }
-    var confirming by remember { mutableStateOf(false) }
     var restoreInfo by remember { mutableStateOf(false) }
-    val media = remember(state.document?.id) { mutableStateMapOf<String,String>() }
-    val authors = remember(state.document?.id) { mutableStateMapOf<String,String>() }
-    var edited by remember(state.plan?.fingerprint) { mutableStateOf(false) }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { file -> if (file != null) { model.resetPreview(); document = file; source = "" } }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { MaintenanceCard(BackupRestoreIcon, "备份与恢复") {
             Text("保存作品原件、作者、头像、标签及浏览记录。", style = MaterialTheme.typography.bodySmall)
@@ -133,51 +124,19 @@ private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewMod
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = model::export, enabled = state.folder.tree != null && !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("导出备份") }
-                OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }, enabled = !state.busy,
-                    modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("导入恢复") }
+                OutlinedButton(onClick = { restoreInfo = !restoreInfo }, enabled = !state.busy,
+                    modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("恢复说明") }
             }
             TextButton(onClick = { restoreInfo = true }, enabled = state.folder.tree != null) { Icon(HistoryRecentIcon, null, Modifier.size(18.dp)); Text("恢复上次") }
-            if (restoreInfo) Text("完整 .qnext 位于「上次 / 备份 / 影库备份.qnext」，相邻 .sha256 是完整性摘要。请用服务包的离线恢复命令还原到新的空目录。旧版 v2 JSON 可从上方导入合并。",
-                style = MaterialTheme.typography.bodySmall)
+            if (restoreInfo) {
+                Text("每代备份中的「备份 / 影库备份.qnext」配有独立 .sha256 摘要。请用配套离线恢复命令还原到新的空目录。PC 或 NAS 选定的资料可通过「设备领取」接收。", style = MaterialTheme.typography.bodySmall)
+            }
         } }
         item { QimengSettingsCard { Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("自动备份", style = MaterialTheme.typography.titleSmall); Text("每天一次，打开影库时保存", style = MaterialTheme.typography.bodySmall) }
             Switch(state.folder.automatic, model::automatic, enabled = state.folder.tree != null && !state.busy)
         } } }
-        if (document != null) item { MaintenanceCard(BackupRestoreIcon, "旧版 v2 导入") {
-            Text("先同步媒体并完成扫描。请填写该份文档原安装的稳定标识。", style = MaterialTheme.typography.bodySmall)
-            QimengCapsuleTextField(source, { source = it }, Modifier.fillMaxWidth(), placeholder = "来源安装标识", singleLine = true, enabled = state.document == null && !state.busy)
-            Button(onClick = { model.preview(document, source, emptyMap(), emptyMap()) }, enabled = !state.busy && source.isNotBlank()) { Text("生成预检") }
-        } }
-        state.plan?.let { plan ->
-            item { Text("匹配 ${plan.matched} / ${plan.media} · 跳过 ${plan.skipped} · 问题 ${plan.issues}") }
-            items(state.mediaRows, key = { "media-${it.key}" }) { row -> MigrationMappingRow(row, media[row.key], plan.state == "prepared" && !state.busy) { media[row.key] = it; edited = true } }
-            if (state.mediaCursor != null) item { TextButton(onClick = { model.nextRows(false) }, enabled = !state.busy) { Text("更多媒体") } }
-            items(state.authorRows, key = { "author-${it.key}" }) { row -> MigrationMappingRow(row, authors[row.key], plan.state == "prepared" && !state.busy) { authors[row.key] = it; edited = true } }
-            if (state.authorCursor != null) item { TextButton(onClick = { model.nextRows(true) }, enabled = !state.busy) { Text("更多作者") } }
-            item { Column {
-                if (plan.state == "prepared") {
-                    if (edited) TextButton(onClick = { model.preview(null, "", media.toMap(), authors.toMap()) }, enabled = !state.busy) { Text("重新生成预检") }
-                    if (plan.issues > 0 || plan.skipped > 0) Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(accept, { accept = it }); Text("已核对并接受报告中的跳过项和冲突")
-                    }
-                    Button(onClick = { confirming = true }, enabled = !edited && !state.busy && (accept || (plan.issues == 0 && plan.skipped == 0))) { Text("导入恢复") }
-                } else Text("已按预检提交，导入前检查点 ${plan.checkpoint ?: "未返回"}")
-            } }
-        }
     }
-    if (confirming && state.plan != null) AlertDialog(onDismissRequest = { confirming = false }, title = { Text("确认合并导入？") },
-        text = { Text("将按已核对的计划合并资料和事件。重复导入沿原事件身份核对。") },
-        confirmButton = { TextButton(onClick = { model.commit(state.plan, accept); confirming = false }) { Text("导入") } },
-        dismissButton = { TextButton(onClick = { confirming = false }) { Text("取消") } })
-}
-
-@Composable
-private fun MigrationMappingRow(row: MigrationRow, value: String?, editable: Boolean, change: (String) -> Unit) {
-    QimengSettingsCard { Column(Modifier.padding(12.dp)) {
-        Text(row.name, style = MaterialTheme.typography.titleSmall); Text((listOf(row.state, row.reason) + row.issues).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-        if (editable) QimengCapsuleTextField(value ?: row.targetId.orEmpty(), change, Modifier.fillMaxWidth(), placeholder = "目标 ID", singleLine = true)
-    } }
 }
 
 @Composable

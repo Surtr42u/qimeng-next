@@ -80,7 +80,12 @@ func TestPublishedIntentRecoversSameAssetAndReceipt(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if e = s.applyFile(ctx, &j); e != nil {
+			// Stop after the real off-lock installation and its locked version
+			// check, before the catalog transaction can publish a receipt.
+			s.mu.Lock()
+			e = s.applyReservedUpload(ctx, w, &j)
+			s.mu.Unlock()
+			if e != nil {
 				t.Fatal(e)
 			}
 			if _, e = s.Run(ctx, w.Principal, "backup-during-publication", "backup-during-publication-key", nil, func(write *Write) (any, int, error) { v, e := s.CreateBackup(ctx, write); return v, 201, e }); e == nil {

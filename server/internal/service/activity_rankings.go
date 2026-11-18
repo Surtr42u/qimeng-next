@@ -47,7 +47,7 @@ func (s *Service) TopInterests(ctx context.Context, window string) (TopInterests
 	}
 	rows, e := s.DB.DB.QueryContext(ctx, `WITH totals AS(SELECT d.asset_id,sum(d.views) views FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? GROUP BY d.asset_id HAVING sum(d.views)>0), interests AS(
  SELECT 'author' kind,au.id,au.name,sum(t.views) views FROM totals t JOIN asset_authors aa ON aa.asset_id=t.asset_id JOIN authors au ON au.id=aa.author_id GROUP BY au.id
- UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.views) FROM totals t JOIN asset_tags at ON at.asset_id=t.asset_id GROUP BY at.tag)
+ UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.views) FROM totals t JOIN asset_tag_names at ON at.asset_id=t.asset_id GROUP BY at.tag)
  SELECT kind,id,name,views FROM interests ORDER BY views DESC,kind ASC,id ASC LIMIT 3`, dayString(start))
 	if e != nil {
 		return result, e
@@ -97,7 +97,7 @@ func (s *Service) ActivityRanking(ctx context.Context, kind, window, metric, cur
 	case "author":
 		projection = `SELECT au.id,au.name,sum(t.views) AS views,sum(t.plays) AS plays,sum(t.seconds) AS seconds,count(*) AS assets,'' AS data FROM totals t JOIN asset_authors aa ON aa.asset_id=t.asset_id JOIN authors au ON au.id=aa.author_id GROUP BY au.id`
 	case "tag":
-		projection = `SELECT at.tag AS id,at.tag AS name,sum(t.views) AS views,sum(t.plays) AS plays,sum(t.seconds) AS seconds,count(*) AS assets,'' AS data FROM totals t JOIN asset_tags at ON at.asset_id=t.asset_id GROUP BY at.tag`
+		projection = `SELECT at.tag AS id,at.tag AS name,sum(t.views) AS views,sum(t.plays) AS plays,sum(t.seconds) AS seconds,count(*) AS assets,'' AS data FROM totals t JOIN asset_tag_names at ON at.asset_id=t.asset_id GROUP BY at.tag`
 	case "asset":
 		projection = `SELECT a.id,a.file_name AS name,t.views,t.plays,t.seconds,1 AS assets,a.data FROM totals t JOIN assets a ON a.id=t.asset_id`
 	default:

@@ -554,11 +554,15 @@ export async function mockLibrary(page: Page) {
         asset.tagsRevision++;
         return respond(route, asset);
       }
-      if (match[2] === "reaction") {
+      if (match[2] === "favorite" && method === "PUT") {
         const body = route.request().postDataJSON();
         asset.favorite = body.favorite;
-        if (body.liked && !asset.liked) asset.likeCount++;
-        asset.liked ||= body.liked;
+        return respond(route, asset);
+      }
+      if (match[2] === "like/today" && method === "PUT") {
+        const body = route.request().postDataJSON();
+        if (body.liked !== asset.liked) asset.likeCount += body.liked ? 1 : -1;
+        asset.liked = body.liked;
         return respond(route, asset);
       }
       if (!match[2] && method === "GET") return respond(route, asset);

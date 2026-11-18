@@ -3,18 +3,23 @@ package httpapi
 import (
 	"net/http"
 	"qimeng.local/next/server/internal/service"
+	"qimeng.local/next/server/internal/transport/generated"
 )
 
-func (a *API) sourceRuleRoutes() {
-	a.mux.HandleFunc("GET /api/v1/sources/custom-groups", a.authScope("admin", func(w http.ResponseWriter, r *http.Request) {
-		value, err := a.s.SourceRules(r.Context())
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		respond(w, 200, value)
-	}))
-	writeScoped(a, "admin", "PUT", "/sources/custom-groups", true, func(r *http.Request, w *service.Write, in service.SourceRuleUpdate) (any, int, error) {
+func (a *API) GetCustomSourceGroups(w http.ResponseWriter, r *http.Request) {
+	if !allowScope(w, r, "admin") {
+		return
+	}
+	value, err := a.s.SourceRules(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	respond(w, 200, value)
+}
+
+func (a *API) SetCustomSourceGroups(w http.ResponseWriter, r *http.Request, params generated.SetCustomSourceGroupsParams) {
+	writeScoped(a, w, r, "admin", true, func(r *http.Request, w *service.Write, in service.SourceRuleUpdate) (any, int, error) {
 		value, err := a.s.SetSourceRules(r.Context(), w, in)
 		return value, 200, err
 	})

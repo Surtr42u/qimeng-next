@@ -127,7 +127,7 @@ class AndroidRealServerTest {
         assertEquals("cancelled", runBlocking { graph.media.report(stopped.batchId!!).items.single().state })
 
         compose.onNodeWithContentDescription("返回").performClick()
-        compose.onNodeWithTag("navigation:home").performClick()
+        compose.onNodeWithTag("navigation:home").assertIsSelected()
         val model = androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java]
         try {
             compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription(picture.name).fetchSemanticsNodes().isNotEmpty() }
@@ -158,6 +158,12 @@ class AndroidRealServerTest {
         await("save-tags", graph) { graph.media.asset(picture.id).tags == listOf("安卓云端标签") }
         compose.onNodeWithContentDescription("收藏").performClick()
         await("favorite", graph) { graph.media.asset(picture.id).favorite }
+        compose.waitUntil(20_000) { model.asset.value?.favorite == true && !model.busy.value }
+        compose.onNodeWithContentDescription("点赞").assertIsEnabled().performClick()
+        await("today-like", graph) { graph.media.asset(picture.id).let { it.favorite && it.liked && it.likeCount == picture.likeCount + 1 } }
+        compose.waitUntil(20_000) { model.asset.value?.liked == true && !model.busy.value }
+        compose.onNodeWithContentDescription("点赞").assertIsEnabled().performClick()
+        await("cancel-today-like", graph) { graph.media.asset(picture.id).let { it.favorite && !it.liked && it.likeCount == picture.likeCount } }
         screenshot("real-server-detail.png")
 
         compose.onNodeWithContentDescription("返回").performClick()
@@ -215,25 +221,83 @@ class AndroidRealServerTest {
                 graph.media.asset(requireNotNull(graph.queue.state.value!!.transfers.single { it.id == input }.assetId))
             }
         }
-        compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].openAsset(video.id) }
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
-        compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("进入全屏").performClick()
-        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
-        screenshotWithMedia("real-server-video-fullscreen.png", landscape = true)
-        await("video-play-event", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (video.playCount ?: 0L) }
-        assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
-        compose.onNodeWithContentDescription("退出全屏").performClick()
-    }
-
-    private fun copyCloudVideo(uri: Uri) {
-        val instrument = InstrumentationRegistry.getInstrumentation()
-        ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
-            requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
-                assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
+        val originalOrientation = playbackOrientation()
+        var resumePosition = 0L
+        repeat(2) { index ->
+            val suffix = if (index == 0) "" else "-resumed"
+            val before = runBlocking { graph.media.asset(video.id) }
+            assertEquals(video.version, before.version)
+            compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].openAsset(video.id) }
+            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("视频播放区域").fetchSemanticsNodes().isNotEmpty() }
+            compose.activityRule.scenario.onActivity { assertNull(it.findViewById<android.view.View>(media.qimeng.next.R.id.video_playback_window)) }
+            compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
+            if (index == 1) {
+                var position: Long? = null
+                compose.waitUntil(10_000) {
+                    compose.activityRule.scenario.onActivity { activity ->
+                        val player = activity.findViewById<androidx.media3.ui.PlayerView>(media.qimeng.next.R.id.video_playback_window)?.player
+                        position = player?.takeIf { it.currentMediaItem != null }?.currentPosition
+                    }
+                    position != null
+                }
+                assertTrue("The new player must start at the position read back from Go", requireNotNull(position) >= resumePosition)
+            }
+            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("进入全屏").performClick()
+            compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+            compose.waitUntil(10_000) { playbackOrientation().let {
+                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE &&
+                    it.configuration == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            } }
+            captureDecoderSurface(compose.activity, suffix)
+            screenshotWithMedia("real-server-video-fullscreen$suffix.png", landscape = true)
+            await("video-play-event$suffix", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (before.playCount ?: 0L) }
+            assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
+            compose.onNodeWithContentDescription("退出全屏").performClick()
+            try {
+                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
+            } catch (failure: ComposeTimeoutException) {
+                throw AssertionError("Leaving fullscreen should restore $originalOrientation, observed ${playbackOrientation()}", failure)
+            }
+            if (index == 0) {
+                compose.waitUntil(10_000) {
+                    var position = 0L
+                    compose.activityRule.scenario.onActivity { activity ->
+                        position = activity.findViewById<androidx.media3.ui.PlayerView>(media.qimeng.next.R.id.video_playback_window)?.player?.currentPosition ?: 0L
+                    }
+                    position >= 350L
+                }
+                compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                compose.waitUntil(10_000) {
+                    var attached = true
+                    compose.activityRule.scenario.onActivity { attached = it.findViewById<android.view.View>(media.qimeng.next.R.id.video_playback_window) != null }
+                    !attached
+                }
+                await("video-position", graph) { graph.media.asset(video.id).let { asset ->
+                    resumePosition = asset.positionMs
+                    asset.positionVersion == video.version && resumePosition > 0L
+                } }
+                compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                compose.waitUntil(10_000) {
+                    var leftDetail = false
+                    compose.activityRule.scenario.onActivity { activity ->
+                        leftDetail = androidx.lifecycle.ViewModelProvider(activity)[media.qimeng.next.LibraryViewModel::class.java].route.value != "asset:${video.id}"
+                    }
+                    leftDetail
+                }
             }
         }
+    }
+
+    private data class PlaybackOrientation(val request: Int, val configuration: Int, val rotation: Int)
+
+    private fun playbackOrientation(): PlaybackOrientation {
+        lateinit var snapshot: PlaybackOrientation
+        compose.activityRule.scenario.onActivity { activity ->
+            snapshot = PlaybackOrientation(activity.requestedOrientation, activity.resources.configuration.orientation,
+                requireNotNull(activity.window.decorView.display).rotation)
+        }
+        return snapshot
     }
 
     @Test(timeout = 240_000)
@@ -278,6 +342,12 @@ class AndroidRealServerTest {
         }
         assertFalse("Rejecting a foreign folder must preserve its temporary-only grant", resolver.persistedUriPermissions.any { it.uri == tree })
         assertEquals(previous, graph.backups.folder(target))
+        compose.activityRule.scenario.onActivity { androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java].navigate("maintenance") }
+        compose.waitUntil(20_000) { compose.onAllNodes(hasText("设备领取") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("设备领取").performClick()
+        compose.onNodeWithText("设备结果包").assertExists()
+        compose.onNodeWithContentDescription("复制本机影库标识").assertDoesNotExist()
+        compose.onNodeWithText("选择本机目标视频").assertDoesNotExist()
     }
 
     private fun await(stage: String, graph: DataGraph, condition: suspend () -> Boolean) = runBlocking {
@@ -301,7 +371,8 @@ class AndroidRealServerTest {
         assertEquals(TabBarMaterial.LIQUID, original.material)
         try {
             compose.onNodeWithTag("navigation:me").performClick()
-            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("外观"))
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("profile-settings-list").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("外观"))
             compose.onNodeWithText("外观").performClick()
             compose.onNodeWithText("经典").performScrollTo().performClick()
             compose.waitUntil(10_000) { graph.settings.preferences.value.material == TabBarMaterial.CLASSIC }
@@ -326,13 +397,9 @@ class AndroidRealServerTest {
                 // Both the PNG and H.264 fixtures contain saturated colors; the surrounding UI and shutter are neutral.
                 val readable = if (bitmap.config == Bitmap.Config.HARDWARE) requireNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false)) else bitmap
                 try {
-                    var colored = 0
-                    for (y in readable.height / 8 until readable.height * 7 / 8 step 8) for (x in 8 until readable.width - 8 step 8) {
-                        val pixel = readable.getPixel(x, y)
-                        val r = Color.red(pixel); val g = Color.green(pixel); val b = Color.blue(pixel)
-                        if (maxOf(r, g, b) - minOf(r, g, b) > 75) colored++
-                    }
+                    val colored = saturatedSamples(readable)
                     observed += " saturatedSamples=$colored"
+                    if (landscape && colored >= 30) android.util.Log.i("QimengFrameEvidence", "compositedWindow $observed")
                     colored >= 30
                 } finally {
                     if (readable !== bitmap) readable.recycle()
@@ -354,5 +421,14 @@ class AndroidRealServerTest {
     }
     private fun saveScreenshot(name: String) {
         media.qimeng.next.testsupport.captureCloudScreenshot(name)
+    }
+}
+
+internal fun copyCloudVideo(uri: Uri) {
+    val instrument = InstrumentationRegistry.getInstrumentation()
+    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
+        requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
+            assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
+        }
     }
 }

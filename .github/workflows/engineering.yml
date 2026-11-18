@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m unittest discover -s tools -p test_engineering_checks.py -v
           python tools/check_docs.py
-      - name: Verify published SQL migrations
+      - name: Verify published migrations and identify affected documentation
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BASE: ${{ github.event.before }}
@@ -54,6 +54,7 @@ jobs:
             fi
           fi
           python tools/check_migration_history.py "$base"
+          python tools/check_doc_impact.py "$base"
       - name: Check production import boundaries for all OS source files
         working-directory: server
         run: go test -count=1 ./internal/architecture

@@ -1,4 +1,4 @@
-"""仅在 CI 从唯一 OpenAPI 生成客户端及来源锁；不含业务实现。"""
+"""仅在 CI 从唯一 OpenAPI 生成客户端、Go 路由及来源锁。"""
 from __future__ import annotations
 
 import argparse
@@ -123,8 +123,9 @@ def go() -> None:
     destination = ROOT / "server/internal/transport/generated"
     destination.mkdir(parents=True, exist_ok=True)
     run("go", "run", f"github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{OAPI_CODEGEN}",
-        "-generate", "types,client", "-package", "generated", "-o", str(destination / "api.gen.go"),
+        "-generate", "types,client,std-http-server,spec", "-package", "generated", "-o", str(destination / "api.gen.go"),
         str(ROOT / "api/openapi.yaml"), cwd=ROOT / "server")
+    (destination / "request_rules.gen.go").unlink(missing_ok=True)
 
 
 def resolve(document: dict, value, stack: tuple[str, ...] = ()):

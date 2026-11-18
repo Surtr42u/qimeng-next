@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -364,49 +363,23 @@ func (s *Service) AppendUpload(ctx context.Context, w *Write, id string, offset 
 	}
 	return u, store.SaveUpload(ctx, q, u)
 }
-func (s *Service) inspectUpload(u model.Upload) (string, error) {
-	f, e := s.Root.Open(uploadPath(u.ID))
-	if e != nil {
-		return "", e
+func (s *Service) inspectUpload(ctx context.Context, u model.Upload) (string, error) {
+	name := uploadPath(u.ID)
+	if err := s.safe(name); err != nil {
+		return "", err
 	}
-	defer f.Close()
-	head := make([]byte, 512)
-	n, e := io.ReadFull(f, head)
-	if e != nil && !errors.Is(e, io.EOF) && !errors.Is(e, io.ErrUnexpectedEOF) {
-		return "", e
+	file, err := s.Root.Open(name)
+	if err != nil {
+		return "", err
 	}
-	head = head[:n]
-	sniff := http.DetectContentType(head)
-	ext := strings.ToLower(path.Ext(u.FileName))
-	valid := sniff == u.MimeType
-	switch ext {
-	case ".avif":
-		valid = len(head) >= 12 && string(head[4:8]) == "ftyp" && (strings.Contains(string(head[8:]), "avif") || strings.Contains(string(head[8:]), "avis"))
-	case ".mp4", ".m4v", ".mov":
-		valid = len(head) >= 12 && string(head[4:8]) == "ftyp"
-	case ".mkv", ".webm":
-		valid = len(head) >= 4 && bytes.Equal(head[:4], []byte{0x1a, 0x45, 0xdf, 0xa3})
-	case ".avi":
-		valid = len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "AVI "
-	case ".webp":
-		valid = len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WEBP"
-	}
-	if !valid {
-		return "", Fail(415, "mime_mismatch", "文件内容与声明格式不匹配。")
-	}
-	hash, size, e := s.hashFile(uploadPath(u.ID))
-	if e != nil {
-		return "", e
-	}
-	if size != u.Size {
-		return "", Fail(409, "length_mismatch", "接收长度与声明长度不一致。")
-	}
-	if u.ExpectedHash != "" && hash != u.ExpectedHash {
-		return "", Fail(409, "source_hash_mismatch", "接收内容与源文件快照摘要不符，未入库。请保留源文件并以新上传会话重新发送。")
-	}
-	return hash, nil
+	defer file.Close()
+	return inspectUploadContent(ctx, file, u)
 }
 func (s *Service) CompleteUpload(ctx context.Context, w *Write, id string) (model.UploadResult, error) {
+	return s.completeUpload(ctx, w, id, nil, nil)
+}
+
+func (s *Service) completeUpload(ctx context.Context, w *Write, id string, prepared *uploadInspection, inspectionErr error) (model.UploadResult, error) {
 	u, e := s.Upload(ctx, w.Principal, id)
 	if e != nil {
 		return model.UploadResult{}, e
@@ -440,8 +413,20 @@ func (s *Service) CompleteUpload(ctx context.Context, w *Write, id string) (mode
 	if u.Offset != u.Size {
 		return model.UploadResult{}, Fail(409, "upload_incomplete", "尚未接收完整文件。")
 	}
+	if inspectionErr != nil {
+		return model.UploadResult{}, inspectionErr
+	}
+	if prepared != nil {
+		if e = s.checkUploadInspection(ctx, u, prepared); e != nil {
+			return model.UploadResult{}, e
+		}
+	}
 	if u.Hash == "" {
-		u.Hash, e = s.inspectUpload(u)
+		if prepared != nil {
+			u.Hash = prepared.hash
+		} else {
+			u.Hash, e = s.inspectUpload(ctx, u)
+		}
 		if e != nil {
 			return model.UploadResult{}, e
 		}
@@ -460,14 +445,20 @@ func (s *Service) CompleteUpload(ctx context.Context, w *Write, id string) (mode
 		}
 		return model.UploadResult{Upload: u}, nil
 	}
-	return s.ingest(ctx, w, u, nil)
+	return s.ingestPrepared(ctx, w, u, nil, prepared)
 }
 func (s *Service) ingest(ctx context.Context, w *Write, u model.Upload, item *model.PlanItem) (model.UploadResult, error) {
+	return s.ingestPrepared(ctx, w, u, item, nil)
+}
+
+func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, item *model.PlanItem, prepared *uploadInspection) (model.UploadResult, error) {
 	if e := s.uploadsAllowed(ctx); e != nil {
 		return model.UploadResult{}, e
 	}
-	if e := s.verify(uploadPath(u.ID), u.Hash, u.Size); e != nil {
-		return model.UploadResult{}, e
+	if prepared == nil {
+		if e := s.verify(uploadPath(u.ID), u.Hash, u.Size); e != nil {
+			return model.UploadResult{}, e
+		}
 	}
 	var duplicate int
 	if e := s.DB.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM assets WHERE hash=? AND size=? AND id!=?", u.Hash, u.Size, u.ReplaceAssetID).Scan(&duplicate); e != nil {
@@ -489,8 +480,28 @@ func (s *Service) ingest(ctx context.Context, w *Write, u model.Upload, item *mo
 		}
 		return model.UploadResult{Upload: u}, nil
 	}
+	if u.ReplaceAssetID == "" {
+		var pending bool
+		e := s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM file_intents
+			WHERE state='prepared' AND kind IN ('ingest','replace') AND json_extract(data,'$.UploadID')!=?
+			AND json_extract(data,'$.After.hash')=? AND json_extract(data,'$.After.size')=?)`, u.ID, u.Hash, u.Size).Scan(&pending)
+		if e != nil {
+			return model.UploadResult{}, e
+		}
+		if pending {
+			return model.UploadResult{}, Fail(409, "publication_pending", "相同内容正在发布，请沿用原上传会话重试。")
+		}
+	}
 	now := time.Now().UTC()
 	kind, mime, _ := domain.MediaType(u.FileName)
+	if u.CollectionID != "" && u.ReplaceAssetID == "" && item == nil && kind == "video" {
+		// A staged upload follows the stable drama ID even if its display
+		// name and the directory for future episodes changed meanwhile.
+		if e := s.DB.DB.QueryRowContext(ctx, "SELECT name FROM collections WHERE id=?", u.CollectionID).Scan(&u.Family); e != nil {
+			return model.UploadResult{}, Normalize(e)
+		}
+		u.RelativeDirectory = u.Family
+	}
 	authors, e := s.resolveAuthors(ctx, u.LibraryID, u.AuthorIDs)
 	if e != nil {
 		return model.UploadResult{}, e
@@ -600,8 +611,17 @@ func (s *Service) ingest(ctx context.Context, w *Write, u model.Upload, item *mo
 		return model.UploadResult{}, e
 	}
 	a.ContentURL = "/api/v1/assets/" + a.ID + "/content"
-	if e = s.probe(ctx, uploadPath(u.ID), &a); e != nil {
-		return model.UploadResult{}, publicationError("probe", e)
+	if prepared != nil && prepared.probed {
+		m := prepared.metadata
+		a.Width, a.Height, a.DurationMs, a.ProbeState = m.Width, m.Height, m.DurationMs, m.ProbeState
+		a.ThumbnailURL = ""
+		if m.ThumbnailURL != "" {
+			a.ThumbnailURL = "/api/v1/assets/" + a.ID + "/thumbnail"
+		}
+	} else {
+		if e = s.probe(ctx, uploadPath(u.ID), &a); e != nil {
+			return model.UploadResult{}, publicationError("probe", e)
+		}
 	}
 	info, e := s.Root.Stat(uploadPath(u.ID))
 	if e != nil {
@@ -666,7 +686,7 @@ func (s *Service) CancelUpload(ctx context.Context, w *Write, id string) error {
 	return s.refreshBatch(ctx, q, u.BatchID)
 }
 
-const directoryNamesSQL = "SELECT file_name FROM assets WHERE library_id=? AND trashed=0 AND " + assetParentDir + "=?"
+const directoryNamesSQL = "SELECT file_name" + liveDirectoryRows + assetParentDir + "=?"
 
 func (s *Service) directoryNames(ctx context.Context, library, dir string) ([]string, error) {
 	parent := path.Clean(dir)
@@ -741,13 +761,17 @@ func (s *Service) nextEpisode(ctx context.Context, collectionID string) (int, er
 	if e != nil {
 		return 0, Normalize(e)
 	}
-	var maximum int
-	if e = s.DB.DB.QueryRowContext(ctx, "SELECT COALESCE(MAX(json_extract(data,'$.page')),0) FROM assets WHERE collection_id=?", collectionID).Scan(&maximum); e != nil {
+	maximum, e := s.maximumCollectionPosition(ctx, collectionID)
+	if e != nil {
 		return 0, e
 	}
 	names, e := s.directoryNames(ctx, c.LibraryID, c.Name)
 	if e != nil {
 		return 0, e
 	}
-	return domain.NextChapter(c.Name, names, maximum), nil
+	next := domain.NextChapter(c.Name, names, maximum)
+	if next < 1 {
+		return 0, Fail(409, "collection_position_exhausted", "此集合已用尽可表示的位置。")
+	}
+	return next, nil
 }

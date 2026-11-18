@@ -26,7 +26,7 @@ type indexedScanPath struct {
 // no longer present in the walk. New uploads do not extend an in-flight scan.
 func (s *Service) scanMissing(ctx context.Context, jobID, libraryID string) error {
 	var through int64
-	if err := s.DB.DB.QueryRowContext(ctx, "SELECT coalesce(max(rowid),0) FROM assets").Scan(&through); err != nil || through == 0 {
+	if err := s.DB.DB.QueryRowContext(ctx, "SELECT coalesce(max(rowid),0) FROM asset_locations").Scan(&through); err != nil || through == 0 {
 		return err
 	}
 	parent := ""
@@ -34,7 +34,7 @@ func (s *Service) scanMissing(ctx context.Context, jobID, libraryID string) erro
 		if err := s.reconcileScanDirectory(ctx, jobID, libraryID, parent, through); err != nil {
 			return err
 		}
-		err := s.DB.DB.QueryRowContext(ctx, "SELECT "+assetParentDir+" FROM assets WHERE library_id=? AND trashed=0 AND "+
+		err := s.DB.DB.QueryRowContext(ctx, "SELECT "+assetParentDir+liveDirectoryRows+
 			assetParentDir+">? AND rowid<=? ORDER BY "+assetParentDir+" LIMIT 1", libraryID, parent, through).Scan(&parent)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -46,7 +46,7 @@ func (s *Service) scanMissing(ctx context.Context, jobID, libraryID string) erro
 }
 
 func (s *Service) scanDirectoryPage(ctx context.Context, libraryID, parent string, after, through int64) ([]indexedScanPath, error) {
-	rows, err := s.DB.DB.QueryContext(ctx, "SELECT rowid,id,relative_path FROM assets WHERE library_id=? AND trashed=0 AND "+
+	rows, err := s.DB.DB.QueryContext(ctx, "SELECT rowid,asset_id,relative_path"+liveDirectoryRows+
 		assetParentDir+"=? AND rowid>? AND rowid<=? ORDER BY rowid LIMIT ?", libraryID, parent, after, through, missingPathPage)
 	if err != nil {
 		return nil, err

@@ -22,7 +22,11 @@ const assetRoleFacets = `CASE WHEN ` + assetIsCOS + ` THEN
  (SELECT json_group_array(json_object('key','work:'||id,'kind','work','id',id,'name',name)) FROM cos_works WHERE id=a.cos_work_id)
  ELSE (SELECT json_group_array(json_object('key','character:'||id,'kind','character','id',id,'name',name)) FROM
  (SELECT ch.id,ch.name FROM asset_characters x JOIN characters ch ON ch.id=x.character_id WHERE x.asset_id=a.id ORDER BY ch.id)) END`
-const assetJSON = `json_set(` + assetCoreJSON + `,
+const assetPlayback = `coalesce((SELECT json_object('positionMs',position_ms,'positionContentVersion',content_version)
+ FROM asset_playback_positions WHERE asset_id=a.id ORDER BY content_version DESC LIMIT 1),
+ '{"positionMs":0,"positionContentVersion":0}')`
+
+const assetJSON = `json_set(json_patch(` + assetCoreJSON + `,` + assetPlayback + `),
  '$.viewCount',coalesce((SELECT sum(views) FROM asset_daily_stats WHERE asset_id=a.id),0),
  '$.playCount',coalesce((SELECT sum(plays) FROM asset_daily_stats WHERE asset_id=a.id),0),
  '$.cosWorkName',coalesce((SELECT name FROM cos_works WHERE id=a.cos_work_id),''),

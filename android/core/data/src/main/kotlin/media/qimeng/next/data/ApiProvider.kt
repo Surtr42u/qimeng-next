@@ -27,6 +27,7 @@ internal fun <T> Response<T>.bodyOrThrow(): T {
             } catch (_: Exception) { null }
         }
         val explanation = when {
+            code() == 409 && errorCode == "legacy_like_day_unknown" -> "旧记录无法确认今天是否已计入点赞，已保留原累计票数。"
             code() == 409 && errorCode == "recommendation_expired" -> "推荐列表已更新，请刷新后继续浏览。"
             code() == 409 && errorCode == "tag_deleted" -> "标签已被删除。请刷新并移除草稿中的旧标签；确需恢复时，使用“添加”明确新建。"
             code() == 409 && errorCode == "source_hash_mismatch" -> "传输字节与入队摘要不一致，未入库。请保留原件并重新选择文件。"
