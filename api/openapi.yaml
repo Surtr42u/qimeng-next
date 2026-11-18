@@ -3114,6 +3114,8 @@ components:
         collectionId: {type: string}
         page: {type: integer}
         expectedHash: {type: string}
+        namingFamily: {type: string, description: Canonical naming family used by this item}
+        namespaceFingerprint: {type: string, description: Frozen directory occupancy and referenced naming objects for this item}
     PlanSummary:
       type: object
       required: [id, state, fingerprint]

@@ -272,6 +272,8 @@ type PlanItem struct {
 	CollectionID string   `json:"collectionId,omitempty"`
 	Page         int      `json:"page,omitempty"`
 	ExpectedHash string   `json:"expectedHash"`
+	NamingFamily string   `json:"namingFamily,omitempty"`
+	NamespaceFingerprint string `json:"namespaceFingerprint,omitempty"`
 }
 type PlanSummary struct {
 	ID          string `json:"id"`

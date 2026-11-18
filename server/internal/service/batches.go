@@ -458,17 +458,14 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 	if planCount >= 100 {
 		return model.Plan{}, Fail(409, "plan_limit", "本批计划数量达到上限。")
 	}
-	fingerprint, e := s.namespaceFingerprint(ctx, b.LibraryID, nil)
-	if e != nil {
-		return model.Plan{}, e
-	}
-	p := model.Plan{PlanSummary: model.PlanSummary{ID: w.ID("plan"), State: "prepared"}, BatchID: id, BatchRevision: b.Revision, DirectoryFingerprint: fingerprint, Items: []model.PlanItem{}}
+	p := model.Plan{PlanSummary: model.PlanSummary{ID: w.ID("plan"), State: "prepared"}, BatchID: id, BatchRevision: b.Revision, Items: []model.PlanItem{}}
 	type group struct {
 		family, class, dir, collection, sep string
 		number, width, lastPage             int
 	}
 	groups := map[string]*group{}
 	inventories := map[string][]string{}
+	originalInventories := map[string][]string{}
 	seen := map[string]bool{}
 	collections := []model.Collection{}
 	dramaCounts := map[string]int{}
@@ -574,6 +571,7 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 			if e != nil {
 				return p, e
 			}
+			originalInventories[directory] = names
 		}
 		groupKey := input.GroupKey
 		if groupKey == "" {
@@ -640,14 +638,9 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		if isDrama {
 			pageNumber = g.number
 		}
-		p.Items = append(p.Items, model.PlanItem{UploadID: u.ID, FileName: filename, RelativePath: relative, AuthorID: authorID, AuthorIDs: authorIDs, SourceIDs: taxonomy.SourceIDs, CharacterIDs: taxonomy.CharacterIDs, CollectionID: g.collection, Page: pageNumber, ExpectedHash: u.Hash})
+		p.Items = append(p.Items, model.PlanItem{UploadID: u.ID, FileName: filename, RelativePath: relative, AuthorID: authorID, AuthorIDs: authorIDs, SourceIDs: taxonomy.SourceIDs, CharacterIDs: taxonomy.CharacterIDs, CollectionID: g.collection, Page: pageNumber, ExpectedHash: u.Hash, NamingFamily: input.Family})
 		inventories[directory] = append(names, filename)
 	}
-	raw, e := json.Marshal(p)
-	if e != nil {
-		return p, e
-	}
-	p.Fingerprint = digest(raw)
 	q, e := w.Q()
 	if e != nil {
 		return p, e
@@ -661,6 +654,21 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 			return p, e
 		}
 	}
+	scopes := make([]string, len(p.Items))
+	for i := range p.Items {
+		item := &p.Items[i]
+		scope, err := planItemScope(ctx, q, b.LibraryID, *item, originalInventories[planDirectory(item.RelativePath)], nil, nil)
+		if err != nil {
+			return p, err
+		}
+		item.NamespaceFingerprint, scopes[i] = scope, scope
+	}
+	p.DirectoryFingerprint = digest([]byte(strings.Join(scopes, "\n")))
+	raw, e := json.Marshal(p)
+	if e != nil {
+		return p, e
+	}
+	p.Fingerprint = digest(raw)
 	if e = store.SavePlan(ctx, q, p); e != nil {
 		return p, e
 	}
@@ -718,6 +726,7 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 				return nil, 0, Fail(409, "batch_cancelled", "批次已取消，已提交项目保留。")
 			}
 			ignore := map[string]bool{}
+			ownPaths := map[string]bool{}
 			applied := int64(0)
 			for _, i := range p.Items {
 				ignore[digest([]byte("asset:" + i.UploadID))[:32]] = true
@@ -729,6 +738,7 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 					if e = s.verifyAppliedPlanItem(ctx, p.ID, i, existing); e != nil {
 						return nil, 0, e
 					}
+					ownPaths[i.RelativePath] = true
 					applied++
 				} else if existing.State == "duplicate" {
 					applied++
@@ -736,13 +746,6 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 			}
 			if b.Revision != p.BatchRevision+applied {
 				return nil, 0, Conflict(b.Revision)
-			}
-			current, e := s.namespaceFingerprint(ctx, b.LibraryID, ignore)
-			if e != nil {
-				return nil, 0, e
-			}
-			if current != p.DirectoryFingerprint {
-				return nil, 0, Fail(409, "namespace_changed", "目标目录或对象版本已变化，请重新准备剩余项目。")
 			}
 			u, e := s.Upload(ctx, principal, item.UploadID)
 			if e != nil {
@@ -757,6 +760,34 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 			}
 			if u.State != "staged" {
 				return nil, 0, Fail(409, "plan_input_conflict", "输入状态已改变。")
+			}
+			if item.NamespaceFingerprint == "" {
+				// Retain the original precondition for plans issued by older Next builds.
+				scope, err := s.namespaceFingerprint(ctx, b.LibraryID, ignore)
+				if err != nil {
+					return nil, 0, err
+				}
+				if scope != p.DirectoryFingerprint {
+					return nil, 0, Fail(409, "namespace_changed", "已签发的旧计划需重新核对。")
+				}
+			} else {
+				dir := planDirectory(item.RelativePath)
+				names, err := s.directoryNames(ctx, b.LibraryID, dir)
+				if err != nil {
+					return nil, 0, err
+				}
+				for _, name := range names {
+					if name == item.FileName {
+						return nil, 0, Fail(409, "path_occupied", "当前计划的实际目标已被占用。")
+					}
+				}
+				scope, err := planItemScope(ctx, s.DB.DB, b.LibraryID, item, names, ownPaths, ignore)
+				if err != nil {
+					return nil, 0, err
+				}
+				if scope != item.NamespaceFingerprint {
+					return nil, 0, Fail(409, "namespace_changed", "该命名族的占号、集合或引用对象已变化，请重新核对。")
+				}
 			}
 			r, e := s.ingest(ctx, w, u, &item)
 			return r, 200, e
