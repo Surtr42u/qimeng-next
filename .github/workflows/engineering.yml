@@ -1,0 +1,61 @@
+name: Engineering checks
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standards:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache: false}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.13'}
+      - name: Check document navigation and guard regression examples
+        run: |
+          python -m unittest discover -s tools -p test_engineering_checks.py -v
+          python tools/check_docs.py
+      - name: Verify published SQL migrations
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          base="${PR_BASE:-${PUSH_BASE:-}}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            if [[ "$GITHUB_REF_NAME" == "$DEFAULT_BRANCH" ]]; then
+              base="$(git rev-parse --verify -q HEAD^ || true)"
+            else
+              base="$(git merge-base HEAD "origin/$DEFAULT_BRANCH")"
+            fi
+          fi
+          python tools/check_migration_history.py "$base"
+      - name: Check production import boundaries for all OS source files
+        working-directory: server
+        run: go test -count=1 ./internal/architecture
+      - name: Check the committed Go source
+        working-directory: server
+        run: |
+          git ls-files -z -- '*.go' | xargs -0 -r gofmt -l > "$RUNNER_TEMP/unformatted.txt"
+          if [[ -s "$RUNNER_TEMP/unformatted.txt" ]]; then
+            cat "$RUNNER_TEMP/unformatted.txt"
+            git ls-files -z -- '*.go' | xargs -0 -r gofmt -w
+            git diff -- '*.go' > "$RUNNER_TEMP/gofmt.patch"
+            exit 1
+          fi
+      - name: Publish the correction from the failed formatting check
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: go-format-correction
+          path: ${{ runner.temp }}/gofmt.patch
+          if-no-files-found: ignore
+          retention-days: 7

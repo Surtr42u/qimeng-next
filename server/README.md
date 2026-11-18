@@ -51,12 +51,14 @@ Android 普通应用在私有数据目录也会遇到硬链接被拒绝。文件
 
 `internal/domain` 是纯规则；`internal/model` 是业务记录；`internal/store` 负责追加迁移和持久化；`internal/service` 实现明确用例与文件恢复；`internal/httpapi` 只适配协议；`cmd/qimeng` 管理运行配置和生命周期。SDK 由根目录云端流水线从 OpenAPI 生成，服务端不手写客户端 SDK。
 
-仅在云端执行：
+数据库启动时先将已记录的迁移逐个与本程序核对，检查通过才运行待执行的 SQL。每项迁移与其校验记录在同一事务提交。后端模块引用与实际检查见[架构边界](../docs/architecture.md#module-boundaries)和[工程检查](../docs/verification.md#engineering-gates)。
+
+以下检查使用云端环境。日常验证直接读取提交的源码。
 
 ```sh
 cd server
 go mod tidy
-gofmt -w cmd internal
+git ls-files -z -- '*.go' | xargs -0 -r gofmt -l
 go vet ./...
 go test -race -count=1 ./...
 go build -trimpath -o qimeng ./cmd/qimeng

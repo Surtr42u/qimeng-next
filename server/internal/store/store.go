@@ -3,15 +3,12 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"embed"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/url"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	"qimeng.local/next/server/internal/model"
 )
@@ -30,87 +27,14 @@ func FileURI(filename string) string {
 	}
 	return (&url.URL{Scheme: "file", Path: p, OmitHost: true}).String()
 }
+
 func Open(path string) (*Store, error) {
 	db, err := OpenDatabase(path, CatalogDatabase)
 	if err != nil {
 		return nil, err
 	}
-	fail := func(e error) (*Store, error) { db.Close(); return nil, e }
-	if err = db.Ping(); err != nil {
-		return fail(err)
-	}
-	if _, err = db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL)"); err != nil {
-		return fail(err)
-	}
-	files, err := migrations.ReadDir("migrations")
-	if err != nil {
-		return fail(err)
-	}
-	known := map[int]bool{}
-	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".sql") {
-			continue
-		}
-		prefix, _, ok := strings.Cut(file.Name(), "_")
-		if !ok {
-			return fail(fmt.Errorf("invalid migration name %s", file.Name()))
-		}
-		version, e := strconv.Atoi(prefix)
-		if e != nil {
-			return fail(e)
-		}
-		known[version] = true
-		body, e := migrations.ReadFile("migrations/" + file.Name())
-		if e != nil {
-			return fail(e)
-		}
-		hash := fmt.Sprintf("%x", sha256.Sum256(body))
-		var recorded string
-		e = db.QueryRow("SELECT sha256 FROM schema_migrations WHERE version=?", version).Scan(&recorded)
-		if e == nil {
-			if recorded != hash {
-				return fail(fmt.Errorf("migration %d checksum changed", version))
-			}
-			continue
-		}
-		if e != sql.ErrNoRows {
-			return fail(e)
-		}
-		tx, e := db.Begin()
-		if e != nil {
-			return fail(e)
-		}
-		if _, e = tx.Exec(string(body)); e != nil {
-			tx.Rollback()
-			return fail(e)
-		}
-		if _, e = tx.Exec("INSERT INTO schema_migrations(version,name,sha256) VALUES(?,?,?)", version, file.Name(), hash); e != nil {
-			tx.Rollback()
-			return fail(e)
-		}
-		if e = tx.Commit(); e != nil {
-			return fail(e)
-		}
-	}
-	rows, err := db.Query("SELECT version FROM schema_migrations")
-	if err != nil {
-		return fail(err)
-	}
-	for rows.Next() {
-		var v int
-		if err = rows.Scan(&v); err != nil {
-			rows.Close()
-			return fail(err)
-		}
-		if !known[v] {
-			rows.Close()
-			return fail(fmt.Errorf("database schema %d requires a newer server", v))
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return fail(err)
+	if err := applySchema(db, migrations); err != nil {
+		return nil, errors.Join(err, db.Close())
 	}
 	return &Store{DB: db}, nil
 }
@@ -121,7 +45,11 @@ type Querier interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
-func Encode(v any) (string, error) { b, e := json.Marshal(v); return string(b), e }
+func Encode(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
 func Get[T any](ctx context.Context, q Querier, query string, args ...any) (T, error) {
 	var value T
 	var raw string

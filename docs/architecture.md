@@ -10,6 +10,22 @@ SQLite 位于服务本地磁盘。单服务排他锁、SQLite WAL、外键、FUL
 
 本人UI仍可输入和查看绝对库根，由仅管理员可用的解析/回显接口桥接上述逻辑位置，不扩张存储权限，也不把路径暴露给一般查询或MCP。DNS-SD仅在命令入口作为可选宿主能力发布候选；关闭发现或剥离Android本机模块都不改变业务协议和数据库。
 
+<a id="module-boundaries"></a>
+## 模块边界与实际调用
+
+| 责任 | 允许的调用与约束 |
+|---|---|
+| Go 命令入口 | `cmd/qimeng` 装配配置、实例和服务。独立的 `cmd/qimeng-backup` 负责离线备份工具 |
+| HTTP 与业务用例 | `internal/httpapi` 校验请求、调用 `service`、编码响应。事务、业务权限及先后顺序由 `service` 处理。协议类型只进入适配层 |
+| 规则与业务记录 | `domain`、`analytics`、`authorlist`、`sourcerules`、`migration`、`model` 接收已经提供的数据。当前时间、文件内容、数据库查询和网络响应由调用方或适配器提供 |
+| 存储与外部环境 | `store` 持有 SQLite 迁移和持久化原语。`storage`、`backup` 和 `sysmon` 分别处理主机文件、备份与系统读数。服务组合这些能力并决定一次业务写入的边界 |
+| Web、桌面与 Android | Web 页面通过数据层读写，桌面壳负责窗口与服务器连接。Android 页面使用 ViewModel、Repository 和 SDK。本机宿主经运行接口启动同一 Go 服务 |
+| 外部 AI | MCP 执行器保存受托凭据、调用正式 API、返回可接续的结果。命名、冲突处理和是否准许业务写入均由 Go 决定 |
+
+以「追加同作品下一张图」为例，页面或 MCP 把作品和目标库交给命名接口。Go 用例读取授权库的现状，调用纯编号规则，提交时再核对目录和修订。界面只展示预览与实际回执。变更续号时应从同一规则及其消费点着手。[编号实现](../server/internal/domain/naming.go) · [命名用例](../server/internal/service/naming.go)
+
+Go 的具体包引用由[依赖检查](../server/internal/architecture/boundaries_test.go)约束。检查解析生产源码的真实 import，也覆盖非当前操作系统的源文件。新增顶层模块时一起明确所有权和允许的引用。Web 与 Android 的具体约束分别维护在[Web](../web/README.md)和[Android](../android/README.md)。跨对象的事务范围、调用时序和用户意图仍需结合真实入口评审。
+
 ## 身份与修订
 
 资产 ID 与文件名、相对路径及哈希独立。资产 `revision`、标签集合 `tagsRevision`、作者关系 `authorsRevision` 与文件 `contentVersion` 表达不同变化。作者是独立身份，资产关系为多对多；`authorId` 仅是兼容主显示字段。常规与 COS 作者身份不合并，但 COS 文件允许附普通作者；浏览分区按是否存在 COS 作者关联判断。“其他搁置”是未知占位，关联真实作者后自动去除占位，不触发后台研究。
