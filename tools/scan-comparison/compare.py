@@ -219,6 +219,8 @@ def snapshot(version, data, library_id, manifest):
 def measure(api, version, library, phase, pid):
     path = "/api/v1/libraries/" + library["id"]
     written_before = proc_number(pid, "io", "write_bytes")
+    rss_before = proc_number(pid, "status", "VmRSS")
+    peak_before = proc_number(pid, "status", "VmHWM")
     start = time.monotonic()
     if version == "installed":
         api.call("POST", path + "/scan")
@@ -264,7 +266,8 @@ def measure(api, version, library, phase, pid):
         duration, = [line.split()[1] for line in metrics if line.startswith("scan_duration_seconds ")]
         internal_ms = float(duration) * 1000
     return {"phase": phase, "http_ms": elapsed, "backend_ms": internal_ms, "polls": polls,
-            "write_bytes": written, "process_peak_rss_kib": high_water, "catalog_rows": total}
+            "write_bytes": written, "rss_before_kib": rss_before, "process_peak_before_kib": peak_before,
+            "process_peak_rss_kib": high_water, "catalog_rows": total}
 
 
 def trial(version, binary, index, corpus, original, temp):
@@ -323,7 +326,8 @@ def report(evidence, metadata, rows):
             lines.append(f"| {phase} | {version} | {times} | {median('http_ms'):.2f} | {median('backend_ms'):.2f} | "
                          f"{median('write_bytes') / 2**20:.2f} | {median('process_peak_rss_kib') / 1024:.1f} | {samples[0]['catalog_rows']} |")
     lines += ["", "计时从手动 POST 发出到首次观察到成功终态。两版均每 10 毫秒轮询一次，HTTP 时间包含轮询间隔和请求开销。"
-              "后端辅助时间分别取旧版扫描函数指标和 Next 持久化任务创建至终态时间。进程写入取 Linux /proc/io 的 write_bytes 差值。",
+              "后端辅助时间分别取旧版扫描函数指标和 Next 持久化任务创建至终态时间。进程写入取 Linux /proc/io 的 write_bytes 差值。"
+              "RSS 高水位从进程启动累计。旧版在扫描前设置密码时执行 64 MiB Argon2id 派生，Next 使用配置令牌。JSON 另记每次提交扫描前的 RSS 和高水位。",
               "每阶段在计时前顺序读取并核对全部原件，磁盘页缓存已热。文件监听关闭、轮询间隔 24 小时，先让 Next 的登记对账扫完空库。"
               "两版缩略图首次回填均在启动 30 秒后，计时结束核验仍在静默期且缓存中无产物。"
               "安装版启动时查找 ffmpeg/ffprobe 路径，准备环境和工具检测均在 POST 前。PNG 没有每文件外部探测，Next 的图片头校验和内容哈希计入扫描。",
