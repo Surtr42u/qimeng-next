@@ -68,6 +68,18 @@ func (s *Service) applyReservedUpload(ctx context.Context, w *Write, j *fileInte
 	if err = s.checkPath(ctx, j.After.LibraryID, j.After.RelativePath, j.After.ID); err != nil {
 		return err
 	}
+	if err = s.verifyFileIdentity(j.Source, j.SourceObject); err != nil {
+		return err
+	}
+	if j.CopyPublication {
+		sourceStamp, err := s.publicationStamp(j.Source)
+		if err != nil {
+			return err
+		}
+		if sourceStamp != j.SourceStamp {
+			return Fail(409, "original_object_changed", "来源在复制后发生变化，已保留供核对。")
+		}
+	}
 	stamp, err := s.publicationStamp(j.Target)
 	if err != nil {
 		return err
