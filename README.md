@@ -1,25 +1,25 @@
 # 绮梦 Next
 
-面向个人 PC / NAS 的自托管媒体库。Go 业务核心、React Web/PWA、Kotlin/Compose Android 客户端与独立 AI 工具入口。
+面向个人 PC / NAS 的自托管媒体库。可以用浏览器、Windows 桌面壳或 Android 客户端连接影库，也可以在 Android 上离线运行同一个 Go 服务。普通上传和浏览可独立于 AI 使用。
 
-本仓库于 2026-11-17 从空目录开始重构。业务核心重新实现，界面以正在使用的旧版为准，可以直接复用旧版的纯展示代码。2026-11-18 起，拟新增的转场与导航效果暂缓。开发版请使用空数据目录，可用能力和云端验证结果见[当前状态](docs/status.md)。
+首次试用请选空的专用数据目录，按[快速开始](docs/quickstart.md)下载服务包、设置密码、登记媒体库并上传第一张图片。各端已验证的提交、现有缺口与真实资料切换条件见[当前状态](docs/status.md)。
 
 ## 从哪里开始
 
 | 你要了解 | 阅读入口 |
 |---|---|
-| 第一次从云端成品包启动 PC/NAS 影库 | [快速开始](docs/quickstart.md) |
+| 运行、排障、升级和备份 PC/NAS 影库 | [快速开始](docs/quickstart.md)、[服务端配置](server/README.md#运行配置)、[迁移与回退](docs/migration.md) |
+| 连接已有影库，或在手机上离线使用 | [Windows 桌面](desktop/README.md)、[Android 两种安装包](android/README.md) |
 | 要做成什么、哪些行为必须保留 | [产品要求](docs/requirements.md) |
 | 模块怎样分工、谁拥有业务真相 | [架构](docs/architecture.md) |
 | 现在实现到哪里、实际验证了什么 | [当前状态](docs/status.md) |
-| 如何开发、构建和验证 | [验证与交付](docs/verification.md) |
-| 如何维护代码、选择依赖、引用依据和同步文档 | [开发与维护](CONTRIBUTING.md) |
-| AI首次配置与日常工作 | [AI工具入口](ai/README.md) |
-| Pi、Hermes及其他MCP宿主 | [兼容指引](docs/mcp-compatibility.md) |
+| 开发、评审、同步文档和选择云端作业 | [开发与维护](CONTRIBUTING.md)、[验证与交付](docs/verification.md) |
+| 报告安全问题或发现意外公开的信息 | [安全说明](SECURITY.md) |
+| AI 首次配置、日常工作和 MCP 宿主 | [AI 工具入口](ai/README.md)、[Pi 与 Hermes 兼容指引](docs/mcp-compatibility.md) |
 | 手机本机运行与后期剥离 | [运行模块边界](docs/runtime-separation.md) |
 | AI 接手约束 | [AGENTS.md](AGENTS.md) |
 
-所有编译、代码生成、测试和发布构建都在云端执行。本地仅编辑与 Git 操作。运行与安装说明随可验证产物补齐，不提供尚未验证的安装承诺。
+编译、代码生成、自动测试和发布构建均在 GitHub Actions 执行。本地开发限于阅读、编辑、静态核对与 Git 操作。本仓以 MIT 许可证发布，重构起点、旧版界面参照及复用范围另有记录。[许可证](LICENSE) · [来源记录](docs/provenance.md)
 
 ## 产品原则
 

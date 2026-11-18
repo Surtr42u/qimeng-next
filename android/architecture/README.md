@@ -1,9 +1,9 @@
 # Android 模块门禁
 
-GitHub Actions 在生成 OpenAPI Kotlin SDK 后运行以下命令。相同 Gradle 调用可以继续附加已有的 JVM、Lint 任务。门禁所需的 `:app:assembleClientDebug` 会加入同一任务图。
+GitHub Actions 在生成 OpenAPI Kotlin SDK 后，从仓库根目录运行以下架构任务。`android` 作业在同一 Gradle 调用中附加 JVM 和 Lint 任务。门禁所需的 `:app:assembleClientDebug` 会加入同一任务图。
 
 ```sh
-gradle --no-daemon -p android -Pqimeng.embedded=false -I architecture/verify.gradle verifyClientArchitecture
+gradle --no-daemon -p android -Pqimeng.embedded=false -I "$GITHUB_WORKSPACE/android/architecture/verify.gradle" verifyClientArchitecture
 ```
 
 | 边界 | 执行检查 |

@@ -10,7 +10,7 @@
 
 用户进一步强调：从重构计划独立完善设计，不能被旧项目历次 AI 的实现与文档惯性带偏。区分用户确认的产品需求、实际有效行为与旧实现者自行选择的技术方案；前两者作为行为依据，技术方案重新评估。原有功能逐项实现/验证，开发中的能力关闭或占位不是完成证明。
 
-2026-11-18 用户要求换新子代理接手并复查前任实现。原三位 GPT-6 Astra / max 已停止。新三位按 Go、Web/桌面、Android 分工，启动参数均为 GPT-6.2 Astra / max。主代理汇总可复现的问题、修复与云端证据，并在交付前系统复核。
+接手续作先读对应提交的云端证据、未通过的用户流程及修复状态。历次执行分工和模型记录保存在[来源记录](docs/provenance.md)，当前断点在[状态页](docs/status.md)。
 
 ## 必守规则
 
@@ -31,10 +31,12 @@
 
 | 当前工作 | 从这里开始 |
 |---|---|
-| 使用、安装、接手未完工作 | [项目入口](README.md)、[当前状态](docs/status.md) |
+| 首次运行、服务配置、接手未完工作 | [快速开始](docs/quickstart.md)、[服务端配置](server/README.md#运行配置)、[当前状态](docs/status.md) |
+| 用户流程、推荐与统计、作者档案与订阅 | [产品要求](docs/requirements.md)、[算法口径](docs/analytics.md)、[作者档案](docs/author-profiles.md) |
 | API、身份、数据迁移 | [协议](api/openapi.yaml)、[API 用法](docs/api.md)、[迁移](docs/migration.md) |
 | 模块引用与共用规则 | [架构边界](docs/architecture.md#module-boundaries)、[服务端](server/README.md)、[AI 工具](ai/README.md) |
 | 界面或宿主运行 | [Web](web/README.md)、[Android](android/README.md)、[桌面](desktop/README.md)、[可移除的本机模块](docs/runtime-separation.md) |
+| 上报安全问题、审阅公开材料 | [安全说明](SECURITY.md) |
 | 变更影响、验证与发布 | [文档同步位置](CONTRIBUTING.md#哪份文档随改动更新)、[云端检查](docs/verification.md#engineering-gates) |
 
 注释说明契约和原因，文件按职责拆分；领域纯函数无 IO，应用层组织事务和任务，HTTP 层只处理协议。错误不能被默认值或空结果隐藏。有效检查通过后推进下一项，不无变化地反复全量测试。

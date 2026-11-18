@@ -2,11 +2,11 @@
 
 ## 执行位置
 
-用户 2026-11-17 明确要求一切编译和测试走云端。GitHub Actions 是构建、SDK 生成、单测、集成、浏览器、Android 检查、文档校验及隐私扫描的执行端。禁止本地运行这些命令或启动应用测试服务。云端结果按提交 SHA 记录，不借用旧 head 或旧项目绿色状态。
+编译、SDK 生成、自动测试、文档校验与发布构建均由 GitHub Actions 执行。云端结果按实际运行的提交 SHA 记录。已取得的证据见[当前状态](status.md)。
 
 本地允许源码阅读与编辑、静态差异检查、Git 提交/推送和读取云端日志。需要设备或 NAS 才能证明的行为单列，不能用 CI 冒充。
 
-主分支和 PR 有代码变更时自动运行 Cloud verification。纯 Markdown 变更走独立工程检查。开发分支平时运行轻量检查，需要集成验收时由维护者在 Actions 中为指定提交所在分支调用完整工作流。合成界面对照可独立调度。Web 展示源码进入主分支后会触发新旧对照，已安装的 Android 参考版只在基准变更或显式调度时重建。
+[Engineering checks](../.github/workflows/engineering.yml) 自动检查 `main`、`codex/**` 的推送和所有 PR。[Cloud verification](../.github/workflows/prepare.yml) 在 `main` 推送或 PR 包含 Markdown 以外的变更时自动运行。维护者也可在 Actions 里选分支手动启动完整工作流，随后核对运行的 SHA。合成界面的[Web 新旧对照](../.github/workflows/ui-reference.yml)和[Android 参考图采集](../.github/workflows/android-reference.yml)可单独调度，也会在主分支上各自列出的路径发生变化时运行。
 
 OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随完整检查提供。仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
 
@@ -17,11 +17,26 @@ Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming
 <a id="engineering-gates"></a>
 ## 代码与架构检查
 
-[Engineering checks](../.github/workflows/engineering.yml) 在推送和 PR 上独立运行。它核对仓库内文档路径与 Markdown 章节、SQL 迁移历史、Go 的模块引用以及所有受版本控制的 Go 文件格式。已有迁移文件的增删改按基线提交比较，新增版本须高于该基线已发布的最大值。不同功能分支有编号冲突时，只重排尚未发布的迁移。
+工程作业核对仓库内文档路径与 Markdown 章节、SQL 迁移历史、Go 模块引用以及 `server/` 下受版本控制的 Go 文件格式。已有迁移文件按基线提交比较，新增版本须高于该基线已发布的最大值。不同功能分支有编号冲突时，只重排尚未发布的迁移。
+
+工程作业配置了固定版本并校验下载摘要的 Gitleaks，扫描本次检出引用可达的 Git 历史。内置凭据规则和项目的个人目录规则命中时，日志遮盖匹配的值。公开前还需核对提交作者信息、人工文本与可下载的日志、截图和制品。具体运行结果绑定到对应提交。[扫描配置](../.gitleaks.toml) · [安全说明](../SECURITY.md)
 
 Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-correction` 补丁供维护者核对。正常 Go 与 Web 构建直接验证提交的源码。Web 的展示层引用随 `npm test` 检查。Android 的 `verifyClientArchitecture` 读取构建系统实际解析的依赖、源码集和客户端 APK，再由真服务或模拟器用例验证业务行为。两端的边界和适用例外见[Web 开发说明](../web/README.md)和[Android 架构检查](../android/architecture/README.md)。错误处理、职责分工和实际效率通过审查与行为用例验证。
 
 比较性能时在同一云机器使用同一套合成数据、配置、冷暖状态和操作；记录提交、运行次数、耗时及该场景相关的内存或磁盘指标。扫描进度写入次数只反映该项数据库开销。跨版本、跨平台结论要有对应的测量范围。
+
+<a id="change-evidence"></a>
+## 按改动选择云端证据
+
+完整工作流一次调度多个作业。审查时从受影响的入口找结果，再按共享协议、数据和平台的影响扩大范围。
+
+| 改动范围 | 先核对什么 |
+|---|---|
+| 纯 Markdown | `Engineering checks` 的文档链接、章节和相关工程检查。操作步骤另与当次启动器、界面或工作流核对 |
+| 协议、迁移、Go 业务、文件恢复 | `generate` 与 `lock-check` 核对协议来源，`server` 核对 Linux／SQLite 行为。文件语义涉及 Windows 时看 `windows`。协议变动也要看直接消费端 |
+| Web、桌面、Android | Web 的 `web` 作业和真实 Go 联调 `live`，Windows 连接壳的 `windows` 作业。Android 依变更看 `android`、`android-ui` 或本机运行链上的 `android-native`、`android-embedded`、`android-local-ui`。新旧画面对照单列 |
+| AI、MCP 宿主 | `ai` 的执行器用例、`live` 的真实 Go 调用，以及受影响的 `mcp-compat`、`hermes` 客户端结果 |
+| PC/NAS 打包、启动与恢复 | `server-packages` 中对应 CPU 和操作系统的作业、产品 ZIP、SHA-256、登录页与隔离恢复记录。设备安装和 NAS 实机另记 |
 
 ## 必须覆盖的实际行为
 
@@ -39,4 +54,4 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 
 分别记录源码完成、编译通过、自动测试、真实接入、已安装与设备验收。失败和跳过保留原因。发布包含同提交源码、协议锁、测试结果和产物摘要；没有完成必需检查时不标成熟可切换。
 
-若 GitHub 在分配运行器之前结束作业，维护者记录该提交、GitHub 的作业提示和最后一个真正执行过的结果。待验代码集中在一个候选提交。恢复云环境后，先为该提交运行工程检查，再启动受影响的集成、恢复和设备作业。若需更新协议锁，从该提交的生成产物取回并复核。在全部相关结果可查看后才更新交付状态。
+若 GitHub 在分配运行器之前结束作业，记录候选提交、GitHub 的作业提示和上一次真正执行过的结果。运行器可用后，为候选提交核对工程检查，运行覆盖对应行为的完整工作流或单独的界面对照。协议锁从该提交的生成产物取回并复核。按实际作业结果更新交付状态。

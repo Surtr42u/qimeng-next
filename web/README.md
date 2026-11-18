@@ -30,21 +30,18 @@ PWA worker 只缓存公共应用壳与哈希静态资源，API/媒体明确排�
 
 ## 云端命令
 
-以下命令只允许 CI 执行：
+`Cloud verification` 的 `generate` 作业从 OpenAPI 生成 TypeScript 契约并归档来源锁。`web` 作业取同次生成物，在 `web/` 下用 Node 24 执行以下检查。[工作流](../.github/workflows/prepare.yml)
 
 ```sh
-# 首次依赖准备，由 CI 生成并归档 lock；之后使用 npm ci
-npm install --package-lock-only --ignore-scripts
 npm ci
-npm run generate:api
+npm run typecheck
 npm run build
 npm test
 npx playwright install --with-deps chromium webkit
 npm run test:e2e
-npm audit --audit-level=high
 ```
 
-Node 24；命令工作目录为 `web`。锁文件来源与 SDK 摘要由根 CI 管理，禁止本机安装、编译、生成、测试或启动应用服务。浏览器mock项目阻止Service Worker以保证全部合成API可被拦截，不访问真实服务；真实live项目仍运行PWA worker。截图保存在Playwright测试产物中。后端真实集成仍需单独 CI 契约场景。
+依赖按已提交的 `package-lock.json` 安装。更新锁文件时，在完整工作流手动启用 `refresh_locks`。浏览器 mock 项目阻止 Service Worker，让全部合成 API 请求可被拦截。独立的 `live` 作业连接同次 Go 服务并运行 PWA worker。截图保存在各自的测试制品中。[云端生成与锁核对](../docs/verification.md)
 
 另有 `npm run test:live` 真实服务闭环：仅在 `CI=true`、`QIMENG_E2E_BASE_URL=http://127.0.0.1:18481` 且提供一次性 `QIMENG_E2E_TOKEN` 时运行。CI先启动同提交Go服务并托管同提交`web/dist`，PATH需ffmpeg/ffprobe，并通过`QIMENG_E2E_LIBRARY_ROOT`提供已加入服务受信storage配置的云端临时根。测试只在该根创建每次独立子目录，从原服务器根路径文本框注册；路径不放查询串或日志。测试在云端生成合成PNG与短视频，实际登录、建库、上传、编辑、推荐回读、播放和时间轴持久化；该项目不使用route mock，不连接8420或任何既有库。执行结果仍以根状态页中的提交SHA与CI日志为准。
 

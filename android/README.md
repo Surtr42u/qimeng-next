@@ -2,6 +2,8 @@
 
 独立 Kotlin / Compose 客户端，应用包名 `media.qimeng.next`。客户端不拥有媒体业务数据库或双向备份合并。用户已明确保留本机离线与远程双模式：可移除 embedded 模块运行同一个新 Go 服务，装配契约见 [本机运行模块](embedded/README.md)，基础启停、登录和证书更新已在云端本机仪器运行。业务与数据层从空目录编写；用户授权复用旧纯展示 UI 以保持界面一致，复用清单与边界见 [UI 来源](UI_SOURCES.md)。
 
+云端提供两种开发用 APK，最低系统版本声明为 Android 8.0（API 26）。连接现有 PC/NAS 影库，选 `Cloud verification` 中 `android` 作业的 `android-first-check` 制品。需要手机离线运行，选 `android-embedded` 作业的 `android-embedded-check` 制品。下载前核对对应作业和提交。首次打开后按运行模式选「NAS / 电脑」或「本机」。云端模拟器与真机验收进度见[当前状态](../docs/status.md)。
+
 ## 分层
 
 Gradle 的有效变体依赖、生产源集、纯客户端 APK 及服务决策回读由[模块门禁](architecture/README.md)记录。已安装版本的同场景截图采集见[旧版截图基准](baseline/README.md)。
@@ -42,11 +44,9 @@ SAF 批选先保存待传快照，允许改名后提交；系统分享可用已�
 
 ## 云端构建
 
-仅云端执行：JDK 17、Gradle 9.7.0、Android SDK 37 / Build Tools 36.0.0。应用 targetSdk 和隔离模拟器为 35。先运行仓库 SDK 生成脚本，再运行：
+应用构建作业以 Temurin 21 运行 Gradle 9.7.0，使用 Android SDK 37 和 Build Tools 37.0.0。Android 模块的 Java 源与目标兼容级别为 17，纯 JVM 模块使用 17 工具链。应用 targetSdk 与云端仪器模拟器均为 35。[构建配置](app/build.gradle.kts) · [云端工作流](../.github/workflows/prepare.yml)
 
-```sh
-gradle -p android -Pqimeng.embedded=false :app:assembleClientDebug :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug --stacktrace
-```
+`generate` 先提供同提交的 Kotlin SDK。纯客户端作业 `android` 关闭 embedded，运行 `verifyClientArchitecture`、客户端与核心模块单测和 `:app:lintClientDebug`。架构任务组装并读取实际客户端 APK。内嵌版在 `android-native` 提供两个架构的原生程序后由 `android-embedded` 构建和检查。[模块门禁与命令](architecture/README.md)
 
 云端专用 API 35 模拟器再运行 `:core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest`。这些测试覆盖快速切换只有一个活动页面、草稿恢复、减少动效、选择语义、大字/深色导航，以及队列重建、坏记录不伪装空队列、认证同源/重定向/断开边界；合成背景截图写入测试应用 external files 目录。JVM 测试另覆盖前后台停留区段、目标实例与查询代际。不得使用本机默认模拟器或手机，也不能访问旧 8420 实例。
 
