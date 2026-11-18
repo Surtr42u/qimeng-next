@@ -78,11 +78,18 @@ test("return restores browsing position and image viewer restores focus", async 
   await expect(page.locator(".media-card")).toHaveCount(48);
   const card = page.locator(".media-card").nth(30);
   await card.scrollIntoViewIfNeeded();
-  const scrollBefore = await page
-    .locator("[data-scroll-root]")
-    .evaluate((element) => element.scrollTop);
+  // WebKit may scroll the card a second time when resolving a pointer target.
+  // The user's departure position is the position when the card actually opens.
+  await card.evaluate(element => {
+    element.addEventListener("click", () => {
+      const root = element.closest("[data-scroll-root]")!;
+      element.setAttribute("data-test-scroll-at-click", String(root.scrollTop));
+    }, { once: true, capture: true });
+  });
   await card.click();
   await expect(page.locator(".overlay-backdrop[inert] #page-albums")).toHaveCount(1);
+  const scrollAtOpen = Number(await card.getAttribute("data-test-scroll-at-click"));
+  expect(scrollAtOpen).toBeGreaterThan(0);
   await expect(page.locator("#page-asset")).toHaveCSS("position", "fixed");
   await page.getByRole("button", { name: "查看原图并缩放" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -97,7 +104,7 @@ test("return restores browsing position and image viewer restores focus", async 
         .locator("[data-scroll-root]")
         .evaluate((element) => element.scrollTop),
     )
-    .toBeGreaterThan(Math.max(0, scrollBefore - 80));
+    .toBeCloseTo(scrollAtOpen, 0);
 });
 
 test("keyboard selection, reduced motion and light mode remain usable", async ({
