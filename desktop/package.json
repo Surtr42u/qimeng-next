@@ -1,7 +1,7 @@
 {
   "name": "qimeng-next-desktop", "version": "0.1.0", "private": true,
   "scripts": {
-    "icons": "tauri icon ../web/public/icon.svg --output src-tauri/icons",
+    "icons": "tauri icon ui/app-icon.png --output src-tauri/icons",
     "build": "tauri build",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml --locked"
   },

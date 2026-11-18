@@ -18,9 +18,10 @@ export type AuthorSourceChange = { author: Schema<"Author">; sources: string[] }
 export function useSaveAssetAuthors() {
   const attempts = useRef(new Map<string, string>());
   return useMutation({
-    mutationFn: async ({ asset, authorIds, sourceChanges }: {
+    mutationFn: async ({ asset, authorIds, newAuthorNames, sourceChanges }: {
       asset: Schema<"Asset">;
       authorIds?: string[];
+      newAuthorNames?: string[];
       sourceChanges: AuthorSourceChange[];
     }) => {
       let savedAsset = asset;
@@ -28,11 +29,15 @@ export function useSaveAssetAuthors() {
       const savedSources: Schema<"Author">[] = [];
       const sourceErrors: { id: string; name: string; error: unknown }[] = [];
       if (authorIds) {
+        const body = { expectedRevision: asset.revision, expectedAuthorsRevision: asset.authorsRevision, authorIds, newAuthorNames };
+        const signature = JSON.stringify(["asset-authors", asset.id, body]);
+        let key = attempts.current.get(signature);
+        if (!key) { key = newId(); attempts.current.set(signature, key); }
         try {
           savedAsset = await read(api.PATCH("/assets/{id}", {
-            params: { path: { id: asset.id } },
-            body: { expectedRevision: asset.revision, expectedAuthorsRevision: asset.authorsRevision, authorIds },
+            params: { path: { id: asset.id }, header: operationHeaders(key) }, body,
           }));
+          attempts.current.delete(signature);
         } catch (error) { linkError = error; }
       }
       if (!linkError) {

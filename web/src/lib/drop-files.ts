@@ -43,11 +43,20 @@ export async function droppedFiles(
       }
     }
   };
-  const entries = Array.from(data.items).map(
-    (item) => item.webkitGetAsEntry?.() as Entry | null,
-  );
-  if (entries.some(Boolean)) {
-    for (const entry of entries) if (entry) await walk(entry, "");
-  } else for (const file of Array.from(data.files)) add(file);
+  // DataTransfer access is only guaranteed during the drop event. Capture both
+  // representations before walking a directory or awaiting any file reads.
+  const inputs = Array.from(data.items).filter(item => item.kind === "file").map(item => ({
+    entry: item.webkitGetAsEntry?.() as Entry | null,
+    file: item.getAsFile(),
+  }));
+  if (!inputs.length) {
+    for (const file of Array.from(data.files)) add(file);
+  } else {
+    for (const input of inputs) {
+      if (input.entry) await walk(input.entry, "");
+      else if (input.file) add(input.file);
+      else throw new Error("拖入的条目无法读取，本次选择尚未上传。请重新选择文件。");
+    }
+  }
   return result;
 }

@@ -11,6 +11,11 @@ pub fn normalize(input: &str) -> Result<Url, String> {
     let value = if trimmed.contains("://") { trimmed.to_owned() } else { format!("http://{trimmed}") };
     let url = Url::parse(&value).map_err(|_| "服务器地址格式不正确")?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() { return Err("只接受 HTTP 或 HTTPS 服务器地址".into()); }
+    if let Some(url::Host::Domain(host)) = url.host() {
+        if !host.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_')) {
+            return Err("服务器主机名中含有无效字符".into());
+        }
+    }
     if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
         return Err("请填写服务器根地址，不要包含账户、密码、路径、参数或片段".into());
     }
@@ -18,7 +23,18 @@ pub fn normalize(input: &str) -> Result<Url, String> {
 }
 
 pub fn same_origin(expected: &Url, requested: &Url) -> bool {
-    matches!(requested.scheme(), "http" | "https") && requested.username().is_empty() && requested.password().is_none() && expected.origin() == requested.origin()
+    external_web_url(requested) && expected.origin() == requested.origin()
+}
+
+pub fn external_web_url(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https") && url.host().is_some() && url.username().is_empty() && url.password().is_none()
+}
+
+pub fn is_setup_page(url: &Url) -> bool {
+    ((matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
+        || (url.scheme() == "tauri" && url.host_str() == Some("localhost")))
+        && url.path() == "/connection.html" && url.port().is_none()
+        && url.username().is_empty() && url.password().is_none() && url.query().is_none() && url.fragment().is_none()
 }
 
 pub fn load(directory: &Path) -> Result<Option<Connection>, String> {
@@ -68,5 +84,13 @@ mod tests {
         let expected = normalize("https://example.test:8450").unwrap();
         assert!(same_origin(&expected, &Url::parse("https://example.test:8450/album?q=x").unwrap()));
         for value in ["http://example.test:8450/", "https://example.test/", "https://example.test.evil.test:8450/", "file:///tmp"] { assert!(!same_origin(&expected, &Url::parse(value).unwrap())); }
+    }
+
+    #[test]
+    fn setup_uses_only_the_bundled_entry_and_the_library_requires_a_literal_host() {
+        assert!(is_setup_page(&Url::parse("http://tauri.localhost/connection.html").unwrap()));
+        assert!(!is_setup_page(&Url::parse("https://example.test/connection.html").unwrap()));
+        assert!(!is_setup_page(&Url::parse("http://tauri.localhost/other.html").unwrap()));
+        assert!(normalize("https://*.example.test").is_err());
     }
 }

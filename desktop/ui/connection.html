@@ -1,1 +1,23 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>连接绮梦影库</title><link rel="stylesheet" href="connection.css"><script src="connection.js" defer></script></head><body><main><span class="eyebrow">绮梦影库 Next</span><h1>连接你的影库</h1><p>填写 PC 或 NAS 服务的根地址。媒体与账户仍由同一服务器管理。</p><form id="connection"><label for="address">服务器地址</label><input id="address" name="address" type="text" inputmode="url" autocomplete="url" placeholder="https://media.example.test" required><p id="error" role="alert" hidden></p><button id="save" type="submit">保存并连接</button></form><small>可从系统托盘再次打开此窗口。连接壳不保存访问令牌。</small></main></body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>连接服务器 · 绮梦影库</title>
+  <link rel="stylesheet" href="connection.css" />
+  <script src="connection.js" defer></script>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><img src="app-icon.png" alt="" /><h1>绮梦影库</h1></div>
+    <p class="sub">连接到你的 NAS 媒体库服务器</p>
+    <form id="connection">
+      <label for="address">服务器地址</label>
+      <input id="address" type="text" placeholder="http://192.0.2.8:8421" inputmode="url" autocomplete="off" spellcheck="false" autofocus required />
+      <p class="hint">与手机 App 登录页填同一个地址，服务端默认端口为 8421</p>
+      <div id="error" class="error" role="alert" hidden></div>
+      <button id="save" type="submit">保存并连接</button>
+    </form>
+  </main>
+</body>
+</html>

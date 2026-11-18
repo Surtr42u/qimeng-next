@@ -2,3 +2,8 @@
 identifier = "configure-server"
 description = "Read and change the connection origin from the bundled setup window."
 commands.allow = ["current_connection", "save_connection"]
+
+[[permission]]
+identifier = "own-titlebar"
+description = "Operate only the invoking library window. The target is chosen natively."
+commands.allow = ["window_action"]

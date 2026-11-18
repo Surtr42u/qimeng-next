@@ -267,9 +267,8 @@ jobs:
         with:
           name: live-integration-evidence
           retention-days: 7
-          path: |
-            web/test-results/
-            web/playwright-report/
+          path: web/test-results/**/live-synthetic-*.png
+          if-no-files-found: ignore
   mcp-compat:
     needs: [generate, server]
     runs-on: ubuntu-24.04

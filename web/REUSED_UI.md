@@ -23,11 +23,13 @@
 | web/src/pages/DataPage.tsx、BrowsingReviewPage.tsx、components/data/DonutCard.tsx、TrendChart.tsx、BrowsingReviewContent.tsx、ReviewInterestCard.tsx | web/src/pages/DataPage.tsx、components/LegacyDonutCard.tsx、LegacyTrendChart.tsx、LegacyReviewContent.tsx、LegacyReviewInterestCard.tsx | 保留指标/趋势库存/回顾占比/三榜的排列与图表；消费新SDK字段，客户端只做图形缩放与格式化 |
 | web/src/pages/SettingsPage.tsx、components/manage/SourceVocabularyCard.tsx | web/src/pages/SettingsPage.tsx、AcquisitionVocabularyPage.tsx | 原设置卡与保存/退出位置，原四推荐预设点选即保存；新设置请求保留在途新草稿 |
 | web/src/pages/LibraryManagePage.tsx、components/manage/ManagePageHeader.tsx | web/src/pages/ManagePage.tsx、components/LegacyManageHeader.tsx | 原三组八入口与管理返回标题，不增加主导航 |
+| web/src/pages/LibraryRegistryPage.tsx | web/src/pages/LibrariesPage.tsx | 原库卡与常驻注册表单；服务器根路径文本经owner专用解析接口映射受信存储，登记和扫描分别记账；计数/扫描状态/移除登记等待完整服务契约 |
+| web/src/pages/LibraryUploadPage.tsx、components/manage/UploadWorkbench.tsx、UploadDestinationCard.tsx、UploadMetadataCard.tsx、AuthorSuggestField.tsx、UploadQueueList.tsx | web/src/components/AuthorSuggestField.tsx、pages/UploadPage.tsx、UploadDestinationCard.tsx、UploadQueueList.tsx | 原上传位置与目标库胶囊、作者与来源折叠、拖放和全宽队列。新 data 层封存每批目标及输入，Go 在入库事务内追加已选常规作者来源。 |
 | web/src/components/manage/DirBrowser.tsx、DirFileList.tsx、MoveDialog.tsx、CreateDirDialog.tsx、components/ui/multi-select-bar.tsx、batch-ops-panel.tsx | web/src/pages/FileManagementPage.tsx、FileManagementDialogs.tsx | 原目录/文件行、单项和批量移动/回收展示；状态和幂等编排全新，目录树目前按真实分页导航，完整树与行计数待服务契约 |
 | web/src/pages/AssetDetailPage.tsx、components/detail/AssetFileName.tsx、AuthorCard.tsx、UpNextList.tsx、AssetTagRow.tsx、FileOpsButton.tsx | web/src/pages/AssetPage.tsx、AssetSidebar.tsx、AssetTagDialog.tsx、components/AssetFileName.tsx | 原媒体舞台/分页/标题与文件名/互动行/标签弹窗/作者与推荐右栏；计数、版本、关注、推荐与幂等写入经新data层 |
 | web/src/components/media/image-viewer.tsx、lib/image-viewer-math.ts | web/src/components/ImageViewer.tsx、lib/viewer-geometry.ts | 原查看器DOM与视觉坐标手势，保留混合媒体查看意图；补背景inert、换件后的焦点归还与实际读取错误 |
 | web/src/components/media/video-player.tsx、lib/player-labels.ts、player-fullscreen.ts | web/src/components/VideoPlayer.tsx、lib/player-controls.ts、player-seek.ts、player-fullscreen.ts | 原ArtPlayer控件、画质/倍速文案、全屏chrome与zoom坐标修正；不复制旧engagement-reporting/use-progress；内容版本进度与事件重新接线，外部字幕/标记通过安全DOM写入 |
-| web/src/pages/AssetEditPage.tsx、components/manage/AuthorSuggestField.tsx | web/src/pages/AssetEditPage.tsx | 原独立作者编辑与联想/逐作者来源区；新data用例逐项记录成功与失败，原子新建作者及COS混合关联等待同一Go身份用例 |
+| web/src/pages/AssetEditPage.tsx、components/manage/AuthorSuggestField.tsx | web/src/pages/AssetEditPage.tsx | 原独立编辑、联想、待新建清单与逐作者来源区；新协议在关联事务里创建或复用作者，保留 COS 固定关联，并按来源的独立回执保留失败草稿。 |
 | web/src/lib/format.ts 的formatBytes/formatCount | web/src/lib/format.ts | 原大小单位与万计数展示；未知值仍明确未知，不以0填充 |
 
 web/src/styles/legacy-base.css 补回旧UI原本消费的浏览器重置规则；legacy-adapter.css 连接新变量与原样式、处理类名冲突，并停用被新连续过渡接管的旧入场动画。没有新增 Web 底栏。独立 GlassNavigation 不改变宿主导航布局；新增 SelectionLens 只在既有侧栏/顶栏的实际选中元素下移动。

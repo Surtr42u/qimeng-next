@@ -85,25 +85,20 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   await page.getByRole("button", { name: "新建作者", exact: true }).click();
   await page.getByLabel("作者名称", { exact: true }).fill(authorName);
   await page.getByRole("button", { name: "保存名称", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: authorName, exact: true }),
-  ).toBeVisible();
+  const authorRow = page.locator("a.author-identity").filter({ has: page.getByText(authorName, { exact: true }) });
+  await expect(authorRow).toBeVisible();
+  const authorId = decodeURIComponent((await authorRow.getAttribute("href"))!.split("/").at(-1)!);
 
   await page.goto("/manage/upload");
+  await page.getByRole("group", { name: "目标库", exact: true }).getByRole("button", { name: libraryName, exact: true }).click();
+  await expect(page.getByRole("button", { name: "选择文件并立即上传", exact: true })).toBeEnabled();
   await page
-    .getByLabel("目标媒体库")
-    .selectOption({ label: `${libraryName} · 常规` });
-  await expect(
-    page.getByRole("button", { name: "选择文件", exact: true }),
-  ).toBeEnabled();
-  await page
-    .locator("input[type=file]:not([webkitdirectory])")
-    .first()
+    .getByLabel("选择要上传的文件", { exact: true })
     .setInputFiles(picture);
   const pictureRow = page
-    .locator(".queue-card")
+    .locator(".upload-task")
     .filter({ hasText: "CI 合成图片.png" });
-  await expect(pictureRow.getByText("已入库", { exact: true })).toBeVisible({
+  await expect(pictureRow.getByText("已完成", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
   await pictureRow.getByRole("link", { name: "查看入库内容" }).click();
@@ -126,6 +121,10 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
     .getByRole("group", { name: "作者联想", exact: true })
     .getByText(authorName, { exact: true })
     .click();
+  const newName = "CI 新建作者 " + suffix;
+  await page.getByLabel("查找作者", { exact: true }).fill(newName);
+  await page.getByRole("button", { name: "新建：" + newName + " 保存时创建" }).click();
+  await expect(page.getByText("待新建作者（保存后自动创建并关联）", { exact: true })).toBeVisible();
   await page.locator("#page-asset-edit").getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.locator("#page-asset-edit")).toHaveCount(0);
   await page.getByRole("button", { name: "收藏", exact: true }).click();
@@ -146,9 +145,13 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   expect(response.ok()).toBe(true);
   const saved = await response.json();
   expect(saved.tags).toContain("CI 合成标签");
-  expect(saved.authorName).toBe(authorName);
+  expect(saved.authorIds).toContain(authorId);
+  expect(saved.authorIds).toHaveLength(2);
+  const createdAuthorId = saved.authorIds.find((id: string) => id !== authorId);
+  const linkedAuthor = await page.request.get("/api/v1/authors/" + encodeURIComponent(createdAuthorId));
+  expect((await linkedAuthor.json()).name).toBe(newName);
   expect(saved.favorite).toBe(true);
-  await page.goto(`/authors/${encodeURIComponent(saved.authorId)}/profile`);
+  await page.goto(`/authors/${encodeURIComponent(authorId)}/profile`);
   await page
     .getByRole("button", { name: "编辑基础资料", exact: true })
     .click();
@@ -168,7 +171,7 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   await page.reload();
   await expect(page.locator(".creator-profile-avatar img")).toBeVisible();
   const profileResponse = await page.request.get(
-    `/api/v1/authors/${encodeURIComponent(saved.authorId)}/profile`,
+    `/api/v1/authors/${encodeURIComponent(authorId)}/profile`,
   );
   expect(profileResponse.ok()).toBe(true);
   const profile = await profileResponse.json();
@@ -188,22 +191,24 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   ).toBeVisible();
 
   await page.goto("/manage/upload");
+  await page.getByRole("group", { name: "目标库", exact: true }).getByRole("button", { name: libraryName, exact: true }).click();
+  await expect(page.getByRole("button", { name: "选择文件并立即上传", exact: true })).toBeEnabled();
+  await page.locator(".upload-metadata-card summary").click();
+  await page.getByLabel("批次作者（可选，联想选择）").fill(authorName);
+  await page.getByRole("group", { name: "作者联想" }).getByText(authorName, { exact: true }).click();
+  await page.getByPlaceholder("新站点或 URL，回车加入").fill("合成渠道");
+  await page.getByPlaceholder("新站点或 URL，回车加入").press("Enter");
   await page
-    .getByLabel("目标媒体库")
-    .selectOption({ label: `${libraryName} · 常规` });
-  await expect(
-    page.getByRole("button", { name: "选择文件", exact: true }),
-  ).toBeEnabled();
-  await page
-    .locator("input[type=file]:not([webkitdirectory])")
-    .first()
+    .getByLabel("选择要上传的文件", { exact: true })
     .setInputFiles(video);
   const videoRow = page
-    .locator(".queue-card")
+    .locator(".upload-task")
     .filter({ hasText: "CI 合成视频.mp4" });
-  await expect(videoRow.getByText("已入库", { exact: true })).toBeVisible({
+  await expect(videoRow.getByText("已完成", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
+  const updatedAuthor = await page.request.get("/api/v1/authors/" + encodeURIComponent(authorId));
+  expect((await updatedAuthor.json()).acquisitionSources).toContain("合成渠道");
   await videoRow.getByRole("link", { name: "查看入库内容" }).click();
   await expect
     .poll(() =>

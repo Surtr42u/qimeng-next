@@ -1,7 +1,7 @@
 {
   "identifier": "connection",
-  "description": "Only the bundled connection form may read or change the server origin. Remote library windows have no native capabilities.",
+  "description": "Only the bundled connection form may read or change the server origin.",
   "local": true,
   "windows": ["connection"],
-  "permissions": ["core:default", "configure-server"]
+  "permissions": ["configure-server"]
 }

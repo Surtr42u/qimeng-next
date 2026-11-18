@@ -7,11 +7,12 @@ import type { paths } from '../api/generated/schema';
 import { invalidateLibrary } from "./query";
 import { useRemoteKey } from "./session";
 
-export function useLibraries() {
+export function useLibraries(observeScans = false) {
   const key = useRemoteKey();
   return useQuery({
     queryKey: [...key, "libraries"],
     queryFn: ({ signal }) => read(api.GET("/libraries", { signal })),
+    refetchInterval: query => observeScans && query.state.data?.items.some(library => library.scanState === "scanning") ? 5000 : false,
   });
 }
 export function useStorages() {
@@ -144,10 +145,11 @@ export function useMergeAuthors() {
     onSuccess: invalidateLibrary,
   });
 }
-export function useCollections(libraryId?: string) {
+export function useCollections(libraryId?: string, enabled = true) {
   const key = useRemoteKey();
   return useInfiniteQuery({
     queryKey: [...key, "collections", libraryId],
+    enabled,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       read(

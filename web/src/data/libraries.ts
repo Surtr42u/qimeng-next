@@ -15,6 +15,14 @@ export function useLibraryLocation(id: string) {
   });
 }
 
+export function useRemoveLibrary(onRemoved: () => void) {
+  return useMutation({
+    mutationFn: ({ id, revision, key }: { id: string; revision: number; key: string }) =>
+      read(api.DELETE("/libraries/{id}", { params: { path: { id }, query: { expectedRevision: revision }, header: operationHeaders(key) } })),
+    onSuccess: () => { onRemoved(); return invalidateLibrary(); },
+  });
+}
+
 export function useRegisterLibrary() {
   const scope = useRemoteKey();
   const attempt = useRef<{ signature: string; key: string; location?: Schema<"LibraryLocation">; library?: Schema<"Library"> }>({ signature: "", key: newId() });

@@ -72,6 +72,13 @@ function Shell() {
   const [showBackTop, setShowBackTop] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const [themeError, setThemeError] = useState(false);
+  const [windowError, setWindowError] = useState(false);
+  const desktop = (window as Window & { __QIMENG_DESKTOP__?: boolean }).__QIMENG_DESKTOP__ === true;
+  useEffect(() => {
+    const failed = () => setWindowError(true);
+    window.addEventListener("qimeng-window-action-error", failed);
+    return () => window.removeEventListener("qimeng-window-action-error", failed);
+  }, []);
   const home = location.pathname === "/";
   const tab =
     params.get("tab") === "rank" ? "hot" : (params.get("tab") ?? "recommend");
@@ -208,7 +215,7 @@ function Shell() {
         </div>
       </aside>
       <div className="main">
-        <header className="header" data-home={home ? "" : undefined}>
+        <header className="header" data-qimeng-titlebar="" data-home={home ? "" : undefined}>
           <div className="header--left">
             {home && (
               <SegmentedControl
@@ -225,16 +232,16 @@ function Shell() {
           </div>
           <LegacySearchBox />
           <div className="header--right">
-            <div className="win-controls" aria-hidden="true">
-              <span className="win-btn">
+            <div className="win-controls" aria-hidden={!desktop || undefined}>
+              <button type="button" className="win-btn" title="最小化" data-window-action="minimize" tabIndex={desktop ? 0 : -1}>
                 <WinMinIcon />
-              </span>
-              <span className="win-btn">
+              </button>
+              <button type="button" className="win-btn" title="最大化" data-window-action="toggleMaximize" tabIndex={desktop ? 0 : -1}>
                 <WinMaxIcon />
-              </span>
-              <span className="win-btn">
+              </button>
+              <button type="button" className="win-btn" title="关闭" data-window-action="close" tabIndex={desktop ? 0 : -1}>
                 <WinCloseIcon />
-              </span>
+              </button>
             </div>
           </div>
         </header>
@@ -274,6 +281,7 @@ function Shell() {
             网络已断开。当前可能显示缓存内容，管理操作需要恢复连接。
           </div>
         )}
+        {windowError && <div className="connection-warning" role="alert">窗口操作未完成，可从系统托盘打开或退出影库。<button type="button" className="pill" onClick={() => setWindowError(false)}>知道了</button></div>}
         {themeError && (
           <div className="connection-warning" role="status">
             主题已切换，但浏览器无法保存偏好。
