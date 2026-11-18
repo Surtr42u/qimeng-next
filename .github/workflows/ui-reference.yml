@@ -1,0 +1,70 @@
+name: Installed Web UI comparison
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    paths:
+      - '.github/workflows/ui-reference.yml'
+      - 'web/tests/ui-reference*.mjs'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      REFERENCE_SHA: 745974081716a9d69a95002a41220e35e743d764
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: next
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Surtr42u/qimeng-media
+          ref: '745974081716a9d69a95002a41220e35e743d764'
+          path: installed
+          persist-credentials: false
+      - name: Verify source identity
+        run: |
+          test "$(git -C installed rev-parse HEAD)" = "$REFERENCE_SHA"
+          test "$(git -C next rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            installed/web/package-lock.json
+            next/web/package-lock.json
+      - name: Build installed Web from its own protocol and lockfile
+        working-directory: installed/web
+        run: |
+          npm ci
+          npm exec -- openapi-ts -f src/api/openapi-ts.config.ts
+          npm run build
+          git diff --exit-code
+      - name: Build candidate and install one shared Chromium
+        working-directory: next/web
+        run: |
+          npm ci
+          npm run generate:api
+          npm run build
+          npx playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Exercise both built entry points
+        working-directory: next/web
+        env:
+          REFERENCE_DIST: ${{ github.workspace }}/installed/web/dist
+          CANDIDATE_DIST: ${{ github.workspace }}/next/web/dist
+          COMPARISON_DIR: ${{ github.workspace }}/evidence
+        run: node tests/ui-reference.mjs
+      - name: Publish measurements to run summary
+        if: always()
+        run: if test -f evidence/report.md; then cat evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: installed-web-comparison
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: warn

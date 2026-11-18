@@ -48,6 +48,8 @@ Node 24；命令工作目录为 `web`。锁文件来源与 SDK 摘要由根 CI �
 
 另有 `npm run test:live` 真实服务闭环：仅在 `CI=true`、`QIMENG_E2E_BASE_URL=http://127.0.0.1:18481` 且提供一次性 `QIMENG_E2E_TOKEN` 时运行。CI先启动同提交Go服务并托管同提交`web/dist`，PATH需ffmpeg/ffprobe，并通过`QIMENG_E2E_LIBRARY_ROOT`提供已加入服务受信storage配置的云端临时根。测试只在该根创建每次独立子目录，从原服务器根路径文本框注册；路径不放查询串或日志。测试在云端生成合成PNG与短视频，实际登录、建库、上传、编辑、推荐回读、播放和时间轴持久化；该项目不使用route mock，不连接8420或任何既有库。执行结果仍以根状态页中的提交SHA与CI日志为准。
 
+GitHub Actions 的 `Installed Web UI comparison` 独立检出已安装旧提交 `745974081716a9d69a95002a41220e35e743d764` 与当前提交，各自生成 SDK、构建 Web 并读取同一组十张合成图片。云端 Chromium 在 1440×900 和 390×844 分别由首页点击相册，再从卡片打开详情、返回。下载 `installed-web-comparison` 产物可查看原图、六张并排图、未遮罩的逐像素差异、元素位置、底衬滚动、实际 HTTP 上下行字节和 SHA-256。`report.md` 会注明失败及未覆盖场景。此验证不连接现有服务，也不把旧代码放入产品。
+
 ## 依赖来源与固定版本
 
 2026-11-17 通过官方 npm registry 实际读取精确版本和 peerDependencies。首次云端准备发现 openapi-typescript 只支持 TypeScript 5.x，已使用 5.9.3；不以 force 或 legacy-peer-deps 绕过。
