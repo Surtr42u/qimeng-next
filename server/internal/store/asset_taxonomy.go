@@ -16,13 +16,17 @@ func CompleteTaxonomy(a model.Asset) *TaxonomyEdits {
 }
 
 func SaveAssetTaxonomy(ctx context.Context, q Querier, a model.Asset, edit *TaxonomyEdits) error {
+	return writeAssetTaxonomy(ctx, q, a, edit, false)
+}
+
+func writeAssetTaxonomy(ctx context.Context, q Querier, a model.Asset, edit *TaxonomyEdits, newAsset bool) error {
 	if edit.SourceIDs != nil {
-		if err := saveAssetIDs(ctx, q, a.ID, "asset_sources", "source_id", edit.SourceIDs, false); err != nil {
+		if err := saveAssetIDs(ctx, q, a.ID, "asset_sources", "source_id", edit.SourceIDs, newAsset); err != nil {
 			return err
 		}
 	}
 	if edit.CharacterIDs != nil {
-		if err := saveAssetIDs(ctx, q, a.ID, "asset_characters", "character_id", edit.CharacterIDs, false); err != nil {
+		if err := saveAssetIDs(ctx, q, a.ID, "asset_characters", "character_id", edit.CharacterIDs, newAsset); err != nil {
 			return err
 		}
 	}
@@ -33,6 +37,10 @@ func SaveAssetTaxonomy(ctx context.Context, q Querier, a model.Asset, edit *Taxo
 	var characters []string
 	if len(a.CharacterIDs) == 0 {
 		characters = a.Characters
+	}
+	// Confirmed identities are already recorded in their relationship rows.
+	if newAsset && sourceText == "" && len(characters) == 0 && !a.TaxonomyDerived && len(a.TaxonomyCandidates) == 0 {
+		return nil
 	}
 	characterText, err := Encode(append([]string{}, characters...))
 	if err != nil {

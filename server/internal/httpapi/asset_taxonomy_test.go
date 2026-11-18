@@ -31,6 +31,10 @@ func TestTaxonomySelectionOrderAndManualClearSurviveFileWrites(t *testing.T) {
 	rolesOrdered := []string{roles[0].ID, roles[1].ID}
 	u, _ := f.upload("taxonomy-order.png", 109, map[string]any{"sourceIds": sourcesOrdered, "characterIds": rolesOrdered, "acquisitionSources": []string{"archive channel"}})
 	a := *f.complete(u).Asset
+	var evidenceRows int
+	if err := f.s.DB.DB.QueryRow("SELECT count(*) FROM asset_taxonomy_state WHERE asset_id=?", a.ID).Scan(&evidenceRows); err != nil || evidenceRows != 0 {
+		t.Fatalf("upload with only confirmed IDs stored an empty taxonomy evidence row: count=%d err=%v", evidenceRows, err)
+	}
 	base := "/assets/" + a.ID
 	check := func(asset model.Asset, sourceIDs, characterIDs []string) {
 		t.Helper()

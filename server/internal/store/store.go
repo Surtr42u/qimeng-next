@@ -157,7 +157,7 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 		return err
 	}
 	if newAsset {
-		return SaveAssetTaxonomy(ctx, q, a, CompleteTaxonomy(a))
+		return writeAssetTaxonomy(ctx, q, a, CompleteTaxonomy(a), true)
 	}
 	return nil
 }
