@@ -45,6 +45,7 @@ import kotlinx.coroutines.delay
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.PlaybackHistory
 import media.qimeng.next.model.Asset
 
 /** The sole platform-view bridge uses the official Media3 player; gesture orchestration is new Compose code. */
@@ -62,7 +63,6 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
     var savedPosition by rememberSaveable(asset.id, asset.version) { mutableLongStateOf(if (asset.positionVersion == asset.version) asset.positionMs else 0) }
     var error by remember { mutableStateOf<String?>(null) }
     var staleContent by remember { mutableStateOf(false) }
-    var positionWasUsed by remember(asset.id, asset.version) { mutableStateOf(false) }
     var playAfterAttach by remember(asset.id, asset.version) { mutableStateOf(false) }
     val player = remember(asset.id, asset.version) {
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(model.mediaClient(asset.target))))
@@ -71,6 +71,10 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
     var surfaceReady by remember(player) { mutableStateOf(false) }
     // The disposing player's final position belongs to its original content version.
     val playbackAsset = remember(player) { asset }
+    val history = remember(player) {
+        PlaybackHistory(player, { model.recordPlay(playbackAsset, viewingSession) },
+            { position -> model.recordProgress(playbackAsset, position, viewingSession) })
+    }
     LaunchedEffect(activated) { onPlayerActiveChanged(activated) }
     val activity = context.activity()
     val canRotate = asset.width?.let { w -> asset.height?.let { h -> w > h && h > 0 } } == true
@@ -95,7 +99,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
                 playAfterAttach = false
                 if (player.currentMediaItem != null) savedPosition = player.currentPosition
                 player.pause()
-                if (positionWasUsed) model.recordProgress(playbackAsset, player.currentPosition, viewingSession)
+                history.checkpoint()
             }
         }
         val listener = object : Player.Listener {
@@ -104,19 +108,18 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
                 staleContent = generateSequence<Throwable>(failure) { it.cause }.filterIsInstance<HttpDataSource.InvalidResponseCodeException>().any { it.responseCode == 409 }
                 error = if (staleContent) "媒体内容已更新，请重新读取" else "视频无法播放，请检查网络或媒体格式"
             }
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) { positionWasUsed = true; model.recordPlay(playbackAsset, viewingSession) }
-            }
-            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) positionWasUsed = true
-            }
         }
-        owner.lifecycle.addObserver(observer); player.addListener(listener)
+        owner.lifecycle.addObserver(observer)
+        player.addListener(listener)
+        player.addListener(history)
         surfaceReady = player.surfaceSize.let { it.width > 0 && it.height > 0 }
         onDispose {
             if (player.currentMediaItem != null) savedPosition = player.currentPosition
-            if (positionWasUsed) model.recordProgress(playbackAsset, player.currentPosition, viewingSession)
-            owner.lifecycle.removeObserver(observer); player.removeListener(listener); player.release()
+            history.checkpoint()
+            owner.lifecycle.removeObserver(observer)
+            player.removeListener(listener)
+            player.removeListener(history)
+            player.release()
         }
     }
     LaunchedEffect(player, activated, surfaceReady, playAfterAttach) {
@@ -137,7 +140,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
             delay(10_000)
             if (player.isPlaying) {
                 savedPosition = player.currentPosition
-                model.recordProgress(playbackAsset, savedPosition, viewingSession)
+                history.checkpoint()
             }
         }
     }

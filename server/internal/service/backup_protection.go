@@ -135,6 +135,9 @@ func (s *Service) StartBatchProtection(ctx context.Context, w *Write, batchID st
 	ready := 0
 	for _, input := range inputs {
 		item := ProtectedInput{InputID: input.ID, Ordinal: input.Ordinal, State: "retained", Reason: input.State, UploadID: input.UploadID}
+		if input.State == "failed" && input.ErrorCode != "" {
+			item.Reason = input.ErrorCode
+		}
 		if input.State == "ingested" {
 			upload, e := store.Get[model.Upload](ctx, s.DB.DB, "SELECT data FROM uploads WHERE id=?", input.UploadID)
 			if e != nil {

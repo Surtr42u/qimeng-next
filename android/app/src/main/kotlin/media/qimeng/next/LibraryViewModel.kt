@@ -91,6 +91,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val tagVocabulary = mutableTags.asStateFlow()
     private val mutableTagCursor = MutableStateFlow<String?>(null)
     val tagCursor = mutableTagCursor.asStateFlow()
+    private val tagReads = RequestGeneration()
     private val lists = mutableMapOf<String, MutableStateFlow<ListState<Asset>>>()
     private val queries = mutableMapOf<String, AssetQuery>()
     private val listJobs = mutableMapOf<String, Job>()
@@ -126,6 +127,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 lists.values.forEach { it.value = ListState() }
                 mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
                 mutableAssetAuthors.value = emptyList()
+                tagReads.next()
                 mutableTags.value = emptyList(); mutableTagCursor.value = null
                 libraryState.value = ListState(); mutableCapabilities.value = null
                 analyticsJob?.cancel(); reviewJob?.cancel(); collectionJob?.cancel(); rankingJob?.cancel()
@@ -359,8 +361,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun saveAcquisitionSources(asset: Asset, sources: List<String>, onSaved: () -> Unit) = action {
         publishAsset(repository.updateAcquisitionSources(asset, sources)); onSaved()
     }
-    fun loadTags(next: Boolean = false) = action {
-        val page = repository.tags(if (next) mutableTagCursor.value else null)
+    fun loadTags(next: Boolean = false) = action(blocking = false) { readTags(next) }
+
+    private suspend fun readTags(next: Boolean) {
+        val cursor = if (next) (mutableTagCursor.value ?: return) else null
+        val ticket = tagReads.next()
+        val page = repository.tags(cursor)
+        if (!tagReads.isCurrent(ticket)) return
         mutableTags.value = if (next) (mutableTags.value + page.items).distinct() else page.items
         mutableTagCursor.value = page.nextCursor
     }
@@ -370,8 +377,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun createTag(name: String, onSaved: (String) -> Unit) = action { onSaved(repository.createTag(name)) }
     fun refreshTagsState() = action {
         mutableAsset.value?.let { publishAsset(repository.asset(it.id)) }
-        val page = repository.tags()
-        mutableTags.value = page.items; mutableTagCursor.value = page.nextCursor
+        readTags(false)
     }
     fun viewSessionId(): String = saved.get<String>("viewSession") ?: UUID.randomUUID().toString().also { saved["viewSession"] = it }
     fun recordView(asset: Asset, sessionId: String) = graph.recordEvent(asset, "view", sessionId)

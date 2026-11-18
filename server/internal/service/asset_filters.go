@@ -16,7 +16,7 @@ import (
 
 const browseCTE = `WITH activity AS (SELECT asset_id,sum(views) views,sum(plays) plays FROM asset_daily_stats GROUP BY asset_id)`
 const browseFrom = ` FROM assets a JOIN libraries l ON l.id=a.library_id LEFT JOIN activity st ON st.asset_id=a.id `
-const assetSearchText = `(a.file_name||char(10)||substr(a.relative_path,1,length(a.relative_path)-length(a.file_name))||char(10)||COALESCE((SELECT group_concat(tag,char(10)) FROM asset_tag_names WHERE asset_id=a.id),'')||char(10)||COALESCE((SELECT group_concat(au.name||' '||COALESCE(json_extract(au.data,'$.aliases'),''),char(10)) FROM asset_authors aa JOIN authors au ON au.id=aa.author_id WHERE aa.asset_id=a.id),'')||char(10)||COALESCE((SELECT group_concat(s.name,char(10)) FROM asset_sources x JOIN sources s ON s.id=x.source_id WHERE x.asset_id=a.id),json_extract(a.data,'$.source'),'')||char(10)||COALESCE((SELECT group_concat(c.name,char(10)) FROM asset_characters x JOIN characters c ON c.id=x.character_id WHERE x.asset_id=a.id),json_extract(a.data,'$.characters'),''))`
+const assetSearchText = `(a.file_name||char(10)||substr(a.relative_path,1,length(a.relative_path)-length(a.file_name))||char(10)||COALESCE((SELECT group_concat(tag,char(10)) FROM asset_tag_names WHERE asset_id=a.id),'')||char(10)||COALESCE((SELECT group_concat(au.name||' '||COALESCE(json_extract(au.data,'$.aliases'),''),char(10)) FROM asset_authors aa JOIN authors au ON au.id=aa.author_id WHERE aa.asset_id=a.id),'')||char(10)||COALESCE((SELECT group_concat(s.name,char(10)) FROM asset_source_memberships x JOIN sources s ON s.id=x.source_id WHERE x.asset_id=a.id),json_extract(a.data,'$.source'),'')||char(10)||COALESCE((SELECT group_concat(c.name,char(10)) FROM asset_characters x JOIN characters c ON c.id=x.character_id WHERE x.asset_id=a.id),json_extract(a.data,'$.characters'),''))`
 
 type browsePredicate struct {
 	Where     string
@@ -35,6 +35,7 @@ const assetNameMatches = `(qimeng_search_token(` + assetSearchText + `,?)=1 OR a
  UNION ALL
  SELECT cm.asset_id FROM collection_aliases ca JOIN collection_members cm ON cm.collection_id=ca.collection_id
  WHERE qimeng_search_token(ca.alias,?)=1))`
+
 type browseSort struct {
 	Expression, Name              string
 	Descending, Numeric, Nullable bool
@@ -162,11 +163,11 @@ func sourceSelection(ids []string) (string, []any) {
 	parts := []string{}
 	args := []any{}
 	if len(selected) > 0 {
-		parts = append(parts, "EXISTS(SELECT 1 FROM asset_sources x WHERE x.asset_id=a.id AND x.source_id IN (SELECT value FROM json_each(?)))")
+		parts = append(parts, "EXISTS(SELECT 1 FROM asset_source_memberships x WHERE x.asset_id=a.id AND x.source_id IN (SELECT value FROM json_each(?)))")
 		args = append(args, queryArray(selected))
 	}
 	if other {
-		parts = append(parts, "(NOT "+assetIsCOS+" AND NOT EXISTS(SELECT 1 FROM asset_sources x WHERE x.asset_id=a.id))")
+		parts = append(parts, "(NOT "+assetIsCOS+" AND NOT EXISTS(SELECT 1 FROM asset_source_memberships x WHERE x.asset_id=a.id))")
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args
 }

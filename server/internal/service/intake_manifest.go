@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"qimeng.local/next/server/internal/domain"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/store"
 )
@@ -33,8 +34,8 @@ func normalizeIntakeInput(in model.IntakeInput) (model.IntakeInput, error) {
 	if len(p) > 4096 || !utf8.ValidString(p) || strings.ContainsAny(p, ":\x00") || strings.HasPrefix(p, "/") || p == ".." || strings.HasPrefix(p, "../") || (p != "" && path.Clean(p) != p) {
 		return in, Fail(400, "invalid_source_path", "输入来源只能是规范相对路径。")
 	}
-	if in.Size != nil && *in.Size < 1 {
-		return in, Fail(400, "invalid_input_size", "已知来源长度须大于零；未知时省略长度。")
+	if in.Size != nil && *in.Size < 0 {
+		return in, Fail(400, "invalid_input_size", "来源长度不能为负数。")
 	}
 	if in.ExpectedHash != "" {
 		if _, e := hex.DecodeString(in.ExpectedHash); e != nil || len(in.ExpectedHash) != 64 {
@@ -43,6 +44,18 @@ func normalizeIntakeInput(in model.IntakeInput) (model.IntakeInput, error) {
 		in.ExpectedHash = strings.ToLower(in.ExpectedHash)
 	}
 	return in, nil
+}
+
+func intakeRejection(in model.IntakeInput) string {
+	if in.Size != nil && *in.Size == 0 {
+		return "empty_input"
+	}
+	if in.NameState == "known" && len(path.Ext(in.OriginalFileName)) > 1 {
+		if _, _, supported := domain.MediaType(in.OriginalFileName); !supported {
+			return "unsupported_media"
+		}
+	}
+	return ""
 }
 
 func (s *Service) SetBatchInputs(ctx context.Context, w *Write, id string, in model.BatchInputsSet) (model.Batch, error) {
@@ -73,10 +86,10 @@ func (s *Service) SetBatchInputs(ctx context.Context, w *Write, id string, in mo
 	if e != nil {
 		return batch, e
 	}
-	return sealIntakeInputs(ctx, q, batch, in.Inputs)
+	return sealIntakeInputs(ctx, q, batch, in.Inputs, false)
 }
 
-func sealIntakeInputs(ctx context.Context, q store.Querier, batch model.Batch, inputs []model.IntakeInput) (model.Batch, error) {
+func sealIntakeInputs(ctx context.Context, q store.Querier, batch model.Batch, inputs []model.IntakeInput, implicitUpload bool) (model.Batch, error) {
 	if len(inputs) < 1 || len(inputs) > MaxBatchItems {
 		return batch, Fail(400, "invalid_manifest", "每批须完整登记1–100个输入，不能截断清单。")
 	}
@@ -108,7 +121,16 @@ func sealIntakeInputs(ctx context.Context, q store.Querier, batch model.Batch, i
 		if e != nil {
 			return batch, e
 		}
-		if _, e = q.ExecContext(ctx, "INSERT INTO batch_inputs(batch_id,input_id,ordinal,data) VALUES(?,?,?,?)", batch.ID, input.ID, ordinal, raw); e != nil {
+		// An implicit upload has already supplied a validated transfer name and
+		// positive size; its original picker name is only source metadata.
+		code := ""
+		if !implicitUpload {
+			code = intakeRejection(input)
+			if code != "" {
+				batch.State = "partial"
+			}
+		}
+		if _, e = q.ExecContext(ctx, "INSERT INTO batch_inputs(batch_id,input_id,ordinal,data,rejection_code) VALUES(?,?,?,?,?)", batch.ID, input.ID, ordinal, raw, code); e != nil {
 			return batch, e
 		}
 	}
@@ -116,7 +138,10 @@ func sealIntakeInputs(ctx context.Context, q store.Querier, batch model.Batch, i
 }
 
 func (s *Service) batchInputs(ctx context.Context, q store.Querier, id string) ([]model.BatchInput, error) {
-	rows, e := q.QueryContext(ctx, `SELECT i.data,i.ordinal,coalesce(i.upload_id,''),CASE WHEN i.cancelled=1 THEN 'cancelled' ELSE coalesce(u.state,'pending') END,coalesce(json_extract(u.data,'$.assetId'),''),coalesce(json_extract(u.data,'$.errorCode'),'') FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id WHERE i.batch_id=? ORDER BY i.ordinal LIMIT 101`, id)
+	rows, e := q.QueryContext(ctx, `SELECT i.data,i.ordinal,coalesce(i.upload_id,''),
+ CASE WHEN i.rejection_code!='' THEN 'failed' WHEN i.cancelled=1 THEN 'cancelled' ELSE coalesce(u.state,'pending') END,
+ coalesce(json_extract(u.data,'$.assetId'),''),coalesce(nullif(i.rejection_code,''),json_extract(u.data,'$.errorCode'),'')
+ FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id WHERE i.batch_id=? ORDER BY i.ordinal LIMIT 101`, id)
 	if e != nil {
 		return nil, e
 	}
@@ -155,12 +180,16 @@ func (s *Service) validateUploadInput(ctx context.Context, in *model.UploadInput
 	var raw string
 	var existing sql.NullString
 	var cancelled bool
-	e = s.DB.DB.QueryRowContext(ctx, "SELECT data,upload_id,cancelled FROM batch_inputs WHERE batch_id=? AND input_id=?", in.BatchID, in.InputID).Scan(&raw, &existing, &cancelled)
+	var rejected string
+	e = s.DB.DB.QueryRowContext(ctx, "SELECT data,upload_id,cancelled,rejection_code FROM batch_inputs WHERE batch_id=? AND input_id=?", in.BatchID, in.InputID).Scan(&raw, &existing, &cancelled, &rejected)
 	if errors.Is(e, sql.ErrNoRows) {
 		return Fail(409, "input_not_declared", "此输入不在原始清单内，不能补入已封存批次。")
 	}
 	if e != nil {
 		return e
+	}
+	if rejected != "" {
+		return Fail(409, rejected, "这项来源在原始选择中已记为无法上传，请查看其输入回执。")
 	}
 	if existing.Valid {
 		return Fail(409, "input_already_received", "此原始输入已有上传身份，请读取批次结果后沿原上传续传。")
@@ -185,7 +214,7 @@ func (s *Service) validateUploadInput(ctx context.Context, in *model.UploadInput
 }
 
 func bindUploadInput(ctx context.Context, q store.Querier, u model.Upload) error {
-	result, e := q.ExecContext(ctx, "UPDATE batch_inputs SET upload_id=? WHERE batch_id=? AND input_id=? AND upload_id IS NULL AND cancelled=0", u.ID, u.BatchID, u.InputID)
+	result, e := q.ExecContext(ctx, "UPDATE batch_inputs SET upload_id=? WHERE batch_id=? AND input_id=? AND upload_id IS NULL AND cancelled=0 AND rejection_code=''", u.ID, u.BatchID, u.InputID)
 	if e != nil {
 		return e
 	}
@@ -228,6 +257,9 @@ func (s *Service) CancelBatchInput(ctx context.Context, w *Write, id, inputID, f
 	}
 	if result.State == "cancelled" {
 		return result, nil
+	}
+	if result.State == "failed" && result.UploadID == "" {
+		return result, Fail(409, "input_already_failed", "此项在传输前已有终态，原始原因保留。")
 	}
 	if result.UploadID != "" {
 		if e = s.CancelUpload(ctx, w, result.UploadID); e != nil {
