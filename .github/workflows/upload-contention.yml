@@ -46,6 +46,9 @@ jobs:
             previous+=("$RUNNER_TEMP/before-server")
           fi
           python3 next/tools/upload-contention/measure.py "$RUNNER_TEMP/next-server" evidence "${previous[@]}"
+      - name: Verify changed evidence, cancellation, replays and restart recovery
+        working-directory: next/server
+        run: go test -mod=readonly -count=1 -v -run '^Test(UploadInspection|PublishedIntentRecoversSameAssetAndReceipt|CancellationCannotErasePreparedPublication|ConcurrentCompletionReplaysOneAsset)' ./internal/service ./internal/httpapi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with: {name: video-upload-concurrent-edit, path: evidence/, if-no-files-found: warn, retention-days: 14}

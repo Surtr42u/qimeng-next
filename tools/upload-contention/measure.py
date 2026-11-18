@@ -82,10 +82,27 @@ def time_trial(binary, version, index, video, video_hash, temp):
             tag_path = "/assets/" + image_asset["id"] + "/tags"
             idle, idle_start, idle_end = timed(editor, "PUT", tag_path,
                 {"expectedRevision": image_asset["tagsRevision"], "tags": ["idle"]}, "edit-while-idle")
+            reaction_path = "/assets/" + image_asset["id"] + "/reaction"
+            favorite, favorite_start, favorite_end = timed(editor, "PUT", reaction_path,
+                {"favorite": True, "liked": False}, "favorite-while-idle")
+            require(favorite["favorite"], "idle favorite was not saved")
             initial_read = proc_number(pid, "io", "rchar")
             key = "complete-large-video"
-            with ThreadPoolExecutor(max_workers=2) as pool:
+            with ThreadPoolExecutor(max_workers=3) as pool:
                 first = pool.submit(timed, uploader, "POST", video_path, {}, key)
+
+                def edit_when_target_exists():
+                    deadline = time.monotonic() + 20
+                    while not (media / video.name).is_file():
+                        if first.done():
+                            first.result()
+                            raise RuntimeError("completion ended before the public target was observed")
+                        require(time.monotonic() < deadline, "video was not installed within the observation window")
+                        time.sleep(0.001)
+                    return timed(editor, "PUT", reaction_path, {"favorite": False, "liked": False},
+                                 "favorite-while-verifying-installed-file")
+
+                late = pool.submit(edit_when_target_exists)
                 # rchar includes page-cache reads. A real full-file digest is
                 # already underway when the other device submits its mutation.
                 deadline = time.monotonic() + 20
@@ -100,7 +117,10 @@ def time_trial(binary, version, index, video, video_hash, temp):
                     {"expectedRevision": idle["tagsRevision"], "tags": ["during-upload"]}, "edit-during-video")
                 result, seal_start, seal_end = first.result()
                 retried, _, retry_end = replay.result()
+                unfavorite, late_start, late_end = late.result()
             require(seal_start < edit_start < seal_end, "second session missed the completion window")
+            require(seal_start < late_start < seal_end and not unfavorite["favorite"],
+                    "late edit missed the publication window")
             asset = result["asset"]
             require((asset["hash"], asset["size"], asset["width"], asset["height"], asset["durationMs"],
                      asset["probeState"]) == (video_hash, video.stat().st_size, 1280, 720, 4000, "ready"),
@@ -110,13 +130,15 @@ def time_trial(binary, version, index, video, video_hash, temp):
             rows = editor.call("GET", "/assets")["items"]
             require(len(rows) == 2 and len({a["id"] for a in rows}) == 2, "completion duplicated or lost an asset")
             saved = editor.call("GET", "/assets/" + image_asset["id"])
-            require(saved["tags"] == ["during-upload"] and saved["tagsRevision"] == edited["tagsRevision"],
+            require(saved["tags"] == ["during-upload"] and saved["tagsRevision"] == edited["tagsRevision"] and not saved["favorite"],
                     "independent device edit was lost")
             ms = lambda a, b: round((b - a) * 1000, 3)
             return {"version": version, "trial": index, "idle_tag_ms": ms(idle_start, idle_end),
                     "concurrent_tag_ms": ms(edit_start, edit_end), "complete_ms": ms(seal_start, seal_end),
                     "tag_sent_after_complete_started_ms": ms(seal_start, edit_start),
                     "tag_finished_before_complete": edit_end < seal_end, "replay_finish_ms": ms(seal_start, retry_end),
+                    "idle_favorite_ms": ms(favorite_start, favorite_end), "late_favorite_ms": ms(late_start, late_end),
+                    "favorite_finished_before_complete": late_end < seal_end,
                     "catalog_assets": len(rows), "probe_state": asset["probeState"]}
 
 
@@ -146,14 +168,16 @@ def main():
         (evidence / "results.json").write_text(json.dumps(details, indent=2) + "\n")
         lines = ["## 大视频上传完成与独立标签修改", "", f"合成 AVI {details['bytes']:,} 字节，1280×720、4 秒。"
                  "两台设备会话分别完成上传和修改另一项资产的标签。采样服务进程读数增长 8 MiB 后发出标签请求，同时重放同一完成键。"
-                 "每次核对视频摘要、真实 ffprobe 尺寸时长、标签修订、入库数量及回执。", "",
-                 "| 版本 | 空闲标签中位 ms | 上传时标签中位 ms | 视频完成中位 ms | 标签先完成次数 |",
-                 "|---|---:|---:|---:|---:|"]
+                 "目标文件出现后再取消另一项资产的收藏。每次核对视频摘要、真实 ffprobe 尺寸时长、标签修订、收藏、入库数量及回执。", "",
+                 "| 版本 | 空闲标签 ms | 哈希时标签 ms | 空闲收藏 ms | 目标出现后收藏 ms | 视频完成 ms | 标签/收藏先完成次数 |",
+                 "|---|---:|---:|---:|---:|---:|---:|"]
         for version, _ in versions:
             group = [r for r in runs if r["version"] == version]
-            vals = [statistics.median(r[k] for r in group) for k in ("idle_tag_ms", "concurrent_tag_ms", "complete_ms")]
-            lines.append(f"| {version} | {vals[0]:.2f} | {vals[1]:.2f} | {vals[2]:.2f} | "
-                         f"{sum(r['tag_finished_before_complete'] for r in group)}/3 |")
+            vals = [statistics.median(r[k] for r in group) for k in
+                    ("idle_tag_ms", "concurrent_tag_ms", "idle_favorite_ms", "late_favorite_ms", "complete_ms")]
+            lines.append(f"| {version} | " + " | ".join(f"{v:.2f}" for v in vals)
+                         + f" | {sum(r['tag_finished_before_complete'] for r in group)}/3，"
+                         + f"{sum(r['favorite_finished_before_complete'] for r in group)}/3 |")
         report = "\n".join(lines) + "\n"
         (evidence / "report.md").write_text(report)
         if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
