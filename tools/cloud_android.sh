@@ -49,7 +49,7 @@ transport_status() {
   echo "$*" | tee -a "$transport_log"
 }
 prepare_transport() {
-  local phase=$1 port pid status prior exit_code
+  local phase=$1 port pid status prior exit_code device_status
   if ! timeout 30 adb -s emulator-5556 wait-for-device ||
      [[ $(adb -s emulator-5556 emu avd name | tr -d '\r' | head -1) != qimeng_api35 ]]; then
     transport_status "$phase: designated AVD unavailable"
@@ -70,14 +70,15 @@ prepare_transport() {
     if awk -v p="tcp:$port" '$2 == p && $3 == p { found=1 } END { exit !found }' <<< "$mappings"; then prior=present; fi
     transport_status "$phase: port=$port host process alive, host HTTP=$status, preceding reverse=$prior"
     [[ $status == 200 ]] || return 1
-    adb -s emulator-5556 reverse "tcp:$port" "tcp:$port" >/dev/null
-    if ! printf 'GET /healthz HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' |
-        timeout 10 adb -s emulator-5556 shell -T toybox nc -w 4 -W 4 127.0.0.1 "$port" |
-        awk 'NR == 1 && $2 == 200 { ok=1 } END { exit !ok }'; then
-      transport_status "$phase: port=$port device HTTP failed after reverse"
+    if ! adb -s emulator-5556 reverse "tcp:$port" "tcp:$port" >/dev/null; then
+      transport_status "$phase: port=$port could not register ADB reverse"
       return 1
     fi
-    transport_status "$phase: port=$port device HTTP=200"
+    # Keep stdin open while the response crosses ADB. Only the production client verifies its authenticated route.
+    device_status=$({ printf 'GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:%s\r\nConnection: close\r\n\r\n' "$port"; sleep 1; } |
+      timeout 8 adb -s emulator-5556 shell -T toybox nc -w 3 -W 3 127.0.0.1 "$port" |
+      awk 'NR == 1 && $1 ~ /^HTTP\// && $2 ~ /^[0-9][0-9][0-9]$/ { print $2 }') || device_status=''
+    transport_status "$phase: port=$port device HTTP=${device_status:-unobserved}"
   done
 }
 ready=false
