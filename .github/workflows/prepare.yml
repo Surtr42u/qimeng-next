@@ -72,6 +72,7 @@ jobs:
           go mod tidy
           go vet ./...
           go test -race -timeout 180s -v ./...
+          go test -tags=qimeng_native_sqlite,sqlite_omit_load_extension -timeout 180s ./internal/store ./internal/service ./internal/httpapi
           go build -trimpath -o ../build/qimeng-next ./cmd/qimeng
           go build -trimpath -o ../build/qimeng-backup ./cmd/qimeng-backup
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

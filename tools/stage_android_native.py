@@ -29,5 +29,5 @@ for abi in ("arm64-v8a", "x86_64"):
         shutil.copy2(path, target / entry["name"])
     notices = root / "android/embedded/src/main/assets/third-party" / abi
     notices.mkdir(parents=True, exist_ok=True)
-    for name in ("FFmpeg-LICENSE.txt", "dav1d-LICENSE.txt", "manifest.json"):
+    for name in ("FFmpeg-LICENSE.txt", "dav1d-LICENSE.txt", "go-sqlite3-LICENSE.txt", "manifest.json"):
         shutil.copy2(source / name, notices / name)

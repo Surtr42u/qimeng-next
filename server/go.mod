@@ -3,6 +3,8 @@ module qimeng.local/next/server
 go 1.27.4
 
 require (
+ github.com/mattn/go-sqlite3 v1.14.53
+ github.com/hashicorp/mdns v1.0.7
  golang.org/x/image v0.48.0
 	github.com/oapi-codegen/runtime v1.9.0
 	modernc.org/sqlite v1.36.3

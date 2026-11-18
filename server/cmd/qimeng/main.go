@@ -39,6 +39,10 @@ func run()error{
  }
  server:=&http.Server{Addr:address,Handler:handler,ReadHeaderTimeout:10*time.Second,IdleTimeout:90*time.Second,MaxHeaderBytes:32<<10}
  listener,e:=supervisedListener(address,s.InstanceID,os.Getenv("QIMENG_STARTUP_RECEIPT"),os.Getenv("QIMENG_LAUNCH_ID"),os.Getenv("QIMENG_EPHEMERAL_TLS")=="true");if e!=nil{return e};defer listener.Close()
+ discovery,e:=readDiscoveryConfig(os.Getenv);if e!=nil{return e}
+ if os.Getenv("QIMENG_EPHEMERAL_TLS")=="true"{discovery.Enabled=false}
+ stopDiscovery,e:=startDiscovery(listener.Addr(),s.InstanceID,discovery)
+ if e!=nil{slog.Warn("LAN discovery unavailable","detail","check configured interface and multicast support")}else{defer stopDiscovery()}
  ctx,stop:=signal.NotifyContext(context.Background(),os.Interrupt,syscall.SIGTERM);defer stop();done:=make(chan error,1)
  go func(){done<-server.Serve(listener)}();select{case e:=<-done:if errors.Is(e,http.ErrServerClosed){return nil};return e;case <-ctx.Done():shutdown,cancel:=context.WithTimeout(context.Background(),20*time.Second);defer cancel();return server.Shutdown(shutdown)}
 }

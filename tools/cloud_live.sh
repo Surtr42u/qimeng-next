@@ -5,6 +5,10 @@ if [[ "${CI:-}" != "true" ]]; then
   exit 2
 fi
 export QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-live"
+export QIMENG_E2E_LIBRARY_ROOT="$RUNNER_TEMP/qimeng-next-live-media"
+mkdir -p "$QIMENG_E2E_LIBRARY_ROOT"
+export QIMENG_STORAGE_ROOTS
+QIMENG_STORAGE_ROOTS=$(jq -cn --arg root "$QIMENG_E2E_LIBRARY_ROOT" '{media:$root}')
 export QIMENG_LISTEN='127.0.0.1:18481'
 export QIMENG_WEB_DIR="$GITHUB_WORKSPACE/web/dist"
 export QIMENG_TIMEZONE='Asia/Shanghai'

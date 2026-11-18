@@ -54,6 +54,22 @@ paths:
       responses:
         '200': {description: Trusted logical storage roots without host paths, content: {application/json: {schema: {$ref: '#/components/schemas/StoragePage'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /storages/resolve-library-root:
+    post:
+      operationId: resolveLibraryRoot
+      description: Owner UI only. Resolves the existing absolute-root text field into a preconfigured logical storage and relative path. Does not create directories or expand filesystem authority. Never exposed to model tools.
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [rootPath], properties: {rootPath: {type: string, minLength: 1, maxLength: 4096}}}}}}
+      responses:
+        '200': {description: Authorized location, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryLocation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /libraries/{id}/location:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: getLibraryLocation
+      description: Owner UI only; physical paths are excluded from general library responses and model tools.
+      responses:
+        '200': {description: Registered location, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryLocation'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /libraries:
     get:
       operationId: listLibraries
@@ -1723,6 +1739,13 @@ components:
         parentDelegationId: {type: string}
         generation: {type: integer, format: int64}
         expiresAt: {type: string, format: date-time}
+    LibraryLocation:
+      type: object
+      required: [storageId, rootRelativePath, rootPath]
+      properties:
+        storageId: {type: string}
+        rootRelativePath: {type: string}
+        rootPath: {type: string, description: Private host path shown only to the owner; do not log or include in telemetry}
     LibraryCreate:
       type: object
       required: [name, kind]

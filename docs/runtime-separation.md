@@ -49,6 +49,8 @@ flowchart LR
 
 ## 原生来源与构建
 
+手机上的 Go 程序使用 [go-sqlite3](https://github.com/mattn/go-sqlite3/tree/v1.14.53)，通过 Android NDK 的文件接口访问 SQLite。2026-11-17 的云端模拟器记录显示，原纯 Go 驱动在打开数据库时触发 Android 沙箱的 SIGSYS。驱动选择位于 `server/internal/store`。两种构建共享数据库迁移、搜索函数与读写用例。云端用相同的 HTTP、备份和迁移测试覆盖两个驱动，再在模拟器内执行打包后的程序。剥离手机宿主时独立后端继续使用其自身的驱动。
+
 `tools/android-native.lock.json`固定NDK、FFmpeg与dav1d的官方源码提交。云端分别构建arm64-v8a与x86_64，不把ARM程序伪装为x86。FFmpeg作为独立命令行进程，仅启用文件/管道协议，关闭网络、GPL与nonfree组件；dav1d提供AV1/AVIF解码。构建产物附源码归档、许可、配置和逐文件摘要。Go服务与宿主runner每次从当前仓库提交重建，不复用旧业务二进制。
 
 `android`门禁用`-Pqimeng.embedded=false`编译client并检查APK不含本机程序；`android-native`核对ELF实际架构、Android解释器与16KiB段对齐；`android-embedded`验证完整APK；`android-local-ui`在明确的`qimeng_api35`云端模拟器运行真实本机实例。实际通过情况记录在状态文档。

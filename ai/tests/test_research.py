@@ -1,7 +1,9 @@
 import asyncio
+import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from qimeng_ai.config import Config
 from qimeng_ai.errors import ToolError
@@ -10,6 +12,12 @@ from qimeng_ai.state import State
 
 
 class ResearchBoundary(unittest.TestCase):
+    def test_media_child_does_not_inherit_executor_or_cloud_credentials(self):
+        with patch.dict(os.environ, {"QIMENG_API_TOKEN": "synthetic-secret", "AWS_SECRET_ACCESS_KEY": "synthetic-cloud-secret"}):
+            output = asyncio.run(_process([sys.executable, "-c",
+                "import os; print(any(name in os.environ for name in ['QIMENG_API_TOKEN', 'AWS_SECRET_ACCESS_KEY']))"], 128, 10))
+        self.assertEqual(output.strip(), b"False")
+
     def test_oversized_child_output_is_killed_and_not_reported_as_success(self):
         with self.assertRaises(ToolError) as raised:
             asyncio.run(_process([sys.executable, "-c", "import sys; sys.stdout.write('x' * 1048576)"], 1024, 10))

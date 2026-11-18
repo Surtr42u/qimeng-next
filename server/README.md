@@ -10,8 +10,10 @@
 
 - `QIMENG_WEB_DIR`：同源 Web 发布目录，支持客户端路由。
 - `QIMENG_ADMIN_PASSWORD`：可选日常登录密码，至少12个字符、至多1024字节。启动时以随机盐和PBKDF2-HMAC-SHA256派生校验值，不写入数据库/回执/日志，子进程环境移除此项。原密码输入界面交换独立设备会话；密码不是API Bearer凭据。变更配置并重启即可改变后续登录密码，已签发设备会话继续按自身撤销/过期规则管理。
-- `QIMENG_STORAGE_ROOTS`：可信运维配置的 JSON 对象，键为逻辑存储 ID，值为该存储的绝对根。路径只进入运行配置，不进入源码、API 或日志。未配置时使用内置 `data` 存储；注册库只接受逻辑 ID 与根内相对目录。
+- `QIMENG_STORAGE_ROOTS`：可信运维配置的 JSON 对象，键为逻辑存储 ID，值为该存储的绝对根。路径不进入源码、日志或AI工具。本人管理界面保留原来的绝对根目录输入框，经专用解析接口转换为已授权根内的位置；注册库仍只保存逻辑 ID 与根内相对目录。未配置时使用内置 `data` 存储。
 - `QIMENG_TIMEZONE`：IANA 时区，在数据库启动前加载；缺省使用宿主时区，非法值阻止启动。
+- `QIMENG_DISCOVERY=true`：在已启用的私有局域网接口发布 `_qimeng._tcp` DNS-SD 服务，缺省关闭；可用 `QIMENG_DISCOVERY_INTERFACE` 选择单网卡、`QIMENG_DISCOVERY_NAME` 指定不含私人信息的显示名。端口取实际监听地址，不固定猜测8421。组播不可用时服务继续运行并给出不含网络地址的警告。
+- `QIMENG_PUBLIC_ORIGIN`：反向代理的明确 HTTPS origin，用于发现候选，例如 `https://library.example`；不得包含账号、路径、查询参数或令牌。客户端仍执行正常证书及实例身份核验。只绑定回环且没有公开origin的独立实例不广播，Android受监督TLS实例始终不广播。
 - `QIMENG_SECURE_COOKIES=true`：HTTPS 会话 cookie；反向代理须保持同源协议与 Host。
 - `QIMENG_AI_TOKEN`：独立只读凭据，不能通过工具可见性取得写权限。
 - `QIMENG_AI_CONFIGURED=true`：可信执行器已接线的运行配置声明；不代表服务内含模型。
@@ -56,3 +58,5 @@ go build -trimpath -o qimeng-backup ./cmd/qimeng-backup
 当前构建工具链锁定 Go 1.27.4，服务模块锁定 `modernc.org/sqlite v1.36.3` 与生成协议客户端需要的 `github.com/oapi-codegen/runtime v1.9.0`。工具链与模块版本以 `go.mod` 为准，云端 tidy 产生 `go.sum` 及传递依赖锁；不由本地隐式升级。确认来源：[Go 官方发行记录](https://go.dev/dl/)、[SQLite driver 发布文档](https://pkg.go.dev/modernc.org/sqlite@v1.36.3)。
 
 可选媒体工具契约依据 [FFmpeg protocol whitelist](https://ffmpeg.org/ffmpeg-protocols.html)、[ffprobe JSON 输出](https://ffmpeg.org/ffprobe.html)。进程不经 shell，禁止网络协议，超时与输出大小有界；运行时工具版本与真实视频格式覆盖仍须在发布环境验收。
+
+局域网发现适配位于 `cmd/qimeng`，锁定 [hashicorp/mdns v1.0.7](https://github.com/hashicorp/mdns/tree/v1.0.7)（MIT），不进入业务服务/数据库。TXT契约为 `txtvers=1, api=0.1.0, id=<实例ID>, scheme=http|https, path=/api/v1`，反向代理可附 `origin`；服务名称或TXT均不是可信身份。Android按[官方DNS-SD机制](https://developer.android.com/develop/connectivity/wifi/use-nsd)解析候选，再回读 `/instance`。单测验证记录和禁用/回环边界，真实路由器/NAS组播另行验收。

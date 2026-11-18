@@ -39,8 +39,11 @@ def tool_definitions():
 
 async def _process(arguments: list[str], maximum: int, timeout: int) -> bytes:
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+               "ANDROID_ROOT", "ANDROID_DATA", "ANDROID_ART_ROOT", "ANDROID_I18N_ROOT", "ANDROID_TZDATA_ROOT"}
+    environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     process = await asyncio.create_subprocess_exec(*arguments, stdin=subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=flags)
+        stdout=asyncio.subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=flags, env=environment)
     try:
         async with asyncio.timeout(timeout):
             result = await process.stdout.read(maximum + 1)

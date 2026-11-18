@@ -44,9 +44,8 @@ func New(config Config)(*Service,error){
  for _,d:=range []string{"libraries","uploads","trash","retired","backups"}{if err=root.MkdirAll(d,0700);err!=nil{root.Close();return nil,err}}
  // SQLite's exclusive ownership lock is held by a separate connection for this
  // process, rather than an unsafe stale-PID file. Main storage remains WAL.
- ownerURL:=store.FileURI(filepath.Join(config.DataDir,"authority.sqlite"))
- owner,err:=sql.Open("sqlite",ownerURL+"?_pragma=busy_timeout(0)");if err!=nil{root.Close();return nil,err};owner.SetMaxOpenConns(1)
- if _,err=owner.Exec("CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE");err!=nil{owner.Close();root.Close();var coded interface{Code()int};if errors.As(err,&coded)&&(coded.Code()&255==5||coded.Code()&255==6){return nil,errors.New("another service owns this data directory")};return nil,fmt.Errorf("initialize ownership database: %w",err)}
+ owner,err:=store.OpenDatabase(filepath.Join(config.DataDir,"authority.sqlite"),store.OwnershipDatabase);if err!=nil{root.Close();return nil,err}
+ if _,err=owner.Exec("CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE");err!=nil{owner.Close();root.Close();if store.DatabaseBusy(err){return nil,errors.New("another service owns this data directory")};return nil,fmt.Errorf("initialize ownership database: %w",err)}
  db,err:=store.Open(filepath.Join(config.DataDir,"qimeng.sqlite"));if err!=nil{owner.Close();root.Close();return nil,err}
  s:=&Service{DB:db,Root:root,Config:config,owner:owner,scanWake:make(chan struct{}),password:password,loginLimit:loginBudget{slots:make(chan struct{},2)}}
  s.workCtx,s.stopWork=context.WithCancel(context.Background())

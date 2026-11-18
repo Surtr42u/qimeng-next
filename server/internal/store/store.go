@@ -14,7 +14,6 @@ import (
  "strings"
 
  "qimeng.local/next/server/internal/model"
- _ "modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
@@ -25,8 +24,8 @@ type Store struct { DB *sql.DB }
 // literal query/fragment characters before callers append connection options.
 func FileURI(filename string)string{p:=filepath.ToSlash(filename);if len(p)>=2&&p[1]==':'{p="/"+p};return (&url.URL{Scheme:"file",Path:p,OmitHost:true}).String()}
 func Open(path string) (*Store,error) {
- db,err := sql.Open("sqlite",FileURI(path)+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
- if err != nil { return nil,err }; db.SetMaxOpenConns(1)
+ db,err := OpenDatabase(path, CatalogDatabase)
+ if err != nil { return nil,err }
  fail:=func(e error)(*Store,error){ db.Close(); return nil,e }
  if err=db.Ping(); err!=nil{return fail(err)}
  if _,err=db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL)");err!=nil{return fail(err)}

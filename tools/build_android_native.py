@@ -176,14 +176,17 @@ def main() -> None:
          *flags.split(), ROOT / "android/embedded/src/main/cpp/runner.c", "-o", dest / "libqimeng_runner.so"], cwd=work)
     env = os.environ | {"GOOS": "android", "GOARCH": goarch, "CGO_ENABLED": "1", "CC": str(compiler),
                         "CGO_CFLAGS": "-fPIE", "CGO_LDFLAGS": flags}
-    run(["go", "build", "-trimpath", "-buildmode=pie",
+    run(["go", "build", "-trimpath", "-tags=sqlite_omit_load_extension", "-buildmode=pie",
          "-ldflags", f"-s -w -linkmode=external -extldflags '{flags}'", "-o", dest / "libqimeng.so", "./cmd/qimeng"], cwd=ROOT / "server", env=env)
     records = [verify_elf(path, machine) for path in sorted(dest.glob("*.so"))]
     for name in ("FFmpeg-LICENSE.txt", "dav1d-LICENSE.txt", "ffmpeg-config.mak"):
         shutil.copy2(media / name, dest / name)
     for archive in media.glob("*-source.tar.gz"):
         shutil.copy2(archive, dest / archive.name)
+    sqlite = json.loads(output(["go", "list", "-m", "-json", "github.com/mattn/go-sqlite3"], cwd=ROOT / "server"))
+    shutil.copy2(Path(sqlite["Dir"]) / "LICENSE", dest / "go-sqlite3-LICENSE.txt")
     manifest = {"repositoryCommit": os.environ["GITHUB_SHA"], "abi": abi, "sourceLock": LOCK,
+                "sqlite": {"module": sqlite["Path"], "version": sqlite["Version"], "sum": sqlite["Sum"]},
                 "go": output(["go", "version"], cwd=ROOT), "files": records}
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 

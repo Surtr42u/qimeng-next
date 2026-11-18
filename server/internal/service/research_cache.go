@@ -20,7 +20,7 @@ var activeResearchSources sync.Map
 
 func(s *Service)openResearchCache(ctx context.Context)(*sql.DB,error){
  name:="cache/research.sqlite";if e:=s.ensureParent(name);e!=nil{return nil,e};absolute,e:=s.Root.AbsolutePath(name);if e!=nil{return nil,e}
- db,e:=sql.Open("sqlite",store.FileURI(absolute)+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)");if e!=nil{return nil,e};db.SetMaxOpenConns(1)
+ db,e:=store.OpenDatabase(absolute,store.ResearchDatabase);if e!=nil{return nil,e}
  fail:=func(err error)(*sql.DB,error){db.Close();return nil,err}
  var version int;if e=db.QueryRowContext(ctx,"PRAGMA user_version").Scan(&version);e!=nil{return fail(e)};if version>1{return fail(Fail(409,"research_cache_version","研究缓存版本较新，不能由旧服务覆盖。"))}
  _,e=db.ExecContext(ctx,`CREATE TABLE IF NOT EXISTS materials(upload_id TEXT NOT NULL,source_hash TEXT NOT NULL,expires INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(upload_id,source_hash));

@@ -6,4 +6,4 @@ import (
  "time"
 )
 
-func configureMediaProcess(cmd *exec.Cmd){cmd.WaitDelay=5*time.Second;cmd.SysProcAttr=&syscall.SysProcAttr{CreationFlags:0x08000000,HideWindow:true}}
+func configureMediaProcess(cmd *exec.Cmd){cmd.WaitDelay=5*time.Second;cmd.Env=mediaEnvironment();cmd.SysProcAttr=&syscall.SysProcAttr{CreationFlags:0x08000000,HideWindow:true}}

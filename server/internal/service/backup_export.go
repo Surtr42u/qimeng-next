@@ -3,7 +3,6 @@ package service
 import (
  "context"
  "crypto/sha256"
- "database/sql"
  "encoding/hex"
  "errors"
  "io"
@@ -39,7 +38,7 @@ func(s *Service)backupSource(ctx context.Context,f archive.File)(*os.File,error)
 func(s *Service)prepareArchive(ctx context.Context,b Backup)(archive.Manifest,error){
  manifest:=archive.Manifest{Format:archive.Format,Version:archive.Version,BackupID:b.ID,InstanceID:s.InstanceID,CreatedAt:b.CreatedAt,Files:[]archive.File{}}
  snapshot:="backups/"+b.ID+"/snapshot.sqlite";info,e:=s.Root.Stat(snapshot);if e!=nil{return manifest,e};if e=s.verify(snapshot,b.SnapshotHash,info.Size());e!=nil{return manifest,e};manifest.Snapshot=archive.File{Kind:"snapshot",ObjectID:b.ID,StoragePath:"qimeng.sqlite",SHA256:b.SnapshotHash,Size:info.Size()}
- db,e:=sql.Open("sqlite",store.FileURI(filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)))+"?mode=ro&_pragma=trusted_schema(0)");if e!=nil{return manifest,e};defer db.Close();db.SetMaxOpenConns(1)
+ db,e:=store.OpenDatabase(filepath.Join(s.Config.DataDir,filepath.FromSlash(snapshot)),store.SnapshotDatabase);if e!=nil{return manifest,e};defer db.Close()
  add:=func(f archive.File)error{if len(manifest.Files)>=archive.MaxFiles{return Fail(422,"backup_manifest_budget","完整备份文件清单超过当前资源预算，未截断导出。")};manifest.Files=append(manifest.Files,f);return nil}
  last:="";for{assets,e:=store.List[model.Asset](ctx,db,"SELECT data FROM assets WHERE id>? ORDER BY id LIMIT 256",last);if e!=nil{return manifest,e};for _,a:=range assets{if e=add(archive.File{Kind:"asset",ObjectID:a.ID,ContentVersion:a.ContentVersion,StoragePath:assetPath(a),SHA256:a.Hash,Size:a.Size,ModifiedAt:a.ContentMtime});e!=nil{return manifest,e};last=a.ID};if len(assets)<256{break}}
  last="";for{uploads,e:=store.List[model.Upload](ctx,db,"SELECT data FROM uploads WHERE id>? AND state!='ingested' ORDER BY id LIMIT 128",last);if e!=nil{return manifest,e};for _,u:=range uploads{last=u.ID;file:=archive.File{Kind:"upload",ObjectID:u.ID,StoragePath:uploadPath(u.ID),Size:u.Offset};source,e:=s.backupSource(ctx,file);if e!=nil{return manifest,e};hash:=sha256.New();_,e=io.CopyN(hash,source,u.Offset);closeErr:=source.Close();if e!=nil{return manifest,e};if closeErr!=nil{return manifest,closeErr};file.SHA256=hex.EncodeToString(hash.Sum(nil));if u.Hash!=""&&(u.Offset!=u.Size||file.SHA256!=u.Hash){return manifest,Fail(409,"backup_input_changed","封存输入内容与检查点摘要不一致。")};if e=add(file);e!=nil{return manifest,e}};if len(uploads)<128{break}}

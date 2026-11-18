@@ -72,6 +72,7 @@ func(a *API)routes(){
  write[struct{}](a,"DELETE","/credentials/{id}",false,func(r *http.Request,w *service.Write,_ struct{})(any,int,error){return nil,204,a.s.Revoke(r.Context(),w,r.PathValue("id"))})
  a.get("/libraries",func(r *http.Request)(any,error){return a.s.Libraries(r.Context())})
  a.get("/storages",func(r *http.Request)(any,error){return a.s.Storages(),nil})
+ a.libraryLocationRoutes()
  write[libraryCreateRequest](a,"POST","/libraries",true,func(r *http.Request,w *service.Write,in libraryCreateRequest)(any,int,error){v,e:=a.s.CreateLibrary(r.Context(),w,in.Name,in.Kind,in.StorageID,in.RootRelativePath);return v,201,e})
  a.get("/assets",func(r *http.Request)(any,error){f,e:=assetFilterRequest(r);if e!=nil{return nil,e};return a.s.Assets(r.Context(),f)})
  a.get("/assets/{id}",func(r *http.Request)(any,error){return a.s.Asset(r.Context(),r.PathValue("id"))})
