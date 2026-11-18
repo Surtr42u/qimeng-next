@@ -46,7 +46,20 @@ func activeProviderTaskID(p model.Principal) string {
 	}
 	return ""
 }
-func (s *Service) providerGrant(ctx context.Context, p model.Principal) (providerGrant, error) {
+
+// A restored intake batch may be claimed under a different delegation. The
+// task ID alone cannot establish who issued a lookup before the restore.
+type storedPublicResearchResult struct {
+	PublicResearchResult
+	CredentialID string `json:"receiptCredentialId"`
+	DelegationID string `json:"receiptDelegationId"`
+}
+
+func (r storedPublicResearchResult) belongsTo(p model.Principal) bool {
+	return r.TaskID == activeProviderTaskID(p) && r.CredentialID == p.ID && r.DelegationID == p.ParentDelegationID && r.CredentialID != "" && r.DelegationID != ""
+}
+
+func (s *Service) providerCredential(ctx context.Context, p model.Principal) (providerGrant, error) {
 	g := providerGrant{taskID: activeProviderTaskID(p)}
 	if p.ParentDelegationID == "" || g.taskID == "" || p.Has("admin") || !p.Has("research") {
 		return g, Fail(403, "research_task_required", "外部研究需要首次授权所签出的当前任务凭据。")
@@ -81,7 +94,7 @@ func (s *Service) providerGrant(ctx context.Context, p model.Principal) (provide
 	if current.Generation != p.Generation || !current.Has("research") || current.ParentDelegationID != parent.ID || activeProviderTaskID(current) != g.taskID {
 		return g, Fail(401, "lease_changed", "任务已由新执行器接续。")
 	}
-	if !parent.CanResearch || parent.State != "active" || !current.ExpiresAt.After(time.Now()) || !parent.ExpiresAt.After(time.Now()) || !g.deadline.After(time.Now()) {
+	if !parent.CanResearch || parent.State != "active" || !current.ExpiresAt.After(time.Now()) || !parent.ExpiresAt.After(time.Now()) {
 		return g, Fail(403, "research_task_inactive", "公开研究授权或任务时限已结束。")
 	}
 	if current.ExpiresAt.Before(g.deadline) {
@@ -92,6 +105,23 @@ func (s *Service) providerGrant(ctx context.Context, p model.Principal) (provide
 	}
 	g.allowed = slices.DeleteFunc(g.allowed, func(name string) bool { return !containsString(parent.ResearchProviders, name) })
 	g.researchLeft = limit - used
+	return g, nil
+}
+
+func (s *Service) providerGrant(ctx context.Context, p model.Principal) (providerGrant, error) {
+	g, err := s.providerCredential(ctx, p)
+	if err != nil {
+		return g, err
+	}
+	return s.activeProviderSubject(ctx, p, g)
+}
+
+// Only a new external call or an in-flight result needs a still-active subject.
+// A current task credential can reconcile its own prior receipts after closure.
+func (s *Service) activeProviderSubject(ctx context.Context, p model.Principal, g providerGrant) (providerGrant, error) {
+	if !g.deadline.After(time.Now()) {
+		return g, Fail(403, "research_task_inactive", "公开研究任务时限已结束。")
+	}
 	switch g.kind {
 	case "intake":
 		b, err := s.Batch(ctx, g.taskID)
@@ -195,7 +225,7 @@ func (s *Service) ResearchProviderContext(ctx context.Context, p model.Principal
 	v.TaskID = g.taskID
 	v.AllowedProviders = append(v.AllowedProviders, g.allowed...)
 	v.RemainingResearchCalls = &g.researchLeft
-	rows, e := s.DB.DB.QueryContext(ctx, `SELECT id,subject_id,provider,json_extract(data,'$.operation'),state FROM research_provider_calls WHERE task_id=? ORDER BY started_at DESC,id DESC LIMIT 100`, g.taskID)
+	rows, e := s.DB.DB.QueryContext(ctx, `SELECT id,subject_id,provider,json_extract(data,'$.operation'),state FROM research_provider_calls WHERE task_id=? AND json_extract(data,'$.receiptCredentialId')=? AND json_extract(data,'$.receiptDelegationId')=? ORDER BY started_at DESC,id DESC LIMIT 100`, g.taskID, p.ID, p.ParentDelegationID)
 	if e != nil {
 		return v, e
 	}
@@ -210,17 +240,20 @@ func (s *Service) ResearchProviderContext(ctx context.Context, p model.Principal
 	return v, rows.Err()
 }
 func (s *Service) PublicResearchResult(ctx context.Context, p model.Principal, id string) (PublicResearchResult, error) {
-	v, e := store.Get[PublicResearchResult](ctx, s.DB.DB, "SELECT data FROM research_provider_calls WHERE id=?", id)
+	v, e := store.Get[storedPublicResearchResult](ctx, s.DB.DB, "SELECT data FROM research_provider_calls WHERE id=?", id)
 	if e != nil {
-		return v, Normalize(e)
+		return PublicResearchResult{}, Normalize(e)
 	}
 	if p.Has("admin") {
-		return v, nil
+		return v.PublicResearchResult, nil
 	}
-	if p.ParentDelegationID == "" || v.TaskID != activeProviderTaskID(p) || !p.Has("research") {
+	if _, err := s.providerCredential(ctx, p); err != nil {
+		return PublicResearchResult{}, err
+	}
+	if !v.belongsTo(p) {
 		return PublicResearchResult{}, Fail(403, "research_task_required", "查询回执只属于绑定任务。")
 	}
-	return v, nil
+	return v.PublicResearchResult, nil
 }
 func (s *Service) checkProviderEvidence(ctx context.Context, batch string, u model.Upload, in model.Research) error {
 	if len(in.ProviderQueryIDs) == 0 {

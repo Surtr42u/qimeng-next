@@ -187,6 +187,8 @@ func TestAuthorizedProviderHTTPReplayAndBudget(t *testing.T) {
 	}
 	var pending, record service.PublicResearchResult
 	f.request("POST", query, token, "one-stable-query", in).expect(t, 202, &pending)
+	const exactReceipt = "/operations/one-stable-query?operation=queryResearchProvider"
+	f.request("GET", exactReceipt, token, "", nil).expect(t, 409, nil)
 	if pending.ID == "" || pending.State != "pending" || pending.SubjectRevision != author.Revision || pending.SubjectID != author.ID {
 		t.Fatalf("invalid pending receipt: %+v", pending)
 	}
@@ -206,6 +208,23 @@ func TestAuthorizedProviderHTTPReplayAndBudget(t *testing.T) {
 	f.request("GET", "/authors/"+author.ID, researchTestOwner, "", nil).expect(t, 200, &after)
 	if budget.Calls != 1 || f.hits.Load() != 1 || after.Revision != author.Revision || after.Name != author.Name || after.Biography != author.Biography {
 		t.Fatal("read-only query modified the subject, double-charged or fetched twice")
+	}
+	var receipt struct {
+		State          string                       `json:"state"`
+		Operation      string                       `json:"operation"`
+		IdempotencyKey string                       `json:"idempotencyKey"`
+		Response       service.PublicResearchResult `json:"response"`
+	}
+	f.request("GET", exactReceipt, other, "", nil).expect(t, 200, &receipt)
+	if receipt.State != "not_recorded" || receipt.Response.ID != "" {
+		t.Fatal("another task could reconcile this receipt")
+	}
+	// A different real operation can use the same key under the same principal.
+	f.request("POST", "/ai/delegated-tasks/"+task.TaskID+"/calls", token, "one-stable-query", struct{}{}).expect(t, 200, nil)
+	f.request("GET", "/operations/one-stable-query", token, "", nil).expect(t, 409, nil)
+	f.request("GET", exactReceipt, token, "", nil).expect(t, 200, &receipt)
+	if receipt.State != "committed" || receipt.Operation != "queryResearchProvider" || receipt.IdempotencyKey != "one-stable-query" || receipt.Response.ID != record.ID || receipt.Response.TaskID != task.TaskID {
+		t.Fatal("exact receipt lost the original operation, key, task or query")
 	}
 }
 
@@ -241,6 +260,52 @@ func TestProviderPolicyMustBeExplicitAndCannotExpand(t *testing.T) {
 	}
 }
 
+func TestResearchRecoveryKeepsItsIssuerAcrossRotationAndIsolatedRestore(t *testing.T) {
+	f := researchServer(t, nil, nil)
+	author, grant := f.authorGrant(t)
+	task, original := f.authorTask(t, author, grant, "recover-query-task", 3)
+	const key = "stable-research-recovery"
+	const lookup = "/operations/" + key + "?operation=queryResearchProvider"
+	const endpoint = "/research/providers/fxtwitter/query"
+	input := service.PublicResearchInput{Operation: "author", Target: "fixture"}
+	var result service.PublicResearchResult
+	f.request("POST", endpoint, original, key, input).expect(t, 200, &result)
+	rotated := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{21}, 32))
+	f.request("POST", "/ai/delegated-tasks/"+task.TaskID+"/resume", grant.Credential.Token, "rotate-for-recovery", map[string]string{"credentialSecret": rotated}).expect(t, 200, nil)
+	f.request("GET", lookup, original, "", nil).expect(t, 401, nil)
+	var outcome map[string]any
+	f.request("GET", lookup, rotated, "", nil).expect(t, 200, &outcome)
+	if outcome["state"] != "committed" {
+		t.Fatal("the resumed task lost a terminal receipt established by the same credential identity")
+	}
+	// A recovered batch can have the same task ID and operation key under a new
+	// grant. Older development records may have no evidence of their issuer.
+	for _, change := range []string{
+		"json_set(data,'$.receiptCredentialId','earlier-credential')",
+		"json_set(data,'$.receiptCredentialId',?,'$.receiptDelegationId','earlier-delegation')",
+		"json_remove(data,'$.receiptCredentialId','$.receiptDelegationId')",
+	} {
+		args := []any{result.ID}
+		if strings.Contains(change, "?") {
+			args = []any{task.Credential.ID, result.ID}
+		}
+		if _, err := f.s.DB.DB.Exec("UPDATE research_provider_calls SET data="+change+" WHERE id=?", args...); err != nil {
+			t.Fatal(err)
+		}
+		outcome = nil
+		f.request("GET", lookup, rotated, "", nil).expect(t, 200, &outcome)
+		if outcome["state"] != "not_recorded" {
+			t.Fatal("same batch and key vouched for another issuer")
+		}
+		f.request("POST", endpoint, rotated, key, input).expect(t, 409, nil)
+		f.request("GET", "/research/queries/"+result.ID, rotated, "", nil).expect(t, 403, nil)
+		f.request("GET", "/research/queries/"+result.ID, researchTestOwner, "", nil).expect(t, 200, nil)
+	}
+	if f.hits.Load() != 1 {
+		t.Fatal("reconciling a lookup sent it again")
+	}
+}
+
 func TestSubjectEditedWhilePublicQueryRuns(t *testing.T) {
 	hold, entered := make(chan struct{}), make(chan struct{}, 1)
 	f := researchServer(t, hold, entered)
@@ -270,6 +335,11 @@ func TestSubjectEditedWhilePublicQueryRuns(t *testing.T) {
 	f.request("GET", "/research/queries/"+pending.ID, researchTestOwner, "", nil).expect(t, 200, &pending)
 	if pending.State != "interrupted" || len(pending.Items) != 0 {
 		t.Fatal("obsolete platform response survived a human edit")
+	}
+	var replay service.PublicResearchResult
+	f.request("POST", endpoint, token, "human-changed-subject", in).expect(t, 200, &replay)
+	if replay.ID != pending.ID || replay.State != "interrupted" || f.hits.Load() != 1 {
+		t.Fatal("reconciling a changed subject must return the original terminal receipt without new egress")
 	}
 }
 

@@ -4,11 +4,14 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import httpx
+
 from qimeng_ai.config import Config
 from qimeng_ai.errors import ToolError
 from qimeng_ai.output import page, present
 from qimeng_ai.runtime import Runtime
 from qimeng_ai.state import State
+from qimeng_ai.transport import Transport, load_contract
 
 
 def config(directory, **extra):
@@ -17,6 +20,46 @@ def config(directory, **extra):
 
 
 class BudgetAndReferences(unittest.TestCase):
+    def test_disabled_lookup_leaves_local_writes_available_but_timeout_needs_its_own_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = config(directory, QIMENG_AI_TASK_ID="task-for-research")
+            state = State(cfg, "instance-a", "contract-a")
+            contract = load_contract()
+            arguments = {"provider": "fxtwitter", "Idempotency-Key": "original-query",
+                         "body": {"operation": "author", "target": "fixture"}}
+            tool = "research.provider.query"
+
+            def provider(request):
+                if request.headers["Idempotency-Key"] == "original-query":
+                    return httpx.Response(403, json={"code": "research_provider_disabled"})
+                raise httpx.ReadTimeout("fixture connection interrupted", request=request)
+
+            with httpx.Client(base_url=cfg.origin, transport=httpx.MockTransport(provider)) as client:
+                transport = Transport(cfg, contract, client=client)
+                for key, uncertain in (("original-query", False), ("lost-response", True)):
+                    arguments["Idempotency-Key"] = key
+                    request = state.reserve(tool, arguments, key)
+                    with self.assertRaises(ToolError) as refused:
+                        transport.call("queryResearchProvider", arguments)
+                    self.assertEqual(refused.exception.uncertain, uncertain)
+                    state.finish(request, refused.exception.as_dict(), key, uncertain=uncertain, completed=False)
+                    if not uncertain:
+                        local = state.reserve("research.submit", {"outcome": "unknown"}, "local-evidence")
+                        state.finish(local, {"status": "saved"}, "local-evidence")
+
+            self.assertEqual(state.receipt_target("lost-response"), ("lost-response", "queryResearchProvider"))
+            with self.assertRaises(ToolError):
+                state.reserve("research.submit", {}, "next-evidence")
+            terminal = {"state": "committed", "operation": "queryResearchProvider", "idempotencyKey": "lost-response",
+                        "response": {"id": "query-original", "taskId": cfg.task_id, "state": "interrupted"}}
+            for wrong in ({"operation": "different-operation"}, {"idempotencyKey": "another-key"},
+                          {"response": {**terminal["response"], "taskId": "another-task"}},
+                          {"response": {**terminal["response"], "state": "pending"}}):
+                with self.assertRaises(ToolError):
+                    state.reconcile("lost-response", {**terminal, **wrong})
+            state.reconcile("lost-response", terminal)
+            self.assertFalse(state.status()["pending"])
+
     def test_reconnect_preserves_calls_and_pending_write_blocks_new_write(self):
         with tempfile.TemporaryDirectory() as directory:
             first = State(config(directory), "instance-a", "contract-a")

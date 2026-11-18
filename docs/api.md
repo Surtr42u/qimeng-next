@@ -22,6 +22,8 @@
 
 `not_found` 表示本次查询未找到对应记录。`blocked`、`rate_limited`、`unavailable` 和 `interrupted` 均保留未确定状态。撤销授权、取消任务或轮换执行器会结束相关在途请求。进程重启后，可以回读已结束和已中断的记录。对批次提交研究候选时，`providerQueryIds` 引用属于同一上传和哈希的已完成回执。仅汇报这些已收费查询时填 `callsUsed=0`，候选出处须在引用的结果中出现。作者归属、人工资料与命名计划分别通过各自的业务操作处理。
 
+若实例关闭公开查证，返回 HTTP 403 和 `research_provider_disabled`，请求尚未发出，本地整理可继续。遇到查询应答丢失，可用当前任务凭据读取 `GET /operations/{key}?operation=queryResearchProvider`。原查询仍在进行时返回 HTTP 409 和 `research_query_pending`。终态回执含原键、查询 ID、任务 ID 及结果状态。同一任务续接后可核销原回执。隔离恢复后重新授权的执行器只能核销自身签发的查询。旧开发版本缺少签发记录时，管理员仍可按查询 ID 阅读留存的证据。
+
 ## 显式设备维护包
 
 PC 或 NAS 的管理员在 `POST /device/credentials` 登记目标设备及客户端生成的 32 字节独立随机凭据（无填充 base64url）。服务只返回凭据 ID、设备标签、显示名和到期时间。轮换须提供当前凭据 ID。设备可用 `GET /sessions/current` 核对本人的设备身份与 `device.apply` 权限，登记端的媒体目录和管理接口另需本人会话。

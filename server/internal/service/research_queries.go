@@ -12,9 +12,40 @@ import (
 	"qimeng.local/next/server/internal/store"
 )
 
+const publicResearchOperation = "queryResearchProvider"
+
+func (s *Service) researchOperationByKey(ctx context.Context, p model.Principal, key string) (*PublicResearchResult, error) {
+	g, err := s.providerCredential(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := store.Get[storedPublicResearchResult](ctx, s.DB.DB,
+		"SELECT data FROM research_provider_calls WHERE task_id=? AND request_key=?", g.taskID, digest([]byte(key)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !receipt.belongsTo(p) {
+		return nil, nil
+	}
+	return &receipt.PublicResearchResult, nil
+}
+
+func researchOperationResult(key string, receipt *PublicResearchResult) (map[string]any, error) {
+	if receipt == nil {
+		return map[string]any{"state": "not_recorded", "idempotencyKey": key}, nil
+	}
+	if receipt.State == "pending" {
+		return nil, Fail(409, "research_query_pending", "公开查询正在处理，尚无终态回执。")
+	}
+	return map[string]any{"state": "committed", "operation": publicResearchOperation, "idempotencyKey": key, "status": 200, "response": receipt}, nil
+}
+
 func (s *Service) QueryResearchProvider(ctx context.Context, p model.Principal, name, key string, in PublicResearchInput) (Result, error) {
 	if !s.Config.ResearchEnabled {
-		return Result{}, Fail(503, "research_provider_disabled", "此实例未开启外部公开研究。")
+		return Result{}, Fail(403, "research_provider_disabled", "此实例未开启外部公开研究，查询未发出。")
 	}
 	if len(key) < 8 || len(key) > 128 {
 		return Result{}, Fail(400, "idempotency_required", "公开查证须使用稳定的查询身份。")
@@ -36,25 +67,24 @@ func (s *Service) QueryResearchProvider(ctx context.Context, p model.Principal, 
 	var outbound context.Context
 	var cancel context.CancelFunc
 	reserved, err := s.Run(ctx, p, "reservePublicResearch", "", nil, func(w *Write) (any, int, error) {
-		g, e := s.providerGrant(ctx, w.Principal)
+		g, e := s.providerCredential(ctx, w.Principal)
 		if e != nil {
-			return nil, 0, e
-		}
-		if !containsString(g.allowed, name) {
-			return nil, 0, Fail(403, "research_provider_denied", "当前任务未明确获准将查询发给此来源。")
-		}
-		if e = s.publicResearchSubject(ctx, w.Principal, &g, in); e != nil {
 			return nil, 0, e
 		}
 		var oldHash, raw string
 		e = s.DB.DB.QueryRowContext(ctx, "SELECT input_hash,data FROM research_provider_calls WHERE task_id=? AND request_key=?", g.taskID, keyHash).Scan(&oldHash, &raw)
 		if e == nil {
+			var previous storedPublicResearchResult
+			if e = json.Unmarshal([]byte(raw), &previous); e != nil {
+				return nil, 0, e
+			}
+			if !previous.belongsTo(w.Principal) {
+				return nil, 0, Fail(409, "research_receipt_from_previous_grant", "此键已属于早先授权的查询，当前凭据不能复用。")
+			}
 			if oldHash != fingerprint {
 				return nil, 0, Fail(409, "idempotency_conflict", "此查询身份已用于不同内容。")
 			}
-			if e = json.Unmarshal([]byte(raw), &record); e != nil {
-				return nil, 0, e
-			}
+			record = previous.PublicResearchResult
 			status := 200
 			if record.State == "pending" {
 				status = 202
@@ -62,6 +92,16 @@ func (s *Service) QueryResearchProvider(ctx context.Context, p model.Principal, 
 			return record, status, nil
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
+			return nil, 0, e
+		}
+		if !containsString(g.allowed, name) {
+			return nil, 0, Fail(403, "research_provider_denied", "当前任务未明确获准将查询发给此来源。")
+		}
+		g, e = s.activeProviderSubject(ctx, w.Principal, g)
+		if e != nil {
+			return nil, 0, e
+		}
+		if e = s.publicResearchSubject(ctx, w.Principal, &g, in); e != nil {
 			return nil, 0, e
 		}
 		if g.researchLeft <= 0 || g.callsLeft <= 0 {
@@ -103,7 +143,7 @@ func (s *Service) QueryResearchProvider(ctx context.Context, p model.Principal, 
 				return nil, 0, e
 			}
 		}
-		body, e := store.Encode(record)
+		body, e := store.Encode(storedPublicResearchResult{record, p.ID, p.ParentDelegationID})
 		if e != nil {
 			return nil, 0, e
 		}
@@ -144,7 +184,7 @@ func (s *Service) QueryResearchProvider(ctx context.Context, p model.Principal, 
 		}
 		now := time.Now().UTC()
 		record.FinishedAt = &now
-		raw, e := store.Encode(record)
+		raw, e := store.Encode(storedPublicResearchResult{record, p.ID, p.ParentDelegationID})
 		if e != nil {
 			return nil, 0, e
 		}

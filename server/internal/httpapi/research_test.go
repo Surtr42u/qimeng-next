@@ -19,7 +19,7 @@ func TestResearchMaterialsPersistAndRespectOriginalUploadScope(t *testing.T) {
 	if providers.Enabled || len(providers.AllowedProviders) != 0 {
 		t.Fatal("public provider egress is enabled by default")
 	}
-	f.json("POST", "/research/providers/fxtwitter/query", "research-disabled-key", service.PublicResearchInput{Operation: "author", Target: "fixture"}, 503)
+	f.json("POST", "/research/providers/fxtwitter/query", "research-disabled-key", service.PublicResearchInput{Operation: "author", Target: "fixture"}, 403)
 	request := "/uploads/" + u.ID + "/research-materials?expectedHash=" + u.Hash
 	var first service.ResearchMaterials
 	decode(t, f.json("GET", request, "", nil, 200), &first)

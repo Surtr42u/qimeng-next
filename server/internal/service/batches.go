@@ -252,7 +252,10 @@ func (s *Service) Context(ctx context.Context, p model.Principal, id, cursor str
 	}
 	if d.Batch.ManifestState == "sealed" && d.Batch.State != "cancelled" && d.Batch.State != "completed" && d.Batch.ResearchCalls >= d.Batch.MaxResearchCalls && p.Has("research") {
 		var available bool
-		e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM research_provider_calls c JOIN uploads u ON u.id=c.subject_id LEFT JOIN research r ON r.upload_id=u.id WHERE c.task_id=? AND u.state='staged' AND c.state!='pending' AND r.upload_id IS NULL)`, id).Scan(&available)
+		e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM research_provider_calls c
+		 JOIN uploads u ON u.id=c.subject_id AND c.subject_hash=json_extract(u.data,'$.hash')
+		 LEFT JOIN research r ON r.upload_id=u.id WHERE c.task_id=? AND u.state='staged' AND c.state!='pending' AND r.upload_id IS NULL
+		 AND (? OR (json_extract(c.data,'$.receiptCredentialId')=? AND json_extract(c.data,'$.receiptDelegationId')=?)))`, id, p.Has("admin"), p.ID, p.ParentDelegationID).Scan(&available)
 		if e != nil {
 			return nil, e
 		}

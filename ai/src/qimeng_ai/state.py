@@ -168,17 +168,28 @@ class State:
             raise ToolError("TASK_NOT_BOUND", "本执行器未持有该任务凭据，请使用task.resume接续原任务")
         return row[0]
 
-    def receipt_key(self, key: str) -> str:
+    def receipt_target(self, key: str) -> tuple[str, str | None]:
         with self.transaction() as db:
             row = db.execute("SELECT tool FROM pending WHERE task=? AND key=?", (self.config.task_id, key)).fetchone()
         if row is None:
             raise ToolError("PENDING_NOT_FOUND", "没有该任务的未决操作")
         suffix = {"upload.file": ":complete", "source.recycle": ":receipt"}.get(row["tool"], "")
-        return key + suffix
+        operation = "queryResearchProvider" if row["tool"] == "research.provider.query" else None
+        return key + suffix, operation
+
+    def receipt_key(self, key: str) -> str:
+        return self.receipt_target(key)[0]
 
     def reconcile(self, key: str, authoritative: dict) -> dict:
-        if authoritative.get("state") != "committed" or authoritative.get("idempotencyKey") != self.receipt_key(key):
+        expected_key, operation = self.receipt_target(key)
+        if authoritative.get("state") != "committed" or authoritative.get("idempotencyKey") != expected_key:
             raise ToolError("STILL_UNCERTAIN", "服务没有可核验终态，保留未决写入")
+        if operation:
+            evidence = authoritative.get("response")
+            if (authoritative.get("operation") != operation or not isinstance(evidence, dict)
+                    or evidence.get("taskId") != self.config.task_id or not evidence.get("id")
+                    or evidence.get("state") not in {"ok", "not_found", "blocked", "rate_limited", "unavailable", "interrupted"}):
+                raise ToolError("STILL_UNCERTAIN", "原查询尚无本任务可核对的终态回执")
         with self.transaction() as db:
             db.execute("DELETE FROM pending WHERE task=? AND key=?", (self.config.task_id, key))
         return {"status": "reconciled", "key": key, "state": authoritative["state"]}
