@@ -14,6 +14,42 @@ from mcp import Client, StdioServerParameters
 
 @unittest.skipUnless(os.environ.get("QIMENG_TEST_BASE") == "http://127.0.0.1:18481", "requires cloud isolated Go service")
 class LiveMCP(unittest.IsolatedAsyncioTestCase):
+    async def test_read_only_alias_lookup_preserves_each_candidate_identity(self):
+        self.assertEqual(os.environ.get("CI"), "true")
+        library = self.request("POST", "/libraries", {"name": "Alias lookup", "kind": "regular"}, key="mcp-alias-library")
+        batch = self.request("POST", "/batches", {"libraryId": library["id"], "mode": "ordinary", "label": "Lookup fixture"}, key="mcp-alias-batch")
+        alias = "合成共用别称"
+        tags = {}
+        for index, name in enumerate(["合成春卷", "合成秋卷"]):
+            tag = self.request("POST", "/tags", {"name": name}, key=f"mcp-alias-tag-{index}")
+            edited = self.request("PUT", f"/tag-vocabulary/{tag['id']}/aliases",
+                                  {"aliases": [alias], "expectedRevision": tag["revision"]}, key=f"mcp-alias-set-{index}")
+            tags[edited["id"]] = edited
+        collection = self.request("POST", "/collections", {"name": "合成画册", "kind": "image_set", "libraryId": library["id"]}, key="mcp-alias-collection")
+        self.request("PUT", f"/collections/{collection['id']}/aliases", {"aliases": [alias], "expectedRevision": collection["revision"]}, key="mcp-alias-group-set")
+        credential = self.request("POST", "/credentials", {"label": "Vocabulary reader", "batchId": batch["id"], "scopes": ["read"]})
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                async with Client(self.process(Path(root), credential["token"], "read")) as client:
+                    async def items(tool, **arguments):
+                        result = await client.call_tool(tool, arguments)
+                        self.assertFalse(result.is_error, result.content)
+                        return result.structured_content["items"]
+
+                    found = await items("tag.vocabulary.query", q=alias)
+                    self.assertEqual({tag["id"]: tag for tag in found}, tags)
+                    self.assertCountEqual(await items("tag.query", q=alias), [tag["name"] for tag in tags.values()])
+                    found_groups = await items("collection.query", q=alias, libraryId=library["id"])
+                    self.assertEqual([group["id"] for group in found_groups], [collection["id"]])
+
+                    cleared = found[0]
+                    self.request("PUT", f"/tag-vocabulary/{cleared['id']}/aliases",
+                                 {"aliases": [], "expectedRevision": cleared["revision"]}, key="mcp-alias-clear")
+                    remaining = await items("tag.vocabulary.query", q=alias)
+                    self.assertEqual({tag["id"] for tag in remaining}, set(tags) - {cleared["id"]})
+        finally:
+            self.request("DELETE", "/credentials/" + credential["id"])
+
     async def test_scanned_file_research_and_metadata_use_the_asset_grant(self):
         self.assertEqual(os.environ.get("CI"), "true")
         import subprocess

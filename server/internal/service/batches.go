@@ -646,11 +646,7 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 		return p, e
 	}
 	for _, c := range collections {
-		raw, e := store.Encode(c)
-		if e != nil {
-			return p, e
-		}
-		if _, e = q.ExecContext(ctx, "INSERT INTO collections(id,library_id,name,kind,data) VALUES(?,?,?,?,?)", c.ID, c.LibraryID, c.Name, c.Kind, raw); e != nil {
+		if e = store.InsertCollection(ctx, q, c); e != nil {
 			return p, e
 		}
 	}

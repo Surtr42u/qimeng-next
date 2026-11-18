@@ -23,6 +23,18 @@ type browsePredicate struct {
 	Args      []any
 	FilterKey string
 }
+
+// Search each spelling on its owner. IN keeps a media item unique when several
+// associated tags and its collection share the same alias.
+const assetNameMatches = `(qimeng_search_token(` + assetSearchText + `,?)=1 OR a.id IN (
+ SELECT at.asset_id FROM tag_aliases ta JOIN asset_tags at ON at.tag_id=ta.tag_id
+ WHERE qimeng_search_token(ta.alias,?)=1
+ UNION ALL
+ SELECT cm.asset_id FROM collections c JOIN collection_members cm ON cm.collection_id=c.id
+ WHERE qimeng_search_token(c.name,?)=1
+ UNION ALL
+ SELECT cm.asset_id FROM collection_aliases ca JOIN collection_members cm ON cm.collection_id=ca.collection_id
+ WHERE qimeng_search_token(ca.alias,?)=1))`
 type browseSort struct {
 	Expression, Name              string
 	Descending, Numeric, Nullable bool
@@ -285,8 +297,8 @@ func assetPredicate(f AssetFilter) (browsePredicate, error) {
 		}
 	}
 	for _, token := range strings.Fields(f.Q) {
-		where = append(where, "qimeng_search_token("+assetSearchText+",?)=1")
-		args = append(args, token)
+		where = append(where, assetNameMatches)
+		args = append(args, token, token, token, token)
 	}
 	if f.Tag != "" {
 		where = append(where, "EXISTS(SELECT 1 FROM asset_tag_names WHERE asset_id=a.id AND tag=?)")
