@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"qimeng.local/next/server/internal/httpapi"
 	"qimeng.local/next/server/internal/model"
@@ -52,7 +53,39 @@ func putDevicePackage(t *testing.T, f *fixture, key string, m service.DeviceAppl
 	return task
 }
 
-func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports(t *testing.T) {
+func historicalDevicePackage(t *testing.T, f *fixture, manifest service.DeviceApplyManifest, files map[string][]byte) service.DeviceApplyTask {
+	t.Helper()
+	now := time.Now().UTC()
+	task := service.DeviceApplyTask{ID: "historical-device-package", TargetDeviceID: manifest.TargetDeviceID, ProtocolVersion: 1, Revision: 1,
+		State: "pending", CreatedAt: now, ExpiresAt: now.Add(time.Hour), Segments: manifest.Segments}
+	raw, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.s.DB.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO device_apply_tasks(id,device_id,state,created_at,expires_at,data) VALUES(?,?,?,?,?,?)",
+		task.ID, task.TargetDeviceID, task.State, now.Format(time.RFC3339Nano), task.ExpiresAt.Format(time.RFC3339Nano), string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range task.Segments {
+		data := files[part.Kind]
+		for offset := 0; offset < len(data); offset += 1 << 20 {
+			if _, err = tx.Exec("INSERT INTO device_apply_chunks(task_id,kind,ordinal,payload) VALUES(?,?,?,?)", task.ID, part.Kind, offset>>20, data[offset:min(len(data), offset+(1<<20))]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func TestHistoricalDevicePackageRemainsReadableAndNewV2PublicationIsRetired(t *testing.T) {
 	origin, local := setup(t), setup(t)
 	register := func(device, label, secret, previous string) service.DeviceCredential {
 		t.Helper()
@@ -89,13 +122,10 @@ func TestDeviceScopedPackageResumesAcrossChunkBoundaryAndReportsRealLocalImports
 		seg.Bytes = int64(len(body))
 		seg.SHA256 = fmt.Sprintf("%x", sha256.Sum256(body))
 	}
-	task := putDevicePackage(t, origin, "publish-real-local-imports", manifest, files, 201)
-	replay := putDevicePackage(t, origin, "publish-real-local-imports", manifest, files, 201)
-	if replay.ID != task.ID || task.State != "pending" || task.TargetDeviceID != "phone" {
-		t.Fatal("package replay or device binding changed")
-	}
+	putDevicePackage(t, origin, "reject-new-v2-publication", manifest, files, 410)
+	task := historicalDevicePackage(t, origin, manifest, files)
 	unverified := manifest
-	unverified.Segments = append([]service.DeviceApplySegment{}, manifest.Segments...)
+	unverified.Segments = append([]service.DeviceApplySegment{}, manifest.Segments[:1]...)
 	unverified.Segments[0].SHA256 = strings.Repeat("f", 64)
 	putDevicePackage(t, origin, "reject-unverified-digest", unverified, files, 409)
 	url := "/device/apply-tasks/" + task.ID

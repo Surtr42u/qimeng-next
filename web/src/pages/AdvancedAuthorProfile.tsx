@@ -98,7 +98,7 @@ export function AdvancedAuthorProfile({
                   ? "由作者合并保留"
                   : block.source === "imported"
                     ? "迁入资料"
-                    : "人工保存"}{" "}
+                    : block.source === "native_delivery" ? "原生交付" : "人工保存"}{" "}
                 · {new Date(block.updatedAt).toLocaleString()}
               </p>
             )}

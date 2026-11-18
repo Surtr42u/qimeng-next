@@ -6,6 +6,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ type DeviceApplySegment struct {
 	SHA256                string `json:"sha256"`
 	ExpectedLocalRevision *int64 `json:"expectedLocalRevision,omitempty"`
 	SourceID              string `json:"sourceId,omitempty"`
+	PackageID             string `json:"packageId,omitempty"`
+	SourceInstanceID      string `json:"sourceInstanceId,omitempty"`
+	TargetInstanceID      string `json:"targetInstanceId,omitempty"`
 }
 type DeviceApplyManifest struct {
 	TargetDeviceID  string               `json:"targetDeviceId"`
@@ -143,9 +147,9 @@ func deviceTask(ctx context.Context, q store.Querier, p model.Principal, id stri
 func (s *Service) GetDeviceApplyTask(ctx context.Context, p model.Principal, id string) (DeviceApplyTask, error) {
 	return deviceTask(ctx, s.DB.DB, p, id, false)
 }
-func (s *Service) DeviceApplyTasks(ctx context.Context, p model.Principal, id, state, cursor string, limit int) (model.Page[DeviceApplyTask], error) {
+func (s *Service) DeviceApplyTasks(ctx context.Context, p model.Principal, id, state, cursor string, limit, protocol int) (model.Page[DeviceApplyTask], error) {
 	page := model.Page[DeviceApplyTask]{Items: []DeviceApplyTask{}}
-	if !deviceLabel.MatchString(id) || !slices.Contains([]string{"", "pending", "claimed", "applied", "partial", "failed", "cancelled", "expired"}, state) {
+	if !deviceLabel.MatchString(id) || protocol < 0 || protocol > 2 || !slices.Contains([]string{"", "pending", "claimed", "applied", "partial", "failed", "cancelled", "expired"}, state) {
 		return page, Fail(400, "invalid_device_filter", "设备标识或任务状态无效。")
 	}
 	if err := allowDevice(p, id, false); err != nil {
@@ -156,6 +160,9 @@ func (s *Service) DeviceApplyTasks(ctx context.Context, p model.Principal, id, s
 		return page, err
 	}
 	filter := "device:" + id + ":" + state
+	if protocol != 0 {
+		filter += ":v" + strconv.Itoa(protocol)
+	}
 	seek, err := readSeek(cursor, filter, "created_desc")
 	if err != nil {
 		return page, err
@@ -163,8 +170,8 @@ func (s *Service) DeviceApplyTasks(ctx context.Context, p model.Principal, id, s
 	now := dateKey(time.Now().UTC())
 	items, err := store.List[DeviceApplyTask](ctx, s.DB.DB, `SELECT json_set(data,'$.state',actual) FROM (
 	 SELECT id,data,created_at,CASE WHEN state IN ('pending','claimed') AND expires_at<=? THEN 'expired' ELSE state END actual
-	 FROM device_apply_tasks WHERE device_id=? AND (?='' OR (created_at,id)<(?,?)))
-	 WHERE (?='' OR actual=?) ORDER BY created_at DESC,id DESC LIMIT ?`, now, id, seek.ID, seek.Value, seek.ID, state, state, n+1)
+	 FROM device_apply_tasks WHERE device_id=? AND (?=0 OR json_extract(data,'$.protocolVersion')=?) AND (?='' OR (created_at,id)<(?,?)))
+	 WHERE (?='' OR actual=?) ORDER BY created_at DESC,id DESC LIMIT ?`, now, id, protocol, protocol, seek.ID, seek.Value, seek.ID, state, state, n+1)
 	if err != nil {
 		return page, err
 	}

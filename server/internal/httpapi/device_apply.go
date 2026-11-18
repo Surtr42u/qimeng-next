@@ -60,7 +60,11 @@ func (a *API) ListDeviceApplyTasks(w http.ResponseWriter, r *http.Request, param
 			return nil, err
 		}
 		q := r.URL.Query()
-		return a.s.DeviceApplyTasks(r.Context(), principal(r), q.Get("targetDeviceId"), q.Get("state"), q.Get("cursor"), n)
+		protocol := 0
+		if params.ProtocolVersion != nil {
+			protocol = *params.ProtocolVersion
+		}
+		return a.s.DeviceApplyTasks(r.Context(), principal(r), q.Get("targetDeviceId"), q.Get("state"), q.Get("cursor"), n, protocol)
 	})
 }
 
@@ -148,7 +152,11 @@ func (a *API) publishDevicePackage(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := make(map[string]service.DevicePackageFile)
 	for kind, headers := range form.File {
-		if len(headers) != 1 || (kind != "masterTxt" && kind != "v2Backup") {
+		if kind == "v2Backup" {
+			fail(w, service.Fail(410, "legacy_delivery_retired", "新设备交付请从源实例选择原生对象。"))
+			return
+		}
+		if len(headers) != 1 || kind != "masterTxt" {
 			fail(w, service.Fail(400, "invalid_device_segment", "每个文件段只能出现一次。"))
 			return
 		}

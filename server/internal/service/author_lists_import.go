@@ -116,6 +116,10 @@ func protectListEntries(ctx context.Context, q store.Querier, list *authorListRe
 }
 
 func (s *Service) ImportAuthorList(ctx context.Context, w *Write, in AuthorListInput) (AuthorListResult, error) {
+	return s.importAuthorList(ctx, w, in, w.ID)
+}
+
+func (s *Service) importAuthorList(ctx context.Context, w *Write, in AuthorListInput, id func(string) string) (AuthorListResult, error) {
 	result := AuthorListResult{PreservedSources: []string{}, Issues: []authorlist.Issue{}}
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return result, e
@@ -143,21 +147,21 @@ func (s *Service) ImportAuthorList(ctx context.Context, w *Write, in AuthorListI
 		return result, Conflict(list.Revision)
 	}
 	oldAuthors := listAuthorIDs(list.Blocks)
-	blocks, created, e := bindTextDeclarations(ctx, q, w.ID, doc)
+	blocks, created, e := bindTextDeclarations(ctx, q, id, doc)
 	if e != nil {
 		return result, e
 	}
 	result.Format = doc.Format
 	result.Issues = doc.Issues
 	result.AuthorsCreated = created
-	if e = archiveAuthorListInput(ctx, q, w.ID("author-list-input"), "manual", in.Name, in.Content, time.Now().UTC()); e != nil {
+	if e = archiveAuthorListInput(ctx, q, id("author-list-input"), "manual", in.Name, in.Content, time.Now().UTC()); e != nil {
 		return result, e
 	}
 	if doc.Format == "names" {
 		return result, nil
 	}
 	if !exists {
-		list, e = nextAuthorList(ctx, q, w.ID("author-list"), in.Name)
+		list, e = nextAuthorList(ctx, q, id("author-list"), in.Name)
 		if e != nil {
 			return result, e
 		}
