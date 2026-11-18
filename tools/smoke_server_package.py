@@ -70,6 +70,7 @@ def main() -> None:
     parser.add_argument("--target", required=True)
     parser.add_argument("--packages", type=Path, required=True)
     parser.add_argument("--compose", action="store_true")
+    parser.add_argument("--media-tools", action="store_true")
     args = parser.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("The package smoke test is cloud-only.")
@@ -94,7 +95,9 @@ def main() -> None:
             port = probe.getsockname()[1]
         if port in (8420, 8421):
             raise RuntimeError("Refusing a default service port in CI.")
-        mode = "compose" if args.compose else "native"
+        if args.media_tools and not args.compose:
+            raise ValueError("Media-tools smoke uses the packaged NAS image.")
+        mode = "compose-media" if args.media_tools else "compose" if args.compose else "native"
         env = {**os.environ, "QIMENG_PACKAGE_STATE": str(work / "synthetic-state"),
                "QIMENG_PACKAGE_PASSWORD_FILE": str(secret), "QIMENG_PACKAGE_PORT": str(port),
                "QIMENG_PACKAGE_TEST_MODE": mode, "QIMENG_PACKAGE_TARGET": args.target,
@@ -103,7 +106,14 @@ def main() -> None:
         process = None
         try:
             if args.compose:
-                subprocess.run(["bash", str(app / "start.sh"), "nas"], env=env, check=True, timeout=180)
+                subprocess.run(["bash", str(app / "start.sh"), "nas-media" if args.media_tools else "nas"], env=env, check=True, timeout=480)
+                if args.media_tools:
+                    video = subprocess.check_output(["docker", "run", "--rm", "qimeng-next-local-media:alpine3.24.4-ffmpeg8.1.3-r0",
+                        "ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10", "-t", "3",
+                        "-c:v", "mpeg4", "-threads", "1", "-movflags", "frag_keyframe+empty_moov", "-f", "mp4", "pipe:1"], timeout=60)
+                    fixture = work / "synthetic-preview.mp4"
+                    fixture.write_bytes(video)
+                    env["QIMENG_PACKAGE_VIDEO"] = str(fixture)
             else:
                 command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned", "-File", str(app / "start.ps1"), "-NoBrowser"] if os.name == "nt" else ["bash", str(app / "start.sh")]
                 process = subprocess.Popen(command, env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)

@@ -19,7 +19,6 @@ import (
  "qimeng.local/next/server/internal/model"
 )
 
-var thumbnailSlots=make(chan struct{},2)
 type boundedOutput struct{bytes.Buffer;limit int}
 func(w *boundedOutput)Write(b []byte)(int,error){if len(b)>w.limit-w.Len(){return 0,errors.New("media tool output exceeded limit")};return w.Buffer.Write(b)}
 func builtinImage(mime string)bool{return mime=="image/jpeg"||mime=="image/png"||mime=="image/gif"}
@@ -41,12 +40,14 @@ func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{
  stream,found:=result.primary();if !found{a.ProbeState="failed";return nil};a.Width,a.Height=stream.Width,stream.Height
  if result.Format.Duration!=""&&result.Format.Duration!="N/A"{duration,e:=strconv.ParseFloat(result.Format.Duration,64);if e!=nil{return e};if duration>=0&&duration<1e9{a.DurationMs=int64(duration*1000)}};a.ProbeState="ready";return nil
 }
-func(s *Service)thumbnailSource(ctx context.Context,id string,version int64,edge int)(*os.File,model.Asset,string,string,error){
+func previewPath(id string,version int64,edge int)string{return "cache/"+id+"/v3-"+strconv.FormatInt(version,10)+"-"+strconv.Itoa(edge)+".jpg"}
+func(s *Service)thumbnailSource(ctx context.Context,id string,version int64,edge int,snapshotNeeded bool)(*os.File,model.Asset,string,string,error){
  s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,"","",e};if a.Trashed{return nil,a,"","",Fail(404,"not_found","媒体位于回收站。")}
  if version>0&&version!=a.ContentVersion{return nil,a,"","",Fail(409,"content_changed","缩略图对应的内容版本已变化，请刷新条目。")}
  if e=s.currentThumbnailSource(a);e!=nil{return nil,a,"","",e}
- cache:="cache/"+a.ID+"/v3-"+strconv.FormatInt(a.ContentVersion,10)+"-"+strconv.Itoa(edge)+".jpg"
+ cache:=previewPath(a.ID,a.ContentVersion,edge)
  if e=s.safe(cache);e!=nil{return nil,a,"","",e};if f,e:=s.Root.Open(cache);e==nil{return f,a,cache,"",nil}else if !errors.Is(e,os.ErrNotExist){return nil,a,"","",e}
+ if !snapshotNeeded{return nil,a,cache,"",nil}
  snapshot:="libraries/"+a.LibraryID+"/.qimeng-internal/cache-sources/"+ID()+path.Ext(a.FileName)
  if e=s.linkNoReplace(assetPath(a),snapshot);e!=nil{return nil,a,"","",e};return nil,a,cache,snapshot,nil
 }
@@ -58,20 +59,32 @@ func(s *Service)currentThumbnailSource(a model.Asset)error{
 }
 func(s *Service)ThumbnailSize(ctx context.Context,id string,version int64,size string)(*os.File,model.Asset,error){
  edge:=512;switch size{case "","md":case "sm":edge=256;case "lg":edge=1024;default:return nil,model.Asset{},Fail(400,"invalid_thumbnail_size","缩略图尺寸必须是sm、md或lg。")}
- // Acquire before creating the temporary source link; queued requests must not
- // create an unbounded number of retained originals.
- select{case thumbnailSlots<-struct{}{}:defer func(){<-thumbnailSlots}();case <-ctx.Done():return nil,model.Asset{},ctx.Err()}
- cached,a,cache,source,e:=s.thumbnailSource(ctx,id,version,edge);if e!=nil{return nil,a,e};if cached!=nil{return cached,a,nil};defer s.Root.Remove(source)
+ return s.thumbnailFor(ctx,id,version,edge,false)
+}
+func(s *Service)thumbnailFor(ctx context.Context,id string,version int64,edge int,background bool)(*os.File,model.Asset,error){
+ cached,a,key,_,err:=s.thumbnailSource(ctx,id,version,edge,false);if err!=nil||cached!=nil{return cached,a,err}
+ err=s.previews.join(ctx,s,key,background,func(work context.Context)error{return s.generatePreview(work,id,a.ContentVersion,edge)})
+ if err!=nil{return nil,a,err}
+ cached,a,_,_,err=s.thumbnailSource(ctx,id,a.ContentVersion,edge,false)
+ if err==nil&&cached==nil{err=Fail(409,"thumbnail_changed","生成的缩略图已失效，请重新读取。")}
+ return cached,a,err
+}
+func(s *Service)generatePreview(ctx context.Context,id string,version int64,edge int)error{
+ cached,a,cache,source,e:=s.thumbnailSource(ctx,id,version,edge,true);if e!=nil{return e};if cached!=nil{return cached.Close()};defer s.Root.Remove(source)
  var data []byte
  if builtinImage(a.MimeType){
   data,e=s.scaledStill(source,a.MimeType,edge,92,draw.CatmullRom)
  }else{
   data,e=s.externalPreview(ctx,source,a,edge)
  }
- if e!=nil{return nil,a,e}
- if e=s.currentThumbnailSource(a);e!=nil{return nil,a,e}
- current,e:=s.Asset(ctx,id);if e!=nil{return nil,a,e};if current.Trashed||current.ContentVersion!=a.ContentVersion{return nil,a,Fail(409,"content_changed","生成期间媒体版本已变化，请刷新条目。")}
- if e=s.ensureParent(cache);e!=nil{return nil,a,e};tmp:=path.Dir(cache)+"/"+ID()+".tmp";f,e:=s.Root.OpenFile(tmp,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);if e!=nil{return nil,a,e};defer s.Root.Remove(tmp)
- if _,e=f.Write(data);e!=nil{f.Close();return nil,a,e};if e=f.Sync();e!=nil{f.Close();return nil,a,e};if e=f.Close();e!=nil{return nil,a,e}
- if e=s.Root.Link(tmp,cache);e!=nil&&!errors.Is(e,os.ErrExist){return nil,a,e};f,e=s.Root.Open(cache);return f,a,e
+ if e!=nil{return e}
+ if e=ctx.Err();e!=nil{return e}
+ free,e:=freeBytes(s.Config.DataDir);if e!=nil{return e}
+ if free-int64(len(data))-4096<s.Config.ReserveBytes{return Fail(507,"thumbnail_space","剩余空间须留给原件，暂缓写入缩略图。")}
+ if e=s.ensureParent(cache);e!=nil{return e};tmp:=path.Dir(cache)+"/"+ID()+".tmp";f,e:=s.Root.OpenFile(tmp,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);if e!=nil{return e};defer s.Root.Remove(tmp)
+ if _,e=f.Write(data);e!=nil{f.Close();return e};if e=f.Sync();e!=nil{f.Close();return e};if e=f.Close();e!=nil{return e}
+ s.mu.Lock();defer s.mu.Unlock()
+ current,e:=s.Asset(ctx,id);if e!=nil{return e};if current.Trashed||current.ContentVersion!=a.ContentVersion{return Fail(409,"content_changed","生成期间媒体版本已变化，请刷新条目。")}
+ if e=s.currentThumbnailSource(current);e!=nil{return e}
+ if e=s.Root.Link(tmp,cache);e!=nil&&!errors.Is(e,os.ErrExist){return e};return nil
 }

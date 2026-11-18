@@ -38,6 +38,7 @@ func(s *Service)scanLibrary(ctx context.Context,id string){
  if e==nil{e=s.scanMissing(ctx,id,j.LibraryID)}
  finishCtx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel();s.mu.Lock();defer s.mu.Unlock();j,readErr:=s.Scan(finishCtx,id);if readErr!=nil||j.State=="cancelled"{return}
  if errors.Is(e,context.Canceled){j.State="interrupted"}else if e!=nil{j.State="failed";scanIssue(&j,"","scan_io_failed")}else if j.IssueCount>0{j.State="partial"}else{j.State="completed"};j.UpdatedAt=time.Now().UTC();if e=saveScan(finishCtx,s.DB.DB,j);e!=nil{slog.Error("scan terminal persistence failed","scanId",id)}
+ if j.Added+j.Moved+j.Changed>0{s.previews.changed(j.LibraryID,"")}
 }
 func(s *Service)scanMissing(ctx context.Context,id,libraryID string)error{last:="";for{items,e:=store.List[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE library_id=? AND trashed=0 AND id>? ORDER BY id LIMIT 200",libraryID,last);if e!=nil{return e};if len(items)==0{return nil};for _,a:=range items{if e:=ctx.Err();e!=nil{return e};if _,e=s.Root.Stat(assetPath(a));errors.Is(e,os.ErrNotExist){if e=s.scanProgress(ctx,id,a.RelativePath,"missing_original",false);e!=nil{return e}}else if e!=nil{return e};last=a.ID}}}
 func(s *Service)walkLibrary(ctx context.Context,jobID,libraryID,relative string,depth int)error{
@@ -50,7 +51,8 @@ func(s *Service)scanFile(ctx context.Context,jobID,libraryID,relative string)err
  hash,size,e:=s.hashFile(full);if e!=nil{return s.scanProgress(ctx,jobID,relative,"read_failed",true)};probe:=model.Asset{ID:"scan",MimeType:mime};if e=s.probe(ctx,full,&probe);e!=nil{return s.scanProgress(ctx,jobID,relative,"invalid_media",true)}
  s.mu.Lock();defer s.mu.Unlock();j,e:=s.Scan(ctx,jobID);if e!=nil{return e};if j.State=="cancelled"{return context.Canceled};library,e:=s.library(ctx,libraryID);if e!=nil{return e};if !library.Enabled{return Fail(409,"library_disabled","库已停用。")}
  nowInfo,e:=s.Root.Stat(full);if e!=nil{return e};if !os.SameFile(initial,nowInfo)||initial.Size()!=size||nowInfo.Size()!=size||!initial.ModTime().Equal(nowInfo.ModTime()){j.Processed++;j.Skipped++;scanIssue(&j,relative,"source_changed");return saveScan(ctx,s.DB.DB,j)}
- var pending int;if e=s.DB.DB.QueryRowContext(ctx,"SELECT count(*) FROM file_intents WHERE state!='done' AND json_extract(data,'$.Target')=?",full).Scan(&pending);e!=nil{return e};if pending>0{j.Processed++;j.Skipped++;scanIssue(&j,relative,"publication_pending");return saveScan(ctx,s.DB.DB,j)}
+ var pending bool;if e=s.DB.DB.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM file_intents WHERE state IN ('prepared','committed') AND
+  (? IN (json_extract(data,'$.Target'),json_extract(data,'$.Source')) OR (json_extract(data,'$.Before.libraryId')=? AND json_extract(data,'$.Before.relativePath')=?)))`,full,libraryID,relative).Scan(&pending);e!=nil{return e};if pending{j.Processed++;j.Skipped++;scanIssue(&j,relative,"publication_pending");return saveScan(ctx,s.DB.DB,j)}
  a,e:=store.Get[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE library_id=? AND relative_path=? AND trashed=0",libraryID,relative);isNew:=errors.Is(e,sql.ErrNoRows);if e!=nil&&!isNew{return e};moved:=false
  if isNew{
   candidates,e:=store.List[model.Asset](ctx,s.DB.DB,"SELECT data FROM assets WHERE library_id=? AND hash=? AND size=? AND trashed=0 ORDER BY id LIMIT 101",libraryID,hash,size);if e!=nil{return e};missing:=[]model.Asset{}

@@ -22,10 +22,24 @@ func(s *Service)localSyncLibraries(ctx context.Context)(map[string][]model.Libra
  for _,lib:=range all{name:=strings.Map(func(r rune)rune{if strings.ContainsRune(`\/:*?"<>|`,r){return '_'};return r},strings.TrimSpace(lib.Name));out[name]=append(out[name],lib)}
  return out,nil
 }
+type InputDirectoryTarget struct{Name string `json:"name"`;State string `json:"state"`;LibraryID string `json:"libraryId,omitempty"`;LibraryName string `json:"libraryName,omitempty"`}
+func inputDirectoryTarget(libs map[string][]model.Library,name string)(InputDirectoryTarget,model.Library){
+ t:=InputDirectoryTarget{Name:name};matches:=libs[name]
+ switch{case len(matches)==0:t.State="missing";case len(matches)>1:t.State="ambiguous";case !matches[0].Enabled:t.State="disabled";case matches[0].Kind!="regular":t.State="unsupported";default:t.State="matched"}
+ if len(matches)==1{t.LibraryID=matches[0].ID;t.LibraryName=matches[0].Name;return t,matches[0]};return t,model.Library{}
+}
+func(s *Service)ResolveInputDirectories(ctx context.Context,p model.Principal,names []string)(model.Page[InputDirectoryTarget],error){
+ out:=model.Page[InputDirectoryTarget]{Items:[]InputDirectoryTarget{}};if e:=Authorize(p,"admin","");e!=nil{return out,e}
+ if names==nil||len(names)>100{return out,Fail(400,"invalid_input_directories","请提交最多100个目录名。")}
+ libs,e:=s.localSyncLibraries(ctx);if e!=nil{return out,e}
+ for _,name:=range names{if !domain.ValidName(name){return out,Fail(400,"invalid_input_directory","只接受单级目录名。")};item,_:=inputDirectoryTarget(libs,name);out.Items=append(out.Items,item)}
+ return out,nil
+}
 func findSyncLibrary(libs map[string][]model.Library,relative string)(model.Library,error){
- folder,_,ok:=strings.Cut(relative,"/");matches:=libs[folder]
- if !ok||len(matches)!=1{return model.Library{},Fail(409,"local_sync_library_ambiguous","投放目录必须恰好匹配一个媒体库。")}
- l:=matches[0];if !l.Enabled||l.Kind!="regular"{return l,Fail(409,"local_sync_library_unavailable","投放仅接受已启用的常规库。")};return l,nil
+ folder,_,_:=strings.Cut(relative,"/");target,l:=inputDirectoryTarget(libs,folder)
+ if target.State=="matched"{return l,nil}
+ if target.State=="missing"||target.State=="ambiguous"{return l,Fail(409,"local_sync_library_ambiguous","投放目录必须恰好匹配一个媒体库。")}
+ return l,Fail(409,"local_sync_library_unavailable","投放仅接受已启用的常规库。")
 }
 func openSyncSource(root *os.Root,name string)(*os.File,os.FileInfo,error){
  parts:=strings.Split(name,"/");var entry os.FileInfo

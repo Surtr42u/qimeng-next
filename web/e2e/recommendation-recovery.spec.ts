@@ -12,7 +12,9 @@ test("an expired recommendation cursor keeps the current page and restarts from 
   });
   await page.goto("/");
   await expect(page.locator(".media-card")).toHaveCount(32);
-  await page.getByRole("button", { name: "加载更多", exact: true }).click();
+  // Scrolling the button into view already fires the sentinel in WebKit. A click
+  // on the same element could run its new recovery action before the assertion.
+  await page.locator("#main-content").evaluate(element => element.scrollTo({ top: element.scrollHeight, behavior: "instant" }));
   await expect(page.getByRole("alert")).toContainText("推荐顺序已更新");
   await expect(page.locator(".media-card")).toHaveCount(32);
   await page.getByRole("button", { name: "从第一页继续", exact: true }).click();

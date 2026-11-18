@@ -133,15 +133,20 @@ func(s *Service)PreparePlan(ctx context.Context,w *Write,id string,in model.Plan
 // a time. Failures remain visible without rolling back unrelated committed items.
 func(s *Service)CommitPlan(ctx context.Context,principal model.Principal,batchID,planID,fingerprint,key string)(Result,error){
  if e:=Authorize(principal,"organize",batchID);e!=nil{return Result{},e};if e:=Authorize(principal,"ingest",batchID);e!=nil{return Result{},e}
+ if len(key)<8||len(key)>128{return Result{},Fail(400,"idempotency_required","提交计划须提供8–128字符的稳定幂等键。")}
  var oldHash string;var oldBody []byte;var oldStatus int
  receiptErr:=s.DB.DB.QueryRowContext(ctx,"SELECT input_hash,response,status FROM idempotency WHERE principal_id=? AND operation=? AND key=?",principal.ID,"commitPlan:"+planID,key).Scan(&oldHash,&oldBody,&oldStatus)
- if receiptErr==nil{if oldHash!=digest([]byte(fingerprint)){return Result{},Fail(409,"idempotency_conflict","同一计划提交键的输入已改变。")};return Result{Body:oldBody,Status:oldStatus},nil};if !errors.Is(receiptErr,sql.ErrNoRows){return Result{},receiptErr}
+ if receiptErr==nil{
+  if oldHash!=digest([]byte(fingerprint)){return Result{},Fail(409,"idempotency_conflict","同一计划提交键的输入已改变。")}
+  var prior model.BatchDetail;if e:=json.Unmarshal(oldBody,&prior);e!=nil{return Result{},e}
+  for _,entry:=range prior.Plans{if entry.ID==planID&&entry.State=="completed"{return s.Run(ctx,principal,"commitPlan:"+planID,key,[]byte(fingerprint),func(*Write)(any,int,error){return nil,0,Fail(409,"receipt_changed","计划回执已变化，请重新回读。")})}}
+ }else if !errors.Is(receiptErr,sql.ErrNoRows){return Result{},receiptErr}
  p,e:=s.Plan(ctx,principal,batchID,planID);if e!=nil{return Result{},e};if p.Fingerprint!=fingerprint{return Result{},Fail(409,"plan_fingerprint_conflict","计划摘要不匹配，必须使用服务端原计划。")}
  for _,item:=range p.Items{
   _,e=s.Run(ctx,principal,"commitPlanItem:"+planID+":"+item.UploadID,fingerprint,[]byte(fingerprint),func(w *Write)(any,int,error){
    b,e:=s.Batch(ctx,batchID);if e!=nil{return nil,0,e};if b.State=="cancelled"{return nil,0,Fail(409,"batch_cancelled","批次已取消，已提交项目保留。")}
    ignore:=map[string]bool{};applied:=int64(0)
-   for _,i:=range p.Items{ignore[digest([]byte("asset:"+i.UploadID))[:32]]=true;existing,e:=s.Upload(ctx,principal,i.UploadID);if e!=nil{return nil,0,e};if existing.State=="ingested"{a,e:=s.Asset(ctx,existing.AssetID);if e!=nil{return nil,0,e};actualAuthors,_:=json.Marshal(a.AuthorIDs);expectedAuthors,_:=json.Marshal(i.AuthorIDs);if a.RelativePath!=i.RelativePath||a.Hash!=i.ExpectedHash||a.CollectionID!=i.CollectionID||a.Trashed||string(actualAuthors)!=string(expectedAuthors){return nil,0,Fail(409,"plan_result_changed","已有结果与本计划不一致，不能重复提交覆盖。")};applied++}else if existing.State=="duplicate"{applied++}}
+   for _,i:=range p.Items{ignore[digest([]byte("asset:"+i.UploadID))[:32]]=true;existing,e:=s.Upload(ctx,principal,i.UploadID);if e!=nil{return nil,0,e};if existing.State=="ingested"{if e=s.verifyAppliedPlanItem(ctx,p.ID,i,existing);e!=nil{return nil,0,e};applied++}else if existing.State=="duplicate"{applied++}}
    if b.Revision!=p.BatchRevision+applied{return nil,0,Conflict(b.Revision)}
    current,e:=s.namespaceFingerprint(ctx,b.LibraryID,ignore);if e!=nil{return nil,0,e};if current!=p.DirectoryFingerprint{return nil,0,Fail(409,"namespace_changed","目标目录或对象版本已变化，请重新准备剩余项目。")}
    u,e:=s.Upload(ctx,principal,item.UploadID);if e!=nil{return nil,0,e};if u.State=="ingested"{a,e:=s.Asset(ctx,u.AssetID);return model.UploadResult{Upload:u,Asset:&a},200,e};if u.State=="duplicate"{return model.UploadResult{Upload:u},200,nil};if u.State!="staged"{return nil,0,Fail(409,"plan_input_conflict","输入状态已改变。")}
@@ -149,7 +154,7 @@ func(s *Service)CommitPlan(ctx context.Context,principal model.Principal,batchID
   })
   if e!=nil{
    var application *Error
-   if errors.As(e,&application){switch application.Code{case "namespace_changed","revision_conflict","batch_cancelled","scope_denied","batch_scope_denied","expired","revoked":return Result{},e}}
+   if errors.As(e,&application){switch application.Code{case "namespace_changed","revision_conflict","plan_result_changed","batch_cancelled","scope_denied","batch_scope_denied","expired","revoked":return Result{},e}}
    code,message:="file_operation_failed","此项未完成，原件保留；请回读后重试。"
    if application!=nil{code=application.Code;message=application.Message}
    _,recordErr:=s.Run(ctx,principal,"planItemFailure:"+planID+":"+item.UploadID,"",nil,func(w *Write)(any,int,error){
@@ -162,7 +167,5 @@ func(s *Service)CommitPlan(ctx context.Context,principal model.Principal,batchID
    if recordErr!=nil{return Result{},recordErr}
   }
  }
- return s.Run(ctx,principal,"commitPlan:"+planID,key,[]byte(fingerprint),func(w *Write)(any,int,error){
-  detail,e:=s.BatchDetail(ctx,principal,batchID);if e!=nil{return nil,0,e};p.State="completed";for _,i:=range detail.Items{if i.Upload.State!="ingested"{p.State="partial";break}};q,e:=w.Q();if e!=nil{return nil,0,e};if e=store.SavePlan(ctx,q,p);e!=nil{return nil,0,e};for i:=range detail.Plans{if detail.Plans[i].ID==p.ID{detail.Plans[i]=p.PlanSummary}};return detail,200,nil
- })
+ return s.finishPlanAttempt(ctx,principal,batchID,p,key)
 }

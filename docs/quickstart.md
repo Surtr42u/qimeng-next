@@ -40,6 +40,27 @@ Compose 会拉取固定摘要的 Alpine 镜像，直接运行包中的服务程�
 ssh -N -L 18421:127.0.0.1:8421 用户@NAS
 ```
 
+## 启用视频缩略图
+
+Windows 打开 PowerShell，运行以下命令。安装后关掉启动影库的旧终端，再开一个新终端，让服务读取更新后的 PATH。
+
+```powershell
+winget install --id Gyan.FFmpeg --exact --source winget
+ffmpeg -version
+ffprobe -version
+```
+
+Ubuntu 或 Debian 可以用下面的命令安装同一组程序。两个版本命令都能显示版本后，停止影库并用原来的启动器重新打开。[Windows 软件包清单](https://github.com/microsoft/winget-pkgs/blob/master/manifests/g/Gyan/FFmpeg/8.1.2/Gyan.FFmpeg.installer.yaml)、[Ubuntu FFmpeg 文件清单](https://packages.ubuntu.com/noble/arm64/ffmpeg/filelist)。
+
+```sh
+sudo apt-get update
+sudo apt-get install ffmpeg
+ffmpeg -version
+ffprobe -version
+```
+
+NAS 在同一持久目录设置下运行 `bash start.sh nas-media`。它从包内配方安装固定版本的 FFmpeg/ffprobe 并启动同一 Compose 项目。原先用基础容器启动过的影库会继续使用原持久卷。以后使用 `nas-media` 启动，`nas-stop` 停止。可在新注册的合成库上传一段短视频，打开详情查看时长、分辨率与缩略图。私有云另有 `linux-amd64-compose-media-smoke.json`，记录预览字节数和逐张核验的研究帧数量。[Alpine FFmpeg 软件包](https://pkgs.alpinelinux.org/package/v3.24/community/aarch64/ffmpeg)。
+
 ## 更新、备份和核验
 
 - 升级先停止旧的 Next 进程，解压新软件到另一目录，用原来的专用状态目录启动。首次启动器会拒绝接管未标记的非空位置；原版库应通过迁移流程进入新实例。
@@ -51,7 +72,7 @@ ssh -N -L 18421:127.0.0.1:8421 用户@NAS
 ```
 
 - `SOURCE.json` 记录完整提交 SHA 与 OpenAPI/SDK 摘要，`SHA256SUMS` 列出各文件的校验值。对应平台的 `*-smoke.json` 与 `*-home.png` 记录云端原生平台实际打开该包、密码登录、空库首页和离线恢复结果。仅以成功作业给出的 artifact 确认对应平台。
-- 基础浏览和原件下载随包提供。媒体探测、视频缩略图和研究预览使用服务进程能找到的 `ffmpeg` 与 `ffprobe`；本包及随附 Alpine 容器没有内置这两个程序。普通浏览器可以播放的原件格式由设备解码能力决定。
+- 基础浏览和原件下载随包提供。原生基础包与 `nas` 模式可使用浏览器支持的原件格式；系统工具安装或 `nas-media` 模式为服务提供视频探测、缩略图和研究帧。
 - 自定义端口用 `QIMENG_PACKAGE_PORT`，持久目录用 `QIMENG_PACKAGE_STATE`。已有受限密码文件可通过 `QIMENG_PACKAGE_PASSWORD_FILE` 提供。默认账号凭据、端口与目录独立于旧应用。
 
 容器参考 [Docker Compose secrets](https://docs.docker.com/compose/how-tos/use-secrets/) 与 [Alpine 官方镜像](https://hub.docker.com/_/alpine/)。

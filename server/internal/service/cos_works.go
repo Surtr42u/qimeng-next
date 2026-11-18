@@ -46,6 +46,13 @@ func saveCOSPlacement(ctx context.Context,q store.Querier,author *model.Author,w
 
 func(s *Service)prepareCOSUpload(ctx context.Context,in *model.UploadInput)error{
  if in.CosWorkID==""{return nil};work,e:=store.Get[model.CosWork](ctx,s.DB.DB,"SELECT data FROM cos_works WHERE id=?",in.CosWorkID);if e!=nil{return Normalize(e)};if work.LibraryID!=in.LibraryID{return Fail(409,"cos_work_library_conflict","COS 作品属于其他库。")};if in.RelativeDirectory!=""&&in.RelativeDirectory!=work.RelativeDirectory{return Fail(409,"cos_work_directory_conflict","显式目录与已登记 COS 作品不一致。")};in.RelativeDirectory=work.RelativeDirectory
- if len(in.AuthorIDs)==0&&in.AuthorID==""{in.AuthorIDs=[]string{work.AuthorID}}else{ids:=in.AuthorIDs;if len(ids)==0{ids=[]string{in.AuthorID}};found:=false;for _,id:=range ids{if id==work.AuthorID{found=true}};if !found{return Fail(409,"cos_work_author_conflict","明确作者集合须包含 COS 作品的目录作者。")}}
+ chosen:=in.AuthorIDs;if len(chosen)==0&&in.AuthorID!=""{chosen=[]string{in.AuthorID}}
+ in.AuthorIDs=[]string{work.AuthorID}
+ for _,id:=range chosen{
+  if id=="unknown"||id==work.AuthorID{continue}
+  author,e:=store.Get[model.Author](ctx,s.DB.DB,"SELECT data FROM authors WHERE id=?",id);if e!=nil{return Normalize(e)}
+  if author.Kind!="regular"{return Fail(409,"cos_work_author_conflict","不能将其他目录的 COS 身份附加到此作品。")}
+  in.AuthorIDs=appendUnique(in.AuthorIDs,id)
+ }
  return nil
 }

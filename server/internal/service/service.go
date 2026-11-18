@@ -28,9 +28,9 @@ type Error struct { Code string `json:"code"`; Message string `json:"message"`; 
 func (e *Error) Error()string{return e.Code+": "+e.Message}
 func Fail(status int,code,message string)error{return &Error{Code:code,Message:message,Status:status}}
 func Conflict(rev int64)error{return &Error{Code:"revision_conflict",Message:"对象已被修改，请刷新后重新提交。",CurrentRevision:rev,Status:409}}
-func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};return err}
+func Normalize(err error)error{if errors.Is(err,sql.ErrNoRows){return Fail(404,"not_found","对象不存在。")};if err!=nil&&strings.Contains(err.Error(),"qimeng_pending_asset"){return Fail(409,"publication_pending","此资产已有未提交的文件操作，请先恢复原操作。")};return err}
 type Config struct { DataDir,AdminToken,AdminPassword,AIToken string; StorageRoots map[string]string; BackupTargets map[string]BackupTarget; DefaultBackupTarget string; SecureCookies,AIConfigured bool; ReserveBytes int64; LocalSync LocalSyncConfig }
-type Service struct { recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner }
+type Service struct { previews previewWork; recommendations recommendationOrders; DB *store.Store; Root *storage.Root; Config Config; InstanceID string; mu sync.Mutex; owner *sql.DB; workCtx context.Context; stopWork context.CancelFunc; workers sync.WaitGroup; activeScans int; scanWake chan struct{}; mirrorWake chan struct{}; mirrorEnabled atomic.Bool; password *passwordLogin; loginLimit loginBudget; localSync *localSyncRunner }
 
 func New(config Config)(*Service,error){
  if len(config.AdminToken)<32{return nil,errors.New("QIMENG_ADMIN_TOKEN must contain at least 32 characters")}
@@ -53,6 +53,7 @@ func New(config Config)(*Service,error){
  s.workCtx,s.stopWork=context.WithCancel(context.Background())
  s.localSync=localSync
  s.recommendations.init()
+ s.previews.init()
  ctx:=context.Background()
  libraries,err:=store.List[model.Library](ctx,db.DB,"SELECT data FROM libraries ORDER BY id");if err!=nil{s.Close();return nil,err}
  for _,library:=range libraries{if err=root.RegisterLibrary(library.ID,library.StorageID,library.RootRelativePath);err!=nil{s.Close();return nil,err}}
@@ -79,9 +80,10 @@ func New(config Config)(*Service,error){
  s.mirrorEnabled.Store(mirror.Path!="");s.mirrorWake=make(chan struct{},1);s.workers.Add(1);go s.authorMirrorWorker();s.wakeAuthorMirror()
  if localSync.config.Root!=""{s.workers.Add(1);go s.localSyncWorker()}
  s.workers.Add(1);go s.warmRecommendationOrders()
+ s.workers.Add(1);go s.previewWorker()
  return s,nil
 }
-func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
+func (s *Service)Close()error{if s.stopWork!=nil{s.stopWork()};s.previews.shutdown();s.workers.Wait();defer s.Root.Close();defer s.owner.Close();return s.DB.DB.Close()}
 func ID()string{var b [16]byte;if _,err:=rand.Read(b[:]);err!=nil{panic(err)};return hex.EncodeToString(b[:])}
 func digest(value []byte)string{h:=sha256.Sum256(value);return hex.EncodeToString(h[:])}
 func token()string{var b [32]byte;if _,err:=rand.Read(b[:]);err!=nil{panic(err)};return base64.RawURLEncoding.EncodeToString(b[:])}

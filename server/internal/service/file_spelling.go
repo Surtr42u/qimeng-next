@@ -110,6 +110,7 @@ func (s *Service) publishSpelling(j fileIntent) error {
 	hold := spellingHold(j)
 	if sourceExists && targetExists {return Fail(409, "path_occupied", "原名称和目标名称都存在，请核对两个文件。")}
 	if targetExists {
+		if err:=s.verifyFileIdentity(j.Target,j.SourceObject);err!=nil{return err}
 		if err := s.verify(j.Target, j.After.Hash, j.After.Size); err != nil {return err}
 		// The old spelling may already have been fixed by a recovered request.
 		// If a hold exists, byte equality alone cannot substitute for identity.
@@ -122,13 +123,15 @@ func (s *Service) publishSpelling(j fileIntent) error {
 		return nil
 	}
 	if sourceExists {
+		if err:=s.verifyFileIdentity(j.Source,j.SourceObject);err!=nil{return err}
 		if err := s.verify(j.Source, j.After.Hash, j.After.Size); err != nil {return err}
 		if err := s.linkNoReplace(j.Source, hold); err != nil {return err}
 		if err := s.verify(hold, j.After.Hash, j.After.Size); err != nil {return err}
-		if err := s.removeVerified(j.Source, j.After.Hash, j.After.Size); err != nil {return err}
+		if err := s.removeFileObject(j.Source,j.SourceObject,j.After.Hash,j.After.Size); err != nil {return err}
 	} else if err := s.verify(hold, j.After.Hash, j.After.Size); err != nil {
 		return err
 	}
+	if err:=s.verifyFileIdentity(hold,j.SourceObject);err!=nil{return err}
 	if err := s.linkNoReplace(hold, j.Target); err != nil {return err}
 	return s.verify(j.Target, j.After.Hash, j.After.Size)
 }

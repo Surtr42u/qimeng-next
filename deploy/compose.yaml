@@ -1,6 +1,6 @@
 services:
   server:
-    image: alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+    image: "${QIMENG_PACKAGE_IMAGE:-alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf}"
     user: "${QIMENG_PACKAGE_UID:?run start.sh nas}:${QIMENG_PACKAGE_GID:?run start.sh nas}"
     restart: unless-stopped
     read_only: true

@@ -118,7 +118,8 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
  var before *model.Asset;operation:="ingest"
  if u.ReplaceAssetID!=""{
   old,e:=s.Asset(ctx,u.ReplaceAssetID);if e!=nil{return model.UploadResult{},e};if old.Trashed||old.ContentVersion!=u.ExpectedContentVersion{return model.UploadResult{},Fail(409,"replacement_conflict","目标内容版本已变化。")};before=&old;a=old;a.Size=u.Size;a.Hash=u.Hash;a.MimeType=mime;a.MediaType=kind;a.ContentVersion++;a.Revision++;a.UpdatedAt=now;a.SourceMtime=u.SourceMtime
-  a.FileName=strings.TrimSuffix(old.FileName,path.Ext(old.FileName))+strings.ToLower(path.Ext(u.FileName));a.RelativePath=path.Join(path.Dir(old.RelativePath),a.FileName);a.AcquisitionSources=appendUnique(a.AcquisitionSources,u.AcquisitionSources...);a.OriginalFileName=u.OriginalFileName;a.SourceRelativePath=u.SourceRelativePath;operation="replace"
+  if !strings.EqualFold(path.Ext(old.FileName),path.Ext(u.FileName)){a.FileName=strings.TrimSuffix(old.FileName,path.Ext(old.FileName))+strings.ToLower(path.Ext(u.FileName))}
+  a.RelativePath=path.Join(path.Dir(old.RelativePath),a.FileName);a.AcquisitionSources=appendUnique(a.AcquisitionSources,u.AcquisitionSources...);a.OriginalFileName=u.OriginalFileName;a.SourceRelativePath=u.SourceRelativePath;operation="replace"
  }else if item!=nil{
   if item.ExpectedHash!=u.Hash{return model.UploadResult{},Fail(409,"plan_content_changed","计划引用的内容已改变。")};a.FileName=item.FileName;a.RelativePath=item.RelativePath;a.CollectionID=item.CollectionID;a.Page=item.Page;a.MetadataSource="ai";authors,e:=s.resolveAuthors(ctx,a.LibraryID,item.AuthorIDs);if e!=nil{return model.UploadResult{},e};setAuthors(&a,authors);if e=s.resolveTaxonomy(ctx,&a,item.SourceIDs,item.CharacterIDs);e!=nil{return model.UploadResult{},e}
  }else if u.CollectionID!=""&&kind!="video"{

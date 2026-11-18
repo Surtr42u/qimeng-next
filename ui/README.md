@@ -26,6 +26,6 @@ Next 导入 `react/tokens.css` 与 `react/glass.css`；`.dark` 使用旧深色�
 
 ## 跨端规范
 
-Android 对齐导航内容、触摸区域、选中语义、动效中断与材料降级规则；由 Compose 原生实现，不调用这些 DOM 组件。桌面连接壳加载同一 Web 内容，系统标题栏负责窗口操作；Web 不获得原生 IPC 权限。
+Android 对齐导航内容、触摸区域、选中语义、动效中断与材料降级规则；由 Compose 原生实现，不调用这些 DOM 组件。桌面连接壳加载同一 Web 内容。Web 顶栏的原三键、空白拖动与双击连接到当前主窗的有限窗口命令；Tauri 按已选来源和每次连接的唯一 WebView 标签授权，本地连接页独占地址配置。媒体子窗使用系统标题栏。
 
 官方依据：[backdrop-filter](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/backdrop-filter)、[Web Animations](https://developer.mozilla.org/en-US/docs/Web/API/Web_Animations_API)。自动浏览器用例见 `web/e2e`；图像质量、手机手势和桌面窗口最终以同提交产物的验收为准。

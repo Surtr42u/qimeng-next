@@ -47,6 +47,9 @@ jobs:
       - name: Open the NAS Compose package with separate persistent mounts
         if: runner.os == 'Linux'
         run: python tools/smoke_server_package.py --target ${{ matrix.target }} --packages build/server-packages --compose
+      - name: Verify video thumbnail and research frames in the packaged media-tools image
+        if: matrix.target == 'linux-amd64'
+        run: python tools/smoke_server_package.py --target ${{ matrix.target }} --packages build/server-packages --compose --media-tools
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: qimeng-next-package-${{ matrix.target }}

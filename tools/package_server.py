@@ -43,7 +43,7 @@ def main() -> None:
     if not (args.web / "index.html").is_file() or not list((args.web / "assets").glob("*.js")):
         raise SystemExit("Missing the Web application built by the web job.")
     shutil.copytree(args.web, staging / "web")
-    for launcher in (("start.cmd", "start.ps1") if windows else ("start.sh", "compose.yaml", "nas-entry.sh")):
+    for launcher in (("start.cmd", "start.ps1") if windows else ("start.sh", "compose.yaml", "nas-entry.sh", "Dockerfile.media")):
         text = (ROOT / "deploy" / launcher).read_text(encoding="utf-8")
         # Windows PowerShell 5.1 needs the BOM to decode Chinese UI text.
         (staging / launcher).write_bytes((text.replace("\r\n", "\n").replace("\n", "\r\n") if windows else text.replace("\r\n", "\n")).encode("utf-8-sig" if launcher == "start.ps1" else "utf-8"))

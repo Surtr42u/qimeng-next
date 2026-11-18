@@ -85,6 +85,14 @@ paths:
       responses:
         '201': {description: Library, content: {application/json: {schema: {$ref: '#/components/schemas/Library'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /libraries/resolve-input-directories:
+    post:
+      operationId: resolveInputDirectories
+      description: Read-only owner lookup using the same directory naming rules as the watched folder. Only directory names are accepted.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InputDirectoryNames'}}}}
+      responses:
+        '200': {description: Target resolution in supplied order, content: {application/json: {schema: {$ref: '#/components/schemas/InputDirectoryTargets'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /libraries/{id}:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
@@ -2031,6 +2039,22 @@ components:
             fileCount: {type: integer, format: int64, minimum: 0, description: 'Indexed assets outside trash, including disabled libraries'}
             scanState: {type: string, enum: [idle, scanning, error]}
             latestScanId: {type: string}
+    InputDirectoryNames:
+      type: object
+      required: [names]
+      properties: {names: {type: array, maxItems: 100, items: {type: string, maxLength: 240}}}
+    InputDirectoryTarget:
+      type: object
+      required: [name, state]
+      properties:
+        name: {type: string}
+        state: {type: string, enum: [matched, missing, ambiguous, disabled, unsupported]}
+        libraryId: {type: string}
+        libraryName: {type: string}
+    InputDirectoryTargets:
+      type: object
+      required: [items]
+      properties: {items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/InputDirectoryTarget'}}}
     NamingContext:
       type: object
       required: [policyVersion, libraryId, directory, family, numberClass, nextWorkNumber, width, separator, namespaceFingerprint, reserved]

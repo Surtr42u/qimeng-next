@@ -7,7 +7,7 @@ state=${QIMENG_PACKAGE_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/qimeng-next-s
 port=${QIMENG_PACKAGE_PORT:-8421}
 secret_override=${QIMENG_PACKAGE_PASSWORD_FILE:-}
 mode=${1:-start}
-case "$mode" in start|nas|nas-stop) ;; *) echo '用法：bash start.sh [start|nas|nas-stop]' >&2; exit 2 ;; esac
+case "$mode" in start|nas|nas-media|nas-stop) ;; *) echo '用法：bash start.sh [start|nas|nas-media|nas-stop]' >&2; exit 2 ;; esac
 [[ "$state" == /* && "$port" =~ ^[0-9]{1,5}$ && 10#$port -ge 1 && 10#$port -le 65535 ]] || { echo '需要绝对持久目录和有效端口。' >&2; exit 2; }
 mkdir -p -- "$state"
 state=$(cd -- "$state" && pwd -P)
@@ -38,11 +38,17 @@ fi
 if [[ ! -f "$secret" || -L "$secret" || ! -O "$secret" ]] || (( (8#$(stat -c '%a' -- "$secret") & 077) != 0 )); then
   echo '密码文件必须为当前用户持有的私有普通文件（权限 600 或 400）。' >&2; exit 1
 fi
-if [[ "$mode" == nas || "$mode" == nas-stop ]]; then
+if [[ "$mode" == nas || "$mode" == nas-media || "$mode" == nas-stop ]]; then
   export QIMENG_PACKAGE_APP="$app" QIMENG_PACKAGE_DATA="$data" QIMENG_PACKAGE_MEDIA="$media" QIMENG_PACKAGE_SECRET="$secret"
   export QIMENG_PACKAGE_UID=$(id -u) QIMENG_PACKAGE_GID=$(id -g) QIMENG_PACKAGE_PORT="$port"
   project="qimeng-next-$(printf %s "$state" | cksum | cut -d' ' -f1)"
+  unset QIMENG_PACKAGE_IMAGE
   if [[ "$mode" == nas-stop ]]; then exec docker compose --project-name "$project" --file "$app/compose.yaml" stop; fi
+  if [[ "$mode" == nas-media ]]; then
+    export QIMENG_PACKAGE_IMAGE=qimeng-next-local-media:alpine3.24.4-ffmpeg8.1.3-r0
+    # Empty build context; no media, database, or credentials are sent to Docker.
+    docker build --tag "$QIMENG_PACKAGE_IMAGE" - < "$app/Dockerfile.media"
+  fi
   docker compose --project-name "$project" --file "$app/compose.yaml" up -d
   echo "NAS 主机回环地址为 http://127.0.0.1:$port/，远程浏览请使用快速开始中的隧道。"
   exit 0
