@@ -1,6 +1,31 @@
 import { test, expect } from "@playwright/test";
 import { mockLibrary } from "./fixture";
 
+test("a cold detail route leaves its album visible while the packaged script downloads", async ({ page }) => {
+  await mockLibrary(page);
+  await page.goto("/album");
+  const cards = page.locator("#page-albums .media-card");
+  await expect(cards).toHaveCount(48);
+  let release!: () => void;
+  const gate = new Promise<void>(done => { release = done; });
+  await page.route("**/assets/*.js", async route => { await gate; await route.continue(); });
+  const downloading = page.waitForRequest(request => /^\/assets\/[^/]+\.js$/.test(new URL(request.url()).pathname));
+  const opening = cards.nth(1).click();
+  try {
+    await downloading;
+    await expect(cards.nth(1)).toBeVisible();
+    await expect(page.locator(".asset-overlay")).toHaveCount(0);
+  } finally {
+    release();
+    await opening;
+  }
+  await expect(page.locator(".asset-pager__count")).toHaveText("2 / 48");
+  await expect(page.locator(".overlay-backdrop")).toHaveJSProperty("inert", true);
+  await page.goBack();
+  await expect(cards.nth(1)).toBeVisible();
+  await expect(page.locator(".overlay-backdrop")).toHaveJSProperty("inert", false);
+});
+
 test("detail keeps the original two-column frame and image navigation semantics", async ({ page }, testInfo) => {
   await mockLibrary(page);
   await page.goto("/album");

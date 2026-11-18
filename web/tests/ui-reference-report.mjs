@@ -97,6 +97,12 @@ export async function writeReport(out, data) {
   }
   rows.push("");
   for (const [key, [sent, received]] of totals) rows.push(`- ${key} 全流程上行 ${sent} B，下行 ${received} B。`);
+  rows.push("", "首屏脚本单列以下数字以便复测按页加载。脚本正文取冷首页实际收到的全部 JavaScript，与包含图片和请求头的整页流量分别统计。", "",
+    "|桌面首页|脚本请求数|全部脚本正文 B|首页实际上行 B|首页实际下行 B|", "|---|---:|---:|---:|---:|");
+  for (const c of data.cases.filter(c => c.view === "desktop" && c.scene === "home")) {
+    const scripts = c.net.requests.filter(r => r.category === "app" && r.path.endsWith(".js"));
+    rows.push(`|${c.side === "installed" ? "旧" : "当前"}|${scripts.length}|${scripts.reduce((sum, r) => sum + r.outBytes, 0)}|${c.net.wireIn}|${c.net.wireOut}|`);
+  }
   rows.push("", "## 有效性与边界", "",
     data.errors.length ? "以下场景或输入校验失败，保留已完成截图，不能据此认定全套验证通过。" : "十件媒体的身份、顺序、真实原图解码、详情页码、列表底衬和返回路径均经产品入口验证。",
     "", ...data.errors.map(e => "- " + e.replaceAll("\n", " ").slice(0, 700)),

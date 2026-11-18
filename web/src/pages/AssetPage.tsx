@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, FolderInput, Pencil, Star, ThumbsUp, Trash2 } from "lucide-react";
 import { useAsset, useAssetActions, originalUrl, mediaCardDate, safeMediaUrl, useThumbnailURL } from "../data/media";
@@ -10,7 +10,6 @@ import { ErrorNotice, Loading } from "../components/Feedback";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ImageViewer } from "../components/ImageViewer";
 import { ImageStage } from "../components/ImageStage";
-import { VideoPlayer } from "../components/VideoPlayer";
 import { AssetFileName } from "../components/AssetFileName";
 import { bytes, count } from "../lib/format";
 import { readDetailNavigation } from "../lib/detail-navigation";
@@ -19,6 +18,8 @@ import { newId } from "../lib/id";
 import { AssetAuthors, AssetUpNext } from "./AssetSidebar";
 import { AssetTagDialog } from "./AssetTagDialog";
 import { MoveFilesDialog, FileJobsPanel } from "./FileManagementDialogs";
+
+const VideoPlayer = lazy(async () => ({ default: (await import("../components/VideoPlayer")).VideoPlayer }));
 
 export function AssetPage() {
   const { id = "" } = useParams();
@@ -92,16 +93,18 @@ function AssetDetail({ asset, navigation, go, openViewer }: {
         <div className="detail-main">
           <div className="asset-stage">
             {asset.mediaType === "video" ? (
-              <VideoPlayer
-                src={src}
-                title={asset.fileName}
-                poster={poster}
-                highlights={marks}
-                initialPosition={asset.positionMs}
-                progressMatches={asset.positionContentVersion === asset.contentVersion}
-                onPlay={event.play}
-                onProgress={event.progress}
-              />
+              <Suspense fallback={<Loading text="正在加载播放器…" />}>
+                <VideoPlayer
+                  src={src}
+                  title={asset.fileName}
+                  poster={poster}
+                  highlights={marks}
+                  initialPosition={asset.positionMs}
+                  progressMatches={asset.positionContentVersion === asset.contentVersion}
+                  onPlay={event.play}
+                  onProgress={event.progress}
+                />
+              </Suspense>
             ) : <ImageStage src={src} title={asset.fileName} onOpen={openViewer} />}
           </div>
           {navigation && (
