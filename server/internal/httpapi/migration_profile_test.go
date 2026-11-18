@@ -95,9 +95,22 @@ func TestV2ExplicitReplacementPreviewsAndBacksUpBeforeChangingOnlyImportedMateri
 	if err != nil || previous != "Original" {
 		t.Fatalf("checkpoint did not retain the exact pre-apply block: %q %v", previous, err)
 	}
-	decode(t, f.json("GET", path, "", nil, 200), &profile)
-	if profile.Blocks[0].Avatar.ID == oldAvatar || profile.Blocks[0].Values.BiographyZh != nil || *profile.Blocks[1].Values.Summary != "Retain absent source field" || *profile.Blocks[1].Values.PublicName != "Updated" {
-		t.Fatal("unrelated data, translation, or offline avatar was bound to the wrong source")
+	// Each response must decode into a fresh value: an omitted JSON field does
+	// not clear a pointer left in the destination by an earlier GET.
+	var afterProfile service.AuthorProfile
+	decode(t, f.json("GET", path, "", nil, 200), &afterProfile)
+	x, afterBasic := afterProfile.Blocks[0], afterProfile.Blocks[1]
+	if x.Avatar == nil || x.Avatar.ID == oldAvatar || x.Avatar.SourceURL != "https://example.org/second.png" {
+		t.Fatal("the new source did not receive its own offline avatar")
+	}
+	if x.Values.BiographyZh != nil {
+		t.Fatal("a new account retained the previous account's translation")
+	}
+	if afterBasic.Values.Summary == nil || *afterBasic.Values.Summary != "Retain absent source field" {
+		t.Fatal("a field absent from the new source was erased")
+	}
+	if afterBasic.Values.PublicName == nil || *afterBasic.Values.PublicName != "Updated" {
+		t.Fatal("the explicitly verified nickname was not applied")
 	}
 	replay := applyProfilePlan(t, f, plan, "device-profile-replace-apply", 200)
 	if replay.CheckpointID != result.CheckpointID || replacePlan(t, f, updated, "device-profile-replan").Counts["profileBlocksToReplace"] != 0 {
