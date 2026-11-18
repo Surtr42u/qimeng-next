@@ -19,4 +19,6 @@
 2. 以和 Next 联网仪器相同的配置启动全新 API 35、Google APIs、x86_64、SwiftShader AVD。固定名称 `qimeng_api35`、端口 5556，显式设置 `ANDROID_SERIAL=emulator-5556`，在 emulator runner 内调用 `bash android/baseline/capture.sh`。脚本核对 AVD 名、系统版本、包是否为首次安装，将窗口设为 320×640、160 dpi、字体比例 1、系统浅色。
 3. 以 `always()` 上传 `android/build/installed-ui-baseline/`。完成条件为 `manifest.json` 的 `state=complete` 和表内全部 PNG。若截图时状态断言失败，`unverified-*.png` 及 `failedStage` 供定位。登录凭据、服务器原始日志和完整设备窗口转储只存在于临时作业环境。
 
+登录采集核对手填地址，并等待可点击的「连接影库」按钮连续两次出现在相同位置。旧版发现服务期间会禁用按钮，输入法收起时表单位置也会变化。`44305961206` 读回了原发布 APK，但当次最终窗口仍在登录页，没有产出同场景对照图。[当次诊断制品](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961206/artifacts/14429915949)
+
 Next 的同场景来自联网仪器产物 `real-server-home.png`、`real-server-home-classic.png`、`real-server-tag-sheet.png`。两个首页缩略图的顺序由各自 Go 推荐服务确定。比较栏高、图标、卡片、字体和边距时以同尺寸全屏图及语义矩形为准。媒体名、画幅和主要色块对应；两个服务各自编码缩略图，系统时钟、JPEG 压缩和模拟 GPU 的背景采样可能产生像素差异。库组件的 `navigation-liquid.png`、`navigation-classic.png` 使用合成示例布局，其宿主在仪器清单内单独标识。

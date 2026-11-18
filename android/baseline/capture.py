@@ -83,7 +83,7 @@ def tree():
 
 
 def bounds(node):
-    return tuple(map(int, re.findall(r"\d+", node.get("bounds", ""))))
+    return tuple(map(int, re.findall(r"-?\d+", node.get("bounds", ""))))
 
 
 def matching(nodes, label):
@@ -96,17 +96,25 @@ def matching(nodes, label):
     return [node for node in nodes if matches(node) and len(bounds(node)) == 4]
 
 
-def wait_for(label, *, scroll=False, match=None, timeout=35):
+def wait_for(label, *, scroll=False, match=None, timeout=35, stable=False):
     deadline = time.monotonic() + timeout
+    previous = None
     while time.monotonic() < deadline:
         nodes = tree()
         candidates = match(nodes) if match else matching(nodes, label)
         for node in candidates:
-            left, top, right, bottom = bounds(node)
-            if right > left and bottom - top >= 10:
+            rect = bounds(node)
+            left, top, right, bottom = rect
+            if right <= left or bottom - top < 10 or not (0 <= (left + right) // 2 < 320 and 0 <= (top + bottom) // 2 < 640):
+                continue
+            if not stable or rect == previous:
                 return node
-        if scroll and nodes:
-            shell("input", "swipe", "160", "475", "160", "210", "350")
+            previous = rect
+            break
+        else:
+            previous = None
+            if scroll and nodes:
+                shell("input", "swipe", "160", "475", "160", "210", "350")
         time.sleep(0.4)
     raise RuntimeError(f"Expected production UI control was not visible: {label}")
 
@@ -163,9 +171,15 @@ def boot_and_login():
     shell("input", "keycombination", "113", "29")
     shell("input", "keyevent", "67")
     shell("input", "text", "http://127.0.0.1:18483")
+    wait_for("http://127.0.0.1:18483")
     if re.search(r"(?:mInputShown|inputShown)=true", shell("dumpsys", "input_method")):
         shell("input", "keyevent", "BACK")
-    tap("连接影库", scroll=True)
+    # Discovery disables the button while its label remains visible. The IME and the discovery
+    # result can also move the form between a UIAutomator dump and a coordinate tap.
+    tap("连接影库", scroll=True, stable=True, match=lambda nodes: [
+        node for node in nodes if node.get("enabled") == "true" and node.get("clickable") == "true"
+        and matching(node.iter("node"), "连接影库")
+    ])
     wait_for(PICTURE, timeout=75)
 
 
