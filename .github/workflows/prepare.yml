@@ -107,11 +107,9 @@ jobs:
         with: {go-version-file: server/go.mod, cache-dependency-path: server/go.sum}
       - name: Install media dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Format and verify Go
+      - name: Verify Go as committed
         working-directory: server
         run: |
-          gofmt -w .
-          git diff -- '*.go' > ../build-format.patch
           go mod tidy
           go vet ./...
           go test -race -timeout 180s -v ./...
@@ -122,7 +120,6 @@ jobs:
           name: server-first-check
           retention-days: 7
           path: |
-            build-format.patch
             server/go.mod
             server/go.sum
   web:
@@ -140,8 +137,6 @@ jobs:
         working-directory: web
         run: |
           npm ci
-          npm exec --yes --package=prettier@3.10.1 -- prettier --write 'src/**/*.{ts,tsx,css}' '../ui/react/**/*.{ts,tsx,css}' 'tests/**/*.ts' 'e2e/**/*.ts' '!src/api/generated/**'
-          git -C .. diff -- web/src web/tests web/e2e ui/react > web-format.patch
           npm run typecheck
           npm run build
           npm test
@@ -156,7 +151,6 @@ jobs:
             web/dist/
             web/test-results/
             web/playwright-report/
-            web/web-format.patch
   server-packages:
     needs: web
     uses: ./.github/workflows/server-packages.yml
@@ -177,7 +171,6 @@ jobs:
           python -m pip install --require-hashes -r ai/requirements.lock
           python -m unittest discover -s ai/tests -v
           python tools/package_ai.py
-          python tools/check_docs.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ai-first-check

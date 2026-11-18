@@ -18,11 +18,11 @@ type LibraryMonitorConfig struct {
 }
 
 type LibraryMonitoring struct {
-	WatchEnabled       bool   `json:"watchEnabled"`
-	State              string `json:"state"`
-	WatchedDirectories int    `json:"watchedDirectories"`
-	PollIntervalSeconds int   `json:"pollIntervalSeconds"`
-	LastError          string `json:"lastError"`
+	WatchEnabled        bool   `json:"watchEnabled"`
+	State               string `json:"state"`
+	WatchedDirectories  int    `json:"watchedDirectories"`
+	PollIntervalSeconds int    `json:"pollIntervalSeconds"`
+	LastError           string `json:"lastError"`
 }
 
 type libraryMonitor struct {

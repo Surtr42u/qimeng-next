@@ -14,10 +14,10 @@ import (
 // Linux using the same HTTP, backup, migration and recovery tests.
 const (
 	sqliteDriverName = "qimeng-native-sqlite"
-	catalogOptions = "_foreign_keys=on&" + researchOptions
-	researchOptions = "_busy_timeout=5000&_journal_mode=WAL&_synchronous=FULL"
+	catalogOptions   = "_foreign_keys=on&" + researchOptions
+	researchOptions  = "_busy_timeout=5000&_journal_mode=WAL&_synchronous=FULL"
 	ownershipOptions = "_busy_timeout=0"
-	snapshotOptions = "mode=ro"
+	snapshotOptions  = "mode=ro"
 )
 
 func init() {

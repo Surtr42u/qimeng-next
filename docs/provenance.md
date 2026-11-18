@@ -2,6 +2,8 @@
 
 本仓库 2026-11-17 从空目录初始化，依据用户已确认产品要求重新实现。参考项目为 [Surtr42u/qimeng-media，d0215962](https://github.com/Surtr42u/qimeng-media/tree/d0215962)，只作业务规则、公式、使用教训、界面布局与验收依据，不复制业务源码或历史补丁实现。
 
+工程规范参考旧项目在代码所有权、按风险验证和专题文档维护上的经验。新仓采用当前实际模块、云端流程和用户选择，规则正文位于[开发与维护](../CONTRIBUTING.md)，实际依赖约束位于[架构](architecture.md#module-boundaries)。[旧仓协作规范](https://github.com/Surtr42u/qimeng-media/blob/d0215962/AI_README_FIRST.md) · [旧仓模块边界](https://github.com/Surtr42u/qimeng-media/blob/d0215962/docs/ARCHITECTURE.md)
+
 ## UI复用的明确授权
 
 初轮实现重画了部分页面。2026-11-17 用户明确允许直接使用旧 UI，要求优化背后的代码。2026-11-18 用户指出截图仍有差异，要求将拟新增的平滑过渡、玻璃材质和选中效果暂缓。采用旧版的实际展示代码和交互，包括 Android 已有的四档导航材质，业务逻辑与 API 则在新仓实现。
