@@ -430,6 +430,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
         with: {toolchain: '1.100.0'}
       - name: Verify native filesystem semantics
+        id: windows_runtime
         working-directory: server
         run: |
           go test -timeout 8m ./...
@@ -442,6 +443,7 @@ jobs:
         if: ${{ !cancelled() }}
         with: {python-version: '3.13'}
       - name: Verify Windows trusted source recycle semantics
+        id: windows_shell
         if: ${{ !cancelled() }}
         env: {PYTHONPATH: ai/src}
         run: |
@@ -449,6 +451,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Windows recycle provider installation failed' }
           python -m unittest discover -s ai/tests -p test_cleanup.py -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows source recycle checks failed' }
+      - name: Verify Go backup and native Windows source recovery over stdio
+        if: ${{ !cancelled() && steps.windows_runtime.outcome == 'success' && steps.windows_shell.outcome == 'success' }}
+        env: {PYTHONPATH: ai/src}
+        run: |
+          python -m pip install --require-hashes -r ai/requirements.lock -r tools/mcp-compat/windows-recycle.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned MCP dependencies did not install on Windows' }
+          python tools/cloud_windows_recovery.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows source recovery did not return a verifiable outcome' }
       - name: Build native connection shell
         if: ${{ !cancelled() }}
         working-directory: desktop
@@ -477,6 +487,7 @@ jobs:
           path: |
             build/qimeng-next.exe
             build/qimeng-backup.exe
+            build/windows-source-recovery.json
             desktop/package-lock.json
             desktop/src-tauri/Cargo.lock
             desktop/src-tauri/target/release/bundle/
