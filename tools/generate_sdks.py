@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -56,19 +57,34 @@ def run(*args: str, cwd: Path = ROOT) -> None:
     subprocess.run(args, cwd=cwd, check=True)
 
 
+def kotlin_generator(cache: Path) -> Path:
+    name = f"openapi-generator-cli-{OPENAPI_GENERATOR}.jar"
+    jar = cache / name
+    if jar.is_file():
+        content = jar.read_bytes()
+    else:
+        coordinate = f"org/openapitools/openapi-generator-cli/{OPENAPI_GENERATOR}/{name}"
+        repositories = ("https://repo.maven.apache.org/maven2", "https://maven-central.storage-download.googleapis.com/maven2")
+        for repository in repositories:
+            try:
+                with urllib.request.urlopen(f"{repository}/{coordinate}", timeout=120) as response:
+                    content = response.read(100 * 1024 * 1024)
+                break
+            except urllib.error.HTTPError as error:
+                if repository == repositories[-1] or error.code not in (429, 502, 503, 504):
+                    raise
+                print(f"Maven Central returned {error.code}. Using its mirror for the pinned artifact.")
+    if hashlib.sha256(content).hexdigest() != OPENAPI_JAR_SHA256:
+        raise RuntimeError("OpenAPI generator checksum mismatch")
+    if not jar.exists():
+        jar.write_bytes(content)
+    return jar
+
+
 def kotlin() -> None:
     cache = ROOT / "build" / "toolchain"
     cache.mkdir(parents=True, exist_ok=True)
-    name = f"openapi-generator-cli-{OPENAPI_GENERATOR}.jar"
-    url = f"https://repo.maven.apache.org/maven2/org/openapitools/openapi-generator-cli/{OPENAPI_GENERATOR}/{name}"
-    jar = cache / name
-    with urllib.request.urlopen(url, timeout=120) as response:
-        content = response.read(100 * 1024 * 1024)
-    # 首次云端取得官方Maven校验通过的产物后记录SHA-256，后续固定校验。
-    if hashlib.sha256(content).hexdigest() != OPENAPI_JAR_SHA256:
-        raise RuntimeError("OpenAPI generator checksum mismatch")
-    print("OpenAPI generator SHA-256:", hashlib.sha256(content).hexdigest())
-    jar.write_bytes(content)
+    jar = kotlin_generator(cache)
     # Retrofit buffers an unannotated ResponseBody before handing it to its
     # caller. Render every binary response as a stream directly in the pinned
     # generator's template, including portable archives larger than phone RAM.

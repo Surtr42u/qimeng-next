@@ -45,6 +45,10 @@ jobs:
           npm --prefix web install --package-lock-only --ignore-scripts
           npm --prefix tools/mcp-compat install --package-lock-only --ignore-scripts
       - run: npm --prefix web ci
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: build/toolchain/openapi-generator-cli-*.jar
+          key: openapi-cli-${{ hashFiles('tools/generate_sdks.py') }}
       - name: Generate protocol clients
         run: python tools/generate_sdks.py
       - name: Resolve Go module checksums
