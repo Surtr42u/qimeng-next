@@ -45,6 +45,43 @@ func TestContractRoutesBindBeforeMutationAndAuthenticateBeforeErrors(t *testing.
 	}
 }
 
+func TestSourceRuleContractChecksNestedReferencesAndAllOfBeforeWriting(t *testing.T) {
+	f := setup(t)
+	operation := "/sources/custom-groups"
+	key := "contract-nested-source-rule"
+	character := map[string]any{"canonical": "Synthetic role"}
+	group := map[string]any{"canonical": "Synthetic work", "variants": []string{}, "characters": []any{character}}
+	input := map[string]any{"groups": []any{group}, "stopWords": []string{}, "expectedRevision": 1}
+	reject := func() {
+		t.Helper()
+		var problem generated.Error
+		decode(t, f.json("PUT", operation, key, input, 400), &problem)
+		if problem.Code != "invalid_json" {
+			t.Fatal("nested request reached the business operation", problem.Code)
+		}
+	}
+	reject()
+	character["aliases"] = nil
+	reject()
+	character["aliases"] = []string{"Fixture"}
+	delete(input, "expectedRevision")
+	reject()
+	input["expectedRevision"] = 1
+	f.json("PUT", operation, key, input, 200)
+	var settings generated.SourceRuleSettings
+	decode(t, f.json("GET", operation, "", nil, 200), &settings)
+	if settings.Revision != 2 || len(settings.Groups) != 1 || len(settings.Groups[0].Characters) != 1 ||
+		len(settings.Groups[0].Characters[0].Aliases) != 1 || settings.Groups[0].Characters[0].Aliases[0] != "Fixture" {
+		t.Fatal("valid nested edit was not applied exactly once", settings)
+	}
+}
+
+func TestSourceNullableOnAuthorCreateRemainsOptional(t *testing.T) {
+	f := setup(t)
+	f.json("POST", "/authors", "contract-nullable-source", map[string]any{"name": "Nullable fixture", "acquisitionSources": nil}, 201)
+	f.json("POST", "/authors", "contract-omitted-source", map[string]any{"name": "Omitted fixture"}, 201)
+}
+
 func TestGeneratedClientUploadsOriginalAndStreamsVersionedRange(t *testing.T) {
 	f := setup(t)
 	server := httptest.NewServer(f.h)

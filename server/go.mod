@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/getkin/kin-openapi v0.142.0
 	github.com/hashicorp/mdns v1.0.7
 	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/oapi-codegen/runtime v1.9.0

@@ -128,7 +128,7 @@ func TestAuthorProfileCandidatesAreScopedDurableAndRequireOwnerSave(t *testing.T
 	other := profileAuthor(t, f, "Other")
 	base := "/authors/" + author.ID + "/profile"
 	var task service.AuthorTask
-	decode(t, f.json("POST", "/author-tasks", "profile-candidate-task", map[string]any{"authorId": author.ID, "expectedRevision": author.Revision, "allowedFields": []string{}, "candidateBlocks": []string{"basic"}, "maxUpdates": 1, "expiresInSeconds": 3600}, 201), &task)
+	decode(t, f.json("POST", "/author-tasks", "profile-candidate-task", map[string]any{"authorId": author.ID, "expectedRevision": author.Revision, "allowedFields": []string{}, "allowClear": false, "candidateBlocks": []string{"basic"}, "maxUpdates": 1, "expiresInSeconds": 3600}, 201), &task)
 	var credential model.Principal
 	decode(t, f.json("POST", "/credentials", "", map[string]any{"label": "Synthetic profile researcher", "authorTaskId": task.ID, "scopes": []string{"read", "research"}}, 201), &credential)
 	input := map[string]any{"block": "basic", "baseRevision": 0, "values": map[string]string{"summary": "Suggested"}, "evidence": profileEvidence()}

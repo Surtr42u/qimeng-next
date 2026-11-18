@@ -123,61 +123,9 @@ def go() -> None:
     destination = ROOT / "server/internal/transport/generated"
     destination.mkdir(parents=True, exist_ok=True)
     run("go", "run", f"github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{OAPI_CODEGEN}",
-        "-generate", "types,client,std-http-server", "-package", "generated", "-o", str(destination / "api.gen.go"),
+        "-generate", "types,client,std-http-server,spec", "-package", "generated", "-o", str(destination / "api.gen.go"),
         str(ROOT / "api/openapi.yaml"), cwd=ROOT / "server")
-    go_request_rules(destination, read_specification())
-
-
-def go_request_rules(destination: Path, document: dict) -> None:
-    """Extra request information the standard server binder leaves to handlers."""
-    def object_fields(schema):
-        required = set(schema.get("required", []))
-        properties = dict(schema.get("properties", {}))
-        closed = schema.get("additionalProperties") is False
-        for part in schema.get("allOf", []):
-            inherited, fields, sealed = object_fields(part)
-            required.update(inherited)
-            properties.update(fields)
-            closed |= sealed
-        return required, properties, closed
-
-    def string_slice(names):
-        return "[]string{" + ", ".join(json.dumps(name) for name in sorted(names)) + "}"
-
-    lines = ["// Code generated from api/openapi.yaml. DO NOT EDIT.", "package generated", "",
-             "type HTTPRequestRule struct {", "Public, BodyRequired, Object bool",
-             "Required, Nullable, Allowed []string", "}", "",
-             "var HTTPRequestRules = map[string]HTTPRequestRule{"]
-    base = document["servers"][0]["url"]
-    for path, item in sorted(document["paths"].items()):
-        for method, operation in sorted(item.items()):
-            if method not in {"get", "put", "post", "patch", "delete", "head"}:
-                continue
-            fields = []
-            if operation.get("security", document.get("security")) == []:
-                fields.append("Public: true")
-            body = resolve(document, operation.get("requestBody", {}))
-            content = body.get("content", {}).get("application/json")
-            if content:
-                schema = content["schema"]
-                required, properties, closed = object_fields(schema)
-                if body.get("required"):
-                    fields.append("BodyRequired: true")
-                if schema.get("type") == "object" or properties or required:
-                    fields.append("Object: true")
-                if required:
-                    fields.append("Required: " + string_slice(required))
-                    nullable = [name for name in required if "null" in properties.get(name, {}).get("type", [])]
-                    if nullable:
-                        fields.append("Nullable: " + string_slice(nullable))
-                if closed:
-                    fields.append("Allowed: " + string_slice(properties))
-            if fields:
-                pattern = method.upper() + " " + base + path
-                lines.append(json.dumps(pattern) + ": {" + ", ".join(fields) + "},")
-    output = destination / "request_rules.gen.go"
-    output.write_text("\n".join(lines + ["}", ""]), encoding="utf-8")
-    run("gofmt", "-w", str(output))
+    (destination / "request_rules.gen.go").unlink(missing_ok=True)
 
 
 def resolve(document: dict, value, stack: tuple[str, ...] = ()):

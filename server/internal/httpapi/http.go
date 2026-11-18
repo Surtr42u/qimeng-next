@@ -32,9 +32,15 @@ func New(s *service.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.healthz)
 	mux.HandleFunc("GET /metrics", a.auth(a.GetServiceMetrics))
-	return generated.HandlerWithOptions(a, generated.StdHTTPServerOptions{
-		BaseURL: "/api/v1", BaseRouter: authenticatedRouter{mux, a}, ErrorHandlerFunc: parameterError,
+	contract := embeddedContract()
+	router := &authenticatedRouter{ServeMux: mux, api: a, contract: contract}
+	handler := generated.HandlerWithOptions(a, generated.StdHTTPServerOptions{
+		BaseURL: contract.baseURL, BaseRouter: router, ErrorHandlerFunc: parameterError,
 	})
+	if router.registered != len(contract.operations) {
+		panic("generated routes are missing OpenAPI operations")
+	}
+	return handler
 }
 func principal(r *http.Request) model.Principal {
 	return r.Context().Value(principalKey{}).(model.Principal)

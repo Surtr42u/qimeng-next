@@ -65,7 +65,7 @@ func TestDeletedOrMergedCreatorRetainsOriginalMaintenanceTask(t *testing.T) {
 		var a model.Author
 		decode(t, f.json("POST", "/authors", "author-with-history", map[string]string{"name": "Archived identity"}, 201), &a)
 		var task service.AuthorTask
-		decode(t, f.json("POST", "/author-tasks", "history-author-grant", map[string]any{"authorId": a.ID, "expectedRevision": a.Revision, "allowedFields": []string{"biography"}}, 201), &task)
+		decode(t, f.json("POST", "/author-tasks", "history-author-grant", map[string]any{"authorId": a.ID, "expectedRevision": a.Revision, "allowClear": false, "allowedFields": []string{"biography"}}, 201), &task)
 		if merged {
 			var target model.Author
 			decode(t, f.json("POST", "/authors", "history-merge-target", map[string]string{"name": "Retained creator"}, 201), &target)
