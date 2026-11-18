@@ -44,7 +44,7 @@ def create_server(runtime: Runtime) -> Server:
                               is_error=failed)
 
     return Server("qimeng-next", version="0.1.0", on_list_tools=list_tools, on_call_tool=call_tool,
-                  instructions="绮梦媒体库：先读取platform.catalog与任务context。AI提供意图和证据；后端负责匹配、编号、冲突、事务与恢复。不要自行扫描最大编号，不从截断摘要重建计划。工具清单可见不代表许可；正常授权任务继续，冲突只暂停相关项。")
+                  instructions="绮梦媒体库。只读检索可直接查询。写入前用 platform.session 查看有效范围和已绑定任务。单任务凭据按返回的任务 ID 读对应上下文。长期凭据用 platform.permissions 确认范围，再由 task.start 创建或认领任务。只提交本次明确修改的字段。身份、修订、证据与执行结果从实际记录读取，改后回读。")
 
 
 async def run() -> None:

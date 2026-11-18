@@ -2,16 +2,17 @@
 // owner lives outside the MCP connection and grades the final state independently.
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { join, resolve } from 'node:path';
 import { McpClient, StdioTransport, toLlmContent } from '@earendil-works/pi-mcp';
 import { openFixture, grade, goOrigin } from '../model-proof/fixtures.mjs';
 
 const modelEndpoint = 'http://127.0.0.1:18580/v1/chat/completions';
 const system = '你是绮梦资料库助手。依据用户要求和实际工具结果作答。保留未授权资料，无法完成的事如实说明。用中文回复。';
-const domainNames = new Set(['platform.catalog', 'platform.permissions', 'platform.tool.describe', 'platform.result.read',
+const domainNames = new Set(['platform.catalog', 'platform.session', 'platform.permissions', 'platform.tool.describe', 'platform.result.read',
   'platform.budget', 'library.query', 'tag.query', 'tag.vocabulary.query', 'collection.query', 'author.query',
   'author.read', 'author.profile.summary', 'author.task.context', 'author.profile.update', 'operation.read']);
-const limits = { turns: 7, toolCalls: 12, responseTokens: 512, wallSeconds: 540 };
+const limits = { turns: 7, toolCalls: 12, responseTokens: 512, wallSeconds: 720, firstResponseSeconds: 660 };
 const bytes = value => Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value));
 const functionName = name => name.replace(/[^A-Za-z0-9_]/g, '_');
 const redact = (text, secret) => String(text || '').replaceAll(secret, '[redacted]').replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]');
@@ -23,9 +24,26 @@ function formatTools(definitions) {
   } }));
 }
 
+async function infer(payload, deadlineMs) {
+  const response = await new Promise((resolve, reject) => {
+    const req = httpRequest(modelEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(deadlineMs) }, resolve);
+    req.once('error', reject);
+    req.end(payload);
+  });
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of response) {
+    length += chunk.length;
+    if (length > 1024 * 1024) throw Error('inference response exceeds fixture limit');
+    chunks.push(chunk);
+  }
+  return { status: response.statusCode, raw: Buffer.concat(chunks).toString('utf8') };
+}
+
 async function runCase(fixture, scenario, profile) {
   const record = { discovery: profile, scenario: scenario.name, userPrompt: scenario.prompt, turns: [], calls: [],
-    stop: 'not_started', tokenTotals: { prompt: 0, completion: 0 }, limits };
+    stop: 'not_started', tokenTotals: { prompt: null, completion: null }, limits };
   const observed = { events: [] };
   const started = Date.now();
   const stateDir = join(fixture.root, 'executor-' + scenario.name);
@@ -39,7 +57,11 @@ async function runCase(fixture, scenario, profile) {
   const messages = [{ role: 'system', content: system }, { role: 'user', content: scenario.prompt }];
   let answer = '';
   try {
-    await client.connect(transport);
+    const initialized = await client.connect(transport);
+    const instructions = initialized.instructions || client.instructions;
+    if (!instructions) throw Error('stdio server supplied no model-facing instructions');
+    messages[0].content += '\n\n' + instructions;
+    record.mcpInstructions = { forwarded: true, bytes: bytes(instructions), sha256: sha(instructions) };
     const listed = await client.listTools();
     const definitions = Array.isArray(listed) ? listed : listed.tools;
     const byWire = new Map(definitions.map(tool => [functionName(tool.name), tool]));
@@ -55,12 +77,17 @@ async function runCase(fixture, scenario, profile) {
       if (remaining <= 0) { record.stop = 'wall_budget'; break; }
       const request = { model: 'qimeng-cpu-fixture', messages, tools: formatTools(active), tool_choice: 'auto',
         temperature: 0, seed: 1403, max_tokens: limits.responseTokens, chat_template_kwargs: { enable_thinking: false }, stream: false };
-      const response = await fetch(modelEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request), signal: AbortSignal.timeout(Math.min(remaining, 240000)) });
-      const raw = await response.text();
-      const measurement = { requestBytes: bytes(request), responseBytes: bytes(raw), httpStatus: response.status };
+      const measurement = { requestBytes: bytes(request), responseBytes: null, httpStatus: null, promptTokens: null, completionTokens: null };
       record.turns.push(measurement);
-      if (!response.ok) {
+      const began = Date.now();
+      const timeout = Math.min(remaining, (turn === 0 ? limits.firstResponseSeconds : 240) * 1000);
+      let replyHttp;
+      try { replyHttp = await infer(JSON.stringify(request), timeout); }
+      finally { measurement.elapsedSeconds = Math.round((Date.now() - began) / 10) / 100; }
+      const { status, raw } = replyHttp;
+      measurement.responseBytes = bytes(raw);
+      measurement.httpStatus = status;
+      if (status !== 200) {
         record.stop = 'inference_error';
         try { measurement.error = JSON.parse(raw).error?.type || 'model_http_error'; } catch { measurement.error = 'invalid_model_response'; }
         break;
@@ -72,8 +99,6 @@ async function runCase(fixture, scenario, profile) {
       }
       Object.assign(measurement, { promptTokens: prompt, completionTokens: completion,
         cachedPromptTokens: reply.usage.prompt_tokens_details?.cached_tokens ?? null, finish: reply.choices[0].finish_reason });
-      record.tokenTotals.prompt += prompt;
-      record.tokenTotals.completion += completion;
       const message = reply.choices[0].message;
       const calls = message.tool_calls || [];
       if (!calls.length) {
@@ -103,6 +128,10 @@ async function runCase(fixture, scenario, profile) {
         const safe = redact(text, scenario.token);
         const signature = sha(name + '\0' + JSON.stringify(args));
         record.calls.push({ name, success: !errorCode, errorCode, responseBytes: bytes(safe),
+          argumentFields: args && typeof args === 'object' ? Object.keys(args).sort() : [],
+          bodyFields: args?.body && typeof args.body === 'object' ? Object.keys(args.body).sort() : [],
+          ...(name === 'author.profile.update' ? { target: args?.id === fixture.author.id ? 'selected_stable_id' :
+            args?.id === fixture.author.name ? 'display_name' : 'other_or_missing', revisionMatchesInitial: args?.body?.expectedRevision === fixture.author.revision } : {}),
           repeatedInput: record.calls.some(past => past.signature === signature), signature });
         observed.events.push({ name, success: !errorCode, readOnly: definition?.annotations?.readOnlyHint === true, text: safe });
         messages.push({ role: 'tool', tool_call_id: call.id, content: safe });
@@ -114,6 +143,13 @@ async function runCase(fixture, scenario, profile) {
     record.error = redact(error.message, scenario.token).slice(0, 300);
   } finally { await client.close(); }
   record.elapsedSeconds = Math.round((Date.now() - started) / 10) / 100;
+  const metered = record.turns.filter(turn => Number.isSafeInteger(turn.promptTokens) && Number.isSafeInteger(turn.completionTokens));
+  record.usageCoverage = { returned: metered.length, requested: record.turns.length };
+  if (metered.length > 0) {
+    record.observedTokens = { prompt: metered.reduce((sum, turn) => sum + turn.promptTokens, 0),
+      completion: metered.reduce((sum, turn) => sum + turn.completionTokens, 0) };
+    if (metered.length === record.turns.length) record.tokenTotals = record.observedTokens;
+  }
   record.finalAnswer = redact(answer, scenario.token).slice(0, 2400);
   Object.assign(record, await grade(fixture, scenario, record.finalAnswer, observed));
   record.passed = record.stop === 'model_final' && Object.values(record.result).every(Boolean);

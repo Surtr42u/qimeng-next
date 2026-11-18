@@ -14,7 +14,7 @@ def tool_definitions(contract):
     identity = {"type": "string", "minLength": 8, "maxLength": 128}
     return [
         {"name": "task.start", "scope": "delegate", "readOnly": False,
-         "description": "在首次配置的长期权限范围内创建任务或认领已有接收批次；不用切回App。可信执行器保管派生凭据。后续调用携带返回taskId；operationId重试不变。",
+         "description": "有 delegate 权限的长期凭据先用 platform.permissions 读授权范围，再创建任务或认领已有接收批次。维护作者先按姓名查询真实 authorId 和 revision，使用 kind=author 及获准字段。后续调用携带返回的 taskId。若 platform.session 已有 authorTaskId，可直接读该任务上下文。",
          "inputSchema": {"type": "object", "properties": {"operationId": identity, "body": start},
                          "required": ["operationId", "body"], "additionalProperties": False}},
         {"name": "task.resume", "scope": "delegate", "readOnly": False,
