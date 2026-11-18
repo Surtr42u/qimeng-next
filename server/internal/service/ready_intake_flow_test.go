@@ -3,6 +3,7 @@ package service_test
 import (
 	"bytes"
 	"encoding/base64"
+	"maps"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -80,13 +81,13 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 		t.Fatal("manual, outside, unsealed, rejected-only or partially transferred intake appeared")
 	}
 	secrets := []string{base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{51}, 32)), base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{52}, 32))}
-	claim := service.DelegatedTaskStart{Kind: "intake", Mode: "intelligent", Label: "Resume settled uploads", LibraryID: library.ID, BatchID: b.ID, ReadyManifestFingerprint: &b.ManifestFingerprint, CredentialSecret: secrets[0]}
+	claim := map[string]string{"kind": "intake", "mode": "intelligent", "label": "Resume settled uploads", "libraryId": library.ID, "batchId": b.ID, "readyManifestFingerprint": b.ManifestFingerprint, "credentialSecret": secrets[0]}
 	f.request("POST", "/ai/delegated-tasks", token, "still-transferring", claim).expect(t, 409, nil)
-	foreignClaim := claim
-	foreignClaim.LibraryID, foreignClaim.BatchID, foreignClaim.ReadyManifestFingerprint = outside.ID, out.ID, &out.ManifestFingerprint
+	foreignClaim := maps.Clone(claim)
+	foreignClaim["libraryId"], foreignClaim["batchId"], foreignClaim["readyManifestFingerprint"] = outside.ID, out.ID, out.ManifestFingerprint
 	f.request("POST", "/ai/delegated-tasks", token, "different-library", foreignClaim).expect(t, 403, nil)
-	ordinaryClaim := claim
-	ordinaryClaim.BatchID, ordinaryClaim.ReadyManifestFingerprint = ordinary.ID, &ordinary.ManifestFingerprint
+	ordinaryClaim := maps.Clone(claim)
+	ordinaryClaim["batchId"], ordinaryClaim["readyManifestFingerprint"] = ordinary.ID, ordinary.ManifestFingerprint
 	f.request("POST", "/ai/delegated-tasks", token, "never-claim-ordinary", ordinaryClaim).expect(t, 409, nil)
 	z := f.stage(t, library.ID, b.ID, second.ID, second.OriginalFileName, "", 154)
 	for _, g := range grants {
@@ -101,9 +102,8 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	}
 	f.request("DELETE", "/ai/delegations/"+revoked.Delegation.ID, researchTestOwner, "", nil).expect(t, 204, nil)
 	f.request("POST", "/ai/delegated-tasks", revoked.Credential.Token, "revoked-after-poll", claim).expect(t, 401, nil)
-	stale := claim
-	staleHash := strings.Repeat("0", 64)
-	stale.ReadyManifestFingerprint = &staleHash
+	stale := maps.Clone(claim)
+	stale["readyManifestFingerprint"] = strings.Repeat("0", 64)
 	f.request("POST", "/ai/delegated-tasks", token, "wrong-sealed-manifest", stale).expect(t, 409, nil)
 	// A legacy scoped writer may already be working on this intake. Automatic
 	// discovery cannot take it over, and a read-only monitor may coexist.
@@ -124,8 +124,8 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	keys := []string{"claim-from-executor-a", "claim-from-executor-b"}
 	for i := range grants {
 		go func(i int) {
-			attempt := claim
-			attempt.CredentialSecret = secrets[i]
+			attempt := maps.Clone(claim)
+			attempt["credentialSecret"] = secrets[i]
 			<-start
 			result <- struct {
 				index int
@@ -158,7 +158,7 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	stop()
 	f, _ = openQueueFixture(t, dir)
 	token = grants[winner].Credential.Token
-	claim.CredentialSecret = secrets[winner]
+	claim["credentialSecret"] = secrets[winner]
 	replay := f.request("POST", "/ai/delegated-tasks", token, keys[winner], claim)
 	replay.expect(t, 201, nil)
 	if !bytes.Equal(accepted.raw, replay.raw) {
