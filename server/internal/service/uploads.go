@@ -271,7 +271,7 @@ func (s *Service) CreateUpload(ctx context.Context, w *Write, in model.UploadInp
 			return u, e
 		}
 		input := model.IntakeInput{ID: u.InputID, OriginalFileName: u.OriginalFileName, SourceRelativePath: u.SourceRelativePath, Size: &u.Size, ExpectedHash: u.ExpectedHash}
-		if _, e = sealIntakeInputs(ctx, q, b, []model.IntakeInput{input}); e != nil {
+		if _, e = sealIntakeInputs(ctx, q, b, []model.IntakeInput{input}, true); e != nil {
 			return u, e
 		}
 	}

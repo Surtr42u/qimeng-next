@@ -1,10 +1,14 @@
 package httpapi_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 
 	"qimeng.local/next/server/internal/model"
+	"qimeng.local/next/server/internal/service"
 )
 
 func TestBatchCompletionReconcilesOriginalSelectionIncludingMissingUploads(t *testing.T) {
@@ -104,5 +108,62 @@ func TestUnavailablePickerNameIsNotReplacedByInventedOriginalName(t *testing.T) 
 	decode(t, f.json("GET", "/batches/"+batch.ID, "", nil, 200), &report)
 	if report.Inputs[0].OriginalFileName != "" || report.Inputs[0].NameState != "unavailable" {
 		t.Fatal("the original unknown metadata was rewritten after upload")
+	}
+}
+
+func TestRejectedSelectionKeepsItsReasonAndOnlyUnfinishedMediaCanBeClaimed(t *testing.T) {
+	f := setup(t)
+	policy := service.DelegationPolicy{Label: "Mixed selection", LibraryIDs: []string{f.library}, AuthorIDs: []string{},
+		AllowedFields: []string{}, CandidateBlocks: []string{}, CanIngest: true, CanResearch: true, CanOrganize: true,
+		MaxResearchCalls: 2, MaxUpdates: 1, MaxTasksPerDay: 2, ValidDays: 1}
+	var grant service.DelegationCreated
+	decode(t, f.json("POST", "/ai/delegations", "", policy, 201), &grant)
+	for _, withMedia := range []bool{false, true} {
+		label := "closed"
+		inputs := []map[string]any{{"id": "notes-input", "originalFileName": "notes.txt", "size": 3}}
+		if withMedia {
+			label = "actionable"
+			inputs = append(inputs, map[string]any{"id": "image-input", "originalFileName": "picture.png"})
+		}
+		var b model.Batch
+		decode(t, f.json("POST", "/batches", "create-mixed-"+label, map[string]any{"libraryId": f.library, "mode": "intelligent",
+			"label": label, "maxResearchCalls": 2}, 201), &b)
+		uri := "/batches/" + b.ID
+		decode(t, f.json("PUT", uri+"/inputs", "seal-mixed-"+label, map[string]any{"expectedManifestRevision": 1, "inputs": inputs}, 200), &b)
+		if b.State != "partial" || b.ExpectedInputs != len(inputs) {
+			t.Fatal("rejected source was missing from the sealed selection", b)
+		}
+		spoof := map[string]any{"libraryId": f.library, "mode": "intelligent", "batchId": b.ID, "inputId": "notes-input",
+			"originalFileName": "notes.txt", "fileName": "renamed.png", "mimeType": "image/png", "size": 3}
+		var rejected service.Error
+		decode(t, f.json("POST", "/uploads", "rename-rejected-"+label, spoof, 409), &rejected)
+		if rejected.Code != "unsupported_media" {
+			t.Fatalf("renamed target bypassed the sealed disposition: %v", rejected)
+		}
+		f.json("POST", uri+"/inputs/notes-input/cancel", "cancel-rejected-"+label, map[string]string{"manifestFingerprint": b.ManifestFingerprint}, 409)
+		body, err := json.Marshal(map[string]any{"kind": "intake", "mode": "intelligent", "libraryId": f.library,
+			"batchId": b.ID, "label": label, "credentialSecret": base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		status := 409
+		if withMedia {
+			status = 201
+		}
+		claim := f.request("POST", "/ai/delegated-tasks", "claim-mixed-"+label, grant.Credential.Token, body, nil)
+		if claim.Code != status {
+			t.Fatalf("claiming %s mixed selection: got %d, want %d: %s", label, claim.Code, status, claim.Body.String())
+		}
+		var report model.BatchDetail
+		decode(t, f.json("GET", uri, "", nil, 200), &report)
+		f.json("POST", uri+"/cancel", "cancel-mixed-"+label, map[string]int64{"expectedRevision": report.Batch.Revision}, 200)
+		decode(t, f.json("GET", uri, "", nil, 200), &report)
+		first := report.Inputs[0]
+		if first.State != "failed" || first.ErrorCode != "unsupported_media" || first.UploadID != "" || first.AssetID != "" {
+			t.Fatalf("batch cancellation replaced the original rejection: %+v", first)
+		}
+		if withMedia && report.Inputs[1].State != "cancelled" {
+			t.Fatal("remaining media input did not honour explicit cancellation")
+		}
 	}
 }

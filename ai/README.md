@@ -33,9 +33,10 @@
 1. 首次由本人在可信设置中选择允许的库、资料维护范围、动作、预算和有效期，签发长期执行器凭据。配置MCP后，模型用`platform.permissions`读取真实范围，以`task.start`创建任务或认领App已有智能批次；不需要每次切回App。
 2. `task.context` 查看状态、缺失条件与剩余研究预算。
 3. `intake.register`从可信逻辑目录完整盘点（或接受用户完整选择的fileRefs），在传输前封存全部原始输入，返回稳定inputId与fileRef；目录变动、超100项或不安全路径会明确停止，不静默截断。`files.search`可用于浏览/研究，但不能以已上传清单代替原始选择。`upload.file`携inputId、沿稳定operationId分片上传并验证服务端摘要。普通上传直接入库，智能上传先进入批次待计划状态。
-4. 已确认资料直接复用；未知项有限研究后调用 `research.submit` 留下候选/未知/冲突与证据，不能伪装已核实。
-5. `plan.prepare` 由Go生成最终命名/关联；必要时 `plan.read` 逐项核对，授权范围内用原ID/fingerprint执行 `plan.commit`。
-6. `task.read` / `asset.read` 按输入清单回读，分别报告入库、未知/冲突、备份和来源清理。上传工具保留来源文件。
+4. 登记工具在已有 `read` 许可时附上 Go 的逐项状态。只上传 `pending` 项。空文件和后缀不受支持的文件会保存失败原因，继续处理同批其他媒体即可。对已入库的项可回读返回的资产 ID。
+5. 已确认资料直接复用；未知项有限研究后调用 `research.submit` 留下候选/未知/冲突与证据，不能伪装已核实。
+6. `plan.prepare` 由Go生成最终命名/关联；必要时 `plan.read` 逐项核对，授权范围内用原ID/fingerprint执行 `plan.commit`。
+7. `task.read` / `asset.read` 按输入清单回读，分别报告入库、未知/冲突、备份和来源清理。上传工具保留来源文件。
 
 需要公开文本查证时，先调用 `research.context`。实例须启用公开研究，首次授权须勾选所用来源，任务凭据须拥有 `research` 和可用研究额度。`research.provider.query` 接受来源、公开标识或词语、固定操作以及稳定的 `Idempotency-Key`。批次另传当前待整理上传的 ID 与 SHA-256。相同键可回读原结果。任务重启后可从 `research.context.queries` 找到回执，再以 `research.provider.result` 阅读。提交已经计费的候选时传 `providerQueryIds` 及 `callsUsed=0`。平台记录、存档和搜索结果仅提供证据，人工已确认的选择继续生效。
 

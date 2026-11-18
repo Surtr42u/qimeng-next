@@ -116,17 +116,17 @@ func (s *Service) refreshBatch(ctx context.Context, q store.Querier, id string) 
 	if e != nil {
 		return e
 	}
-	var declared, bound, cancelled int
-	if e = q.QueryRowContext(ctx, "SELECT count(*),count(upload_id),coalesce(sum(cancelled),0) FROM batch_inputs WHERE batch_id=?", id).Scan(&declared, &bound, &cancelled); e != nil {
+	var declared, bound, unsuccessful int
+	if e = q.QueryRowContext(ctx, "SELECT count(*),count(upload_id),coalesce(sum(cancelled=1 OR rejection_code!=''),0) FROM batch_inputs WHERE batch_id=?", id).Scan(&declared, &bound, &unsuccessful); e != nil {
 		return e
 	}
 	if b.ManifestState == "sealed" && (declared != b.ExpectedInputs || total != bound) {
 		return Fail(500, "manifest_corrupt", "已收文件与原始输入映射不一致，不能报告完成。")
 	}
 	switch {
-	case b.ManifestState == "sealed" && declared > 0 && total == declared && ingested == declared && cancelled == 0:
+	case b.ManifestState == "sealed" && declared > 0 && total == declared && ingested == declared && unsuccessful == 0:
 		b.State = "completed"
-	case problems > 0 || ingested > 0 || cancelled > 0:
+	case problems > 0 || ingested > 0 || unsuccessful > 0:
 		b.State = "partial"
 	case receiving > 0 || b.ManifestState != "sealed" || bound < declared:
 		b.State = "receiving"
@@ -172,7 +172,7 @@ func (s *Service) CancelBatch(ctx context.Context, w *Write, id string, revision
   WHERE batch_id=? AND state IN ('receiving','staged')`, id); e != nil {
 		return b, e
 	}
-	if _, e = q.ExecContext(ctx, `UPDATE batch_inputs SET cancelled=1 WHERE batch_id=? AND cancelled=0 AND
+	if _, e = q.ExecContext(ctx, `UPDATE batch_inputs SET cancelled=1 WHERE batch_id=? AND cancelled=0 AND rejection_code='' AND
   (upload_id IS NULL OR upload_id IN (SELECT id FROM uploads WHERE batch_id=? AND state='cancelled'))`, id, id); e != nil {
 		return b, e
 	}

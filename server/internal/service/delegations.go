@@ -353,8 +353,19 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 			if e != nil {
 				return result, e
 			}
-			if b.LibraryID != in.LibraryID || b.Mode != mode || b.MaxResearchCalls > budget || b.State != "waiting_executor" && b.State != "receiving" {
+			if b.LibraryID != in.LibraryID || b.Mode != mode || b.MaxResearchCalls > budget {
 				return result, Fail(409, "batch_not_claimable", "批次范围、预算或状态不符合本授权。")
+			}
+			claimable := b.State == "waiting_executor" || b.State == "receiving"
+			if b.State == "partial" {
+				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id
+ WHERE i.batch_id=? AND i.cancelled=0 AND i.rejection_code='' AND (i.upload_id IS NULL OR u.state IN ('receiving','staged')))`, b.ID).Scan(&claimable)
+				if e != nil {
+					return result, e
+				}
+			}
+			if !claimable {
+				return result, Fail(409, "batch_not_claimable", "批次没有可接手的待处理输入。")
 			}
 			var exists int
 			e = s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM delegated_tasks WHERE task_id=?", b.ID).Scan(&exists)
