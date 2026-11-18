@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/model"
+	"qimeng.local/next/server/internal/store"
 )
 
 // Only small regular-library images with no previously indexed path are
@@ -59,6 +60,15 @@ func skipScanIssue(j *ScanJob, relative, code string) {
 	scanIssue(j, relative, code)
 }
 
+func scanPublicationPending(ctx context.Context, q store.Querier, libraryID string, file scannedFile) (bool, error) {
+	var pending bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM file_intents WHERE state IN ('prepared','committed') AND
+		(? IN (json_extract(data,'$.Target'),json_extract(data,'$.Source')) OR
+		(json_extract(data,'$.Before.libraryId')=? AND json_extract(data,'$.Before.relativePath')=?)))`,
+		file.full, libraryID, file.relative).Scan(&pending)
+	return pending, err
+}
+
 func (s *Service) flushPreparedScans(ctx context.Context, run *scanRun) error {
 	files := run.prepared
 	run.prepared = nil
@@ -101,10 +111,6 @@ func (s *Service) commitFreshScanPrefix(ctx context.Context, run *scanRun, files
 	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM file_intents WHERE state IN ('prepared','committed'))").Scan(&pending); err != nil {
 		return 0, 0, err
 	}
-	if pending {
-		// The individual path checks both sides of each durable intent.
-		return 0, len(files), nil
-	}
 	var completed, individual int
 	var itemErr error
 	var inserted []scannedFile
@@ -119,6 +125,14 @@ func (s *Service) commitFreshScanPrefix(ctx context.Context, run *scanRun, files
 			library.ID, file.relative, file.hash, file.size, library.ID).Scan(&reconcile)
 		if itemErr != nil {
 			break
+		}
+		if pending && !reconcile {
+			// A delayed publication in a different path or library must not
+			// send every independent new file back to individual commits.
+			reconcile, itemErr = scanPublicationPending(ctx, tx, library.ID, file)
+			if itemErr != nil {
+				break
+			}
 		}
 		if reconcile {
 			individual = 1

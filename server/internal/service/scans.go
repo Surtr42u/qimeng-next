@@ -263,31 +263,6 @@ func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
 		s.previews.changed(j.LibraryID, "")
 	}
 }
-func (s *Service) scanMissing(ctx context.Context, id, libraryID string) error {
-	last := ""
-	for {
-		items, e := store.List[model.Asset](ctx, s.DB.DB, "SELECT json_object('id',id,'relativePath',relative_path) FROM assets WHERE library_id=? AND trashed=0 AND id>? ORDER BY id LIMIT 200", libraryID, last)
-		if e != nil {
-			return e
-		}
-		if len(items) == 0 {
-			return nil
-		}
-		for _, a := range items {
-			if e := ctx.Err(); e != nil {
-				return e
-			}
-			if _, e = s.Root.Stat(path.Join("libraries", libraryID, a.RelativePath)); errors.Is(e, os.ErrNotExist) {
-				if e = s.scanProgress(ctx, id, a.RelativePath, "missing_original", false); e != nil {
-					return e
-				}
-			} else if e != nil {
-				return e
-			}
-			last = a.ID
-		}
-	}
-}
 func (s *Service) walkLibrary(ctx context.Context, run *scanRun, relative string, depth int) error {
 	jobID, libraryID := run.id, run.library.ID
 	if e := ctx.Err(); e != nil {
@@ -454,9 +429,8 @@ func (s *Service) commitScannedFile(ctx context.Context, run *scanRun, file scan
 		skipScanIssue(&j, relative, "source_changed")
 		return saveScan(ctx, s.DB.DB, j)
 	}
-	var pending bool
-	if e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM file_intents WHERE state IN ('prepared','committed') AND
-  (? IN (json_extract(data,'$.Target'),json_extract(data,'$.Source')) OR (json_extract(data,'$.Before.libraryId')=? AND json_extract(data,'$.Before.relativePath')=?)))`, file.full, libraryID, relative).Scan(&pending); e != nil {
+	pending, e := scanPublicationPending(ctx, s.DB.DB, libraryID, file)
+	if e != nil {
 		return e
 	}
 	if pending {

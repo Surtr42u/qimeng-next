@@ -19,7 +19,11 @@ func preparedScanFixture(t *testing.T, names ...string) (*Service, *scanRun, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if s.workCtx.Err() == nil {
+			s.Close()
+		}
+	})
 	var library model.Library
 	result := testMutation(t, s, "batch-test-library", func(w *Write) (any, int, error) {
 		l, e := s.CreateLibrary(ctx, w, "Synthetic", "regular")
@@ -137,5 +141,77 @@ func TestScanBatchCancellationDiscardsPreparedAssets(t *testing.T) {
 	var count int
 	if err = s.DB.DB.QueryRow("SELECT count(*) FROM assets").Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
+	}
+}
+
+func TestScanBatchUnrelatedFileIntentKeepsIndependentWorkInBatch(t *testing.T) {
+	ctx := context.Background()
+	s, run, _ := preparedScanFixture(t, "one.png", "two.png")
+	if _, err := s.DB.DB.Exec(`INSERT INTO file_intents(id,kind,state,data) VALUES('unrelated','move','prepared',
+		json_object('Target',?,'Before',json_object('libraryId',?,'relativePath','elsewhere.png')))`,
+		"libraries/"+run.library.ID+"/other.png", run.library.ID); err != nil {
+		t.Fatal(err)
+	}
+	committed, individual, err := s.commitFreshScanPrefix(ctx, run, run.prepared)
+	if err != nil || committed < 1 || individual != 0 {
+		t.Fatal("independent images lost their batch", committed, individual, err)
+	}
+	run.prepared = run.prepared[committed:]
+	if err = s.flushPreparedScans(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.Scan(ctx, run.id)
+	if err != nil || job.Added != 2 || job.Processed != 2 || job.IssueCount != 0 {
+		t.Fatal(job, err)
+	}
+}
+
+func TestScanBatchRestartResumesFromDurableAssetsAndCounts(t *testing.T) {
+	ctx := context.Background()
+	s, run, _ := preparedScanFixture(t, "committed.png", "in-memory.png")
+	prefix := &scanRun{id: run.id, library: run.library, prepared: run.prepared[:1]}
+	if err := s.flushPreparedScans(ctx, prefix); err != nil {
+		t.Fatal(err)
+	}
+	var retainedID string
+	if err := s.DB.DB.QueryRow("SELECT id FROM assets WHERE file_name='committed.png'").Scan(&retainedID); err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.Config
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	job, err := restarted.Scan(ctx, run.id)
+	if err != nil || job.State != "interrupted" || job.Processed != 1 || job.Added != 1 {
+		t.Fatal("restart exposed unpublished progress", job, err)
+	}
+	result := testMutation(t, restarted, "restart-batch-rescan", func(w *Write) (any, int, error) {
+		job, e := restarted.StartScan(ctx, w, run.library.ID, run.library.Revision)
+		return job, 202, e
+	})
+	if err = json.Unmarshal(result.Body, &job); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for job.State == "queued" || job.State == "running" {
+		if time.Now().After(deadline) {
+			t.Fatal("new scan did not finish")
+		}
+		time.Sleep(5 * time.Millisecond)
+		if job, err = restarted.Scan(ctx, job.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if job.State != "completed" || job.Added != 1 || job.Skipped != 1 || job.Processed != 2 {
+		t.Fatal(job)
+	}
+	asset, err := restarted.Asset(ctx, retainedID)
+	if err != nil || asset.FileName != "committed.png" || asset.ContentVersion != 1 {
+		t.Fatal("rescan recreated an already committed asset", asset, err)
 	}
 }
