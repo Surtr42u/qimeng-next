@@ -654,7 +654,7 @@ paths:
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {type: object, required: [name], properties: {name: {type: string, maxLength: 100}}}}}}
       responses:
-        '201': {description: Tag, content: {application/json: {schema: {$ref: '#/components/schemas/Tag'}}}}
+        '201': {description: Original receipt for this creation, content: {application/json: {schema: {$ref: '#/components/schemas/TagWriteReceipt'}}}}
         default: {$ref: '#/components/responses/Error'}
   /tag-vocabulary:
     get:
@@ -682,7 +682,7 @@ paths:
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {type: object, required: [name, expectedRevision], properties: {name: {type: string, maxLength: 100}, expectedRevision: {type: integer, format: int64}}}}}}
       responses:
-        '200': {description: Renamed vocabulary and all affected associations atomically, content: {application/json: {schema: {$ref: '#/components/schemas/Tag'}}}}
+        '200': {description: Original receipt for this rename, content: {application/json: {schema: {$ref: '#/components/schemas/TagWriteReceipt'}}}}
         default: {$ref: '#/components/responses/Error'}
     delete:
       operationId: deleteTag
@@ -3299,7 +3299,18 @@ components:
           type: array
           description: Complete alias list. Explicitly supply an empty list to clear it.
           maxItems: 100
-          items: {type: string, minLength: 1, maxLength: 200, description: Up to 200 UTF-8 bytes after trimming surrounding space}
+          items: {type: string, minLength: 1, description: Between 1 and 200 UTF-8 bytes after trimming surrounding space}
+    TagWriteReceipt:
+      type: object
+      description: Immutable response saved when a tag was created or renamed. Older receipts can omit id or aliases. Read tag-vocabulary for the current stable ID and aliases.
+      required: [name, revision, createdAt, updatedAt]
+      properties:
+        id: {type: string, minLength: 1}
+        name: {type: string}
+        aliases: {type: array, items: {type: string}}
+        revision: {type: integer, format: int64}
+        createdAt: {type: string}
+        updatedAt: {type: string}
     Tag:
       type: object
       required: [id, name, aliases, revision, createdAt, updatedAt]
