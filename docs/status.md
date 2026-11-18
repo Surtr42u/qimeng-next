@@ -4,6 +4,8 @@
 
 ## 原生数据重构的交接
 
+当前非界面的交付覆盖 Go 原生数据、共用命名规则、正式 API、设备交付、MCP 和 App 智能入库。验收器经 App 使用的正式 API 提交一张图片、一段视频和一份不支持的附件。文件接收后，worker 自动认领，真实 Qwen3‑4B 选择原名预览并确认提交，从启动 worker 到返回用时 27.1 秒。图片和视频都从 Go 读回原件并核对摘要，附件保留失败原因。新进程再次轮询时没有重复入库。项目首页提供 Windows 和 Linux 的安装步骤及手机两种运行方式。[真实混合入库](https://github.com/Surtr42u/qimeng-next/actions/runs/44401162182/job/135144232294) · [项目首页](../README.md)
+
 数据库迁移 0034–0038 分别处理续播、原件版本和位置、原生交付回执、稳定标签和集合成员。0039–0042 涵盖词条别名、出处与角色关系、混合文件清单和单帧查证授权。0043 供已授权执行器查找就绪批次，0044 保存与当前任务租约和批次修订对应的停等原因。Go 的生成接口挂在运行中的服务路由上，各端协议从同一份 OpenAPI 生成。[数据权属](architecture.md#next-原生数据与恢复) · [各版本升级说明](migration.md) · [云端生成来源锁](../api/sdk.lock)
 
 | 验收 | 已回读的结果 |
@@ -22,6 +24,8 @@
 App 主动提交后，`b4371fa` 的正式 worker 通过真实 HTTP 认领混合批次。在脚本化模型已经准备计划时强制结束进程，重启后沿原计划完成。每日新任务名额已满仍可续办。模型离线时另一会话查到一次暂停，恢复后回读同一批。需要人工处理的一批也能让后续可办的批次先完成。[执行器、Go 与隔离宿主](https://github.com/Surtr42u/qimeng-next/actions/runs/44393250358/job/135117593505) · [真实模型的单独验收](mcp-compatibility.md#标准-cpu-上的真实模型任务)
 
 `2e35913` 的 Go 竞态测试还覆盖了两名执行器同时认领同一批、响应丢失后重启、人工操作后拒绝旧状态，以及研究结论为未知时仍可用占位作者入库。缺少对应证据的实名归属会被拒绝，旧计划中的其他合格项继续发布。[Go 事务与恢复验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44395254646/job/135124150263)
+
+真实 Qwen3‑4B 通过 Pi MCP，用领域目录和完整目录各做了一遍共享别名查询、一次受限作者简介修改并回读。四场均通过。两次简介都只写入一次，执行器独立向 Go 读取同一作者并把读数交还模型。Windows 和 Linux 已从 `0046221` 的下载包在新 Python 环境中安装并启动 `qai`，再核对内置 API 摘要。[模型逐轮数据](mcp-compatibility.md#标准-cpu-上的真实模型任务) · [安装步骤](../ai/README.md#安装到运行-ai-的电脑) · [Windows 安装验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44396206955/job/135128653990) · [Linux 安装验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44396206955/job/135128653894)
 
 Web 的 `8df9cd4` 在 Chromium、移动 Chromium 和 WebKit 共通过 107 项浏览器用例。浏览器目录写入演练只在支持所需 OPFS 接口的 Chromium 执行，WebKit 跳过这一项。设备配对、跨实例资料交付和用户实际拖动视频使用独立的真实服务作业验收。[浏览器回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44356165266/job/134985901182)
 
