@@ -304,8 +304,15 @@ func (s *Service) ApplyAssetMaintenance(ctx context.Context, w *Write, id string
 	if in.Tags != nil {
 		a.TagSetUpdatedAt = &a.UpdatedAt
 	}
-	if err = store.SaveAsset(ctx, q, a); err != nil {
-		return t, err
+	if in.Tags != nil {
+		if err = store.SaveAssetTags(ctx, q, a); err != nil {
+			return t, err
+		}
+	}
+	if in.AuthorIDs != nil || in.SourceIDs != nil || in.CharacterIDs != nil {
+		if err = store.SaveAssetEdits(ctx, q, a, in.AuthorIDs != nil, in.SourceIDs != nil || in.CharacterIDs != nil); err != nil {
+			return t, err
+		}
 	}
 	if in.AuthorIDs != nil {
 		if err = s.recordExplicitAuthorSet(ctx, q, previousAuthors, a); err != nil {

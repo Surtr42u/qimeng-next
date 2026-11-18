@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"qimeng.local/next/server/internal/model"
+	"qimeng.local/next/server/internal/service"
 )
 
 func TestTagEditsLeaveAuthorTaxonomyAndOriginalRowsUntouched(t *testing.T) {
@@ -51,4 +52,45 @@ func TestTagEditsLeaveAuthorTaxonomyAndOriginalRowsUntouched(t *testing.T) {
 		t.Fatal("tag edit wrote an unrelated row", n, err)
 	}
 	t.Log("two HTTP tag edits caused 0 writes to populated author, source, character, location and content-version tables")
+}
+
+func TestTagRenameKeepsItsIdentityMembershipAndStaleSpellingGuard(t *testing.T) {
+	f := setup(t)
+	u, _ := f.upload("stable-tag.png", 103, nil)
+	a := f.complete(u).Asset
+	base := "/assets/" + a.ID
+	var word service.Tag
+	decode(t, f.json("POST", "/tags", "create-stable-word", map[string]string{"name": "former"}, 201), &word)
+	decode(t, f.json("PUT", base+"/tags", "associate-stable-word", map[string]any{"expectedRevision": a.TagsRevision,
+		"tags": []string{"first", "former", "last"}}, 200), a)
+	db := f.s.DB.DB
+	for _, op := range []string{"INSERT", "UPDATE", "DELETE"} {
+		guard := fmt.Sprintf("CREATE TRIGGER tag_rename_%s BEFORE %s ON asset_tags BEGIN SELECT RAISE(ABORT,'rename rewrote membership'); END", strings.ToLower(op), op)
+		if _, err := db.Exec(guard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var renamed service.Tag
+	action := map[string]any{"expectedRevision": word.Revision, "name": "current"}
+	decode(t, f.json("PATCH", "/tags/former", "stable-word-rename", action, 200), &renamed)
+	f.json("PATCH", "/tags/former", "stable-word-rename", action, 200)
+	var current model.Asset
+	decode(t, f.json("GET", base, "", nil, 200), &current)
+	if word.ID == "" || renamed.ID != word.ID || renamed.Revision <= word.Revision || current.TagsRevision != a.TagsRevision+1 ||
+		strings.Join(current.Tags, ",") != "first,current,last" {
+		t.Fatal("renamed word lost its stable identity, position or asset clock", renamed, current.Tags)
+	}
+	var id string
+	var ordinal int
+	if err := db.QueryRow("SELECT tag_id,ordinal FROM asset_tags WHERE asset_id=? AND tag_id=?", a.ID, word.ID).Scan(&id, &ordinal); err != nil || id != renamed.ID || ordinal != 1 {
+		t.Fatal("asset no longer references the original word", id, ordinal, err)
+	}
+	f.json("PUT", base+"/tags", "old-spelling-cannot-revive", map[string]any{"expectedRevision": current.TagsRevision, "tags": []string{"former"}}, 409)
+	var newWord service.Tag
+	decode(t, f.json("POST", "/tags", "explicitly-recreate-former", map[string]string{"name": "former"}, 201), &newWord)
+	if newWord.ID == word.ID || newWord.Revision <= word.Revision {
+		t.Fatal("reusing a spelling reused the active identity or accepted its old revision")
+	}
+	f.json("PATCH", "/tags/former", "stale-owner-cannot-rename", action, 409)
+	t.Log("rename and replay performed zero writes to asset_tags; the original ID and ordinal survived")
 }

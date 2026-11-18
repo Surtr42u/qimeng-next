@@ -63,7 +63,7 @@ func (s *Service) StatsOverview(ctx context.Context, window string) (Overview, e
 	}
 	var liveViews int64
 	e = s.DB.DB.QueryRowContext(ctx, `WITH viewed AS(SELECT d.asset_id,sum(d.views) AS views FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? AND d.views>0 GROUP BY d.asset_id)
- SELECT coalesce(sum(views),0),count(*),(SELECT count(DISTINCT aa.author_id) FROM viewed v JOIN asset_authors aa ON aa.asset_id=v.asset_id),(SELECT count(DISTINCT at.tag) FROM viewed v JOIN asset_tags at ON at.asset_id=v.asset_id) FROM viewed`, day).Scan(&liveViews, &result.ViewedAssets, &result.ViewedAuthors, &result.ViewedTags)
+ SELECT coalesce(sum(views),0),count(*),(SELECT count(DISTINCT aa.author_id) FROM viewed v JOIN asset_authors aa ON aa.asset_id=v.asset_id),(SELECT count(DISTINCT at.tag) FROM viewed v JOIN asset_tag_names at ON at.asset_id=v.asset_id) FROM viewed`, day).Scan(&liveViews, &result.ViewedAssets, &result.ViewedAuthors, &result.ViewedTags)
 	if e != nil {
 		return result, e
 	}
@@ -398,7 +398,7 @@ func (s *Service) BrowsingReview(ctx context.Context, window string) (Review, er
 func (s *Service) interestChanges(ctx context.Context, previous, current string, total, previousTotal int64) ([]InterestChange, error) {
 	rows, e := s.DB.DB.QueryContext(ctx, `WITH totals AS(SELECT d.asset_id,sum(CASE WHEN d.day>=? THEN d.views ELSE 0 END) AS current,sum(CASE WHEN d.day<? THEN d.views ELSE 0 END) AS previous FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? GROUP BY d.asset_id), interests AS(
  SELECT 'author' AS kind,au.id,au.name,sum(t.current) AS current,sum(t.previous) AS previous FROM totals t JOIN asset_authors aa ON aa.asset_id=t.asset_id JOIN authors au ON au.id=aa.author_id GROUP BY au.id
- UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.current),sum(t.previous) FROM totals t JOIN asset_tags at ON at.asset_id=t.asset_id GROUP BY at.tag), scored AS(SELECT *,100.0*current/?-100.0*previous/? AS change FROM interests)
+ UNION ALL SELECT 'tag',at.tag,at.tag,sum(t.current),sum(t.previous) FROM totals t JOIN asset_tag_names at ON at.asset_id=t.asset_id GROUP BY at.tag), scored AS(SELECT *,100.0*current/?-100.0*previous/? AS change FROM interests)
  SELECT kind,id,name,current,previous FROM scored WHERE change!=0 ORDER BY abs(change) DESC,kind,id LIMIT 6`, current, current, previous, total, previousTotal)
 	if e != nil {
 		return nil, e

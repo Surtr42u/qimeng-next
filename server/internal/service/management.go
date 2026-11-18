@@ -108,11 +108,14 @@ func (s *Service) CreateDirectory(ctx context.Context, w *Write, libraryID, rela
 }
 
 type Tag struct {
+	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Revision  int64  `json:"revision"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
+
+const tagJSON = "json_object('id',id,'name',name,'revision',revision,'createdAt',created_at,'updatedAt',updated_at)"
 
 func (s *Service) TagVocabulary(ctx context.Context, cursor string, limit int) (model.Page[Tag], error) {
 	n, e := limited(limit, 100)
@@ -123,9 +126,15 @@ func (s *Service) TagVocabulary(ctx context.Context, cursor string, limit int) (
 	if e != nil {
 		return model.Page[Tag]{}, e
 	}
-	a, e := store.List[Tag](ctx, s.DB.DB, "SELECT json_object('name',name,'revision',revision,'createdAt',created_at,'updatedAt',updated_at) FROM tags WHERE deleted=0 ORDER BY name LIMIT ? OFFSET ?", n+1, o)
+	a, e := store.List[Tag](ctx, s.DB.DB, "SELECT "+tagJSON+" FROM tags WHERE deleted=0 ORDER BY name LIMIT ? OFFSET ?", n+1, o)
 	return paged(a, n, o, "tag-vocabulary"), e
 }
+
+// A request identifies its spelling as well as its revision. Crossing the
+// last revision for that spelling prevents stale forms editing a new owner.
+const nextTagRevision = `SELECT coalesce(max(revision),0)+1 FROM
+ (SELECT revision FROM tags WHERE name=?1 UNION ALL SELECT revision FROM retired_tag_names WHERE name=?1)`
+
 func (s *Service) CreateTag(ctx context.Context, w *Write, name string) (Tag, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return Tag{}, e
@@ -135,36 +144,46 @@ func (s *Service) CreateTag(ctx context.Context, w *Write, name string) (Tag, er
 		return Tag{}, e
 	}
 	name = names[0]
+	q, e := w.Q()
+	if e != nil {
+		return Tag{}, e
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var revision int64
+	var existing string
 	var deleted bool
-	e = s.DB.DB.QueryRowContext(ctx, "SELECT revision,deleted FROM tags WHERE name=?", name).Scan(&revision, &deleted)
+	e = q.QueryRowContext(ctx, "SELECT id,deleted FROM tags WHERE name=? ORDER BY deleted,revision DESC,id LIMIT 1", name).Scan(&existing, &deleted)
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return Tag{}, e
 	}
 	if e == nil && !deleted {
 		return Tag{}, Fail(409, "tag_exists", "标签已存在。")
 	}
-	tag := Tag{Name: name, Revision: revision + 1, CreatedAt: now, UpdatedAt: now}
-	q, e := w.Q()
-	if e != nil {
-		return tag, e
+	var revision int64
+	if e = q.QueryRowContext(ctx, nextTagRevision, name).Scan(&revision); e != nil {
+		return Tag{}, e
 	}
-	_, e = q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET revision=excluded.revision,deleted=0,updated_at=excluded.updated_at", name, tag.Revision, now, now)
-	return tag, e
+	if existing == "" {
+		return store.Get[Tag](ctx, q, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,?,?,?) RETURNING "+tagJSON, name, revision, now, now)
+	}
+	return store.Get[Tag](ctx, q, "UPDATE tags SET deleted=0,revision=?,updated_at=? WHERE id=? RETURNING "+tagJSON, revision, now, existing)
 }
+
 func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string, revision int64, remove bool) (any, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return nil, e
 	}
-	var tag Tag
-	e := s.DB.DB.QueryRowContext(ctx, "SELECT name,revision,created_at,updated_at FROM tags WHERE name=? AND deleted=0", name).Scan(&tag.Name, &tag.Revision, &tag.CreatedAt, &tag.UpdatedAt)
+	q, e := w.Q()
+	if e != nil {
+		return nil, e
+	}
+	tag, e := store.Get[Tag](ctx, q, "SELECT "+tagJSON+" FROM tags WHERE name=? AND deleted=0", name)
 	if e != nil {
 		return nil, Normalize(e)
 	}
 	if revision != tag.Revision {
 		return nil, Conflict(tag.Revision)
 	}
+	newRevision := tag.Revision + 1
 	if !remove {
 		v, e := cleanStrings([]string{newName}, 1, 100)
 		if e != nil {
@@ -174,60 +193,39 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 		if newName == name {
 			return tag, nil
 		}
-		var exists int
-		if e = s.DB.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM tags WHERE name=? AND deleted=0", newName).Scan(&exists); e != nil {
+		var exists bool
+		if e = q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM tags WHERE name=? AND deleted=0)", newName).Scan(&exists); e != nil {
 			return nil, e
 		}
-		if exists > 0 {
+		if exists {
 			return nil, Fail(409, "tag_exists", "目标标签已存在，不会隐式合并。")
 		}
-	}
-	assets, e := store.List[model.Asset](ctx, s.DB.DB, "SELECT a.data FROM assets a JOIN asset_tags t ON t.asset_id=a.id WHERE t.tag=?", name)
-	if e != nil {
-		return nil, e
-	}
-	q, e := w.Q()
-	if e != nil {
-		return nil, e
+		var next int64
+		if e = q.QueryRowContext(ctx, nextTagRevision, newName).Scan(&next); e != nil {
+			return nil, e
+		}
+		newRevision = max(newRevision, next)
 	}
 	now := time.Now().UTC()
-	if !remove {
-		if _, e = q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?) ON CONFLICT(name) DO UPDATE SET deleted=0,revision=tags.revision+1,updated_at=excluded.updated_at WHERE tags.deleted=1", newName, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); e != nil {
-			return nil, e
-		}
-	}
-	for _, a := range assets {
-		tags := []string{}
-		for _, v := range a.Tags {
-			if v != name {
-				tags = append(tags, v)
-			} else if !remove {
-				tags = append(tags, newName)
-			}
-		}
-		a.Tags = tags
-		a.TagsRevision++
-		a.Revision++
-		a.UpdatedAt = now
-		a.TagSetUpdatedAt = &now
-		a.TagSetSource = "human"
-		if e = store.SaveAssetTags(ctx, q, a); e != nil {
-			return nil, e
-		}
-	}
-	if _, e = q.ExecContext(ctx, "UPDATE tags SET deleted=1,revision=revision+1,updated_at=? WHERE name=?", now.Format(time.RFC3339Nano), name); e != nil {
+	if _, e = q.ExecContext(ctx, `UPDATE asset_records SET revision=revision+1,updated_at=?,
+		data=json_set(data,'$.revision',revision+1,'$.updatedAt',?,'$.tagsRevision',coalesce(json_extract(data,'$.tagsRevision'),0)+1,
+		'$.tagSetUpdatedAt',?,'$.tagSetSource','human') WHERE id IN (SELECT asset_id FROM asset_tags WHERE tag_id=?)`,
+		dateKey(now), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), tag.ID); e != nil {
 		return nil, e
 	}
 	if remove {
-		return nil, nil
+		if _, e = q.ExecContext(ctx, "DELETE FROM asset_tags WHERE tag_id=?", tag.ID); e != nil {
+			return nil, e
+		}
+		_, e = q.ExecContext(ctx, "UPDATE tags SET deleted=1,revision=?,updated_at=? WHERE id=?", newRevision, now.Format(time.RFC3339Nano), tag.ID)
+		return nil, e
 	}
-	var result Tag
-	e = q.QueryRowContext(ctx, "SELECT name,revision,created_at,updated_at FROM tags WHERE name=?", newName).Scan(&result.Name, &result.Revision, &result.CreatedAt, &result.UpdatedAt)
-	if errors.Is(e, sql.ErrNoRows) {
-		result = Tag{Name: newName, Revision: 1, CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
-		_, e = q.ExecContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,1,?,?)", newName, result.CreatedAt, result.UpdatedAt)
+	if _, e = q.ExecContext(ctx, `INSERT INTO retired_tag_names(name,revision) VALUES(?,?)
+		ON CONFLICT(name) DO UPDATE SET revision=max(revision,excluded.revision)`, name, tag.Revision+1); e != nil {
+		return nil, e
 	}
-	return result, e
+	return store.Get[Tag](ctx, q, "UPDATE tags SET name=?,revision=?,updated_at=? WHERE id=? RETURNING "+tagJSON,
+		newName, newRevision, now.Format(time.RFC3339Nano), tag.ID)
 }
 func (s *Service) RemoveAssetTag(ctx context.Context, w *Write, id, tag string, revision int64) (model.Asset, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {

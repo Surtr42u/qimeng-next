@@ -32,12 +32,9 @@ func SetFavorite(ctx context.Context, q store.Querier, a model.Asset, value bool
 	}
 	a.Revision++
 	a.UpdatedAt = now
-	patch, err := store.Encode(map[string]any{"favorite": value, "favoriteUpdatedAt": now, "favoritedAt": a.FavoritedAt,
-		"revision": a.Revision, "updatedAt": now})
-	if err == nil {
-		_, err = q.ExecContext(ctx, "UPDATE asset_records SET favorite=?,favorited_at=?,revision=?,updated_at=?,data=json_patch(data,?) WHERE id=?",
-			value, favoriteDate, a.Revision, timestamp(now), patch, a.ID)
-	}
+	_, err := q.ExecContext(ctx, `UPDATE asset_records SET favorite=?,favorited_at=?,favorite_updated_at=?,revision=?,updated_at=?,
+		data=json_set(data,'$.revision',?,'$.updatedAt',?) WHERE id=?`,
+		value, favoriteDate, timestamp(now), a.Revision, timestamp(now), a.Revision, timestamp(now), a.ID)
 	return a, err
 }
 
@@ -75,11 +72,8 @@ func SetTodayLike(ctx context.Context, q store.Querier, a model.Asset, value boo
 	a.Liked = value
 	a.Revision++
 	a.UpdatedAt = now
-	patch, err := store.Encode(map[string]any{"liked": value, "likeCount": a.LikeCount, "revision": a.Revision, "updatedAt": now})
-	if err == nil {
-		_, err = q.ExecContext(ctx, "UPDATE asset_records SET liked=?,revision=?,updated_at=?,data=json_patch(data,?) WHERE id=?",
-			value, a.Revision, timestamp(now), patch, a.ID)
-	}
+	_, err := q.ExecContext(ctx, "UPDATE asset_records SET revision=?,updated_at=?,data=json_set(data,'$.revision',?,'$.updatedAt',?) WHERE id=?",
+		a.Revision, timestamp(now), a.Revision, timestamp(now), a.ID)
 	return a, err
 }
 

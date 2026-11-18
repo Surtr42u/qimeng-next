@@ -274,7 +274,7 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 		asset.AuthorsRevision++
 		asset.Revision++
 		asset.UpdatedAt = time.Now().UTC()
-		if e = store.SaveAsset(ctx, q, asset); e != nil {
+		if e = store.SaveAssetEdits(ctx, q, asset, true, false); e != nil {
 			return result, e
 		}
 		result.ChangedAssets++
@@ -380,5 +380,5 @@ func (s *Service) matchAuthorListsForAsset(ctx context.Context, q store.Querier,
 	a.AuthorsRevision++
 	a.Revision++
 	a.UpdatedAt = time.Now().UTC()
-	return store.SaveAsset(ctx, q, *a)
+	return store.SaveAssetEdits(ctx, q, *a, true, false)
 }

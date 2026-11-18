@@ -164,7 +164,8 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 		return a, Fail(409, "asset_trashed", "请先恢复媒体。")
 	}
 	editAuthors := in.AuthorID != nil || in.AuthorIDs != nil || len(in.NewAuthorNames) > 0
-	if in.Source != nil || in.SourceIDs != nil || in.Characters != nil || in.CharacterIDs != nil {
+	editTaxonomy := in.Source != nil || in.SourceIDs != nil || in.Characters != nil || in.CharacterIDs != nil
+	if editTaxonomy {
 		a.TaxonomyDerived = false
 		a.TaxonomyCandidates = nil
 	}
@@ -219,7 +220,7 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 	a.MetadataSource = "human"
 	a.Revision++
 	a.UpdatedAt = time.Now().UTC()
-	if e = store.SaveAsset(ctx, q, a); e != nil {
+	if e = store.SaveAssetEdits(ctx, q, a, editAuthors, editTaxonomy); e != nil {
 		return a, e
 	}
 	if editAuthors {
@@ -227,7 +228,7 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 			return a, e
 		}
 	}
-	if in.Source != nil || in.SourceIDs != nil || in.Characters != nil || in.CharacterIDs != nil {
+	if editTaxonomy {
 		if e = protectHumanField(ctx, q, a.ID, "taxonomy"); e != nil {
 			return a, e
 		}
@@ -308,7 +309,7 @@ func (s *Service) validateAssetTags(ctx context.Context, tags []string) ([]strin
 	}
 	for _, tag := range values {
 		var deleted int
-		e = s.DB.DB.QueryRowContext(ctx, "SELECT COALESCE((SELECT deleted FROM tags WHERE name=?),0)", tag).Scan(&deleted)
+		e = s.DB.DB.QueryRowContext(ctx, store.TagUnavailable, tag).Scan(&deleted)
 		if e != nil {
 			return nil, e
 		}
