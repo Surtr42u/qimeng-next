@@ -541,8 +541,9 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 			return e
 		}
 	}
+	var taxonomyChanged bool
 	if library.Kind == "regular" {
-		if _, e = s.applySourceRules(ctx, tx, &a); e != nil {
+		if taxonomyChanged, e = s.applySourceRules(ctx, tx, &a); e != nil {
 			return e
 		}
 	}
@@ -550,6 +551,9 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 		e = store.InsertAsset(ctx, tx, a)
 	} else {
 		e = store.SaveAsset(ctx, tx, a)
+		if e == nil && taxonomyChanged {
+			e = store.SaveAssetTaxonomy(ctx, tx, a, store.CompleteTaxonomy(a))
+		}
 	}
 	if e != nil {
 		return e

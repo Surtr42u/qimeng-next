@@ -102,6 +102,12 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 		return tx.Commit()
 	}
 	a.FileDate = a.EffectiveFileDate()
+	newAsset := insertOnly
+	if !insertOnly {
+		if err := q.QueryRowContext(ctx, "SELECT NOT EXISTS(SELECT 1 FROM asset_records WHERE id=?)", a.ID).Scan(&newAsset); err != nil {
+			return err
+		}
+	}
 	raw, err := Encode(a)
 	if err != nil {
 		return err
@@ -121,7 +127,8 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 		'$.id','$.hash','$.size','$.contentVersion','$.mediaType','$.mimeType','$.width','$.height','$.durationMs','$.probeState',
 		'$.libraryId','$.relativePath','$.fileName','$.contentMtime','$.storageLayoutVersion','$.trashed','$.positionMs','$.positionContentVersion',
 		'$.tags','$.authorId','$.authorIds','$.authorName','$.favorite','$.favoriteUpdatedAt','$.favoritedAt','$.liked','$.likeCount','$.unattributedLikeCount',
-		'$.collectionId','$.page'),?,?,?)`
+		'$.collectionId','$.page','$.source','$.sourceIds','$.characters','$.characterIds','$.taxonomyDerived','$.taxonomyCandidates',
+		'$.workKeys','$.roleKeys','$.workFacets','$.roleFacets'),?,?,?)`
 	if !insertOnly {
 		query += ` ON CONFLICT(id) DO UPDATE SET author_id=excluded.author_id,
 			revision=excluded.revision,updated_at=excluded.updated_at,data=excluded.data,file_date=excluded.file_date,cos_work_id=excluded.cos_work_id`
@@ -149,10 +156,10 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 	if err = writeAssetTags(ctx, q, a, !insertOnly); err != nil {
 		return err
 	}
-	if err = saveAssetIDs(ctx, q, a.ID, "asset_sources", "source_id", a.SourceIDs, insertOnly); err != nil {
-		return err
+	if newAsset {
+		return SaveAssetTaxonomy(ctx, q, a, CompleteTaxonomy(a))
 	}
-	return saveAssetIDs(ctx, q, a.ID, "asset_characters", "character_id", a.CharacterIDs, insertOnly)
+	return nil
 }
 
 // Callers supply literal table/column pairs. Keeping the same membership
@@ -170,14 +177,8 @@ func saveAssetIDs(ctx context.Context, q Querier, assetID, table, column string,
 			return err
 		}
 	}
-	cols, values, onConflict := column, "j.value", " DO NOTHING"
-	if table == "asset_authors" {
-		cols += ",ordinal"
-		values += ",CAST(j.key AS INTEGER)"
-		onConflict = " DO UPDATE SET ordinal=excluded.ordinal WHERE ordinal!=excluded.ordinal"
-	}
-	_, err = q.ExecContext(ctx, "INSERT INTO "+table+"(asset_id,"+cols+") SELECT ?,"+values+
-		" FROM json_each(?) j WHERE j.type='text' ON CONFLICT(asset_id,"+column+")"+onConflict, assetID, raw)
+	_, err = q.ExecContext(ctx, "INSERT INTO "+table+"(asset_id,"+column+",ordinal) SELECT ?,j.value,CAST(j.key AS INTEGER)"+
+		" FROM json_each(?) j WHERE j.type='text' ON CONFLICT(asset_id,"+column+") DO UPDATE SET ordinal=excluded.ordinal WHERE ordinal!=excluded.ordinal", assetID, raw)
 	return err
 }
 func SaveUpload(ctx context.Context, q Querier, u model.Upload) error {

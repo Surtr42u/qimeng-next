@@ -230,8 +230,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun updateRelations(asset: Asset, sources: List<String>, characters: List<String>): Asset {
         val target = asset.target
+        val sourceChanged = sources != asset.sourceIds
+        val characterChanged = characters != asset.characterIds
+        // An unchanged displayed source can be implied by a role being removed.
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
-            sourceIds = sources, characterIds = characters)).bodyOrThrow().toModel(target)
+            sourceIds = sources.takeIf { sourceChanged || !characterChanged },
+            characterIds = characters.takeIf { characterChanged || !sourceChanged })).bodyOrThrow().toModel(target)
     }
     suspend fun updateAcquisitionSources(asset: Asset, sources: List<String>): Asset {
         val target = asset.target

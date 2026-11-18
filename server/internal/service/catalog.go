@@ -72,7 +72,7 @@ func (s *Service) library(ctx context.Context, id string) (model.Library, error)
 	return a, Normalize(e)
 }
 
-const assetCoreJSON = "json_set(a.data,'$.authorName',au.name,'$.liked',json(CASE WHEN EXISTS(SELECT 1 FROM likes lk WHERE lk.asset_id=a.id AND lk.day=?) THEN 'true' ELSE 'false' END),'$.likeCount',(SELECT count(*) FROM likes lk WHERE lk.asset_id=a.id)+COALESCE((SELECT unattributed_count FROM like_baselines WHERE asset_id=a.id),0),'$.unattributedLikeCount',COALESCE((SELECT unattributed_count FROM like_baselines WHERE asset_id=a.id),0),'$.source',CASE WHEN json_array_length(json_extract(a.data,'$.sourceIds'))>0 THEN (SELECT group_concat(name,'+') FROM (SELECT s.name FROM json_each(a.data,'$.sourceIds') j JOIN sources s ON s.id=j.value ORDER BY j.key)) ELSE json_extract(a.data,'$.source') END,'$.characters',json(CASE WHEN json_array_length(json_extract(a.data,'$.characterIds'))>0 THEN (SELECT json_group_array(name) FROM (SELECT c.name FROM json_each(a.data,'$.characterIds') j JOIN characters c ON c.id=j.value ORDER BY j.key)) ELSE COALESCE(json_extract(a.data,'$.characters'),'[]') END))"
+const assetCoreJSON = "json_set(a.data,'$.authorName',au.name,'$.liked',json(CASE WHEN EXISTS(SELECT 1 FROM likes lk WHERE lk.asset_id=a.id AND lk.day=?) THEN 'true' ELSE 'false' END),'$.likeCount',(SELECT count(*) FROM likes lk WHERE lk.asset_id=a.id)+COALESCE((SELECT unattributed_count FROM like_baselines WHERE asset_id=a.id),0),'$.unattributedLikeCount',COALESCE((SELECT unattributed_count FROM like_baselines WHERE asset_id=a.id),0))"
 
 func (s *Service) Asset(ctx context.Context, id string) (model.Asset, error) {
 	return readAssetOnDay(ctx, s.DB.DB, id, time.Now().Format(time.DateOnly))
@@ -153,7 +153,12 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return model.Asset{}, e
 	}
-	a, e := s.Asset(ctx, id)
+	q, e := w.Q()
+	if e != nil {
+		return model.Asset{}, e
+	}
+	day := time.Now().Format(time.DateOnly)
+	a, e := readAssetOnDay(ctx, q, id, day)
 	if e != nil {
 		return a, e
 	}
@@ -164,11 +169,6 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 		return a, Fail(409, "asset_trashed", "请先恢复媒体。")
 	}
 	editAuthors := in.AuthorID != nil || in.AuthorIDs != nil || len(in.NewAuthorNames) > 0
-	editTaxonomy := in.Source != nil || in.SourceIDs != nil || in.Characters != nil || in.CharacterIDs != nil
-	if editTaxonomy {
-		a.TaxonomyDerived = false
-		a.TaxonomyCandidates = nil
-	}
 	before := a.AuthorIDs
 	if in.Note != nil {
 		if len(*in.Note) > 10000 {
@@ -176,41 +176,15 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 		}
 		a.Note = *in.Note
 	}
-	if in.Source != nil {
-		if len(*in.Source) > 200 {
-			return a, Fail(400, "invalid_source", "出处名称过长。")
-		}
-		a.Source = *in.Source
-	}
-	if in.Characters != nil {
-		v, e := cleanStrings(*in.Characters, 50, 200)
-		if e != nil {
-			return a, e
-		}
-		a.Characters = v
-	}
-	if in.SourceIDs != nil || in.CharacterIDs != nil {
-		sources := a.SourceIDs
-		characters := a.CharacterIDs
-		if in.SourceIDs != nil {
-			sources = *in.SourceIDs
-		}
-		if in.CharacterIDs != nil {
-			characters = *in.CharacterIDs
-		}
-		if e = s.resolveTaxonomy(ctx, &a, sources, characters); e != nil {
-			return a, e
-		}
+	taxonomy, e := editAssetTaxonomy(ctx, q, &a, in)
+	if e != nil {
+		return a, e
 	}
 	if in.AcquisitionSources != nil {
 		a.AcquisitionSources, e = cleanStrings(*in.AcquisitionSources, 100, 2000)
 		if e != nil {
 			return a, e
 		}
-	}
-	q, e := w.Q()
-	if e != nil {
-		return a, e
 	}
 	if editAuthors {
 		if e = s.replaceAssetAuthors(ctx, w, q, &a, in); e != nil {
@@ -220,7 +194,7 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 	a.MetadataSource = "human"
 	a.Revision++
 	a.UpdatedAt = time.Now().UTC()
-	if e = store.SaveAssetEdits(ctx, q, a, editAuthors, editTaxonomy); e != nil {
+	if e = store.SaveAssetEdits(ctx, q, a, editAuthors, taxonomy); e != nil {
 		return a, e
 	}
 	if editAuthors {
@@ -228,15 +202,17 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 			return a, e
 		}
 	}
-	if editTaxonomy {
+	if taxonomy != nil {
 		if e = protectHumanField(ctx, q, a.ID, "taxonomy"); e != nil {
 			return a, e
 		}
 	}
 	if editAuthors {
-		e = s.recordExplicitAuthorSet(ctx, q, before, a)
+		if e = s.recordExplicitAuthorSet(ctx, q, before, a); e != nil {
+			return a, e
+		}
 	}
-	return a, e
+	return readAssetOnDay(ctx, q, id, day)
 }
 func cleanStrings(values []string, maxCount, maxLen int) ([]string, error) {
 	if values == nil {

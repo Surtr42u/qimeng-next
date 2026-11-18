@@ -5,6 +5,7 @@ import android.graphics.Color
 import kotlinx.coroutines.runBlocking
 import media.qimeng.next.model.Asset
 import media.qimeng.next.sdk.model.EventCreate
+import media.qimeng.next.sdk.model.TermInput
 import media.qimeng.next.sdk.model.UploadCreate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -63,17 +64,34 @@ class DeviceReactionIntentTest {
         }
     }
 
-    private suspend fun createPicture(client: CloudClient): Asset {
-        val library = client.media.createLibrary("云端独立互动样本", false)
+    @Test fun removingOnlyACharacterDoesNotConfirmItsDisplayedSource() = runBlocking {
+        val client = signInToCloud()
+        val asset = createPicture(client, "android-taxonomy", Color.GREEN)
+        try {
+            val source = client.api.createSource("android-taxonomy-source", TermInput(name = "云端关系出处", aliases = emptyList())).bodyOrThrow()
+            val role = client.api.createCharacter("android-taxonomy-role", TermInput(name = "云端关系角色", aliases = emptyList(), sourceId = source.id)).bodyOrThrow()
+            val linked = client.media.updateRelations(asset, emptyList(), listOf(role.id))
+            assertEquals(listOf(source.id), linked.sourceIds)
+            val cleared = client.media.updateRelations(linked, linked.sourceIds, emptyList())
+            assertTrue(cleared.sourceIds.isEmpty() && cleared.characterIds.isEmpty())
+            assertEquals(cleared.sourceIds, client.media.asset(asset.id).sourceIds)
+        } finally {
+            client.media.trash(client.media.asset(asset.id))
+            client.media.logout()
+        }
+    }
+
+    private suspend fun createPicture(client: CloudClient, key: String = "android-reaction", color: Int = Color.BLUE): Asset {
+        val library = client.media.createLibrary("云端样本 $key", false)
         val bitmap = Bitmap.createBitmap(24, 32, Bitmap.Config.ARGB_8888)
         val bytes = try {
-            bitmap.eraseColor(Color.BLUE)
+            bitmap.eraseColor(color)
             ByteArrayOutputStream().use { stream -> check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)); stream.toByteArray() }
         } finally { bitmap.recycle() }
         val input = UploadCreate(libraryId = library.id, fileName = "reaction-test.png", propertySize = bytes.size.toLong(), mimeType = "image/png", mode = UploadCreate.Mode.ordinary)
-        val upload = client.api.createUpload("android-reaction-upload", input).bodyOrThrow()
+        val upload = client.api.createUpload("$key-upload", input).bodyOrThrow()
         client.api.appendUpload(upload.id, 0L, bytes.toRequestBody("application/octet-stream".toMediaType())).bodyOrThrow()
-        val result = client.api.completeUpload(upload.id, "android-reaction-complete").bodyOrThrow()
+        val result = client.api.completeUpload(upload.id, "$key-complete").bodyOrThrow()
         return client.media.asset(requireNotNull(result.upload.assetId))
     }
 

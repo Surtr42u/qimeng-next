@@ -107,6 +107,10 @@ func (s *Service) CreateUpload(ctx context.Context, w *Write, in model.UploadInp
 		return model.Upload{}, e
 	}
 	taxonomy := model.Asset{}
+	declaredSources, e := cleanStrings(append([]string{}, in.SourceIDs...), 20, 100)
+	if e != nil {
+		return model.Upload{}, e
+	}
 	if e = s.resolveTaxonomy(ctx, &taxonomy, in.SourceIDs, in.CharacterIDs); e != nil {
 		return model.Upload{}, e
 	}
@@ -281,6 +285,13 @@ func (s *Service) CreateUpload(ctx context.Context, w *Write, in model.UploadInp
 	if e = store.SaveUpload(ctx, q, u); e != nil {
 		return u, e
 	}
+	declared, e := store.Encode(declaredSources)
+	if e != nil {
+		return u, e
+	}
+	if _, e = q.ExecContext(ctx, "UPDATE uploads SET declared_source_ids=? WHERE id=?", declared, u.ID); e != nil {
+		return u, e
+	}
 	if e = s.refreshBatch(ctx, q, u.BatchID); e != nil {
 		return u, e
 	}
@@ -445,13 +456,9 @@ func (s *Service) completeUpload(ctx context.Context, w *Write, id string, prepa
 		}
 		return model.UploadResult{Upload: u}, nil
 	}
-	return s.ingestPrepared(ctx, w, u, nil, prepared)
+	return s.ingestPrepared(ctx, w, u, nil, prepared, nil)
 }
-func (s *Service) ingest(ctx context.Context, w *Write, u model.Upload, item *model.PlanItem) (model.UploadResult, error) {
-	return s.ingestPrepared(ctx, w, u, item, nil)
-}
-
-func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, item *model.PlanItem, prepared *uploadInspection) (model.UploadResult, error) {
+func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, item *model.PlanItem, prepared *uploadInspection, declaredSources []string) (model.UploadResult, error) {
 	if e := s.uploadsAllowed(ctx); e != nil {
 		return model.UploadResult{}, e
 	}
@@ -511,7 +518,13 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 	setAuthors(&a, authors)
 	a.AuthorsRevision = 1
 	a.AcquisitionSources = u.AcquisitionSources
-	if e = s.resolveTaxonomy(ctx, &a, u.SourceIDs, u.CharacterIDs); e != nil {
+	if declaredSources == nil {
+		declaredSources, e = uploadDeclaredSources(ctx, s.DB.DB, u)
+		if e != nil {
+			return model.UploadResult{}, e
+		}
+	}
+	if e = s.resolveTaxonomy(ctx, &a, declaredSources, u.CharacterIDs); e != nil {
 		return model.UploadResult{}, e
 	}
 	var before *model.Asset
@@ -559,7 +572,7 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 			return model.UploadResult{}, e
 		}
 		setAuthors(&a, authors)
-		if e = s.resolveTaxonomy(ctx, &a, item.SourceIDs, item.CharacterIDs); e != nil {
+		if e = s.resolveTaxonomy(ctx, &a, declaredSources, item.CharacterIDs); e != nil {
 			return model.UploadResult{}, e
 		}
 	} else if u.CollectionID != "" && kind != "video" {
@@ -639,6 +652,9 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 	modified := info.ModTime().UTC()
 	a.ContentMtime = &modified
 	j := fileIntent{ID: digest([]byte("publish:" + u.ID))[:32], Kind: operation, Source: uploadPath(u.ID), Target: assetPath(a), Retired: "retired/" + u.ID, UploadID: u.ID, Before: before, After: a}
+	if operation == "ingest" {
+		j.DeclaredSourceIDs = &declaredSources
+	}
 	a, e = s.runFile(ctx, w, j)
 	if e != nil {
 		return model.UploadResult{}, e
