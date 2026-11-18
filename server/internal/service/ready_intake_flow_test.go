@@ -183,7 +183,7 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	var plan model.Plan
 	in := model.PlanCreate{ExpectedRevision: detail.Batch.Revision, Items: []model.PlanInput{{UploadID: a.ID, Family: "First"}, {UploadID: z.ID, Family: "Second"}}}
 	f.request("POST", "/batches/"+b.ID+"/plans", resumed, "queue-prepare-plan", in).expect(t, 201, &plan)
-	commit := "/batches/"+b.ID+"/plans/"+plan.ID+"/commit"
+	commit := "/batches/" + b.ID + "/plans/" + plan.ID + "/commit"
 	outcome := f.request("POST", commit, resumed, "queue-publish-plan", map[string]string{"fingerprint": plan.Fingerprint})
 	outcome.expect(t, 200, &detail)
 	again := f.request("POST", commit, resumed, "queue-publish-plan", map[string]string{"fingerprint": plan.Fingerprint})

@@ -47,25 +47,25 @@ type DelegationCreated struct {
 	Credential model.Principal `json:"credential"`
 }
 type DelegatedTaskStart struct {
-	Kind                   string   `json:"kind"`
-	Label                  string   `json:"label"`
-	LibraryID              string   `json:"libraryId"`
-	BatchID                string   `json:"batchId"`
-	ReadyManifestFingerprint *string `json:"readyManifestFingerprint,omitempty"`
-	Mode                   string   `json:"mode"`
-	MaxResearchCalls       *int     `json:"maxResearchCalls"`
-	ResearchProviders      []string `json:"researchProviders,omitzero"`
-	AllowImageLookup       bool     `json:"allowImageLookup,omitempty"`
-	AuthorID               string   `json:"authorId"`
-	AssetID                string   `json:"assetId"`
-	ExpectedContentVersion int64    `json:"expectedContentVersion"`
-	AssetFields            []string `json:"assetFields"`
-	ExpectedRevision       int64    `json:"expectedRevision"`
-	AllowedFields          []string `json:"allowedFields"`
-	CandidateBlocks        []string `json:"candidateBlocks"`
-	AllowClear             bool     `json:"allowClear"`
-	MaxUpdates             int      `json:"maxUpdates"`
-	CredentialSecret       string   `json:"credentialSecret"`
+	Kind                     string   `json:"kind"`
+	Label                    string   `json:"label"`
+	LibraryID                string   `json:"libraryId"`
+	BatchID                  string   `json:"batchId"`
+	ReadyManifestFingerprint *string  `json:"readyManifestFingerprint,omitempty"`
+	Mode                     string   `json:"mode"`
+	MaxResearchCalls         *int     `json:"maxResearchCalls"`
+	ResearchProviders        []string `json:"researchProviders,omitzero"`
+	AllowImageLookup         bool     `json:"allowImageLookup,omitempty"`
+	AuthorID                 string   `json:"authorId"`
+	AssetID                  string   `json:"assetId"`
+	ExpectedContentVersion   int64    `json:"expectedContentVersion"`
+	AssetFields              []string `json:"assetFields"`
+	ExpectedRevision         int64    `json:"expectedRevision"`
+	AllowedFields            []string `json:"allowedFields"`
+	CandidateBlocks          []string `json:"candidateBlocks"`
+	AllowClear               bool     `json:"allowClear"`
+	MaxUpdates               int      `json:"maxUpdates"`
+	CredentialSecret         string   `json:"credentialSecret"`
 }
 type DelegatedTask struct {
 	TaskID     string                `json:"taskId"`
