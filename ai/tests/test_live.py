@@ -350,6 +350,19 @@ class LiveMCP(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
             credential = self.request("POST", "/credentials", {"label": "MCP author", "authorTaskId": task["id"], "scopes": ["read", "author.profile.write"]})
             try:
                 async with Client(self.process(root, credential["token"], "read,author.profile.write")) as client:
+                    session = await client.call_tool("platform.session", {})
+                    self.assertFalse(session.is_error, session.content)
+                    self.assertEqual(session.structured_content["authorTaskId"], task["id"])
+                    self.assertNotIn("token", session.structured_content)
+                    context = await client.call_tool("author.task.context", {"id": session.structured_content["authorTaskId"]})
+                    self.assertFalse(context.is_error, context.content)
+                    self.assertEqual(context.structured_content["task"]["allowedFields"], ["biography"])
+                    denied = await client.call_tool("author.profile.update", {"id": author["id"], "Idempotency-Key": "mcp-ungranted-author-source",
+                        "body": {"expectedRevision": author["revision"], "acquisitionSources": [], "biography": "Must not apply"}})
+                    self.assertTrue(denied.is_error)
+                    self.assertEqual((denied.structured_content["code"], denied.structured_content["details"]["nextTool"]),
+                                     ("scope_denied", "platform.session"))
+                    self.assertIn("acquisitionSources", denied.structured_content["message"])
                     result = await client.call_tool("author.profile.update", {"id": author["id"], "Idempotency-Key": "mcp-live-clear",
                                                     "body": {"expectedRevision": author["revision"], "biography": ""}})
                     self.assertFalse(result.is_error, result.content)

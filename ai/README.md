@@ -64,7 +64,7 @@
 
 输入已由手机或其他设备上传时，使用`research.materials`，传uploadId与expectedHash。Go从核验的输入生成元信息和至多三张预览；`sa_`图片引用可由另一执行器在相同任务授权下读取，不需要原执行器的本地路径/缓存。预览注明原始SHA256和有效期，不代替作者证据。服务端研究缓存独立于业务数据库，最多256MiB/10000张、24小时有效，原件不转码；缓存缺失可从仍可用的原输入重建。输入已替换且无缓存时明确无法取得旧输入，不拿新版冒充。
 
-作者资料维护采用单独的明确授权任务：可信客户端用 `POST /author-tasks` 指定作者、读取修订、允许字段、是否允许清空、次数及有效期，随后签发只绑定该任务的 `read,author.profile.write` 凭据。模型通过 `author.task.context` 获取需要的信息，使用稳定幂等键执行 `author.profile.update`。正常用户界面仍直接使用本人会话编辑；只有向AI委托时才需要此范围授权。AI修改字段标为candidate，不冒充人工核实；无关字段保留。
+作者资料维护可以直接使用可信客户端签发的单任务凭据。先用 `platform.session` 读取 `authorTaskId`，再用 `author.task.context` 读取该任务的作者 ID、当前修订、允许字段与清空许可。`author.profile.update` 使用作者 ID 和 `expectedRevision`，只传本次受托修改的字段。相同写入沿用原幂等键，完毕后回读作者。授权范围外的字段（含获取渠道）会遭拒绝。AI 修改的资料标为候选。本人首次签发的是长期授权时，先读取 `platform.permissions`，按明确作者与字段通过 `task.start` 建立受限任务。
 
 ## 整理已经在库里的作品
 

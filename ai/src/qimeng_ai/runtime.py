@@ -155,6 +155,7 @@ class Runtime:
                     "existingAssetWorkflow": ["asset.query", "asset.read", "task.start", "asset.task.context",
                                               "asset.research.materials", "platform.artifact.read", "asset.metadata.apply",
                                               "naming.suggest", "naming.preview", "asset.rename.apply"],
+                    "authorTaskWorkflow": ["platform.session", "author.task.context", "author.profile.update", "author.read"],
                     "publicResearchWorkflow": ["research.context", "research.provider.query", "research.provider.result"],
                     "imageResearchWorkflow": ["research.context", "research.image.search", "research.provider.result"],
                     "rules": ["仅处理获授权批次；正常新增自动完成，冲突才等待用户。",

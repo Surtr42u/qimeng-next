@@ -49,6 +49,16 @@ export async function openFixture() {
       allowedFields: ['biography'], allowClear: false, maxUpdates: 1 });
     const lookupCredential = await owner('/credentials', 'POST', { label: '词表读取', batchId: batch.id, scopes: ['read'] });
     const authorCredential = await owner('/credentials', 'POST', { label: '仅补简介', authorTaskId: task.id, scopes: ['read', 'author.profile.write'] });
+    for (const [issued, binding, id, scopes] of [
+      [lookupCredential, 'batchId', batch.id, ['read']],
+      [authorCredential, 'authorTaskId', task.id, ['read', 'author.profile.write']],
+    ]) {
+      const res = await fetch(goOrigin + '/api/v1/sessions/current', { headers: { Authorization: 'Bearer ' + issued.token } });
+      if (!res.ok) throw Error('fixture credential readback failed');
+      const current = await res.json();
+      if (current.id !== issued.id || current[binding] !== id || current.token ||
+          JSON.stringify([...current.scopes].sort()) !== JSON.stringify([...scopes].sort())) throw Error('fixture scope or task binding mismatch');
+    }
     return { root, owner, close, candidates, author, task, cases: [
       { name: 'alias', prompt: aliasPrompt, token: lookupCredential.token, permissions: 'read' },
       { name: 'author', prompt: authorPrompt, token: authorCredential.token, permissions: 'read,author.profile.write' },

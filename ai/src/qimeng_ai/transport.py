@@ -91,7 +91,14 @@ class Transport:
                     details = {}
                     if isinstance(result, dict) and isinstance(result.get("currentRevision"), int):
                         details["currentRevision"] = result["currentRevision"]
-                    raise ToolError(code, "服务拒绝或未完成请求；按错误码处理并回读原操作",
+                    message = "服务拒绝或未完成请求；按错误码处理并回读原操作"
+                    if operation_id == "updateAuthor" and code in {"scope_denied", "field_scope_denied", "clear_not_authorized", "author_task_stale", "revision_conflict"}:
+                        details["nextTool"] = "platform.session"
+                        if code == "scope_denied" and "acquisitionSources" in (arguments.get("body") or {}):
+                            message = "作者维护凭据不能写 acquisitionSources。请省略该字段，用 platform.session 的 authorTaskId 读取 author.task.context，再按 allowedFields 提交。"
+                        else:
+                            message = "用 platform.session 核对范围。已有 authorTaskId 时读 author.task.context，按实际 author.id、author.revision 和 allowedFields 只提交此次修改。清空需要 allowClear。只有长期 delegate 凭据须先用 platform.permissions 和 task.start 建立任务。"
+                    raise ToolError(code, message,
                                     status=response.status_code, uncertain=mutation and response.status_code >= 500,
                                     details=details)
                 return result

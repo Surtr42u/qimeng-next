@@ -48,6 +48,8 @@ PC 或 NAS 的管理员在 `POST /device/credentials` 登记目标设备及客�
 
 ## 身份与错误
 
+`GET /sessions/current` 通过 MCP 的 `platform.session` 返回调用方的 scope、到期时间和已绑定的任务 ID，令牌只在签发时交付。作者维护凭据用 `authorTaskId` 读取 `GET /author-tasks/{id}`，再以返回的作者 ID 和当前修订更新获准字段。已建立的单任务可直接读取，长期委托按自己的策略创建或接手续作。[AI 工具用法](../ai/README.md)
+
 「维护」读取 `GET /system/status` 的容量、系统 CPU、系统内存、进程 RSS、运行时长和服务 HTTP 正文累计流量。未取得的宿主指标留空。每两个采样点来自同一实例和启动周期时才能相减计算速率；两秒内复用同一读数。数据目录及各媒体库分别统计，共用同一磁盘的目录会显示相同的卷容量。概览最多列 128 项，`/system/storage` 支持继续分页。全部接口要求本人会话。
 
 `GET /maintenance/jobs` 将现有扫描、接收批次、备份、保护和资料任务按创建时间排在一起，保留原类型和状态。每个任务通过原有操作入口查看详情或取消。`GET /system/client-errors` 仅提供最新 200 条错误；上报只接受固定分类、页面名称及可选 HTTP 状态码，服务端生成显示文字。客户端的 URL、文件名、堆栈与请求正文不会进入异常列表。
