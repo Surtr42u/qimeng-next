@@ -131,9 +131,10 @@ func(s *Service)ingest(ctx context.Context,w *Write,u model.Upload,item *model.P
  }else{a.RelativePath,e=s.availablePath(ctx,u.LibraryID,a.RelativePath);if e!=nil{return model.UploadResult{},e};a.FileName=path.Base(a.RelativePath)}
  if !domain.ValidName(a.FileName)||!domain.ValidMediaPath(a.RelativePath){return model.UploadResult{},Fail(400,"invalid_name","目标命名含不合法字符、保留目录或坏编码；未发布文件。")}
  if u.CosWorkID!=""{work,e:=store.Get[model.CosWork](ctx,s.DB.DB,"SELECT data FROM cos_works WHERE id=?",u.CosWorkID);if e!=nil{return model.UploadResult{},Normalize(e)};if !strings.HasPrefix(a.RelativePath,work.RelativeDirectory+"/"){return model.UploadResult{},Fail(409,"cos_work_directory_conflict","命名后的目标不属于明确选择的 COS 作品目录。")}}
- if e=s.checkPath(ctx,a.LibraryID,a.RelativePath,a.ID);e!=nil{return model.UploadResult{},e};a.ContentURL="/api/v1/assets/"+a.ID+"/content";if e=s.probe(ctx,uploadPath(u.ID),&a);e!=nil{return model.UploadResult{},e}
- if u.SourceMtime!=nil{if e=s.Root.Chtimes(uploadPath(u.ID),*u.SourceMtime,*u.SourceMtime);e!=nil{return model.UploadResult{},e}}
- info,e:=s.Root.Stat(uploadPath(u.ID));if e!=nil{return model.UploadResult{},e};modified:=info.ModTime().UTC();a.ContentMtime=&modified
+ if e=s.checkPath(ctx,a.LibraryID,a.RelativePath,a.ID);e!=nil{return model.UploadResult{},e};a.ContentURL="/api/v1/assets/"+a.ID+"/content";if e=s.probe(ctx,uploadPath(u.ID),&a);e!=nil{return model.UploadResult{},publicationError("probe",e)}
+ info,e:=s.Root.Stat(uploadPath(u.ID));if e!=nil{return model.UploadResult{},publicationError("stat_source",e)}
+ if u.SourceMtime!=nil&&!info.ModTime().Equal(*u.SourceMtime){if e=s.Root.Chtimes(uploadPath(u.ID),*u.SourceMtime,*u.SourceMtime);e!=nil{return model.UploadResult{},publicationError("source_time",e)};info,e=s.Root.Stat(uploadPath(u.ID));if e!=nil{return model.UploadResult{},publicationError("stat_source",e)}}
+ modified:=info.ModTime().UTC();a.ContentMtime=&modified
  j:=fileIntent{ID:digest([]byte("publish:"+u.ID))[:32],Kind:operation,Source:uploadPath(u.ID),Target:assetPath(a),Retired:"retired/"+u.ID,UploadID:u.ID,Before:before,After:a}
  a,e=s.runFile(ctx,w,j);if e!=nil{return model.UploadResult{},e};u.State="ingested";u.AssetID=a.ID;u.PublishedContentVersion=a.ContentVersion;return model.UploadResult{Upload:u,Asset:&a},nil
 }

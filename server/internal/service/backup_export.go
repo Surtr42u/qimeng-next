@@ -60,7 +60,7 @@ func(s *Service)exportBackup(ctx context.Context,b Backup){
   file,e:=s.Root.OpenFile(temporary,os.O_WRONLY|os.O_CREATE|os.O_TRUNC,0600);if e!=nil{fail(e);return};hash:=sha256.New();writer:=io.MultiWriter(&reserveWriter{ctx:ctx,s:s,file:file},hash)
   open:=func(f archive.File)(io.ReadCloser,error){if f.Kind=="snapshot"{f.StoragePath=directory+"/snapshot.sqlite"};return s.backupSource(ctx,f)}
   e=archive.Write(ctx,writer,manifest,open,func(count int)error{b.ExportedFiles=count;if count%32==0||count==b.TotalFiles{return s.setBackupProgress(ctx,b)};return nil});if e==nil{e=file.Sync()};info,statErr:=file.Stat();closeErr:=file.Close();if e==nil{e=statErr};if e==nil{e=closeErr};if e!=nil{fail(e);return}
-  if e=s.Root.Link(temporary,final);e!=nil{fail(e);return};if e=s.syncParent(final);e!=nil{fail(e);return};if e=s.Root.Remove(temporary);e!=nil{fail(e);return};b.ArchiveHash=hex.EncodeToString(hash.Sum(nil));b.ArchiveBytes=info.Size()
+  if e=s.Root.PublishTemp(temporary,final);e!=nil{fail(e);return};if e=s.syncParent(final);e!=nil{fail(e);return};b.ArchiveHash=hex.EncodeToString(hash.Sum(nil));b.ArchiveBytes=info.Size()
  }
  now:=time.Now().UTC();b.ExportedAt=&now;b.ExportState="completed";b.ExportError="";if e:=s.setBackupProgress(context.Background(),b);e!=nil{return}
 }

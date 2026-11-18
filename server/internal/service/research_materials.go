@@ -64,28 +64,36 @@ func(s *Service) buildResearchMaterials(ctx context.Context,resolve func()(resea
  cache,e:=s.openResearchCache(ctx);if e!=nil{return result,e};defer cache.Close()
  cached,e:=store.Get[ResearchMaterials](ctx,cache,"SELECT data FROM materials WHERE upload_id=? AND source_hash=? AND expires>?",subject.key,subject.hash,time.Now().Unix());if e==nil{return cached,nil};if !errors.Is(e,sql.ErrNoRows){return result,e}
  select{case researchSlots<-struct{}{}:defer func(){<-researchSlots}();case <-ctx.Done():return result,ctx.Err()}
- // A durable hard-link intent protects rename/replacement during probing without
- // copying large original videos. Interrupted snapshots are removed on next use.
+ // A seekable handle on Linux/Android, or a journalled same-volume link on
+ // Windows, keeps a large video stable without copying it to the cache.
  sourceID:=ID();snapshot:="libraries/"+subject.libraryID+"/.qimeng-internal/research-sources/"+sourceID+path.Ext(subject.fileName)
- activeResearchSources.Store(sourceID,struct{}{})
- if _,e=cache.ExecContext(ctx,"INSERT INTO work_sources VALUES(?,?,?)",sourceID,researchProcess,snapshot);e!=nil{activeResearchSources.Delete(sourceID);return result,e}
- defer func(){defer activeResearchSources.Delete(sourceID);removeErr:=s.Root.Remove(snapshot);if errors.Is(removeErr,os.ErrNotExist){removeErr=nil};if removeErr==nil{_,removeErr=cache.ExecContext(context.Background(),"DELETE FROM work_sources WHERE id=?",sourceID)};if err==nil&&removeErr!=nil{err=Fail(500,"research_cleanup_pending","研究材料已生成，但临时引用清理待恢复。")}}()
- s.mu.Lock();current,e:=resolve();if e==nil{e=s.linkNoReplace(current.source,snapshot)};s.mu.Unlock();if e!=nil{return result,e}
- if e=s.verify(snapshot,subject.hash,subject.size);e!=nil{return result,e}
+ if !inheritedMediaFD{
+  activeResearchSources.Store(sourceID,struct{}{})
+  defer activeResearchSources.Delete(sourceID)
+  if _,e=cache.ExecContext(ctx,"INSERT INTO work_sources VALUES(?,?,?)",sourceID,researchProcess,snapshot);e!=nil{return result,e}
+ }
+ var source mediaInput
+ s.mu.Lock();current,e:=resolve();if e==nil{source,e=s.pinMedia(current.source,snapshot,subject.size)};s.mu.Unlock();if e!=nil{return result,e}
+ defer func(){
+  cleanup:=source.release(s)
+  if cleanup==nil&&!inheritedMediaFD{_,cleanup=cache.ExecContext(context.Background(),"DELETE FROM work_sources WHERE id=?",sourceID)}
+  if err==nil&&cleanup!=nil{err=Fail(500,"research_cleanup_pending","研究材料已生成，临时引用尚待清理。")}
+ }()
+ if e=source.verify(ctx,s,subject.hash,subject.size);e!=nil{return result,e}
  free,e:=freeBytes(s.Config.DataDir);if e!=nil{return result,e};if free-(8<<20)<s.Config.ReserveBytes{return result,Fail(507,"research_space","研究缓存空间不足，原件保持不变。")}
- metadata:=model.Asset{ID:subject.assetID,MimeType:subject.mime};if e=s.probe(ctx,snapshot,&metadata);e!=nil{return result,e}
+ metadata:=model.Asset{ID:subject.assetID,MimeType:subject.mime};if e=s.probeMedia(ctx,source,&metadata);e!=nil{return result,e}
  if metadata.ProbeState!="ready"{if metadata.ProbeState=="unavailable"{return result,Fail(501,"media_tool_unavailable","研究需要可用的媒体探测工具，未把能力缺失视为研究无结果。")};return result,Fail(422,"research_probe_failed","未能读取有效研究元数据，原件保留，不能视为已经研究但没有结果。")}
  result=ResearchMaterials{UploadID:subject.uploadID,AssetID:subject.assetID,ContentVersion:subject.version,SourceSHA256:subject.hash,Width:metadata.Width,Height:metadata.Height,DurationMs:metadata.DurationMs,ProbeState:metadata.ProbeState,Artifacts:[]ResearchArtifact{},Limitations:[]string{"预览不证明作者归属。","外部作品来源仍需独立核实。"}}
  if subject.mime=="image/gif"{result.Limitations=append(result.Limitations,"动图预览仅覆盖首帧，不能据此宣称核对了全部帧。")}
  positions:=[]float64{0};if metadata.DurationMs>0&&subject.mime!="image/gif"{duration:=float64(metadata.DurationMs)/1000;positions=[]float64{duration*.15,duration*.5,duration*.85}}
  contents:=[][]byte{};expires:=time.Now().UTC().Add(24*time.Hour);var total int64
  for _,position:=range positions{
-  data,e:=s.researchFrame(ctx,snapshot,subject.mime,metadata.Width,metadata.Height,position);if e!=nil{return result,e}
+  data,e:=s.researchFrame(ctx,source,subject.mime,metadata.Width,metadata.Height,position);if e!=nil{return result,e}
   hash:=digest(data);artifactID:=digest([]byte(subject.key+":"+subject.hash+":"+strconv.FormatFloat(position,'f',6,64)+":"+hash))
   item:=ResearchArtifact{ID:artifactID,ArtifactRef:"sa_"+artifactID,UploadID:subject.uploadID,AssetID:subject.assetID,ContentVersion:subject.version,SourceSHA256:subject.hash,SHA256:hash,MimeType:"image/jpeg",Size:int64(len(data)),PositionSeconds:position,ExpiresAt:expires}
   result.Artifacts=append(result.Artifacts,item);contents=append(contents,data);total+=item.Size
  }
- if e=s.verify(snapshot,subject.hash,subject.size);e!=nil{return result,e}
+ if e=source.verify(ctx,s,subject.hash,subject.size);e!=nil{return result,e}
  if _,e=resolve();e!=nil{return result,e}
  // Keep cache publication atomic; it contains no business authority or original media.
  tx,e:=cache.BeginTx(ctx,nil);if e!=nil{return result,e};defer tx.Rollback()
@@ -97,11 +105,11 @@ func(s *Service) buildResearchMaterials(ctx context.Context,resolve func()(resea
  raw,e:=store.Encode(result);if e!=nil{return result,e};if _,e=tx.ExecContext(ctx,"INSERT OR REPLACE INTO materials VALUES(?,?,?,?)",subject.key,subject.hash,expires.Unix(),raw);e!=nil{return result,e};return result,tx.Commit()
 }
 
-func(s *Service)researchFrame(ctx context.Context,source,mime string,width,height int,position float64)([]byte,error){
+func(s *Service)researchFrame(ctx context.Context,source mediaInput,mime string,width,height int,position float64)([]byte,error){
  if width<1||height<1||int64(width)*int64(height)>40_000_000{return nil,Fail(422,"research_image_limit","画面超过研究预览解码预算，原件仍可正常保留。")}
  if builtinImage(mime){return s.scaledStill(source,mime,640,85,draw.ApproxBiLinear)}
- ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");if ffmpeg==""{return nil,Fail(501,"media_tool_unavailable","研究预览需要FFmpeg。")};absolute,e:=s.Root.AbsolutePath(source);if e!=nil{return nil,e}
- demuxer:=mediaDemuxer(mime);if demuxer==""{return nil,Fail(415,"media_unsupported","此格式没有受限研究通道。")};deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-threads","2","-max_alloc","67108864","-protocol_whitelist","file,pipe","-f",demuxer,"-ss",strconv.FormatFloat(position,'f',6,64),"-i",absolute,"-frames:v","1","-vf","scale=640:640:force_original_aspect_ratio=decrease","-threads","1","-f","image2pipe","-vcodec","mjpeg","pipe:1");configureMediaProcess(cmd)
+ ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");if ffmpeg==""{return nil,Fail(501,"media_tool_unavailable","研究预览需要FFmpeg。")};absolute,e:=source.argument(s);if e!=nil{return nil,e}
+ demuxer:=mediaDemuxer(mime);if demuxer==""{return nil,Fail(415,"media_unsupported","此格式没有受限研究通道。")};deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel();cmd:=exec.CommandContext(deadline,ffmpeg,"-nostdin","-v","error","-threads","2","-max_alloc","67108864","-protocol_whitelist","file,pipe","-f",demuxer,"-ss",strconv.FormatFloat(position,'f',6,64),"-i",absolute,"-frames:v","1","-vf","scale=640:640:force_original_aspect_ratio=decrease","-threads","1","-f","image2pipe","-vcodec","mjpeg","pipe:1");source.configure(cmd)
  output:=&boundedOutput{limit:2<<20};cmd.Stdout=output;cmd.Stderr=io.Discard;if e=cmd.Run();e!=nil{return nil,Fail(422,"research_decode_failed","研究抽帧失败或超时，原件保留。")};if _,e=jpeg.DecodeConfig(bytes.NewReader(output.Bytes()));e!=nil{return nil,e};return output.Bytes(),nil
 }
 

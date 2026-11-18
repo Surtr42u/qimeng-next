@@ -64,7 +64,7 @@ func RestoreBackup(ctx context.Context,options RestoreOptions)(result RestoreRes
   "UPDATE source_cleanup_permits SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='issued'",
  }{if _,e=tx.ExecContext(ctx,statement);e!=nil{return result,e}}
  if _,e=tx.ExecContext(ctx,"UPDATE settings SET value=? WHERE key='instance_id'",result.InstanceID);e!=nil{return result,e};if e=tx.Commit();e!=nil{return result,e};if _,e=db.DB.ExecContext(ctx,"PRAGMA wal_checkpoint(TRUNCATE)");e!=nil{return result,e};if e=db.DB.Close();e!=nil{return result,e}
- if e=root.Link("restore.sqlite","qimeng.sqlite");e!=nil{return result,e};if e=root.Remove("restore.sqlite");e!=nil{return result,e};if e=root.Remove("RESTORE_INCOMPLETE");e!=nil{return result,e};parent,e:=root.OpenParent("qimeng.sqlite");if e!=nil{return result,e};e=syncDirectory(parent);parent.Close();if e!=nil{return result,e}
+ if e=root.PublishTemp("restore.sqlite","qimeng.sqlite");e!=nil{return result,e};if e=root.Remove("RESTORE_INCOMPLETE");e!=nil{return result,e};parent,e:=root.OpenParent("qimeng.sqlite");if e!=nil{return result,e};e=syncDirectory(parent);parent.Close();if e!=nil{return result,e}
  result.BackupID=manifest.BackupID;result.SourceInstanceID=manifest.InstanceID;result.State="restored";return result,nil
 }
 func safeBackupID(id string)bool{return id!=""&&len(id)<=256&&!strings.ContainsAny(id,"/\\:\x00")&&id!="."&&id!=".."}

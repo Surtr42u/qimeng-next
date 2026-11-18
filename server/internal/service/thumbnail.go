@@ -24,10 +24,11 @@ func(w *boundedOutput)Write(b []byte)(int,error){if len(b)>w.limit-w.Len(){retur
 func builtinImage(mime string)bool{return mime=="image/jpeg"||mime=="image/png"||mime=="image/gif"}
 func mediaDemuxer(mime string)string{switch mime{case "image/png":return "png_pipe";case "image/jpeg":return "mjpeg";case "image/gif":return "gif";case "image/webp":return "webp_pipe";case "image/avif","video/mp4","video/quicktime":return "mov";case "video/webm","video/x-matroska":return "matroska";case "video/x-msvideo":return "avi"};return ""}
 func toolPath(env,name string)string{if configured:=os.Getenv(env);configured!=""{return configured};value,e:=exec.LookPath(name);if e!=nil{return ""};return value}
-func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{
+func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{return s.probeMedia(ctx,mediaInput{name:name},a)}
+func(s *Service)probeMedia(ctx context.Context,input mediaInput,a *model.Asset)error{
  a.ProbeState="unavailable";a.ThumbnailURL="";a.Width=0;a.Height=0;a.DurationMs=0
  if builtinImage(a.MimeType){
-  f,e:=s.Root.Open(name);if e!=nil{return e};defer f.Close()
+  f,e:=input.reader(s);if e!=nil{return e};defer f.Close()
   cfg,_,e:=image.DecodeConfig(f);if e!=nil{return Fail(415,"invalid_image","文件不是可解码的图片。")}
   a.Width,a.Height=cfg.Width,cfg.Height
   if a.MimeType=="image/jpeg"{if _,e=f.Seek(0,io.SeekStart);e!=nil{return e};if jpegOrientation(f)>=5{a.Width,a.Height=a.Height,a.Width}}
@@ -35,21 +36,21 @@ func(s *Service)probe(ctx context.Context,name string,a *model.Asset)error{
  }
  if ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg");ffmpeg!=""{a.ThumbnailURL="/api/v1/assets/"+a.ID+"/thumbnail"}
  ffprobe:=toolPath("QIMENG_FFPROBE","ffprobe");if ffprobe==""{return nil}
- demuxer:=mediaDemuxer(a.MimeType);if demuxer==""{return Fail(415,"media_unsupported","此格式没有受限媒体探测通道。")};sourcePath,e:=s.Root.AbsolutePath(name);if e!=nil{return e};deadline,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel()
- result,e:=probeStreams(deadline,ffprobe,demuxer,sourcePath);if e!=nil{if ctx.Err()!=nil{return ctx.Err()};a.ProbeState="failed";return nil}
+ demuxer:=mediaDemuxer(a.MimeType);if demuxer==""{return Fail(415,"media_unsupported","此格式没有受限媒体探测通道。")};deadline,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel()
+ result,e:=s.probeStreams(deadline,ffprobe,demuxer,input);if e!=nil{if ctx.Err()!=nil{return ctx.Err()};a.ProbeState="failed";return nil}
  stream,found:=result.primary();if !found{a.ProbeState="failed";return nil};a.Width,a.Height=stream.Width,stream.Height
  if result.Format.Duration!=""&&result.Format.Duration!="N/A"{duration,e:=strconv.ParseFloat(result.Format.Duration,64);if e!=nil{return e};if duration>=0&&duration<1e9{a.DurationMs=int64(duration*1000)}};a.ProbeState="ready";return nil
 }
 func previewPath(id string,version int64,edge int)string{return "cache/"+id+"/v3-"+strconv.FormatInt(version,10)+"-"+strconv.Itoa(edge)+".jpg"}
-func(s *Service)thumbnailSource(ctx context.Context,id string,version int64,edge int,snapshotNeeded bool)(*os.File,model.Asset,string,string,error){
- s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,"","",e};if a.Trashed{return nil,a,"","",Fail(404,"not_found","媒体位于回收站。")}
- if version>0&&version!=a.ContentVersion{return nil,a,"","",Fail(409,"content_changed","缩略图对应的内容版本已变化，请刷新条目。")}
- if e=s.currentThumbnailSource(a);e!=nil{return nil,a,"","",e}
+func(s *Service)thumbnailSource(ctx context.Context,id string,version int64,edge int,snapshotNeeded bool)(*os.File,model.Asset,string,mediaInput,error){
+ s.mu.Lock();defer s.mu.Unlock();a,e:=s.Asset(ctx,id);if e!=nil{return nil,a,"",mediaInput{},e};if a.Trashed{return nil,a,"",mediaInput{},Fail(404,"not_found","媒体位于回收站。")}
+ if version>0&&version!=a.ContentVersion{return nil,a,"",mediaInput{},Fail(409,"content_changed","缩略图对应的内容版本已变化，请刷新条目。")}
+ if e=s.currentThumbnailSource(a);e!=nil{return nil,a,"",mediaInput{},e}
  cache:=previewPath(a.ID,a.ContentVersion,edge)
- if e=s.safe(cache);e!=nil{return nil,a,"","",e};if f,e:=s.Root.Open(cache);e==nil{return f,a,cache,"",nil}else if !errors.Is(e,os.ErrNotExist){return nil,a,"","",e}
- if !snapshotNeeded{return nil,a,cache,"",nil}
+ if e=s.safe(cache);e!=nil{return nil,a,"",mediaInput{},e};if f,e:=s.Root.Open(cache);e==nil{return f,a,cache,mediaInput{},nil}else if !errors.Is(e,os.ErrNotExist){return nil,a,"",mediaInput{},e}
+ if !snapshotNeeded{return nil,a,cache,mediaInput{},nil}
  snapshot:="libraries/"+a.LibraryID+"/.qimeng-internal/cache-sources/"+ID()+path.Ext(a.FileName)
- if e=s.linkNoReplace(assetPath(a),snapshot);e!=nil{return nil,a,"","",e};return nil,a,cache,snapshot,nil
+ pinned,e:=s.pinMedia(assetPath(a),snapshot,a.Size);return nil,a,cache,pinned,e
 }
 func(s *Service)Thumbnail(ctx context.Context,id string,versions ...int64)(*os.File,model.Asset,error){
  version:=int64(0);if len(versions)>0{version=versions[0]};return s.ThumbnailSize(ctx,id,version,"")
@@ -70,7 +71,7 @@ func(s *Service)thumbnailFor(ctx context.Context,id string,version int64,edge in
  return cached,a,err
 }
 func(s *Service)generatePreview(ctx context.Context,id string,version int64,edge int)error{
- cached,a,cache,source,e:=s.thumbnailSource(ctx,id,version,edge,true);if e!=nil{return e};if cached!=nil{return cached.Close()};defer s.Root.Remove(source)
+ cached,a,cache,source,e:=s.thumbnailSource(ctx,id,version,edge,true);if e!=nil{return e};if cached!=nil{return cached.Close()};defer source.release(s)
  var data []byte
  if builtinImage(a.MimeType){
   data,e=s.scaledStill(source,a.MimeType,edge,92,draw.CatmullRom)
@@ -86,5 +87,5 @@ func(s *Service)generatePreview(ctx context.Context,id string,version int64,edge
  s.mu.Lock();defer s.mu.Unlock()
  current,e:=s.Asset(ctx,id);if e!=nil{return e};if current.Trashed||current.ContentVersion!=a.ContentVersion{return Fail(409,"content_changed","生成期间媒体版本已变化，请刷新条目。")}
  if e=s.currentThumbnailSource(current);e!=nil{return e}
- if e=s.Root.Link(tmp,cache);e!=nil&&!errors.Is(e,os.ErrExist){return e};return nil
+ if e=s.Root.PublishTemp(tmp,cache);e!=nil&&!errors.Is(e,os.ErrExist){return e};return nil
 }

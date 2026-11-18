@@ -895,7 +895,7 @@ paths:
       description: Download the readable author Markdown from this exact immutable checkpoint. Owner access only.
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses:
-        '200': {description: Complete UTF-8 author documentation, content: {text/plain: {schema: {type: string}}}}
+        '200': {description: Complete UTF-8 author documentation, content: {text/plain: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
   /backups/{id}:
     get:
@@ -975,7 +975,7 @@ paths:
       operationId: exportMasterAuthorList
       description: Combined current author declarations, live relationships and verified profile sources in one consistent read.
       responses:
-        '200': {description: UTF-8 master author list, content: {text/plain: {schema: {type: string}}}}
+        '200': {description: UTF-8 master author list, content: {text/plain: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
   /author-lists/mirror:
     get:
@@ -1009,7 +1009,7 @@ paths:
       description: Current server projection with stable author bindings and current filenames. Verified profile links may supplement acquisition sources; candidate identities never become confirmed sources. SHA-256 ETag identifies the exact export bytes.
       parameters: [{$ref: '#/components/parameters/Id'}]
       responses:
-        '200': {description: UTF-8 author text, content: {text/plain: {schema: {type: string}}}}
+        '200': {description: UTF-8 author text, content: {text/plain: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Error'}
   /backup-targets:
     get:

@@ -30,7 +30,7 @@ func (s *Service) publishCheckpointDatabase(ctx context.Context, snapshot string
 	syncErr := file.Sync()
 	closeErr := file.Close()
 	if err = errors.Join(syncErr, closeErr); err != nil { return err }
-	if err = s.Root.Link(staging, snapshot); err != nil { return err }
+	if err = s.Root.PublishTemp(staging, snapshot); err != nil { return err }
 	return s.syncParent(snapshot)
 }
 
@@ -75,7 +75,7 @@ func (s *Service) publishCheckpointManifest(ctx context.Context, db *sql.DB, b B
 	if err==nil { err=file.Sync() }
 	if err=errors.Join(err,file.Close());err!=nil {return 0,"",err}
 	expected:=hex.EncodeToString(hash.Sum(nil))
-	if err=s.Root.Link(staging,final);errors.Is(err,os.ErrExist) {
+	if err=s.Root.PublishTemp(staging,final);errors.Is(err,os.ErrExist) {
 		actual,_,readErr:=s.hashFile(final)
 		if readErr!=nil {return 0,"",readErr}
 		if actual!=expected {return 0,"",Fail(409,"backup_manifest_conflict","已有清单与这个业务快照不一致，请保留并核对。")}

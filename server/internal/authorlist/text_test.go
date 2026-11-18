@@ -1,9 +1,20 @@
 package authorlist
 
 import (
+ "strconv"
  "strings"
  "testing"
 )
+
+func TestPlainNamesAndRepeatedWorkLinesUseBoundedOrderedSets(t *testing.T){
+ var large strings.Builder
+ for i:=0;i<=maxAuthorBlocks;i++{large.WriteString("Studio ");large.WriteString(strconv.Itoa(i));large.WriteByte('\n')}
+ if _,err:=Parse(large.String());err==nil{t.Fatal("plain names exceeded the same block budget as numbered declarations")}
+ parsed,err:=Parse("1  Studio\r\n来源  A  B  A\r\n作品\r\nfirst.png\r\nsecond.png\r\nfirst.png\r\n")
+ if err!=nil||strings.Join(parsed.Blocks[0].Works,",")!="first.png,second.png"||strings.Join(parsed.Blocks[0].Sources,",")!="A,B"{
+  t.Fatal("streaming parse changed declared order or duplicated terms",parsed,err)
+ }
+}
 
 func TestDeclaredBlocksSourcesAndNumericMediaAreDistinct(t *testing.T){
  text:="1  Synthetic Studio  合成作者(备注)\n来源  渠道甲  Channel Two\n作品\n2099  合成角色.png\n图组\n\n\n\n2  第二作者\n出处\n渠道乙\n作品\n片段.mp4\n"

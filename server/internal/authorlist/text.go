@@ -42,15 +42,83 @@ func header(line string)([]string,bool,error){
  runes:=[]rune(line);i:=0;for i<len(runes)&&runes[i]>='0'&&runes[i]<='9'{i++};if i==0||i==len(runes){return nil,false,nil};start:=i;for i<len(runes)&&unicode.IsSpace(runes[i]){i++};if i-start<2||i==len(runes)||mediaExtension(line)!=""{return nil,false,nil};names,e:=Names(string(runes[i:]));return names,true,e
 }
 func marker(line,name string)(string,bool){if line==name{return "",true};if !strings.HasPrefix(line,name){return "",false};rest:=strings.TrimPrefix(line,name);r,_:=utf8.DecodeRuneInString(rest);if !unicode.IsSpace(r){return "",false};return strings.TrimSpace(rest),true}
-func unique(values []string,value string)[]string{value=strings.TrimSpace(value);if value==""{return values};for _,old:=range values{if old==value{return values}};return append(values,value)}
-func Parse(text string)(Document,error){
- result:=Document{Format:"names",Blocks:[]Block{},Issues:[]Issue{}};if len(text)>MaxTextBytes||!utf8.ValidString(text)||strings.ContainsRune(text,0){return result,errors.New("author text must be bounded UTF-8")};text=strings.TrimPrefix(text,"\ufeff");lines:=strings.Split(strings.ReplaceAll(text,"\r\n","\n"),"\n");current:=-1;section:="";foundHeader:=false
- for number,raw:=range lines{line:=strings.TrimSpace(raw);if line==""||allDigits(line){continue};if len(line)>16384{return result,fmt.Errorf("line %d exceeds text budget",number+1)};names,isHeader,e:=header(line);if e!=nil{return result,fmt.Errorf("line %d: %w",number+1,e)};if isHeader{foundHeader=true;result.Format="blocks";result.Blocks=append(result.Blocks,Block{Names:names,Sources:[]string{},Works:[]string{},Order:len(result.Blocks),Header:line});current=len(result.Blocks)-1;section="";if len(result.Blocks)>20000{return result,errors.New("too many author blocks")};continue};if current<0{continue}
-  if rest,ok:=marker(line,"来源");ok{section="sources";for _,source:=range words(rest){result.Blocks[current].Sources=unique(result.Blocks[current].Sources,source)};continue};if rest,ok:=marker(line,"出处");ok{section="sources";for _,source:=range words(rest){result.Blocks[current].Sources=unique(result.Blocks[current].Sources,source)};continue};if rest,ok:=marker(line,"作品");ok{section="works";if rest!=""{result.Blocks[current].Works=unique(result.Blocks[current].Works,rest)};continue}
-  switch section{case "sources":result.Blocks[current].Sources=unique(result.Blocks[current].Sources,strings.Trim(line,"`"));case "works":result.Blocks[current].Works=unique(result.Blocks[current].Works,line);default:if len(result.Issues)<100{result.Issues=append(result.Issues,Issue{number+1,"line_outside_section"})}}
- }
- if !foundHeader{seen:=map[string]bool{};for number,raw:=range lines{line:=strings.TrimSpace(raw);if line==""||allDigits(line){continue};names,e:=Names(line);if e!=nil{return result,fmt.Errorf("line %d: %w",number+1,e)};key:=IdentityKey(names[0]);if !seen[key]{seen[key]=true;result.Blocks=append(result.Blocks,Block{Names:names,Sources:[]string{},Works:[]string{},Order:len(result.Blocks)})}}}
- if len(result.Blocks)==0{return result,errors.New("author text contains no valid authors")};return result,nil
+const maxAuthorBlocks = 20000
+
+func appendTextLine(lines *[]string, seen map[string]bool, value string) {
+	value = strings.TrimSpace(value)
+	if value != "" && !seen[value] {
+		seen[value] = true
+		*lines = append(*lines, value)
+	}
+}
+
+func Parse(text string) (Document,error) {
+	result := Document{Format:"names", Blocks:[]Block{}, Issues:[]Issue{}}
+	if len(text)>MaxTextBytes || !utf8.ValidString(text) || strings.ContainsRune(text,0) {
+		return result,errors.New("author text must be bounded UTF-8")
+	}
+	text=strings.TrimPrefix(text,"\ufeff")
+	current:=-1
+	section:=""
+	lineNumber:=0
+	var sources,works map[string]bool
+	for raw:=range strings.SplitSeq(text,"\n") {
+		lineNumber++
+		line:=strings.TrimSpace(raw)
+		if line=="" || allDigits(line) { continue }
+		if len(line)>16384 { return result,fmt.Errorf("line %d exceeds text budget",lineNumber) }
+		names,isHeader,err:=header(line)
+		if err!=nil { return result,fmt.Errorf("line %d: %w",lineNumber,err) }
+		if isHeader {
+			if len(result.Blocks)>=maxAuthorBlocks { return result,errors.New("too many author blocks") }
+			result.Format="blocks"
+			current=len(result.Blocks)
+			result.Blocks=append(result.Blocks,Block{Names:names,Sources:[]string{},Works:[]string{},Order:current,Header:line})
+			section=""
+			sources,works=make(map[string]bool),make(map[string]bool)
+			continue
+		}
+		if current<0 { continue }
+		block:=&result.Blocks[current]
+		content,sourceMarker:=marker(line,"来源")
+		if !sourceMarker { content,sourceMarker=marker(line,"出处") }
+		if sourceMarker {
+			section="sources"
+			for _,source:=range words(content) { appendTextLine(&block.Sources,sources,source) }
+			continue
+		}
+		if content,ok:=marker(line,"作品");ok {
+			section="works"
+			appendTextLine(&block.Works,works,content)
+			continue
+		}
+		switch section {
+		case "sources":
+			appendTextLine(&block.Sources,sources,strings.Trim(line,"`"))
+		case "works":
+			appendTextLine(&block.Works,works,line)
+		default:
+			if len(result.Issues)<100 { result.Issues=append(result.Issues,Issue{lineNumber,"line_outside_section"}) }
+		}
+	}
+	if current<0 {
+		seen:=make(map[string]bool)
+		lineNumber=0
+		for raw:=range strings.SplitSeq(text,"\n") {
+			lineNumber++
+			line:=strings.TrimSpace(raw)
+			if line=="" || allDigits(line) { continue }
+			names,err:=Names(line)
+			if err!=nil { return result,fmt.Errorf("line %d: %w",lineNumber,err) }
+			key:=IdentityKey(names[0])
+			if seen[key] { continue }
+			if len(result.Blocks)>=maxAuthorBlocks { return result,errors.New("too many author blocks") }
+			seen[key]=true
+			result.Blocks=append(result.Blocks,Block{Names:names,Sources:[]string{},Works:[]string{},Order:len(result.Blocks)})
+		}
+	}
+	if len(result.Blocks)==0 { return result,errors.New("author text contains no valid authors") }
+	return result,nil
 }
 func normalized(value string)string{return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value)," ",""))}
 func Matches(work,fileName string)bool{

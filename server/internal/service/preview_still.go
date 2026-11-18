@@ -82,8 +82,8 @@ func orientPreview(src *image.RGBA, orientation int) *image.RGBA {
 	return dst
 }
 
-func (s *Service) scaledStill(source,mime string,edge,quality int,scale draw.Scaler)([]byte,error){
-	f,err:=s.Root.Open(source);if err!=nil{return nil,err};defer f.Close()
+func (s *Service) scaledStill(source mediaInput,mime string,edge,quality int,scale draw.Scaler)([]byte,error){
+	f,err:=source.reader(s);if err!=nil{return nil,err};defer f.Close()
 	orientation:=1
 	if mime=="image/jpeg"{
 		orientation=jpegOrientation(f)

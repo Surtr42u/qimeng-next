@@ -27,16 +27,17 @@ type mediaMetadata struct {
 	Format struct{Duration string}
 }
 
-func probeStreams(ctx context.Context, binary, demuxer, source string) (mediaMetadata, error) {
+func (s *Service) probeStreams(ctx context.Context, binary, demuxer string, input mediaInput) (mediaMetadata, error) {
 	var metadata mediaMetadata
+ source,err:=input.argument(s);if err!=nil{return metadata,err}
 	cmd:=exec.CommandContext(ctx,binary,"-v","error","-protocol_whitelist","file,pipe","-f",demuxer,
 		"-select_streams","v","-show_entries","stream=index,width,height:stream_disposition=attached_pic:format=duration",
 		"-of","json",source)
-	configureMediaProcess(cmd)
+	input.configure(cmd)
 	output:=&boundedOutput{limit:64<<10}
 	cmd.Stdout,cmd.Stderr=output,io.Discard
 	if err:=cmd.Run();err!=nil{return metadata,err}
-	err:=json.Unmarshal(output.Bytes(),&metadata)
+	err=json.Unmarshal(output.Bytes(),&metadata)
 	return metadata,err
 }
 
@@ -72,12 +73,13 @@ func extremeFrame(frame image.Image) bool {
 	return black||white
 }
 
-func extractPreview(ctx context.Context,binary,source,demuxer,stream string,millis int64,edge int)([]byte,error){
+func (s *Service) extractPreview(ctx context.Context,binary string,input mediaInput,demuxer,stream string,millis int64,edge int)([]byte,error){
+ source,err:=input.argument(s);if err!=nil{return nil,err}
 	args:=[]string{"-nostdin","-v","error","-threads","2","-max_alloc","67108864","-protocol_whitelist","file,pipe","-f",demuxer}
 	if millis>0 {args=append(args,"-ss",strconv.FormatFloat(float64(millis)/1000,'f',3,64))}
 	args=append(args,"-i",source,"-map",stream,"-frames:v","1","-vf","scale="+strconv.Itoa(edge)+":"+strconv.Itoa(edge)+":force_original_aspect_ratio=decrease","-threads","1","-q:v","2","-f","image2pipe","-vcodec","mjpeg","pipe:1")
 	cmd:=exec.CommandContext(ctx,binary,args...)
-	configureMediaProcess(cmd)
+	input.configure(cmd)
 	buffer:=&boundedOutput{limit:2<<20}
 	cmd.Stdout,cmd.Stderr=buffer,io.Discard
 	if err:=cmd.Run();err!=nil{return nil,err}
@@ -85,25 +87,23 @@ func extractPreview(ctx context.Context,binary,source,demuxer,stream string,mill
 	return buffer.Bytes(),nil
 }
 
-func (s *Service) externalPreview(ctx context.Context,source string,a model.Asset,edge int)([]byte,error){
+func (s *Service) externalPreview(ctx context.Context,source mediaInput,a model.Asset,edge int)([]byte,error){
 	ffmpeg:=toolPath("QIMENG_FFMPEG","ffmpeg")
 	if ffmpeg==""{return nil,Fail(501,"media_tool_unavailable","此格式需要配置 FFmpeg。")}
 	demuxer:=mediaDemuxer(a.MimeType)
 	if demuxer==""{return nil,Fail(415,"media_unsupported","此格式没有可用的预览通道。")}
-	absolute,err:=s.Root.AbsolutePath(source)
-	if err!=nil{return nil,err}
 	deadline,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel()
 	if a.MediaType!="video"{
-		data,err:=extractPreview(deadline,ffmpeg,absolute,demuxer,"0:v:0",0,edge)
+		data,err:=s.extractPreview(deadline,ffmpeg,source,demuxer,"0:v:0",0,edge)
 		if err!=nil{return nil,Fail(422,"thumbnail_decode_failed","预览生成失败，原件保留。")}
 		return data,nil
 	}
 	if ffprobe:=toolPath("QIMENG_FFPROBE","ffprobe");ffprobe!=""{
-		metadata,err:=probeStreams(deadline,ffprobe,demuxer,absolute)
+		metadata,err:=s.probeStreams(deadline,ffprobe,demuxer,source)
 		if err==nil{
 			for _,stream:=range metadata.Streams{
 				if stream.Disposition.Attached!=0{
-					if cover,err:=extractPreview(deadline,ffmpeg,absolute,demuxer,"0:"+strconv.Itoa(stream.Index),0,edge);err==nil{return cover,nil}
+					if cover,err:=s.extractPreview(deadline,ffmpeg,source,demuxer,"0:"+strconv.Itoa(stream.Index),0,edge);err==nil{return cover,nil}
 					break
 				}
 			}
@@ -112,7 +112,7 @@ func (s *Service) externalPreview(ctx context.Context,source string,a model.Asse
 	var first []byte
 	for _,millis:=range representativePositions(a.DurationMs){
 		if deadline.Err()!=nil{break}
-		data,err:=extractPreview(deadline,ffmpeg,absolute,demuxer,"0:V:0",millis,edge)
+		data,err:=s.extractPreview(deadline,ffmpeg,source,demuxer,"0:V:0",millis,edge)
 		if err!=nil{continue}
 		frame,err:=jpeg.Decode(bytes.NewReader(data))
 		if err!=nil{continue}

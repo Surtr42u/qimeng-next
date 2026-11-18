@@ -8,6 +8,8 @@
 
 推送主分支和提交 PR 自动运行 Cloud verification。OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随该次检查提供；仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 会将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 同时使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
 
+Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming`。归档下载、作者总表、片段与可读作者资料均按字节流交付。云端会核对这些方法的实际签名，避免手机在收到大备份时先把整个响应放进内存。
+
 需要更新 JavaScript／Rust 依赖时，在 Actions 手动运行并勾选 `refresh_locks`。协议变更可直接取同一提交的 `generated-contracts-and-locks` 更新来源锁；若锁有差异，独立的功能测试仍能给出诊断。带新锁的提交须通过完整检查才可交付。
 
 ## 必须覆盖的实际行为

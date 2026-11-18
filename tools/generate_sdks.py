@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import urllib.request
+import zipfile
 
 import yaml
 
@@ -68,8 +69,22 @@ def kotlin() -> None:
         raise RuntimeError("OpenAPI generator checksum mismatch")
     print("OpenAPI generator SHA-256:", hashlib.sha256(content).hexdigest())
     jar.write_bytes(content)
+    # Retrofit buffers an unannotated ResponseBody before handing it to its
+    # caller. Render every binary response as a stream directly in the pinned
+    # generator's template, including portable archives larger than phone RAM.
+    templates = cache / "kotlin-templates"
+    relative = Path("libraries/jvm-retrofit2/api.mustache")
+    with zipfile.ZipFile(jar) as archive:
+        template = archive.read("kotlin-client/" + relative.as_posix()).decode("utf-8")
+    anchor = "    {{#isDeprecated}}\n"
+    if template.count(anchor) != 1:
+        raise RuntimeError("The upstream Retrofit operation template changed.")
+    customized = templates / relative
+    customized.parent.mkdir(parents=True, exist_ok=True)
+    customized.write_text(template.replace(anchor, "    {{#isResponseFile}}\n    @Streaming\n    {{/isResponseFile}}\n" + anchor), encoding="utf-8")
     run("java", "-jar", str(jar), "generate", "-i", "api/openapi.yaml", "-g", "kotlin",
         "--library", "jvm-retrofit2", "-o", "api/generated/kotlin",
+        "--template-dir", str(templates),
         "--api-package", "media.qimeng.next.sdk.api",
         "--model-package", "media.qimeng.next.sdk.model",
         "--invoker-package", "media.qimeng.next.sdk.infrastructure",
@@ -78,6 +93,14 @@ def kotlin() -> None:
         "--enum-name-mappings", "name=nameValue",
         "--additional-properties", "serializationLibrary=gson,dateLibrary=string,useCoroutines=true,useResponseAsReturnType=true,packageName=media.qimeng.next.sdk,hideGenerationTimestamp=true,enumPropertyNaming=original",
         "--global-property", "apiTests=false,modelTests=false,apiDocs=false,modelDocs=false")
+    interface = ROOT / "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt"
+    generated = interface.read_text(encoding="utf-8")
+    for operation in ("downloadBackupArchive", "exportAuthorList", "exportBackupAuthorDocuments", "exportMasterAuthorList"):
+        signature = "suspend fun " + operation + "("
+        start = generated.index(signature)
+        annotations = generated[generated.rfind("*/", 0, start):start]
+        if "@Streaming" not in annotations or "Response<ResponseBody>" not in generated[start:generated.index("\n", start)]:
+            raise RuntimeError("Expected a streaming response for " + operation)
 
 
 def go() -> None:

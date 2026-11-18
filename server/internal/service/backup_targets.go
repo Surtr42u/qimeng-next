@@ -13,6 +13,7 @@ import (
  "strings"
 
  "qimeng.local/next/server/internal/model"
+ "qimeng.local/next/server/internal/storage"
  "qimeng.local/next/server/internal/store"
 )
 
@@ -39,7 +40,7 @@ func verifyTargetObject(ctx context.Context,root *os.Root,name,expected string,s
 func copyTargetObject(ctx context.Context,root *os.Root,targetRoot,temporary,destination,hash string,size,reserve int64,open func()(io.ReadCloser,error))error{
  if _,e:=root.Lstat(destination);e==nil{return verifyTargetObject(ctx,root,destination,hash,size)}else if !errors.Is(e,os.ErrNotExist){return e}
  if e:=root.MkdirAll(path.Dir(temporary),0700);e!=nil{return e};if e:=root.MkdirAll(path.Dir(destination),0700);e!=nil{return e};source,e:=open();if e!=nil{return e};defer source.Close();out,e:=root.OpenFile(temporary,os.O_WRONLY|os.O_CREATE|os.O_TRUNC,0600);if e!=nil{return e};digest:=sha256.New();writer:=io.MultiWriter(&restoreWriter{ctx:ctx,root:targetRoot,reserve:reserve,file:out},digest);_,e=io.CopyN(writer,source,size);if e==nil&&hex.EncodeToString(digest.Sum(nil))!=hash{e=Fail(409,"backup_source_changed","输入内容在备份期间变化。")};if e==nil{e=out.Sync()};closeErr:=out.Close();if e==nil{e=closeErr};if e!=nil{return e}
- if e=root.Link(temporary,destination);e!=nil{if !errors.Is(e,os.ErrExist){return e};if e=verifyTargetObject(ctx,root,destination,hash,size);e!=nil{return e}};if e=root.Remove(temporary);e!=nil{return e};folder,e:=root.Open(path.Dir(destination));if e!=nil{return e};e=syncDirectory(folder);folder.Close();if e!=nil{return e}
+ if e=storage.PublishTemp(root,temporary,destination);e!=nil{if !errors.Is(e,os.ErrExist){return e};if e=verifyTargetObject(ctx,root,destination,hash,size);e!=nil{return e};if e=root.Remove(temporary);e!=nil{return e}};folder,e:=root.Open(path.Dir(destination));if e!=nil{return e};e=syncDirectory(folder);folder.Close();if e!=nil{return e}
  // Flush completion alone is not proof: reopen and hash the target bytes.
  return verifyTargetObject(ctx,root,destination,hash,size)
 }

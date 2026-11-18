@@ -10,6 +10,7 @@ import (
  "io"
  "os"
  "path"
+ "runtime"
  "strings"
  "time"
 
@@ -28,6 +29,10 @@ type fileIntent struct {
  State string
  SourceObject string `json:"sourceObject,omitempty"`
  OldObject string `json:"oldObject,omitempty"`
+ CopyPublication bool `json:"copyPublication,omitempty"`
+ CopyObject string `json:"copyObject,omitempty"`
+ CopyStamp string `json:"copyStamp,omitempty"`
+ SourceStamp string `json:"sourceStamp,omitempty"`
  SpellingOnly bool `json:"spellingOnly,omitempty"`
  MaintenanceTask *AssetMaintenanceTask `json:"assetMaintenanceTask,omitempty"`
 }
@@ -81,9 +86,14 @@ func(s *Service)prepareFile(ctx context.Context,w *Write,j fileIntent)(fileInten
  if j.Kind=="move" {j.SpellingOnly,e=s.classifyMove(j.Source,j.Target);if e!=nil{return j,e}}
  if j.Source!=""{j.SourceObject,e=s.managedFileIdentity(j.Source);if e!=nil{return j,e}}
  if j.Kind=="replace"&&j.Before!=nil{j.OldObject,e=s.managedFileIdentity(assetPath(*j.Before));if e!=nil{return j,e}}
+ j.CopyPublication=j.CopyPublication||runtime.GOOS=="android"&&j.Kind!="purge"
  j.State="prepared";j.PrincipalID=w.Principal.ID;j.Operation=w.operation;j.Key=w.key;j.InputHash=w.inputHash;return j,s.saveIntent(ctx,j)
 }
-func(s *Service)applyFile(j fileIntent)error{
+func(s *Service)applyFile(ctx context.Context,intent *fileIntent)error{
+ if intent.CopyPublication||runtime.GOOS=="android"&&intent.Kind!="purge"{
+  return s.applyCopiedFile(ctx,intent)
+ }
+ j:=*intent
  if j.SpellingOnly{return s.publishSpelling(j)}
  if j.Kind=="purge"{return s.removeFileObject(j.Source,j.SourceObject,j.After.Hash,j.After.Size)}
  if e:=s.verifyFileIdentity(j.Source,j.SourceObject);e!=nil{return e}
@@ -134,12 +144,14 @@ func(s *Service)commitFile(ctx context.Context,q store.Querier,j *fileIntent)err
  j.State="committed";raw,e:=store.Encode(j);if e!=nil{return e};_,e=q.ExecContext(ctx,"UPDATE file_intents SET state=?,data=? WHERE id=?",j.State,raw,j.ID);return e
 }
 func(s *Service)finishFile(ctx context.Context,j fileIntent)error{
- if j.SpellingOnly{
+ if j.CopyPublication{
+  if e:=s.finishCopiedFile(ctx,&j);e!=nil{return e}
+ }else if j.SpellingOnly{
   if e:=s.publishSpelling(j);e!=nil{return e}
   if e:=s.verifyFileIdentity(j.Target,j.SourceObject);e!=nil{return e}
   if e:=s.removeFileObject(spellingHold(j),j.SourceObject,j.After.Hash,j.After.Size);e!=nil{return e}
  }else if j.Kind!="purge"&&j.Source!=j.Target{if e:=s.finishPublishedLink(j);e!=nil{return e}}
- if j.Kind=="replace"&&j.Before!=nil{
+ if !j.CopyPublication&&j.Kind=="replace"&&j.Before!=nil{
   old:=assetPath(*j.Before);cleanOld:=old!=j.Target
   if cleanOld&&strings.EqualFold(old,j.Target)&&path.Dir(old)==path.Dir(j.Target){oldName,newName,e:=s.exactNames(path.Dir(old),path.Base(old),path.Base(j.Target));if e!=nil{return e};if !oldName&&newName{cleanOld=false}}
   if cleanOld{
@@ -161,12 +173,12 @@ func(s *Service)runFile(ctx context.Context,w *Write,j fileIntent)(model.Asset,e
   }
   if len(j.After.AuthorIDs)>20{return j.After,Fail(400,"too_many_authors","加上固定目录作者后最多关联20人。")}
  }
- j,e:=s.prepareFile(ctx,w,j);if e!=nil{return j.After,e}
+ j,e:=s.prepareFile(ctx,w,j);if e!=nil{return j.After,publicationError("prepare",e)}
  if j.State=="done"{return j.After,nil}
  if j.State=="committed"{return j.After,s.finishFile(ctx,j)}
  if e=s.validatePublicationBase(ctx,s.DB.DB,j);e!=nil{return j.After,e}
- if e=s.applyFile(j);e!=nil{return j.After,e}
- q,e:=w.Q();if e!=nil{return j.After,e};if e=s.commitFile(ctx,q,&j);e!=nil{return j.After,e}
+ if e=s.applyFile(ctx,&j);e!=nil{return j.After,publicationError("install_file",e)}
+ q,e:=w.Q();if e!=nil{return j.After,publicationError("catalog_commit",e)};if e=s.commitFile(ctx,q,&j);e!=nil{return j.After,publicationError("catalog_commit",Normalize(e))}
  w.after=append(w.after,func()error{return s.finishFile(context.Background(),j)});return j.After,nil
 }
 func(s *Service)recoverIntents(ctx context.Context)error{
@@ -174,7 +186,7 @@ func(s *Service)recoverIntents(ctx context.Context)error{
  intents,e:=store.List[fileIntent](ctx,s.DB.DB,"SELECT data FROM file_intents WHERE state!='done' ORDER BY id LIMIT 64");if e!=nil{return e};if len(intents)==0{return nil}
  for _,j:=range intents{
   j,e=s.recoverMoveSpelling(ctx,j);if e!=nil{return e}
-  if j.State=="prepared"{if e=s.validatePublicationBase(ctx,s.DB.DB,j);e!=nil{return e};if e=s.applyFile(j);e!=nil{return fmt.Errorf("intent %s: %w",j.ID,e)};tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e};if e=s.commitFile(ctx,tx,&j);e!=nil{tx.Rollback();return e};if e=tx.Commit();e!=nil{return e}}
+  if j.State=="prepared"{if e=s.validatePublicationBase(ctx,s.DB.DB,j);e!=nil{return e};if e=s.applyFile(ctx,&j);e!=nil{return fmt.Errorf("intent %s: %w",j.ID,e)};tx,e:=s.DB.DB.BeginTx(ctx,nil);if e!=nil{return e};if e=s.commitFile(ctx,tx,&j);e!=nil{tx.Rollback();return e};if e=tx.Commit();e!=nil{return e}}
   if e=s.finishFile(ctx,j);e!=nil{return fmt.Errorf("intent %s cleanup: %w",j.ID,e)}
  }
  }

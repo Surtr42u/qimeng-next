@@ -56,4 +56,4 @@ test("old monitoring cards use actual samples, typed diagnostics, paged mounts a
   rejectReads = true; await page.reload();
   await expect(page.getByRole("button", { name: "重试日志" })).toBeVisible();
   expect(reports).toHaveLength(1);
-}
+});
