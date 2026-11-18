@@ -41,7 +41,7 @@ mcp_servers:
     args: [mcp]
 ```
 
-Hermes整机交互验收与传输测试分别记录；不能用另一个SDK通过替代Hermes本身的测试证据。
+云端 `hermes` 作业使用 [Hermes 0.23.2](https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.2) 的实际 CLI、独立配置目录和标准输入输出执行器。测试只用回环的脚本化模型服务，检查模型实际收到的实例身份、库列表和越权拒绝。Pi、Hermes 与真实模型的任务判断分别记录在[当前状态](status.md)。
 
 ## Codex、ZCode与其他宿主
 
