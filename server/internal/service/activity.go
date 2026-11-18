@@ -1,64 +1,144 @@
 package service
 
 import (
- "context"
- "database/sql"
- "errors"
- "math"
- "time"
+	"context"
+	"database/sql"
+	"errors"
+	"math"
+	"time"
 
- "qimeng.local/next/server/internal/model"
- "qimeng.local/next/server/internal/store"
+	"qimeng.local/next/server/internal/model"
+	"qimeng.local/next/server/internal/store"
 )
 
 // RecordEvent keeps append-only events and their daily projection in one transaction.
 // Retries reuse eventId; repeated view/play in one browsing session do not count twice.
-func(s *Service)RecordEvent(ctx context.Context,w *Write,id string,in model.Event)(model.Event,error){
- if e:=Authorize(w.Principal,"admin","");e!=nil{return in,e}
- if len(in.EventID)<8||len(in.EventID)>128||in.PositionMs<0||math.IsNaN(in.Seconds)||math.IsInf(in.Seconds,0)||in.Seconds<0||in.Seconds>86400 {
-  return in,Fail(400,"invalid_event","浏览或播放事件无效。")
- }
- switch in.Kind{case "view","play","progress","dwell":default:return in,Fail(400,"invalid_event","事件类别无效。")}
- if in.SessionID==""{in.SessionID=in.EventID};if len(in.SessionID)>128{return in,Fail(400,"invalid_event","会话身份过长。")}
- in.Seconds=math.Trunc(in.Seconds)
- if in.Kind=="dwell"&&in.Seconds<1{return in,Fail(400,"invalid_event","不足一秒的停留不记录。")}
- old,e:=store.Get[model.Event](ctx,s.DB.DB,"SELECT data FROM events WHERE event_id=?",in.EventID)
- if e==nil{
-  if old.AssetID!=id||old.Kind!=in.Kind||old.ContentVersion!=in.ContentVersion||old.PositionMs!=in.PositionMs||old.Seconds!=in.Seconds||old.SessionID!=in.SessionID {
-   return in,Fail(409,"event_conflict","事件身份已被其他内容使用。")
-  }
-  return old,nil
- }
- if !errors.Is(e,sql.ErrNoRows){return in,e}
- a,e:=s.Asset(ctx,id);if e!=nil{return in,e};if a.Trashed{return in,Fail(409,"asset_trashed","媒体已移入回收站。")}
- if a.ContentVersion!=in.ContentVersion{return in,Fail(409,"content_changed","内容已替换，旧记录不能覆盖新版进度。")}
- now:=time.Now().UTC();occurred:=now
- if in.OccurredAt!=nil{occurred=in.OccurredAt.UTC();if occurred.After(now.Add(5*time.Minute)){return in,Fail(400,"event_time_invalid","事件时间超前。")}}
- day:=occurred.In(time.Local).Format("2006-01-02")
- if in.Kind=="view"||in.Kind=="play"{
-  event,e:=store.Get[model.Event](ctx,s.DB.DB,`SELECT e.data FROM event_sessions d JOIN events e ON e.event_id=d.event_id WHERE d.asset_id=? AND d.session_id=? AND d.kind=? AND d.day=?`,id,in.SessionID,in.Kind,day)
-  if e==nil{return event,nil};if !errors.Is(e,sql.ErrNoRows){return in,e}
- }
- in.AssetID=id;in.FileName=a.FileName;in.CreatedAt=occurred
- raw,e:=store.Encode(in);if e!=nil{return in,e};q,e:=w.Q();if e!=nil{return in,e}
- if _,e=q.ExecContext(ctx,"INSERT INTO events(event_id,asset_id,created_at,data) VALUES(?,?,?,?)",in.EventID,id,dateKey(occurred),raw);e!=nil{return in,e}
- views,plays,seconds:=int64(0),int64(0),int64(0)
- switch in.Kind {case "view":views=1;case "play":plays=1;case "dwell":seconds=int64(in.Seconds)}
- if views+plays>0{if _,e=q.ExecContext(ctx,"INSERT INTO event_sessions VALUES(?,?,?,?,?)",id,in.SessionID,in.Kind,day,in.EventID);e!=nil{return in,e}}
- if views+plays+seconds>0{
-  if _,e=q.ExecContext(ctx,`INSERT INTO asset_daily_stats(asset_id,day,views,plays,seconds) VALUES(?,?,?,?,?) ON CONFLICT(asset_id,day) DO UPDATE SET views=views+excluded.views,plays=plays+excluded.plays,seconds=seconds+excluded.seconds`,id,day,views,plays,seconds);e!=nil{return in,e}
- }
- if views+seconds>0{if _,e=q.ExecContext(ctx,`INSERT INTO asset_hourly_stats(asset_id,day,hour,views,seconds) VALUES(?,?,?,?,?) ON CONFLICT(asset_id,day,hour) DO UPDATE SET views=views+excluded.views,seconds=seconds+excluded.seconds`,id,day,occurred.In(time.Local).Hour(),views,seconds);e!=nil{return in,e}}
- if in.Kind=="progress"||in.Kind=="play"{a.PositionMs=in.PositionMs;a.PositionContentVersion=in.ContentVersion;if e=store.SaveAsset(ctx,q,a);e!=nil{return in,e}}
- return in,nil
+func (s *Service) RecordEvent(ctx context.Context, w *Write, id string, in model.Event) (model.Event, error) {
+	if e := Authorize(w.Principal, "admin", ""); e != nil {
+		return in, e
+	}
+	if len(in.EventID) < 8 || len(in.EventID) > 128 || in.PositionMs < 0 || math.IsNaN(in.Seconds) || math.IsInf(in.Seconds, 0) || in.Seconds < 0 || in.Seconds > 86400 {
+		return in, Fail(400, "invalid_event", "浏览或播放事件无效。")
+	}
+	switch in.Kind {
+	case "view", "play", "progress", "dwell":
+	default:
+		return in, Fail(400, "invalid_event", "事件类别无效。")
+	}
+	if in.SessionID == "" {
+		in.SessionID = in.EventID
+	}
+	if len(in.SessionID) > 128 {
+		return in, Fail(400, "invalid_event", "会话身份过长。")
+	}
+	in.Seconds = math.Trunc(in.Seconds)
+	if in.Kind == "dwell" && in.Seconds < 1 {
+		return in, Fail(400, "invalid_event", "不足一秒的停留不记录。")
+	}
+	old, e := store.Get[model.Event](ctx, s.DB.DB, "SELECT data FROM events WHERE event_id=?", in.EventID)
+	if e == nil {
+		if old.AssetID != id || old.Kind != in.Kind || old.ContentVersion != in.ContentVersion || old.PositionMs != in.PositionMs || old.Seconds != in.Seconds || old.SessionID != in.SessionID {
+			return in, Fail(409, "event_conflict", "事件身份已被其他内容使用。")
+		}
+		return old, nil
+	}
+	if !errors.Is(e, sql.ErrNoRows) {
+		return in, e
+	}
+	a, e := s.Asset(ctx, id)
+	if e != nil {
+		return in, e
+	}
+	if a.Trashed {
+		return in, Fail(409, "asset_trashed", "媒体已移入回收站。")
+	}
+	if a.ContentVersion != in.ContentVersion {
+		return in, Fail(409, "content_changed", "内容已替换，旧记录不能覆盖新版进度。")
+	}
+	now := time.Now().UTC()
+	occurred := now
+	if in.OccurredAt != nil {
+		occurred = in.OccurredAt.UTC()
+		if occurred.After(now.Add(5 * time.Minute)) {
+			return in, Fail(400, "event_time_invalid", "事件时间超前。")
+		}
+	}
+	day := occurred.In(time.Local).Format("2006-01-02")
+	if in.Kind == "view" || in.Kind == "play" {
+		event, e := store.Get[model.Event](ctx, s.DB.DB, `SELECT e.data FROM event_sessions d JOIN events e ON e.event_id=d.event_id WHERE d.asset_id=? AND d.session_id=? AND d.kind=? AND d.day=?`, id, in.SessionID, in.Kind, day)
+		if e == nil {
+			return event, nil
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return in, e
+		}
+	}
+	in.AssetID = id
+	in.FileName = a.FileName
+	in.CreatedAt = occurred
+	raw, e := store.Encode(in)
+	if e != nil {
+		return in, e
+	}
+	q, e := w.Q()
+	if e != nil {
+		return in, e
+	}
+	if _, e = q.ExecContext(ctx, "INSERT INTO events(event_id,asset_id,created_at,data) VALUES(?,?,?,?)", in.EventID, id, dateKey(occurred), raw); e != nil {
+		return in, e
+	}
+	views, plays, seconds := int64(0), int64(0), int64(0)
+	switch in.Kind {
+	case "view":
+		views = 1
+	case "play":
+		plays = 1
+	case "dwell":
+		seconds = int64(in.Seconds)
+	}
+	if views+plays > 0 {
+		if _, e = q.ExecContext(ctx, "INSERT INTO event_sessions VALUES(?,?,?,?,?)", id, in.SessionID, in.Kind, day, in.EventID); e != nil {
+			return in, e
+		}
+	}
+	if views+plays+seconds > 0 {
+		if _, e = q.ExecContext(ctx, `INSERT INTO asset_daily_stats(asset_id,day,views,plays,seconds) VALUES(?,?,?,?,?) ON CONFLICT(asset_id,day) DO UPDATE SET views=views+excluded.views,plays=plays+excluded.plays,seconds=seconds+excluded.seconds`, id, day, views, plays, seconds); e != nil {
+			return in, e
+		}
+	}
+	if views+seconds > 0 {
+		if _, e = q.ExecContext(ctx, `INSERT INTO asset_hourly_stats(asset_id,day,hour,views,seconds) VALUES(?,?,?,?,?) ON CONFLICT(asset_id,day,hour) DO UPDATE SET views=views+excluded.views,seconds=seconds+excluded.seconds`, id, day, occurred.In(time.Local).Hour(), views, seconds); e != nil {
+			return in, e
+		}
+	}
+	if in.Kind == "progress" || in.Kind == "play" {
+		a.PositionMs = in.PositionMs
+		a.PositionContentVersion = in.ContentVersion
+		if e = store.SaveAsset(ctx, q, a); e != nil {
+			return in, e
+		}
+	}
+	return in, nil
 }
 
-func(s *Service)History(ctx context.Context,cursor string,limit int)(model.Page[model.Event],error){
- return s.FilteredHistory(ctx,AssetFilter{Cursor:cursor,Limit:limit})
+func (s *Service) History(ctx context.Context, cursor string, limit int) (model.Page[model.Event], error) {
+	return s.FilteredHistory(ctx, AssetFilter{Cursor: cursor, Limit: limit})
 }
 
-func(s *Service)Stats(ctx context.Context)(map[string]int64,error){
- result:=map[string]int64{}
- rows,e:=s.DB.DB.QueryContext(ctx,`SELECT 'assets',count(*) FROM assets WHERE trashed=0 UNION ALL SELECT 'images',count(*) FROM assets WHERE trashed=0 AND media_type!='video' UNION ALL SELECT 'videos',count(*) FROM assets WHERE trashed=0 AND media_type='video' UNION ALL SELECT 'bytes',COALESCE(sum(size),0) FROM assets WHERE trashed=0 UNION ALL SELECT 'favorites',count(*) FROM assets WHERE trashed=0 AND favorite=1 UNION ALL SELECT 'authors',count(*) FROM authors WHERE id!='unknown' UNION ALL SELECT 'events',count(*) FROM events UNION ALL SELECT 'trash',count(*) FROM assets WHERE trashed=1`)
- if e!=nil{return nil,e};defer rows.Close();for rows.Next(){var key string;var value int64;if e=rows.Scan(&key,&value);e!=nil{return nil,e};result[key]=value};return result,rows.Err()
+func (s *Service) Stats(ctx context.Context) (map[string]int64, error) {
+	result := map[string]int64{}
+	rows, e := s.DB.DB.QueryContext(ctx, `SELECT 'assets',count(*) FROM assets WHERE trashed=0 UNION ALL SELECT 'images',count(*) FROM assets WHERE trashed=0 AND media_type!='video' UNION ALL SELECT 'videos',count(*) FROM assets WHERE trashed=0 AND media_type='video' UNION ALL SELECT 'bytes',COALESCE(sum(size),0) FROM assets WHERE trashed=0 UNION ALL SELECT 'favorites',count(*) FROM assets WHERE trashed=0 AND favorite=1 UNION ALL SELECT 'authors',count(*) FROM authors WHERE id!='unknown' UNION ALL SELECT 'events',count(*) FROM events UNION ALL SELECT 'trash',count(*) FROM assets WHERE trashed=1`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		var value int64
+		if e = rows.Scan(&key, &value); e != nil {
+			return nil, e
+		}
+		result[key] = value
+	}
+	return result, rows.Err()
 }

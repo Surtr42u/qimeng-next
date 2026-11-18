@@ -11,10 +11,10 @@ import (
 
 const (
 	sqliteDriverName = "sqlite"
-	catalogOptions = "_pragma=foreign_keys(1)&" + researchOptions
-	researchOptions = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)"
+	catalogOptions   = "_pragma=foreign_keys(1)&" + researchOptions
+	researchOptions  = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)"
 	ownershipOptions = "_pragma=busy_timeout(0)"
-	snapshotOptions = "mode=ro&_pragma=trusted_schema(0)"
+	snapshotOptions  = "mode=ro&_pragma=trusted_schema(0)"
 )
 
 func init() {

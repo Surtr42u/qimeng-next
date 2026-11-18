@@ -15,11 +15,17 @@ func issueSecret[T any](a *API, pattern string, issue func(*http.Request, *servi
 			return
 		}
 		input, raw, err := decode[T](w, r)
-		if err != nil {fail(w, err); return}
+		if err != nil {
+			fail(w, err)
+			return
+		}
 		value, err := a.s.Run(r.Context(), principal(r), r.Method+" "+r.URL.Path, "", raw, func(write *service.Write) (any, int, error) {
 			return issue(r, write, input)
 		})
-		if err != nil {fail(w, err); return}
+		if err != nil {
+			fail(w, err)
+			return
+		}
 		result(w, value)
 	}))
 }

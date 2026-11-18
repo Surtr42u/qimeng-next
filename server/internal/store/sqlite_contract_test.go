@@ -27,7 +27,9 @@ func TestConnectionProfilesPreserveDurabilityAndReadOnlySnapshots(t *testing.T) 
 		t.Fatalf("shared browse functions differ: %v", err)
 	}
 	snapshot, err := OpenDatabase(filename, SnapshotDatabase)
-	if err != nil {t.Fatal(err)}
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer snapshot.Close()
 	var trust int
 	if err := snapshot.QueryRow(`PRAGMA trusted_schema`).Scan(&trust); err != nil || trust != 0 {
