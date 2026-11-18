@@ -12,7 +12,7 @@ func TestIndependentFavoriteAndDailyVoteKeepHistoryAcrossStaleViewsAndReplays(t 
 	upload, _ := f.upload("intent-test.png", 81, nil)
 	asset := *f.complete(upload).Asset
 	day := time.Now().AddDate(0, 0, -1).Format(time.DateOnly)
-	commitLikeImport(t, f, asset, "prior-four-votes", 4, day)
+	seedRecordedLikes(t, f, asset.ID, 3, day)
 	root := "/assets/" + asset.ID
 	read := func() model.Asset {
 		var current model.Asset

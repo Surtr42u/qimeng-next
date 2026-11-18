@@ -61,4 +61,10 @@ test("a browser sends a selected author list and displays the independent receiv
     state: "applied", results: [{ kind: segment.kind, state: "applied", sha256: segment.sha256, receiptId: plan.id }] } });
   expect(report.ok()).toBe(true);
   await expect(page.getByText(plan.id, { exact: true })).toBeVisible({ timeout: 10000 });
+  await page.reload();
+  await page.getByText("发送资料到另一台设备", { exact: true }).click();
+  await page.getByLabel("目标设备标识").fill(device);
+  await page.getByText("查看这个设备的交付记录", { exact: true }).click();
+  await page.getByRole("button", { name: new RegExp(task.id) }).click();
+  await expect(page.getByText(plan.id, { exact: true })).toBeVisible();
 });

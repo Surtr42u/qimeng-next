@@ -5,7 +5,7 @@ on:
       suite:
         description: Checks to run on this revision
         type: choice
-        options: [all, contracts, backend, web, android, windows]
+        options: [all, contracts, backend, web, android, windows, archived-import]
         default: all
       refresh_locks:
         description: Refresh dependency locks and collect the resulting files
@@ -107,7 +107,7 @@ jobs:
           path: build/
           if-no-files-found: error
   server:
-    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'backend'
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'backend' || inputs.suite == 'archived-import'
     needs: generate
     runs-on: ubuntu-24.04
     timeout-minutes: 38
@@ -121,6 +121,7 @@ jobs:
       - name: Install media dependencies
         run: if ! command -v ffmpeg >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg; fi
       - name: Verify Go as committed
+        if: inputs.suite != 'archived-import'
         working-directory: server
         run: |
           go mod tidy
@@ -129,6 +130,10 @@ jobs:
           go test -race -timeout 4m -v -run "$native_flows" ./internal/httpapi
           go test -race -timeout 12m -v -skip "$native_flows" ./...
           go test -tags=qimeng_native_sqlite,sqlite_omit_load_extension -timeout 8m ./internal/store ./internal/service ./internal/httpapi
+      - name: Reproduce a retired import on isolated data
+        if: inputs.suite == 'archived-import'
+        working-directory: server
+        run: go test -tags=qimeng_legacy_import -run '^Test(V2|OnlyV2)' -timeout 8m -v ./internal/migration ./internal/httpapi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -512,7 +517,7 @@ jobs:
           disk-size: 2048M
           emulator-port: 5556
           disable-animations: false
-          emulator-options: '-no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim'
+          emulator-options: '-no-window -gpu swiftshader_indirect -feature -HardwareDecoder -no-snapshot -noaudio -no-boot-anim'
           script: bash tools/cloud_android.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

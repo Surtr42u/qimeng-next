@@ -93,7 +93,7 @@ func TestImportedLikeBaselineAffectsLifetimeButNotInventedWindows(t *testing.T) 
 	f := setup(t)
 	u, _ := f.upload("unattributed-ranking.png", 219, nil)
 	a := *f.complete(u).Asset
-	commitLikeImport(t, f, a, "unattributed-ranking", 17, nil)
+	seedRecordedLikes(t, f, a.ID, 17, "")
 	for _, period := range []string{"day", "week", "month", "all"} {
 		var ranking model.Page[service.RankedAsset]
 		decode(t, f.json("GET", "/rankings?period="+period, "", nil, 200), &ranking)

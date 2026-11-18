@@ -1,7 +1,6 @@
 package httpapi_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -10,72 +9,6 @@ import (
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
-
-func TestImportedAuthorProfilesRestoreKnownFieldsWithoutOverwritingConfirmedBlocks(t *testing.T) {
-	f := setup(t)
-	author := profileAuthor(t, f, "Imported")
-	base := "/authors/" + author.ID + "/profile"
-	f.json("PATCH", base+"/basic", "import-keep-explicit-clear", map[string]any{"expectedRevision": 0, "values": map[string]string{"summary": "", "note": "本地私人备注"}}, 200)
-	raw := []byte(`{"authorId":"legacy-author","revision":91,"nickname":"公开昵称","biography":"迁入简介","remark":"已退圈，仅有存档","avatarUrl":"https://example.org/avatar.png","homepageUrl":"https://example.org/author","feedUrl":"https://example.org/works","status":"verified","evidenceUrls":["https://example.org/proof"],"autoRefresh":true,"trackUpdates":true,"xProfile":{"url":"https://twitter.com/Example","biography":"Original","biographyZh":"译文"},"unknownInteger":9007199254740993}`)
-	prepared, err := service.PrepareImportedAuthorProfile(context.Background(), "legacy-author", raw, pngBytes(t, 67))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx, err := f.s.DB.DB.BeginTx(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	imported, err := service.RestoreImportedAuthorProfile(context.Background(), tx, author.ID, author.Name, "synthetic-import-archive", prepared)
-	if err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if len(imported.RestoredBlocks) != 2 || len(imported.CandidateBlocks) != 1 || !imported.AvatarRestored {
-		t.Fatalf("unexpected import outcome %+v", imported)
-	}
-	var profile service.AuthorProfile
-	decode(t, f.json("GET", base, "", nil, 200), &profile)
-	if *profile.Blocks[1].Values.Summary != "" || *profile.Blocks[1].Values.Note != "本地私人备注" || profile.Blocks[1].Revision != 1 {
-		t.Fatal("migration overwrote a confirmed empty field")
-	}
-	if profile.Blocks[0].Revision != 1 || *profile.Blocks[0].Values.BiographyZh != "译文" || profile.Blocks[0].Avatar.Origin != "import" {
-		t.Fatal("known X fields or offline avatar were not restored")
-	}
-	if profile.Blocks[2].Values.Accounts == nil || (*profile.Blocks[2].Values.Accounts)[0].PublishingURL != "https://example.org/works" {
-		t.Fatal("manual publication entry lost")
-	}
-	archived := f.json("GET", base+"/archives/synthetic-import-archive", "", nil, 200)
-	if !strings.Contains(archived.Body.String(), `9007199254740993`) {
-		t.Fatal("opaque imported number lost precision")
-	}
-	// A second import must not overwrite a deliberately cleared translation.
-	f.json("PATCH", base+"/x", "import-clear-translation", map[string]any{"expectedRevision": 1, "values": map[string]string{"biographyZh": ""}}, 200)
-	tx, err = f.s.DB.DB.BeginTx(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = service.RestoreImportedAuthorProfile(context.Background(), tx, author.ID, author.Name, "synthetic-second-archive", prepared)
-	if err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	decode(t, f.json("GET", base, "", nil, 200), &profile)
-	if profile.Blocks[0].Values.BiographyZh == nil || *profile.Blocks[0].Values.BiographyZh != "" {
-		t.Fatal("explicit empty translation resurrected")
-	}
-	if _, err = service.PrepareImportedAuthorProfile(context.Background(), "different-author", raw, nil); err == nil {
-		t.Fatal("mismatched imported identity accepted")
-	}
-	if _, err = service.PrepareImportedAuthorProfile(context.Background(), "legacy-author", raw, []byte("<svg/>")); err == nil {
-		t.Fatal("invalid offline avatar passed preflight")
-	}
-}
 
 func profileAuthor(t *testing.T, f *fixture, name string) model.Author {
 	t.Helper()

@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useRef } from "react";
 import { api, operationHeaders, read } from "./client";
 import type { Schema } from "./client";
@@ -15,6 +15,19 @@ export function usePublishDelivery() {
         params: { header: operationHeaders(attempt.current.key) }, body,
       }));
     },
+    onSuccess: () => { attempt.current = undefined; },
+  });
+}
+
+export function useDeviceDeliveries(device: string) {
+  const scope = useRemoteKey();
+  return useInfiniteQuery({
+    queryKey: [...scope, "device-deliveries", device], enabled: !!device,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => read(api.GET("/device/apply-tasks", {
+      params: { query: { targetDeviceId: device, protocolVersion: 2, cursor: pageParam, limit: 20 } }, signal,
+    })),
+    getNextPageParam: last => last.nextCursor || undefined,
   });
 }
 

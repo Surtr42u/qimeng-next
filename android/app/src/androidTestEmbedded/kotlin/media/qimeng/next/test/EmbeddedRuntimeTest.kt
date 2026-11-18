@@ -4,6 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -153,8 +156,9 @@ class EmbeddedRuntimeTest {
             search("unmatched-local-mark-fixture")
             compose.waitUntil(20_000) { compose.onAllNodesWithText("没有符合条件的本机视频").fetchSemanticsNodes().isNotEmpty() }
             search(video.name)
-            compose.waitUntil(20_000) { compose.onAllNodes(hasText(video.name) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText(video.name).performScrollTo().performClick()
+            val result = hasText(video.name) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)
+            compose.waitUntil(20_000) { compose.onAllNodes(result and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(result).performScrollTo().performClick()
             compose.waitUntil(20_000) { compose.onAllNodesWithContentDescription("复制目标视频 ID").fetchSemanticsNodes().isNotEmpty() }
             assertCopied("目标视频 ID", video.id)
             assertCopied("目标内容版本", video.version.toString())

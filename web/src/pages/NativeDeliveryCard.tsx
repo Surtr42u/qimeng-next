@@ -4,11 +4,11 @@ import { ErrorNotice } from "../components/Feedback";
 import type { Schema } from "../data/client";
 import { useAuthorLists } from "../data/author-lists";
 import { useAuthorProfile } from "../data/author-profiles";
-import { createPairingAttempt, registerDevice, useDeliveryReceipt, usePublishDelivery } from "../data/native-delivery";
+import { createPairingAttempt, registerDevice, useDeliveryReceipt, useDeviceDeliveries, usePublishDelivery } from "../data/native-delivery";
 import { useTimeline } from "../data/catalog";
 import { useAssets } from "../data/media";
 import { useRemoteKey } from "../data/session";
-import { duration } from "../lib/format";
+import { dateTime, duration } from "../lib/format";
 
 type Selection = Schema<"NativeDeliverySelection">;
 type Chosen = { selection: Selection; label: string };
@@ -103,9 +103,11 @@ function DeliveryForm() {
   const [timeline, setTimeline] = useState(false);
   const [chosen, setChosen] = useState<Chosen[]>([]);
   const [taskId, setTaskId] = useState("");
+  const [historyDevice, setHistoryDevice] = useState("");
   const [notice, setNotice] = useState("");
   const publish = usePublishDelivery();
   const receipt = useDeliveryReceipt(taskId);
+  const history = useDeviceDeliveries(historyDevice === device.trim() ? historyDevice : "");
   const task = receipt.data ?? publish.data;
   const add = (item: Chosen) => {
     const existing = chosen.find(entry => itemKey(entry.selection) === itemKey(item.selection));
@@ -116,6 +118,15 @@ function DeliveryForm() {
   return <div className="form-stack">
     <label className="settings-field">目标设备标识<input value={device} maxLength={80} onChange={e => setDevice(e.target.value)} placeholder="与接收端登记的标识相同" /></label>
     <PairDevice key={device.trim()} device={device.trim()} />
+    <details onToggle={e => { if (e.currentTarget.open) setHistoryDevice(device.trim()); }}><summary>查看这个设备的交付记录</summary>
+      <button type="button" className="pill" disabled={!device.trim()} onClick={() => {
+        if (historyDevice === device.trim()) void history.refetch(); else setHistoryDevice(device.trim());
+      }}>读取交付记录</button>
+      {historyDevice === device.trim() && history.isSuccess && <ul>{history.data.pages.flatMap(page => page.items).map(item =>
+        <li key={item.id}><button type="button" className="pill" onClick={() => setTaskId(item.id)}>{dateTime(item.createdAt)} · {states[item.state]} · {item.id}</button></li>)}</ul>}
+      {history.hasNextPage && <button type="button" className="pill" onClick={() => void history.fetchNextPage()}>更多记录</button>}
+      <ErrorNotice error={history.error} />
+    </details>
     <label className="settings-field">接收实例 ID<input value={instance} maxLength={128} onChange={e => {
       setInstance(e.target.value); setChosen(items => items.filter(item => item.selection.kind !== "timelineMark"));
     }} placeholder="从接收端的设备领取页复制" /></label>

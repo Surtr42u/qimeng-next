@@ -1,3 +1,5 @@
+//go:build qimeng_legacy_import
+
 // These writers seed representative records from older Next databases. They
 // are compiled only in tests. The shipped service exposes historical reads.
 package httpapi

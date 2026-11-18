@@ -109,7 +109,7 @@ func TestHistoricalDevicePackageRemainsReadableAndNewV2PublicationIsRetired(t *t
 	}
 	u, _ := local.upload("receiver.png", 129, nil)
 	asset := *local.complete(u).Asset
-	raw := v2Document(t, asset, map[string]any{"favorites": []string{"source-record"}})
+	raw := []byte(`{"format":"qimeng_backup","schemaVersion":2,"appIdentifier":"synthetic.legacy","data":{"mediaFiles":[{"recordKey":"source-record","fileName":"receiver.png"}],"favorites":["source-record"],"viewEvents":[]}}`)
 	raw = append(raw, bytes.Repeat([]byte{' '}, (1<<20)+23)...)
 	files := map[string][]byte{"masterTxt": []byte("1  Synthetic receiver author\n作品\nreceiver.png\n" + strings.Repeat("\n", 600<<10)), "v2Backup": raw}
 	rev := int64(0)
@@ -201,34 +201,29 @@ func TestHistoricalDevicePackageRemainsReadableAndNewV2PublicationIsRetired(t *t
 			receipt = res.List.ID
 			local.json("POST", "/author-lists", "stale-device-txt", map[string]any{"name": "作者总表.txt", "content": string(got), "expectedRevision": 0}, 409)
 		case "v2Backup":
-			local.h = httpapi.LegacyImportTestHandler(local.s)
 			r := local.request("POST", "/migration/v2/imports?sourceId="+seg.SourceID, "device-local-v2-input", testSecret, got, map[string]string{"Content-Type": "application/octet-stream"})
-			if r.Code != 201 {
-				t.Fatal("stage received V2", r.Code)
+			if r.Code != 410 {
+				t.Fatal("ordinary receiver accepted a historical write", r.Code)
 			}
-			var in service.V2Import
-			decode(t, r, &in)
-			plan := planV2(t, local, in, "device-local-v2-plan")
-			decode(t, local.json("POST", "/migration/v2/plans/"+plan.ID+"/commit", "device-local-v2-commit",
-				map[string]any{"fingerprint": plan.Fingerprint, "acceptSkipped": false}, 200), &plan)
-			receipt = plan.ID
+			outcomes = append(outcomes, service.DeviceApplyOutcome{Kind: seg.Kind, State: "skipped", Code: "v2_import_retired"})
+			continue
 		}
 		outcomes = append(outcomes, service.DeviceApplyOutcome{Kind: seg.Kind, State: "applied", SHA256: seg.SHA256, ReceiptID: receipt})
 	}
 	var current model.Asset
 	decode(t, local.json("GET", "/assets/"+asset.ID, "", nil, 200), &current)
-	if !current.Favorite || current.AuthorName != "Synthetic receiver author" {
-		t.Fatal("local authorized metadata was not applied", current)
+	if current.Favorite || current.AuthorName != "Synthetic receiver author" {
+		t.Fatal("receiver failed to distinguish its TXT update from the retired v2 selection")
 	}
-	result := service.DeviceApplyReport{State: "applied", ExpectedRevision: page.Revision, Results: outcomes}
+	result := service.DeviceApplyReport{State: "partial", ExpectedRevision: page.Revision, Results: outcomes}
 	decode(t, request("POST", url+"/result", "real-device-result", newSecret, result, 200), &page)
-	if page.State != "applied" || len(page.Results) != 2 {
+	if page.State != "partial" || len(page.Results) != 2 {
 		t.Fatal("missing device receipt")
 	}
 	request("POST", url+"/result", "resume-real-device-result", newSecret, result, 200)
 	request("GET", url+"/segments/v2Backup", "", newSecret, nil, 409)
 	request("POST", url+"/claim", "resume-device-claim", newSecret, map[string]int{"expectedRevision": 2}, 409)
-	result.Results[1].ReceiptID = "different-local-receipt"
+	result.Results[0].ReceiptID = "different-local-receipt"
 	request("POST", url+"/result", "immutable-device-terminal", newSecret, result, 409)
 
 	waiting := service.DeviceApplyManifest{TargetDeviceID: "phone", ProtocolVersion: 1, Segments: manifest.Segments[:1]}
@@ -253,7 +248,7 @@ func TestHistoricalDevicePackageRemainsReadableAndNewV2PublicationIsRetired(t *t
 	defer restored.Close()
 	historical := &fixture{t: t, s: restored, h: httpapi.New(restored)}
 	decode(t, historical.json("GET", url, "", nil, 200), &page)
-	if page.State != "applied" || len(page.Results) != 2 {
+	if page.State != "partial" || len(page.Results) != 2 {
 		t.Fatal("restoration removed the existing result")
 	}
 	decode(t, historical.json("GET", "/device/apply-tasks/"+notTaken.ID, "", nil, 200), &page)

@@ -98,6 +98,10 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 普通元数据使用 `expectedRevision`。标签集合写入使用 `Asset.tagsRevision`，空数组是明确清空。作者编辑集合为 `authorIds`，可以附带 `expectedAuthorsRevision`。Go 保留 COS 固定目录作者，并在关联真实作者时解除未知占位。
 
+每个标签有稳定 `Tag.id`。改词条名后，同一资产的关联 ID 和显示顺序保留。组图与短剧通过 `GET /collections/{id}/members` 分页读取成员。改集合名称使用 `PATCH /collections/{id}` 并提交集合修订。调整一页或一集使用 `PUT /collections/{id}/members/{assetId}/position`，提交成员修订和正整数位置。实际位置已有成员或已被在途发布占用时返回 409 和 `collection_position_occupied`。早期 Next 库里冲突的旧编号作为 `reportedPosition` 展示，便于核对。
+
+普通播放与拖动分开上报到 `POST /assets/{id}/events`。`play` 增加该会话的播放事实，`progress` 随 `contentVersion` 和 `positionMs` 写入续播行。位置为 0 表示回到开头。旧版本的标记和位置始终带原版本号，换版后播放器只对当前版本自动续播。[事件口径](analytics.md#事件与排行)
+
 **收藏和当天的赞分别写入。** `PUT /assets/{id}/favorite` 只接受 `{"favorite":true}` 或 `{"favorite":false}`。`PUT /assets/{id}/like/today` 只接受 `{"liked":true}` 或 `{"liked":false}`。两个入口均使用 `Idempotency-Key`，返回当前资产。对同一次操作重发时使用原键。回读旧回执后，查 `GET /assets/{id}` 可看到其后其他设备的修改。
 
 日界线取服务器配置的时区。当日已赞时再次点击会撤销当天这一票，收藏、此前的票和迁入的未分日累计保留。`liked` 表示当天有一条已知投票记录，`likeCount` 包含真实历史基线。无日期的基线只参与累计推荐和全时排行。旧版 Next 的组合接口 `/reaction` 已弃用；旧格式的点赞请求附带与当前值冲突的收藏时返回 409，升级客户端后可单独提交本次操作。
