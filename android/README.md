@@ -4,6 +4,8 @@
 
 ## 分层
 
+Gradle 的有效变体依赖、生产源集、纯客户端 APK 及服务决策回读由[模块门禁](architecture/README.md)记录。已安装版本的同场景截图采集见[旧版截图基准](baseline/README.md)。
+
 - `core/model`：端内展示、传输和队列模型，不计算推荐、排名、统计与命名规则。
 - `sdk`：引用 `api/generated/kotlin/src/main/kotlin`，源码仅由云端按 OpenAPI 生成。
 - `core/data`：生成 SDK 的唯一业务调用边界，Repository 将 DTO 映射成端内模型；媒体引擎经限定来源的认证客户端取字节。

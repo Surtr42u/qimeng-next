@@ -20,6 +20,56 @@ import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 class RecoveryBoundaryTest {
+    @Test fun libraryReadsPreserveTheServersOrderScoresCursorsAndNames() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val settings = SecureSettings(isolatedContext())
+            val session = Session(server.url("/").toString(), "authority-fixture", "Synthetic server")
+            settings.saveSession(session, "synthetic-authority-credential")
+            val provider = ApiProvider(settings)
+            val media = MediaRepository(settings, provider)
+            fun reply(json: String) = server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(json))
+            fun asset(id: String) = """{"id":"$id","libraryId":"library","fileName":"$id.png","originalFileName":"$id.png",
+                "relativePath":"$id.png","mediaType":"image","mimeType":"image/png","size":100,"hash":"fixture","revision":1,
+                "tagsRevision":1,"contentVersion":1,"authorId":"","authorIds":[],"authorsRevision":1,"authorStatus":"unknown",
+                "tags":[],"favorite":false,"liked":false,"likeCount":0,"note":"","createdAt":"2025-01-01T00:00:00Z",
+                "updatedAt":"2025-01-01T00:00:00Z","contentUrl":"media/$id","probeState":"ready","trashed":false,
+                "positionMs":0,"positionContentVersion":1}"""
+            val first = asset("z")
+            val second = asset("a")
+            reply("""{"items":[$first,$second],"snapshotId":"stable","nextCursor":"opaque-recommendation"}""")
+            val recommendations = media.assets(AssetQuery(source = "recommendations", seed = 91))
+            assertEquals(listOf("z", "a"), recommendations.items.map { it.id })
+            assertEquals("opaque-recommendation", recommendations.nextCursor)
+            val recommendationRequest = server.takeRequest(3, TimeUnit.SECONDS)!!.requestUrl!!
+            assertEquals("/api/v1/recommendations", recommendationRequest.encodedPath)
+            assertEquals("91", recommendationRequest.queryParameter("seed"))
+
+            reply("""{"items":[{"asset":$first,"score":712},{"asset":$second,"score":641}],"nextCursor":"opaque-ranking"}""")
+            val rankings = media.assets(AssetQuery(source = "rankings", period = "all"))
+            assertEquals(listOf(712L, 641L), rankings.items.map { it.rankingScore })
+            assertEquals(listOf("z", "a"), rankings.items.map { it.id })
+            assertEquals("opaque-ranking", rankings.nextCursor)
+            assertEquals("/api/v1/rankings", server.takeRequest(3, TimeUnit.SECONDS)!!.requestUrl!!.encodedPath)
+
+            reply("""{"policyVersion":"fixture","items":[{"family":"Z","suggestedName":"chosen-by-server","numberClass":"image","workNumber":73}],"truncated":false}""")
+            reply("""{"policyVersion":"fixture","libraryId":"library","directory":"covers","family":"Z","numberClass":"image",
+                "nextWorkNumber":73,"width":4,"separator":"-","namespaceFingerprint":"scope","reserved":false}""")
+            reply("""{"policyVersion":"fixture","namespaceFingerprint":"scope","reserved":false,"items":[{"fileName":"published.png",
+                "relativePath":"covers/served-name-0073.png","numberClass":"image","workNumber":73}]}""")
+            val naming = NamingRepository(settings, provider).inspect(NamingRequest("library", "covers", "Z", null,
+                "image", "", listOf(NamingFile("single", "phone-original.png"))))
+            assertEquals("chosen-by-server", naming.suggestions.single().example)
+            assertEquals(73, naming.position!!.nextWork)
+            assertEquals(listOf("covers/served-name-0073.png"), naming.preview!!.names)
+            val namingPaths = List(3) { server.takeRequest(3, TimeUnit.SECONDS)!!.requestUrl!!.encodedPath.substringAfter("/naming/") }
+            assertEquals(listOf("suggestions", "context", "preview"), namingPaths)
+        } finally {
+            server.shutdown()
+        }
+    }
+
     @Test fun ordinarySuccessWithoutAssetReconcilesOriginalUploadAfterRestart() = runBlocking {
         val context = isolatedContext()
         val queue = QueueStore(context)

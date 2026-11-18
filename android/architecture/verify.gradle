@@ -1,0 +1,81 @@
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+
+// An explicit CI task. Read the same variant inputs and resolved graphs used by the Android plugins.
+gradle.beforeProject { root ->
+    if (root != root.rootProject || root.name != 'QimengNext') return
+    def variants = []
+    root.subprojects { module ->
+        ['com.android.application', 'com.android.library'].each { plugin ->
+            module.pluginManager.withPlugin(plugin) {
+                def components = module.extensions.getByName('androidComponents')
+                components.onVariants(components.selector().all()) { variant ->
+                    variants << [module: module, variant: variant]
+                    root.tasks.named('verifyClientArchitecture').configure { check ->
+                        ['java', 'kotlin'].each { kind ->
+                            def directories = variant.sources."${kind}"
+                            if (directories != null) check.inputs.files(directories.all)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    root.tasks.register('verifyClientArchitecture', Exec) { check ->
+        group = 'verification'
+        description = 'Check production client dependencies, source sets, presentation boundaries and APK contents.'
+        dependsOn ':app:assembleClientDebug'
+        def report = root.layout.buildDirectory.file('reports/architecture/gradle-inputs.json')
+        commandLine 'python3', root.file('architecture/check.py'), report.get().asFile
+        doFirst {
+            if (root.providers.gradleProperty('qimeng.embedded').orNull != 'false' || root.findProject(':embedded') != null) {
+                throw new GradleException('Run the client gate with -Pqimeng.embedded=false and no embedded project.')
+            }
+            def repository = root.projectDir.parentFile.canonicalFile.toPath()
+            def relative = { path ->
+                def canonical = path.canonicalFile.toPath()
+                if (!canonical.startsWith(repository)) throw new GradleException('Production inputs outside the checkout cannot be audited.')
+                repository.relativize(canonical).toString().replace(File.separator, '/')
+            }
+            def roots = []
+            variants.each { row ->
+                ['java', 'kotlin', 'jniLibs', 'assets', 'res', 'resources'].each { kind ->
+                    def source = row.variant.sources."${kind}"
+                    def folders = (kind in ['java', 'kotlin'] ? source?.all : source?.getStatic())?.get()
+                    folders?.flatten()?.each { directory ->
+                        roots << [module: row.module.path, variant: row.variant.name, kind: kind, dir: relative(directory.asFile)]
+                    }
+                }
+            }
+            root.subprojects.findAll { it.pluginManager.hasPlugin('org.jetbrains.kotlin.jvm') }.each { module ->
+                def main = module.extensions.getByName('kotlin').sourceSets.getByName('main')
+                main.kotlin.srcDirs.each { dir -> roots << [module: module.path, variant: 'main', kind: 'kotlin', dir: relative(dir)] }
+                module.extensions.getByName('sourceSets').getByName('main').java.srcDirs.each { dir ->
+                    roots << [module: module.path, variant: 'main', kind: 'java', dir: relative(dir)]
+                }
+            }
+            def graph = [:]
+            def app = root.project(':app')
+            variants.findAll { it.module == app }.each { row ->
+                ['CompileClasspath', 'RuntimeClasspath'].each { scope ->
+                    def name = row.variant.name + scope
+                    def edges = [] as Set
+                    app.configurations.getByName(name).incoming.resolutionResult.allDependencies.each { dep ->
+                        if (dep instanceof UnresolvedDependencyResult) throw new GradleException("Unresolved dependency in ${name}.", dep.failure)
+                        if (dep instanceof ResolvedDependencyResult && dep.from.id instanceof ProjectComponentIdentifier &&
+                            dep.selected.id instanceof ProjectComponentIdentifier) {
+                            edges << [dep.from.id.projectPath, dep.selected.id.projectPath]
+                        }
+                    }
+                    graph[name] = edges.toList().sort { it.join(' ') }
+                }
+            }
+            def inventory = [projects: root.subprojects*.path.sort(), classpaths: graph, sources: roots.unique()]
+            def file = report.get().asFile
+            file.parentFile.mkdirs()
+            file.setText(JsonOutput.prettyPrint(JsonOutput.toJson(inventory)) + '\n', 'UTF-8')
+        }
+    }
+}

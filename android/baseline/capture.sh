@@ -24,15 +24,25 @@ if [[ -n $("${device[@]}" shell pm list packages media.qimeng.app | tr -d '\r') 
   exit 1
 fi
 "${device[@]}" install "$apk"
-installed=$("${device[@]}" shell pm path media.qimeng.app | tr -d '\r' | sed -n 's/^package://p')
-"${device[@]}" exec-out cat "$installed" | sha256sum | cut -d ' ' -f 1 > "$work/installed.sha256"
-[[ $(cat "$work/installed.sha256") == "$(sha256sum "$apk" | cut -d ' ' -f 1)" ]]
+echo "Installed baseline package ($mode)."
+installed=$("${device[@]}" shell pm path media.qimeng.app | tr -d '\r' | sed -n 's/^package://p' | head -1)
+if [[ -z $installed ]]; then echo 'Package manager returned no installed APK path.' >&2; exit 1; fi
+# Use the file-sync protocol for binary APKs, as in the original installation receipt.
+if ! "${device[@]}" pull "$installed" "$work/readback.apk" > "$work/pull.log" 2>&1; then
+  echo 'ADB could not read back the installed APK over its file-sync protocol.' >&2
+  exit 1
+fi
+sha256sum "$work/readback.apk" | cut -d ' ' -f 1 > "$work/installed.sha256"
 jq -n --arg source "$(git -C "$work/source" rev-parse HEAD)" --arg mode "$mode" \
   --arg installed "$(cat "$work/installed.sha256")" --arg reference "$(cat "$work/reference-apk.sha256")" \
   --arg archive "$(cat "$work/reference-archive.sha256")" --arg run "$GITHUB_RUN_ID" \
   '{sourceRevision:$source,installedBuild:$mode,installedApkSha256:$installed,referenceApkSha256:$reference,
     referenceArchiveSha256:$archive,referenceArtifactId:14228034776,referenceRunId:43873579739,captureRunId:$run}' \
   > "$output/provenance.json"
+if [[ $(cat "$work/installed.sha256") != "$(sha256sum "$apk" | cut -d ' ' -f 1)" ]]; then
+  echo "Installed APK digest differs from the candidate. Byte counts: candidate=$(stat -c %s "$apk"), readback=$(stat -c %s "$work/readback.apk")." >&2
+  exit 1
+fi
 
 export QIMENG_LISTEN=127.0.0.1:18483 QIMENG_AUTH_DEV_MODE=1 QIMENG_TIMEZONE=Asia/Shanghai
 export QIMENG_DATA_DIR="$work/data" QIMENG_DB_PATH="$work/data/qimeng.db"
