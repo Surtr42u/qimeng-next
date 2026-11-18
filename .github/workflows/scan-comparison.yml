@@ -70,7 +70,7 @@ jobs:
         run: '"$RUNNER_TEMP/scan.test" -test.v -test.run "^(TestScanningNewAuthorRuleMatchAndLaterManualRemoval|TestScanRegistersExistingFileAndConservesIdentityAfterExternalMove)$"'
       - name: Verify partial commits, cancellation and missing-file reconciliation
         working-directory: next/server
-        run: go test -mod=readonly -count=1 -v -run '^TestScan(Batch|Missing)' ./internal/service
+        run: go test -mod=readonly -count=1 -v -run '^TestScan(Batch|Missing|Known|Signatures)' ./internal/service
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

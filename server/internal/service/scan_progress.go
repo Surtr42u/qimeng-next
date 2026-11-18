@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"time"
 
 	"qimeng.local/next/server/internal/model"
-	"qimeng.local/next/server/internal/store"
 )
 
 type scanWorker struct {
@@ -62,6 +62,7 @@ type scanRun struct {
 	lastFlush  time.Time
 	prepared   []scannedFile
 	preparedAt time.Time
+	manualFull bool
 }
 
 func (s *Service) skipScannedEntry(ctx context.Context, run *scanRun) error {
@@ -106,15 +107,35 @@ func (s *Service) scanSignatures(ctx context.Context, library string, paths []st
 	if err != nil {
 		return nil, err
 	}
-	items, err := store.List[scanSignature](ctx, s.DB.DB, `SELECT json_object('path',relative_path,'size',size,'hash',hash,
-	 'mtime',json_extract(data,'$.contentMtime'),'author',json_extract(data,'$.cosDirectoryAuthorId'),'work',cos_work_id)
+	// Missing/null directory authors are empty. Other non-string JSON values
+	// yield SQL NULL, which scanning into a string rejects as corrupt metadata.
+	rows, err := s.DB.DB.QueryContext(ctx, `SELECT relative_path,size,hash,json_extract(data,'$.contentMtime'),
+	 CASE coalesce(json_type(data,'$.cosDirectoryAuthorId'),'null')
+	   WHEN 'text' THEN json_extract(data,'$.cosDirectoryAuthorId') WHEN 'null' THEN ''
+	 END,cos_work_id
 	 FROM assets WHERE library_id=? AND trashed=0 AND relative_path IN (SELECT value FROM json_each(?))`, library, string(raw))
 	if err != nil {
 		return nil, err
 	}
-	found := make(map[string]scanSignature, len(items))
-	for _, item := range items {
+	defer rows.Close()
+	found := make(map[string]scanSignature, len(paths))
+	for rows.Next() {
+		var item scanSignature
+		var mtime sql.NullString
+		if err = rows.Scan(&item.RelativePath, &item.Size, &item.Hash, &mtime, &item.DirectoryAuthor, &item.COSWork); err != nil {
+			return nil, err
+		}
+		if mtime.Valid {
+			var stamp time.Time
+			if err = stamp.UnmarshalText([]byte(mtime.String)); err != nil {
+				return nil, err
+			}
+			item.Mtime = &stamp
+		}
 		found[item.RelativePath] = item
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
 	}
 	return found, nil
 }

@@ -200,7 +200,7 @@ func (s *Service) scanProgress(ctx context.Context, id, relative, code string, s
 }
 func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
 	j, e := s.admitScan(ctx, id)
-	run := &scanRun{id: id, lastFlush: time.Now()}
+	run := &scanRun{id: id, lastFlush: time.Now(), manualFull: j.Trigger == "manual" && len(paths) == 0}
 	if e == nil {
 		defer s.releaseScan()
 		run.library, e = s.library(ctx, j.LibraryID)
@@ -294,9 +294,26 @@ func (s *Service) walkLibrary(ctx context.Context, run *scanRun, relative string
 		if e != nil {
 			return e
 		}
-		for _, entry := range entries {
+		unchanged, e := s.knownDirectoryEntries(ctx, run, directory, relative, entries, known)
+		if e != nil {
+			return e
+		}
+		for _, skip := range unchanged {
+			if skip {
+				if e = ctx.Err(); e != nil {
+					return e
+				}
+				if e = s.skipScannedEntry(ctx, run); e != nil {
+					return e
+				}
+			}
+		}
+		for index, entry := range entries {
 			if e := ctx.Err(); e != nil {
 				return e
+			}
+			if unchanged != nil && unchanged[index] {
+				continue
 			}
 			if privateLibraryEntry(entry.Name()) {
 				continue
@@ -370,7 +387,7 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 	if !initial.Mode().IsRegular() {
 		return s.scanProgress(ctx, jobID, relative, "not_regular_file", true)
 	}
-	unchanged := previous.RelativePath != "" && previous.Size == initial.Size() && previous.Mtime != nil && previous.Mtime.Equal(initial.ModTime())
+	unchanged := previous.sameSizeAndTime(initial)
 	if unchanged {
 		depth := strings.Count(relative, "/")
 		unchanged = run.library.Kind != "cos" || depth == 0 || previous.DirectoryAuthor != "" && (depth < 2 || previous.COSWork != "")
