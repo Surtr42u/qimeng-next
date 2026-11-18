@@ -41,7 +41,7 @@ func TestScanSignaturesRetainPreciseTimeHashAndCOSIdentity(t *testing.T) {
 		t.Fatal("legacy original incorrectly acquired a skip signature", a)
 	}
 
-	if _, err := s.DB.DB.ExecContext(ctx, "UPDATE assets SET data=json_set(data,'$.contentMtime',NULL,'$.cosDirectoryAuthorId',NULL) WHERE id=?", legacy.ID); err != nil {
+	if _, err := s.DB.DB.ExecContext(ctx, "UPDATE asset_records SET data=json_set(data,'$.cosDirectoryAuthorId',NULL) WHERE id=?", legacy.ID); err != nil {
 		t.Fatal(err)
 	}
 	rows, err = s.scanSignatures(ctx, run.library.ID, []string{legacy.RelativePath})
@@ -54,15 +54,18 @@ func TestScanSignaturesRejectInvalidStoredMetadata(t *testing.T) {
 	ctx := context.Background()
 	s, run, root := preparedScanFixture(t)
 	a := existingScanOriginal(t, s, run, root, "corrupt.png")
-	for _, invalid := range []struct{ field, value string }{
-		{"$.contentMtime", `"not a timestamp"`},
-		{"$.cosDirectoryAuthorId", `["unexpected"]`},
+	for _, statement := range []string{
+		"UPDATE asset_locations SET content_mtime='not a timestamp' WHERE asset_id=?",
+		`UPDATE asset_records SET data=json_set(data,'$.cosDirectoryAuthorId',json('["unexpected"]')) WHERE id=?`,
 	} {
-		if _, err := s.DB.DB.ExecContext(ctx, "UPDATE assets SET data=json_set(data,'$.contentMtime',NULL,?,json(?)) WHERE id=?", invalid.field, invalid.value, a.ID); err != nil {
+		if _, err := s.DB.DB.ExecContext(ctx, statement, a.ID); err != nil {
 			t.Fatal(err)
 		}
 		if rows, err := s.scanSignatures(ctx, run.library.ID, []string{a.RelativePath}); err == nil || rows != nil {
 			t.Fatal("invalid metadata could suppress a scan", rows, err)
+		}
+		if _, err := s.DB.DB.ExecContext(ctx, "UPDATE asset_locations SET content_mtime=NULL WHERE asset_id=?", a.ID); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

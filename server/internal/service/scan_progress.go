@@ -109,11 +109,13 @@ func (s *Service) scanSignatures(ctx context.Context, library string, paths []st
 	}
 	// Missing/null directory authors are empty. Other non-string JSON values
 	// yield SQL NULL, which scanning into a string rejects as corrupt metadata.
-	rows, err := s.DB.DB.QueryContext(ctx, `SELECT relative_path,size,hash,json_extract(data,'$.contentMtime'),
-	 CASE coalesce(json_type(data,'$.cosDirectoryAuthorId'),'null')
-	   WHEN 'text' THEN json_extract(data,'$.cosDirectoryAuthorId') WHEN 'null' THEN ''
-	 END,cos_work_id
-	 FROM assets WHERE library_id=? AND trashed=0 AND relative_path IN (SELECT value FROM json_each(?))`, library, string(raw))
+	rows, err := s.DB.DB.QueryContext(ctx, `SELECT l.relative_path,v.size,v.hash,l.content_mtime,
+	 CASE coalesce(json_type(r.data,'$.cosDirectoryAuthorId'),'null')
+	   WHEN 'text' THEN json_extract(r.data,'$.cosDirectoryAuthorId') WHEN 'null' THEN ''
+	 END,r.cos_work_id
+	 FROM asset_locations AS l JOIN asset_content_versions AS v ON v.asset_id=l.asset_id AND v.version=l.current_version
+	 JOIN asset_records AS r ON r.id=l.asset_id
+	 WHERE l.library_id=? AND l.trashed=0 AND l.relative_path IN (SELECT value FROM json_each(?))`, library, string(raw))
 	if err != nil {
 		return nil, err
 	}

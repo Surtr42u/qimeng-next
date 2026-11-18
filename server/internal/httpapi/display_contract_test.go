@@ -8,7 +8,10 @@ func TestUnknownFileDateCountIsExplicitAndIndependentOfPageSize(t *testing.T) {
 	_ = f.complete(first)
 	second, _ := f.upload("unknown-date.png", 141, nil)
 	asset := f.complete(second).Asset
-	if _, e := f.s.DB.DB.Exec("UPDATE assets SET file_date=NULL,data=json_remove(data,'$.fileDate','$.sourceMtime','$.contentMtime') WHERE id=?", asset.ID); e != nil {
+	if _, e := f.s.DB.DB.Exec("UPDATE asset_locations SET content_mtime=NULL WHERE asset_id=?", asset.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := f.s.DB.DB.Exec("UPDATE asset_records SET file_date=NULL,data=json_remove(data,'$.fileDate','$.sourceMtime') WHERE id=?", asset.ID); e != nil {
 		t.Fatal(e)
 	}
 	page := assetsAt(t, f, "?dateCounts=true&limit=1")

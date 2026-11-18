@@ -356,7 +356,7 @@ func (s *Service) commitFile(ctx context.Context, q store.Querier, j *fileIntent
 		if e := removeAssetAuthorWorks(ctx, q, j.After); e != nil {
 			return e
 		}
-		if _, e := q.ExecContext(ctx, "DELETE FROM assets WHERE id=?", j.After.ID); e != nil {
+		if _, e := q.ExecContext(ctx, "DELETE FROM asset_records WHERE id=?", j.After.ID); e != nil {
 			return e
 		}
 	} else {

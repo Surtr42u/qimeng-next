@@ -678,7 +678,7 @@ func (s *Service) CancelUpload(ctx context.Context, w *Write, id string) error {
 	return s.refreshBatch(ctx, q, u.BatchID)
 }
 
-const directoryNamesSQL = "SELECT file_name FROM assets WHERE library_id=? AND trashed=0 AND " + assetParentDir + "=?"
+const directoryNamesSQL = "SELECT file_name FROM asset_locations WHERE library_id=? AND trashed=0 AND " + assetParentDir + "=?"
 
 func (s *Service) directoryNames(ctx context.Context, library, dir string) ([]string, error) {
 	parent := path.Clean(dir)

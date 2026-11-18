@@ -508,25 +508,28 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 		a = model.Asset{ID: ID(), LibraryID: library.ID, OriginalFileName: path.Base(relative), AuthorID: "unknown", AuthorIDs: []string{"unknown"}, AuthorsRevision: 1, AuthorStatus: "unknown", TagsRevision: 1, Revision: 1, ContentVersion: 1, Tags: []string{}, SourceIDs: []string{}, CharacterIDs: []string{}, Characters: []string{}, AcquisitionSources: []string{}, MetadataSource: "scanner", CreatedAt: now}
 	}
 	previousName := a.FileName
+	changedBytes := isNew || a.Hash != file.hash
 	if !isNew {
 		a.Revision++
-		if a.Hash != file.hash {
+		if changedBytes {
 			a.ContentVersion++
 		}
 	}
 	a.RelativePath = relative
 	a.FileName = path.Base(relative)
-	a.Size = file.size
-	a.Hash = file.hash
-	a.MediaType = file.kind
-	a.MimeType = file.probe.MimeType
+	if changedBytes {
+		a.Size = file.size
+		a.Hash = file.hash
+		a.MediaType = file.kind
+		a.MimeType = file.probe.MimeType
+		a.Width = file.probe.Width
+		a.Height = file.probe.Height
+		a.DurationMs = file.probe.DurationMs
+		a.ProbeState = file.probe.ProbeState
+	}
 	a.UpdatedAt = now
 	modified := file.initial.ModTime().UTC()
 	a.ContentMtime = &modified
-	a.Width = file.probe.Width
-	a.Height = file.probe.Height
-	a.DurationMs = file.probe.DurationMs
-	a.ProbeState = file.probe.ProbeState
 	a.ContentURL = "/api/v1/assets/" + a.ID + "/content"
 	a.ThumbnailURL = ""
 	if file.probe.ThumbnailURL != "" {

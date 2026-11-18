@@ -90,6 +90,17 @@ func InsertAsset(ctx context.Context, q Querier, a model.Asset) error {
 }
 
 func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) error {
+	if db, ok := q.(*sql.DB); ok {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err = writeAsset(ctx, tx, a, insertOnly); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	a.FileDate = a.EffectiveFileDate()
 	raw, err := Encode(a)
 	if err != nil {
@@ -102,20 +113,21 @@ func writeAsset(ctx context.Context, q Querier, a model.Asset, insertOnly bool) 
 	if a.Favorite && a.FavoritedAt != nil {
 		favoritedAt = a.FavoritedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
 	}
-	query := `INSERT INTO assets(id,library_id,relative_path,file_name,media_type,author_id,collection_id,hash,size,revision,
-		created_at,updated_at,favorite,liked,trashed,data,file_date,favorited_at,cos_work_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,json_remove(?,'$.positionMs','$.positionContentVersion'),?,?,?)`
+	query := `INSERT INTO asset_records(id,author_id,collection_id,revision,created_at,updated_at,favorite,liked,
+		data,file_date,favorited_at,cos_work_id) VALUES(?,?,?,?,?,?,?,?,json_remove(?,
+		'$.id','$.hash','$.size','$.contentVersion','$.mediaType','$.mimeType','$.width','$.height','$.durationMs','$.probeState',
+		'$.libraryId','$.relativePath','$.fileName','$.contentMtime','$.storageLayoutVersion','$.trashed','$.positionMs','$.positionContentVersion'),?,?,?)`
 	if !insertOnly {
-		query += ` ON CONFLICT(id) DO UPDATE SET relative_path=excluded.relative_path,file_name=excluded.file_name,
-			media_type=excluded.media_type,author_id=excluded.author_id,collection_id=excluded.collection_id,hash=excluded.hash,
-			size=excluded.size,revision=excluded.revision,updated_at=excluded.updated_at,favorite=excluded.favorite,
-			liked=excluded.liked,trashed=excluded.trashed,data=excluded.data,file_date=excluded.file_date,
-			favorited_at=excluded.favorited_at,cos_work_id=excluded.cos_work_id`
+		query += ` ON CONFLICT(id) DO UPDATE SET author_id=excluded.author_id,collection_id=excluded.collection_id,
+			revision=excluded.revision,updated_at=excluded.updated_at,favorite=excluded.favorite,liked=excluded.liked,
+			data=excluded.data,file_date=excluded.file_date,favorited_at=excluded.favorited_at,cos_work_id=excluded.cos_work_id`
 	}
-	_, err = q.ExecContext(ctx, query, a.ID, a.LibraryID, a.RelativePath, a.FileName, a.MediaType, a.AuthorID,
-		a.CollectionID, a.Hash, a.Size, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
-		a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, a.Liked, a.Trashed, raw, fileDate, favoritedAt, a.CosWorkID)
+	_, err = q.ExecContext(ctx, query, a.ID, a.AuthorID, a.CollectionID, a.Revision, a.CreatedAt.Format("2006-01-02T15:04:05.000000000Z"),
+		a.UpdatedAt.Format("2006-01-02T15:04:05.000000000Z"), a.Favorite, a.Liked, raw, fileDate, favoritedAt, a.CosWorkID)
 	if err != nil {
+		return err
+	}
+	if err = saveAssetFile(ctx, q, a, insertOnly); err != nil {
 		return err
 	}
 	if !insertOnly {
