@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
@@ -269,16 +268,6 @@ type libraryCreateRequest struct {
 	StorageID        string `json:"storageId"`
 	RootRelativePath string `json:"rootRelativePath"`
 }
-type eventCreateRequest struct {
-	EventID        string     `json:"eventId"`
-	Kind           string     `json:"kind"`
-	ContentVersion int64      `json:"contentVersion"`
-	PositionMs     int64      `json:"positionMs"`
-	SessionID      string     `json:"sessionId,omitempty"`
-	Seconds        float64    `json:"seconds,omitempty"`
-	OccurredAt     *time.Time `json:"occurredAt,omitempty"`
-}
-
 func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 	if e := a.s.CheckReadiness(r.Context()); e != nil {
 		fail(w, e)
@@ -425,8 +414,20 @@ func (a *API) UpdateReaction(w http.ResponseWriter, r *http.Request, id generate
 }
 
 func (a *API) RecordEvent(w http.ResponseWriter, r *http.Request, id generated.Id) {
-	write[eventCreateRequest](a, w, r, false, func(r *http.Request, w *service.Write, in eventCreateRequest) (any, int, error) {
-		v, e := a.s.RecordEvent(r.Context(), w, id, model.Event{EventID: in.EventID, Kind: in.Kind, ContentVersion: in.ContentVersion, PositionMs: in.PositionMs, SessionID: in.SessionID, Seconds: in.Seconds, OccurredAt: in.OccurredAt})
+	write[generated.EventCreate](a, w, r, false, func(r *http.Request, w *service.Write, in generated.EventCreate) (any, int, error) {
+		event := model.Event{EventID: in.EventId, Kind: string(in.Kind), ContentVersion: in.ContentVersion, OccurredAt: in.OccurredAt}
+		if in.PositionMs != nil {
+			event.PositionMs = *in.PositionMs
+		} else if event.Kind == "progress" {
+			return nil, 0, service.Fail(400, "missing_progress_position", "播放进度需要明确的毫秒位置。")
+		}
+		if in.SessionId != nil {
+			event.SessionID = *in.SessionId
+		}
+		if in.Seconds != nil {
+			event.Seconds = *in.Seconds
+		}
+		v, e := a.s.RecordEvent(r.Context(), w, id, event)
 		return v, 200, e
 	})
 }

@@ -69,6 +69,9 @@ func TestVideoSeeksOwnOnlyVersionedPlaybackState(t *testing.T) {
 	event(3, "progress", 1200, 3)
 	event(3, "progress", 1200, 3)
 	event(4, "progress", 900, 1)
+	f.json("POST", root+"/events", "", map[string]any{"eventId": "next-page-play", "sessionId": "next-page", "kind": "play", "contentVersion": a.ContentVersion}, 200)
+	f.json("POST", root+"/events", "", map[string]any{"eventId": "play-at-offset", "sessionId": "third-page", "kind": "play", "positionMs": 300, "contentVersion": a.ContentVersion}, 200)
+	f.json("POST", root+"/events", "", map[string]any{"eventId": "missing-seek-offset", "kind": "progress", "contentVersion": a.ContentVersion}, 400)
 	var reloaded model.Asset
 	decode(t, f.json("GET", root, "", nil, 200), &reloaded)
 	if reloaded.PositionMs != 1200 || reloaded.PositionContentVersion != a.ContentVersion || reloaded.Revision != initial.Revision {
@@ -80,5 +83,10 @@ func TestVideoSeeksOwnOnlyVersionedPlaybackState(t *testing.T) {
 	}
 	if err := db.QueryRow("SELECT count(*) FROM assets WHERE id=? AND (json_type(data,'$.positionMs') IS NOT NULL OR json_type(data,'$.positionContentVersion') IS NOT NULL)", a.ID).Scan(&copies); err != nil || copies != 0 {
 		t.Fatal("asset metadata contains a second writable copy of playback", copies, err)
+	}
+	event(5, "progress", 0, 5)
+	decode(t, f.json("GET", root, "", nil, 200), &reloaded)
+	if reloaded.PositionMs != 0 || reloaded.PositionContentVersion != a.ContentVersion {
+		t.Fatal("explicit seek to the beginning was lost", reloaded.PositionMs, reloaded.PositionContentVersion)
 	}
 }

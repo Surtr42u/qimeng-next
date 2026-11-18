@@ -2887,6 +2887,7 @@ components:
       properties: {favorite: {type: boolean}, liked: {type: boolean, description: True requests one daily like. False does not add a like and never undoes accumulated likes.}}
     EventCreate:
       type: object
+      description: Only a progress event updates resume position. A play records that playback started and may also record its observed offset in history.
       required: [eventId, kind, contentVersion]
       properties:
         eventId: {type: string, minLength: 8, maxLength: 128}
@@ -2895,7 +2896,7 @@ components:
         seconds: {type: number, format: double, minimum: 0, maximum: 86400, description: 'Dwell duration; floor to whole seconds, values below one second are rejected for dwell'}
         occurredAt: {type: string, format: date-time, description: 'UTC start of the visible segment; server receipt time if omitted'}
         contentVersion: {type: integer, format: int64, minimum: 1}
-        positionMs: {type: integer, format: int64, minimum: 0}
+        positionMs: {type: integer, format: int64, minimum: 0, description: Required for progress. Zero explicitly seeks to the beginning.}
     HistoryEvent:
       type: object
       required: [eventId, kind, contentVersion, assetId, createdAt]
