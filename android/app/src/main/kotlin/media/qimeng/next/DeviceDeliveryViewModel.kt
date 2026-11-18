@@ -33,14 +33,20 @@ class DeviceDeliveryViewModel(application: Application) : AndroidViewModel(appli
         }
     } }
     fun local(target: Session?) = target != null && app.isSelectedLocalInstance(target)
-    fun save(address: String, device: String, secret: String, complete: () -> Unit) = act { target ->
-        repo.saveCredential(target,address,device,device,secret)
-        if (session.value == target) { complete(); results.value = repo.recent() }
+    fun save(address: String, device: String, secret: String, replaceAuthorProfiles: Boolean, applyNow: Boolean, complete: () -> Unit) = act { target ->
+        repo.saveSettings(target, address, device, secret, replaceAuthorProfiles)
+        if (session.value == target) {
+            complete()
+            if (applyNow) repo.schedule(target, replaceAuthorProfiles)
+            else if (secret.isNotBlank()) {
+                val page = repo.recent()
+                if (session.value == target) results.value = page
+            }
+        }
     }
     fun issue(device: String) = act { repo.generate(it, device, device); results.value = repo.recent() }
     fun clear() = act { repo.clear(); results.value = null }
     fun toggle(on: Boolean) = act { repo.background(it, on) }
-    fun applyNow() = act { repo.schedule(it) }
     fun refresh() = act { target -> val page = repo.recent(); if (session.value == target) results.value = page }
     private fun act(block: suspend (Session) -> Unit) {
         val target = session.value ?: return

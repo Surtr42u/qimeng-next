@@ -55,7 +55,7 @@ internal object DeviceSegments {
         return file
     }
 
-    suspend fun apply(local: DefaultApi, file: File, segment: DeviceApplySegment, key: String): ReceivedSegment {
+    suspend fun apply(local: DefaultApi, file: File, segment: DeviceApplySegment, key: String, replaceAuthorProfiles: Boolean): ReceivedSegment {
         if (segment.kind.value == "masterTxt") {
             val revision = requireNotNull(segment.expectedLocalRevision) { "作者主表缺少预期本机修订" }
             val content = file.inputStream().use { readAuthorText(it) }
@@ -69,11 +69,37 @@ internal object DeviceSegments {
         val source = requireNotNull(segment.sourceId) { "v2 段缺少来源安装身份" }
         val staged = local.stageV2Import("v2-$key",source,file.asRequestBody("application/octet-stream".toMediaType())).bodyOrThrow()
         check(staged.sha256 == segment.sha256 && staged.bytes == segment.bytes && staged.sourceId == source) { "本机 v2 暂存与服务器段不符" }
-        val plan = local.prepareV2Migration(staged.id,"plan-$key",V2PlanCreate()).bodyOrThrow()
-        if (plan.issueCount > 0 || plan.skippedCount > 0) return ReceivedSegment(segment.kind.value,"skipped", receipt = plan.id, code = "v2_review_required")
-        local.commitV2Migration(plan.id,"commit-$key",CommitV2MigrationRequest(plan.fingerprint,false)).bodyOrThrow()
+        val policy = if (replaceAuthorProfiles) V2AuthorProfileConflict.replace else V2AuthorProfileConflict.keep
+        // The original keep request was {}, with these plan and commit keys. Resume that exact operation after an upgrade.
+        val decisionKey = if (replaceAuthorProfiles) operationKey("replace", key) else key
+        val input = V2PlanCreate(authorProfileConflict = policy.takeIf { replaceAuthorProfiles })
+        val plan = local.prepareV2Migration(staged.id, "plan-$decisionKey", input).bodyOrThrow()
+        if (plan.requiresReview != false || plan.skippedCount > 0 || plan.authorProfileConflict != policy) {
+            return ReceivedSegment(segment.kind.value, "skipped", receipt = plan.id, code = "v2_review_required")
+        }
+        try {
+            local.commitV2Migration(plan.id, "commit-$decisionKey", CommitV2MigrationRequest(plan.fingerprint, false)).bodyOrThrow()
+        } catch (failure: ApiFailure) {
+            if (failure.status != 409) throw failure
+            return ReceivedSegment(segment.kind.value, "skipped", receipt = plan.id, code = failure.code?.takeIf { it.matches(Regex("[a-z0-9_]{1,80}")) } ?: "v2_commit_conflict")
+        }
         val applied = local.getV2MigrationPlan(plan.id).bodyOrThrow()
-        check(applied.state.value == "committed" && applied.fingerprint == plan.fingerprint && applied.checkpointId != null) { "本机没有返回可核对的迁移完成回执" }
-        return ReceivedSegment(segment.kind.value,"applied",segment.sha256,applied.id)
+        check(applied.id == plan.id && applied.importId == staged.id && applied.fingerprint == plan.fingerprint &&
+            applied.authorProfileConflict == policy && !applied.checkpointId.isNullOrEmpty()) { "本机没有返回可核对的迁移完成回执" }
+        return when (applied.state.value) {
+            "committed" -> ReceivedSegment(segment.kind.value, "applied", segment.sha256, applied.id)
+            "partial" -> {
+                val protected = (applied.counts["profileBlocksProtected"] ?: 0L) > 0
+                val candidates = (applied.counts["profileBlocksCandidateOnly"] ?: 0L) > 0
+                val reason = when {
+                    protected && candidates -> "v2_profiles_protected_and_candidate"
+                    protected -> "v2_profiles_protected"
+                    candidates -> "v2_profiles_candidate"
+                    else -> "v2_partial"
+                }
+                ReceivedSegment(segment.kind.value, "partial", segment.sha256, applied.id, reason)
+            }
+            else -> error("本机迁移尚未完成")
+        }
     }
 }

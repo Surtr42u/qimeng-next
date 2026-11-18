@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import media.qimeng.next.DeviceDeliveryViewModel
+import media.qimeng.next.model.DeviceSegmentResult
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.component.QimengCapsuleTextField
 import media.qimeng.next.ui.component.QimengSettingsCard
@@ -31,6 +32,7 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
     var device by rememberSaveable(settings.deviceId) { mutableStateOf(settings.deviceId) }
     var address by rememberSaveable(settings.address) { mutableStateOf(settings.address) }
     var secret by remember(session, settings.configured) { mutableStateOf("") }
+    var replaceProfiles by rememberSaveable(session?.instanceId, settings.replaceAuthorProfiles) { mutableStateOf(settings.replaceAuthorProfiles) }
     val local = model.local(session)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -50,9 +52,20 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
                 Column(Modifier.weight(1f)) { Text("后台领取",style = MaterialTheme.typography.titleSmall); Text("每 15 分钟尝试一次，系统省电可能延迟。",style = MaterialTheme.typography.bodySmall) }
                 Switch(settings.background,model::toggle,enabled = !busy && (settings.background || local && settings.configured))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = model::applyNow,enabled = !busy && settings.configured && local,shape = RoundedCornerShape(12.dp)) { Text("立即应用") }
-                OutlinedButton(onClick = { model.save(address,device,secret) { secret = "" } },enabled = !busy && secret.isNotBlank() && device.isNotBlank(),shape = RoundedCornerShape(12.dp)) { Text("保存设置") }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("应用时覆盖作者资料", style = MaterialTheme.typography.titleSmall)
+                    Text("开启后按 v2 预检替换作者资料。人工编辑的资料保留，修订冲突可在领取记录中查看。默认保留本机资料。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = replaceProfiles, onCheckedChange = { replaceProfiles = it }, enabled = !busy)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { model.save(address, device, secret, replaceProfiles, applyNow = true) { secret = "" } },
+                    enabled = !busy && (settings.configured || secret.isNotBlank()) && device.isNotBlank() && local,
+                    shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) { Text("立即应用") }
+                OutlinedButton(onClick = { model.save(address, device, secret, replaceProfiles, applyNow = false) { secret = "" } },
+                    enabled = !busy && device.isNotBlank(), shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) { Text("保存设置") }
             }
             error?.let { ErrorNotice(it) }
             settings.notice?.let { Text(it,style = MaterialTheme.typography.bodySmall) }
@@ -64,7 +77,7 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
             list.orEmpty().forEach { item ->
                 val state = when(item.state) { "pending" -> "待领取"; "claimed" -> "已领取"; "applied" -> "已应用"; "partial" -> "部分完成"; "cancelled" -> "已取消"; "expired" -> "已过期"; else -> "失败" }
                 Text("$state · ${item.createdAt}",style = MaterialTheme.typography.labelMedium)
-                item.results.forEach { Text(it,style = MaterialTheme.typography.bodySmall) }
+                item.results.forEach { Text(segmentDescription(it), style = MaterialTheme.typography.bodySmall) }
             }
         } }
         QimengSettingsCard { Column(Modifier.padding(16.dp),verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -72,4 +85,18 @@ internal fun DeviceDeliveryScreen(model: DeviceDeliveryViewModel = viewModel()) 
             Text("请先连接本机影库并配置可写维护目录。设备只领取发给自己的资料包。作者资料修订冲突和 v2 未能明确匹配的项保留在报告中。",style = MaterialTheme.typography.bodySmall)
         } }
     }
+}
+
+private fun segmentDescription(result: DeviceSegmentResult): String {
+    val kind = if (result.kind == "v2Backup") "v2 资料" else "作者主表"
+    val state = when (result.state) { "applied" -> "已应用"; "partial" -> "部分应用"; "skipped" -> "已跳过"; else -> "失败" }
+    val reason = when (result.reason) {
+        "v2_review_required" -> "请核对本机预检的匹配和冲突"
+        "migration_profile_changed" -> "预检后的作者资料已变更"
+        "v2_profiles_protected" -> "已保留受保护的本机资料"
+        "v2_profiles_candidate" -> "部分资料仅作为候选保留"
+        "v2_profiles_protected_and_candidate" -> "已保留受保护的本机资料和待核对的候选"
+        else -> result.reason
+    }
+    return listOfNotNull(kind, state, reason, result.receipt?.let { "本机回执 $it" }).joinToString(" · ")
 }

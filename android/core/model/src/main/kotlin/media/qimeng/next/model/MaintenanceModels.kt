@@ -12,5 +12,6 @@ data class MigrationPreview(val id: String, val documentId: String, val fingerpr
     val matched: Int, val skipped: Int, val issues: Int, val checkpoint: String?)
 data class MigrationRow(val key: String, val name: String, val targetId: String?, val state: String, val reason: String, val issues: List<String> = emptyList())
 data class DeviceDeliverySettings(val deviceId: String, val label: String = "", val address: String = "", val configured: Boolean = false,
-    val background: Boolean = false, val destination: String? = null, val notice: String? = null)
-data class DevicePackage(val id: String, val state: String, val createdAt: String, val results: List<String>)
+    val background: Boolean = false, val destination: String? = null, val notice: String? = null, val replaceAuthorProfiles: Boolean = false)
+data class DevicePackage(val id: String, val state: String, val createdAt: String, val results: List<DeviceSegmentResult>)
+data class DeviceSegmentResult(val kind: String, val state: String, val reason: String?, val receipt: String?)
