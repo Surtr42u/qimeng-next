@@ -1594,6 +1594,13 @@ paths:
       responses:
         '204': {description: Delegation and all task credentials revoked}
         default: {$ref: '#/components/responses/Error'}
+  /ai/delegations/current/ready-batches:
+    get:
+      operationId: listReadyIntakeBatches
+      description: Read the oldest 16 unclaimed, sealed intelligent intakes within this live long-term executor grant. All declared transfers have settled and at least one verified staged upload is actionable. Polling has no side effects. Claim an item through startDelegatedTask with its readyManifestFingerprint.
+      responses:
+        '200': {description: Empty when there is no matching work, content: {application/json: {schema: {$ref: '#/components/schemas/ReadyIntakeBatches'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /ai/delegated-tasks:
     post:
       operationId: startDelegatedTask
@@ -2331,6 +2338,19 @@ components:
       properties:
         delegation: {$ref: '#/components/schemas/AIDelegation'}
         credential: {$ref: '#/components/schemas/Session'}
+    ReadyIntakeBatches:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ReadyIntakeBatch'}}
+    ReadyIntakeBatch:
+      type: object
+      required: [batchId, libraryId, manifestFingerprint, maxResearchCalls]
+      properties:
+        batchId: {type: string}
+        libraryId: {type: string}
+        manifestFingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
     DelegatedTaskStart:
       type: object
       required: [kind, label, credentialSecret]
@@ -2342,6 +2362,7 @@ components:
         expectedContentVersion: {type: integer, format: int64, minimum: 1}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
         batchId: {type: string}
+        readyManifestFingerprint: {type: string, pattern: '^[0-9a-f]{64}$', description: For a queue claim use kind intake and mode intelligent with the returned batch and library IDs. Readiness is rechecked atomically. An idempotent replay returns the original task.}
         mode: {type: string, enum: [ordinary, intelligent]}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
         researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
