@@ -112,6 +112,8 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 
 Windows 作业使用同一提交的 Go 服务和正式 stdio MCP 执行器登记一张合成图片。可用独立卷时，验收重读备份原件、SQLite 检查点和证明文件，再调用 Windows Shell 回收。新进程使用原操作键回读同一许可和回执，并检查原位置的新文件及库内原件。若 Shell 拒绝回收，验收核实原文件身份、字节和保留原因。没有可用独立卷时，验收核实备份拒绝、来源保留以及零清理许可。`windows-first-check` 中的 `windows-source-recovery.json` 记录该次运行实际经过的分支。[验收程序](../tools/cloud_windows_recovery.py)
 
+`da811b7` 在 Windows 2025 标准云机上取得独立卷。Go 和 MCP 跑通备份、原件与检查点回读，Shell 实际将选中的来源移入系统回收站。服务只签发一个许可。新的 stdio 进程重发原操作后得到同一回执，重新建立的同名文件和库内原件均通过字节核对。[Windows 作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44384433852/job/135085794715) · [回收结果报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44384433852/artifacts/14465882480)
+
 完整工作流一次调度多个作业。审查时从受影响的入口找结果，再按共享协议、数据和平台的影响扩大范围。
 
 | 改动范围 | 先核对什么 |
