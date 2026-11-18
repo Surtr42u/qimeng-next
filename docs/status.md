@@ -27,7 +27,7 @@ Web 的 `8df9cd4` 在 Chromium、移动 Chromium 和 WebKit 共通过 107 项浏
 
 Web 首页、相册及详情已用旧、新两个实际入口，按同一组合成媒体、主题和桌面／窄屏视口对照。六组已测布局误差均在 1 CSS 像素内，打开详情后返回原列表的位置一致。详情、图表和管理代码改为按需载入后，同套合成数据的冷首页实际下行从 3,174,379 降至 2,470,783 字节，相比调整前减少约 22%。这个数值只适用于这次 Web 首屏测量。设置页另保留用户授权所需的「AI 接入」入口。[六组画面与网络测量](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855368)
 
-Android 已接回旧版四档导航、首页间距及标签底部弹层。`4105b7a` 纯客户端构建、JVM、Lint 和 APK 检查通过。旧版默认／经典首页与标签弹层已有实际发布 APK 的回读摘要和云端原图；完整新旧同状态对照仍需新版同场景截图。[客户端构建](https://github.com/Surtr42u/qimeng-next/actions/runs/44284583229/job/134734519028) · [旧版原图](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855346)
+Android 已接回旧版四档导航、首页间距及标签底部弹层。旧版已安装构建与新版 API 35 模拟器都有默认首页、经典首页和标签弹层原图。对照记录列出了逐区域的像素差异，以及媒体样本不同而不能直接比较的区域。其余页面和实体手机尚待按相同状态核对。[Android 新旧画面对照](../android/UI_PARITY.md) · [旧版采图](https://github.com/Surtr42u/qimeng-next/actions/runs/44286855346)
 
 ## 已取得的证据
 
@@ -37,8 +37,8 @@ Android 已接回旧版四档导航、首页间距及标签底部弹层。`4105b
 | Go 扫描 | 在同一台云机三轮手动扫描 2,048 张小图，安装旧版与 0038 后的 Next 首扫中位数分别为 5,639.48 和 2,905.30 ms，原样复扫为 66.45 和 88.57 ms，少量改动为 127.60 和 166.20 ms。Next 相对分表前同场首扫多写 23.99 MiB，三个版本最终都找到 2,052 个文件。[同机原始记录与身份核对](https://github.com/Surtr42u/qimeng-next/actions/runs/44351821418) |
 | 文件身份 | `ff92b48` 与安装版在同一云机执行了两种操作。换成同尺寸、同时间戳、字节不同的新图时，旧版沿用了原图身份，新版为新图分配了新身份并报告原件缺失。字节相同的原图移动且时间戳改变时，旧版分配了新身份，新版保住原身份。[两种情况的云端记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44320603158) |
 | 命名与作者导入 | `7600949` 的查询计划和 HTTP 回归确认，自动补全只从索引读取当前目录，再合并磁盘上尚未登记的占号文件。已验证 v2 作者资料显式覆盖前的快照、重复交付回读，以及人工清空、订阅与候选保护。外部存储整根与子目录均可注册、上传和重启恢复。[后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44318828263/job/134852628470) |
-| Android 本机 | `89edb6a` 的 ARM64 和 x86_64 原生构建、内嵌 APK 和本机 API 35 作业通过，使用隔离数据核对上传及电源变化后的扫描。[本机模拟器](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259/job/134812936078) |
-| Android 客户端 | `f2b884b` 的 APK、JVM、lint、两种原生架构和本机 API 35 仪器通过。后者实际核对了普通上传取得的资产 ID、磁盘原件及断电／接电扫描。联网模拟器的视频全屏画面仍未通过。此轮仍使用修正前的 Android 外观。[本机仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44269316797/job/134686309823) |
+| Android 本机 | API 35 运行内嵌 Go，实际上传合成 H.264，再从接收页复制实例 ID、目标视频 ID 和内容版本，逐一从系统剪贴板回读，并与 Go 返回值核对。上传、重新连接和接电扫描也在隔离库验收。[内嵌设备记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44363806975/job/135016521774) |
+| Android 客户端 | `730f8ad` 全部通过核心界面 6 项、真实 Go 数据 13 项和应用 4 项。`85eb908` 的两台云模拟器均取得首次播放的彩色解码表面和系统横屏原图。`83954db` 定位到退出后活动仍请求横屏。[联网仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44357630219/job/134993469508) · [逐提交窗口和方向证据](../android/UI_PARITY.md) |
 | Web 与桌面 | 浏览器在两个独立 Go 服务间签发资料包，回读目标实际 TXT、逐项回执，并在刷新后按设备找到原记录。Windows 的 `4012001` 在云机完成 NSIS 安装、原生窗口最大化/最小化、真实鼠标打开带认证会话的原件、HTTP Range、切换服务关闭旧窗口、退出及卸载。[Web 双实例实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44354939835/job/134981903063) · [Windows 完整操作](https://github.com/Surtr42u/qimeng-next/actions/runs/44354017708/job/134978093760) |
 | PC／NAS 启动包 | `89edb6a` 的 Windows x64、Linux x64、Linux ARM64 服务端包各自通过启动、登录与隔离恢复。[三个发行包的作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259) |
 | AI 执行器与 MCP | `0325a6d` 的独立 stdio 客户端、Pi、官方 TypeScript SDK 和 Hermes 作业通过。受限合成 TLS 来源验证了研究只执行一次、重放复用回执和预算。Hermes 使用合成模型响应，核对实际宿主的工具发现、结果与拒绝写入。[独立客户端与研究](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037437) · [Hermes 宿主](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037531) |

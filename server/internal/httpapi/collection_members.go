@@ -14,6 +14,13 @@ func (a *API) RenameCollection(w http.ResponseWriter, r *http.Request, id genera
 	})
 }
 
+func (a *API) SetCollectionAliases(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SetCollectionAliasesParams) {
+	writeScoped[generated.AliasSetUpdate](a, w, r, "admin", true, func(r *http.Request, tx *service.Write, in generated.AliasSetUpdate) (any, int, error) {
+		c, err := a.s.SetCollectionAliases(r.Context(), tx, id, in.ExpectedRevision, in.Aliases)
+		return c, http.StatusOK, err
+	})
+}
+
 func (a *API) ListCollectionMembers(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ListCollectionMembersParams) {
 	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		n, err := limit(r)

@@ -83,7 +83,15 @@ func (a *API) ListTagVocabulary(w http.ResponseWriter, r *http.Request, params g
 		if e != nil {
 			return nil, e
 		}
-		return a.s.TagVocabulary(r.Context(), r.URL.Query().Get("cursor"), n)
+		q := r.URL.Query()
+		return a.s.TagVocabulary(r.Context(), q.Get("q"), q.Get("cursor"), n)
+	})
+}
+
+func (a *API) SetTagAliases(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.SetTagAliasesParams) {
+	writeScoped[generated.AliasSetUpdate](a, w, r, "admin", true, func(r *http.Request, tx *service.Write, in generated.AliasSetUpdate) (any, int, error) {
+		tag, err := a.s.SetTagAliases(r.Context(), tx, id, in.ExpectedRevision, in.Aliases)
+		return tag, http.StatusOK, err
 	})
 }
 

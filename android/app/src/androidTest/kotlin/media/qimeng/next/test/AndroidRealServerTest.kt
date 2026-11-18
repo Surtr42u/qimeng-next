@@ -260,13 +260,31 @@ class AndroidRealServerTest {
                 throw AssertionError("Leaving fullscreen should restore $originalOrientation, observed ${playbackOrientation()}", failure)
             }
             if (index == 0) {
+                compose.waitUntil(10_000) {
+                    var position = 0L
+                    compose.activityRule.scenario.onActivity { activity ->
+                        position = activity.findViewById<androidx.media3.ui.PlayerView>(media.qimeng.next.R.id.video_playback_window)?.player?.currentPosition ?: 0L
+                    }
+                    position >= 350L
+                }
                 compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-                compose.waitUntil(10_000) { compose.onAllNodesWithContentDescription("返回").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithContentDescription("返回").performClick()
+                compose.waitUntil(10_000) {
+                    var attached = true
+                    compose.activityRule.scenario.onActivity { attached = it.findViewById<android.view.View>(media.qimeng.next.R.id.video_playback_window) != null }
+                    !attached
+                }
                 await("video-position", graph) { graph.media.asset(video.id).let { asset ->
                     resumePosition = asset.positionMs
                     asset.positionVersion == video.version && resumePosition > 0L
                 } }
+                compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                compose.waitUntil(10_000) {
+                    var leftDetail = false
+                    compose.activityRule.scenario.onActivity { activity ->
+                        leftDetail = androidx.lifecycle.ViewModelProvider(activity)[media.qimeng.next.LibraryViewModel::class.java].route.value != "asset:${video.id}"
+                    }
+                    leftDetail
+                }
             }
         }
     }

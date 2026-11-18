@@ -70,6 +70,8 @@ Go 的具体包引用由[依赖检查](../server/internal/architecture/boundarie
 
 词表中的每个标签有稳定 ID。资产按 ID 和显示顺序关联标签，改名保留原关联，推进受影响资产的标签修订，旧拼写进入保留清单。用户明确重新创建旧拼写时，新词条与已改名词条各有身份。删除词条会移除关联并保留墓碑，其他资产的旧表单也受到保护。显式恢复被删除的词条会推进修订。[词表和关系迁移](../server/internal/store/migrations/0037_asset_relationships.sql)
 
+标签和集合的别名按对象 ID 与显示顺序分别保存在 `tag_aliases` 和 `collection_aliases`。编辑时检查该对象的修订，空数组代表清空。词表搜索和集合搜索分别匹配正式名与单个别名，同一对象只列一次。两个对象共享旧称时分别返回，集合可按库限定。标签删除后，其别名随对象退出活动词表。按原名明确恢复同一标签 ID 时保留原别名，重新使用改名前的拼写创建的新 ID 独立维护别名。已按集合 ID 准备的命名计划只核对命名修订、目标和占用信息。[别名所有权与查询](../server/internal/store/migrations/0039_owner_aliases.sql) · [按对象修订编辑](../server/internal/service/aliases.go)
+
 作者成员及其顺序由 `asset_authors` 提供，收藏由资产的收藏状态与时间提供，日赞和迁入的无日期基数分别由每日记录和基数表提供。资产列表和详情按需投影这些值，改标签只更新词表关联与对应修订。普通改名、移动或文件恢复可复用通用资产保存入口，原有关联仅在成员或顺序变化时写入。[资产编辑](../server/internal/store/asset_edits.go) · [标签写入](../server/internal/store/asset_tags.go) · [收藏和日赞](../server/internal/engagement/reactions.go)
 
 组图和 AI 短剧有稳定集合身份。图片仍逐张显示；组图页码与作品号分离。Go 根据目录、family、图片/视频类别分配最小空号，扩展名不另分序，动图归图片。组内页码固定半角括号，已有组图补页从最大页码加一，不补洞或重排。短剧用集合 ID 与服务端序号追加，保留用户原始备注，不自动研究视频备注。

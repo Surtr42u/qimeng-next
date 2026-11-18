@@ -235,8 +235,8 @@ func cleanStrings(values []string, maxCount, maxLen int) ([]string, error) {
 	}
 	return out, nil
 }
-func (s *Service) Tags(ctx context.Context, cursor string, limit int) (model.Page[string], error) {
-	page, e := s.TagVocabulary(ctx, cursor, limit)
+func (s *Service) Tags(ctx context.Context, query, cursor string, limit int) (model.Page[string], error) {
+	page, e := s.TagVocabulary(ctx, query, cursor, limit)
 	if e != nil {
 		return model.Page[string]{}, e
 	}
@@ -557,6 +557,10 @@ func (s *Service) UpdateAuthor(ctx context.Context, w *Write, id string, in Auth
 	}
 	return a, finishAuthorTask(ctx, q, task, a.Revision)
 }
+
+const collectionAliasMatch = `(c.name LIKE ? ESCAPE '\' OR EXISTS(SELECT 1 FROM collection_aliases a
+ WHERE a.collection_id=c.id AND a.alias LIKE ? ESCAPE '\'))`
+
 func (s *Service) Collections(ctx context.Context, libraryID, query, cursor string, limit int) (model.Page[model.Collection], error) {
 	n, e := limited(limit, 50)
 	if e != nil {
@@ -567,7 +571,22 @@ func (s *Service) Collections(ctx context.Context, libraryID, query, cursor stri
 	if e != nil {
 		return model.Page[model.Collection]{}, e
 	}
-	a, e := store.List[model.Collection](ctx, s.DB.DB, "SELECT data FROM collections WHERE (?='' OR library_id=?) AND (name LIKE ? ESCAPE '\\' OR json_extract(data,'$.aliases') LIKE ? ESCAPE '\\') ORDER BY name,id LIMIT ? OFFSET ?", libraryID, libraryID, like(query), like(query), n+1, o)
+	statement := "SELECT c.data FROM collection_details c"
+	var filters []string
+	var args []any
+	if libraryID != "" {
+		filters = append(filters, "c.library_id=?")
+		args = append(args, libraryID)
+	}
+	if query != "" {
+		filters = append(filters, collectionAliasMatch)
+		pattern := like(query)
+		args = append(args, pattern, pattern)
+	}
+	if len(filters) > 0 {
+		statement += " WHERE " + strings.Join(filters, " AND ")
+	}
+	a, e := store.List[model.Collection](ctx, s.DB.DB, statement+" ORDER BY c.name,c.id LIMIT ? OFFSET ?", append(args, n+1, o)...)
 	return paged(a, n, o, key), e
 }
 func (s *Service) CreateCollection(ctx context.Context, w *Write, in model.Collection) (model.Collection, error) {
@@ -591,14 +610,9 @@ func (s *Service) CreateCollection(ctx context.Context, w *Write, in model.Colle
 	in.ID = w.ID("collection")
 	in.Revision = 1
 	in.CreatedAt = time.Now().UTC()
-	raw, e := store.Encode(in)
-	if e != nil {
-		return in, e
-	}
 	q, e := w.Q()
 	if e != nil {
 		return in, e
 	}
-	_, e = q.ExecContext(ctx, "INSERT INTO collections(id,library_id,name,kind,data) VALUES(?,?,?,?,?)", in.ID, in.LibraryID, in.Name, in.Kind, raw)
-	return in, e
+	return in, store.InsertCollection(ctx, q, in)
 }

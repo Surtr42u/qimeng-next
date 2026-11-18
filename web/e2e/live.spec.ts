@@ -197,6 +197,40 @@ test("same-commit service: login, upload, edit, recommend and play persist throu
   const linkedAuthor = await page.request.get("/api/v1/authors/" + encodeURIComponent(createdAuthorId));
   expect((await linkedAuthor.json()).name).toBe(newName);
   expect(saved.favorite).toBe(true);
+
+  const tagPage = await page.request.get("/api/v1/tag-vocabulary", { params: { q: tagName } });
+  expect(tagPage.ok()).toBe(true);
+  const managedTag = (await tagPage.json()).items.find((tag: { name: string }) => tag.name === tagName);
+  expect(managedTag).toBeTruthy();
+  const alias = `云验旧称${suffix}`;
+  const aliasPath = `/api/v1/tag-vocabulary/${encodeURIComponent(managedTag.id)}/aliases`;
+  const editedTag = await page.request.put(aliasPath, {
+    headers: { Origin: base, "Idempotency-Key": `browser-alias-add-${suffix}` },
+    data: { expectedRevision: managedTag.revision, aliases: [alias] },
+  });
+  expect(editedTag.status()).toBe(200);
+  await page.goto("/");
+  const search = page.getByRole("textbox", { name: "搜索媒体", exact: true });
+  const searchResponse = () => page.waitForResponse(r => {
+    const url = new URL(r.url());
+    return url.pathname === "/api/v1/assets" && url.searchParams.get("q") === alias;
+  });
+  await search.fill(alias);
+  const firstSearch = searchResponse();
+  await search.press("Enter");
+  const matches = await (await firstSearch).json();
+  expect(matches.items.map((item: { id: string }) => item.id)).toEqual([assetId]);
+  await expect(page.getByRole("link", { name: "打开 " + pictureName, exact: true })).toBeVisible();
+  const clearedTag = await page.request.put(aliasPath, {
+    headers: { Origin: base, "Idempotency-Key": `browser-alias-clear-${suffix}` },
+    data: { expectedRevision: (await editedTag.json()).revision, aliases: [] },
+  });
+  expect(clearedTag.status()).toBe(200);
+  const refreshedSearch = searchResponse();
+  await page.reload();
+  expect((await (await refreshedSearch).json()).totalMatched).toBe(0);
+  await expect(page.getByRole("link", { name: "打开 " + pictureName, exact: true })).toHaveCount(0);
+
   await page.goto(`/authors/${encodeURIComponent(authorId)}/profile`);
   await page
     .getByRole("button", { name: "编辑基础资料", exact: true })

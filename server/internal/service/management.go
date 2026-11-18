@@ -108,26 +108,40 @@ func (s *Service) CreateDirectory(ctx context.Context, w *Write, libraryID, rela
 }
 
 type Tag struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Revision  int64  `json:"revision"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Aliases   []string `json:"aliases"`
+	Revision  int64    `json:"revision"`
+	CreatedAt string   `json:"createdAt"`
+	UpdatedAt string   `json:"updatedAt"`
 }
 
-const tagJSON = "json_object('id',id,'name',name,'revision',revision,'createdAt',created_at,'updatedAt',updated_at)"
+func tagByID(ctx context.Context, q store.Querier, id string) (Tag, error) {
+	tag, err := store.Get[Tag](ctx, q, "SELECT data FROM tag_details WHERE id=? AND deleted=0", id)
+	return tag, Normalize(err)
+}
 
-func (s *Service) TagVocabulary(ctx context.Context, cursor string, limit int) (model.Page[Tag], error) {
+func (s *Service) TagVocabulary(ctx context.Context, query, cursor string, limit int) (model.Page[Tag], error) {
 	n, e := limited(limit, 100)
 	if e != nil {
 		return model.Page[Tag]{}, e
 	}
-	o, e := pageOffset(cursor, "tag-vocabulary")
+	key := "tag-vocabulary"
+	statement := "SELECT t.data FROM tag_details t WHERE t.deleted=0"
+	var args []any
+	if query != "" {
+		key += ":" + query
+		statement += ` AND (t.name LIKE ? ESCAPE '\' OR EXISTS(SELECT 1 FROM tag_aliases a
+			WHERE a.tag_id=t.id AND a.alias LIKE ? ESCAPE '\'))`
+		pattern := like(query)
+		args = append(args, pattern, pattern)
+	}
+	o, e := pageOffset(cursor, key)
 	if e != nil {
 		return model.Page[Tag]{}, e
 	}
-	a, e := store.List[Tag](ctx, s.DB.DB, "SELECT "+tagJSON+" FROM tags WHERE deleted=0 ORDER BY name LIMIT ? OFFSET ?", n+1, o)
-	return paged(a, n, o, "tag-vocabulary"), e
+	a, e := store.List[Tag](ctx, s.DB.DB, statement+" ORDER BY t.name,t.id LIMIT ? OFFSET ?", append(args, n+1, o)...)
+	return paged(a, n, o, key), e
 }
 
 // A request identifies its spelling as well as its revision. Crossing the
@@ -163,9 +177,14 @@ func (s *Service) CreateTag(ctx context.Context, w *Write, name string) (Tag, er
 		return Tag{}, e
 	}
 	if existing == "" {
-		return store.Get[Tag](ctx, q, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,?,?,?) RETURNING "+tagJSON, name, revision, now, now)
+		e = q.QueryRowContext(ctx, "INSERT INTO tags(name,revision,created_at,updated_at) VALUES(?,?,?,?) RETURNING id", name, revision, now, now).Scan(&existing)
+	} else {
+		_, e = q.ExecContext(ctx, "UPDATE tags SET deleted=0,revision=?,updated_at=? WHERE id=?", revision, now, existing)
 	}
-	return store.Get[Tag](ctx, q, "UPDATE tags SET deleted=0,revision=?,updated_at=? WHERE id=? RETURNING "+tagJSON, revision, now, existing)
+	if e != nil {
+		return Tag{}, e
+	}
+	return tagByID(ctx, q, existing)
 }
 
 func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string, revision int64, remove bool) (any, error) {
@@ -176,7 +195,7 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 	if e != nil {
 		return nil, e
 	}
-	tag, e := store.Get[Tag](ctx, q, "SELECT "+tagJSON+" FROM tags WHERE name=? AND deleted=0", name)
+	tag, e := store.Get[Tag](ctx, q, "SELECT data FROM tag_details WHERE name=? AND deleted=0", name)
 	if e != nil {
 		return nil, Normalize(e)
 	}
@@ -228,8 +247,9 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 		ON CONFLICT(name) DO UPDATE SET revision=max(revision,excluded.revision)`, name, tag.Revision+1); e != nil {
 		return nil, e
 	}
-	return store.Get[Tag](ctx, q, "UPDATE tags SET name=?,revision=?,updated_at=? WHERE id=? RETURNING "+tagJSON,
-		newName, newRevision, now.Format(time.RFC3339Nano), tag.ID)
+	tag.Name, tag.Revision, tag.UpdatedAt = newName, newRevision, now.Format(time.RFC3339Nano)
+	_, e = q.ExecContext(ctx, "UPDATE tags SET name=?,revision=?,updated_at=? WHERE id=?", tag.Name, tag.Revision, tag.UpdatedAt, tag.ID)
+	return tag, e
 }
 func (s *Service) RemoveAssetTag(ctx context.Context, w *Write, id, tag string, revision int64) (model.Asset, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {

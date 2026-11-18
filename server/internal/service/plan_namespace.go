@@ -33,12 +33,13 @@ func planItemScope(ctx context.Context, q store.Querier, library string, item mo
 	_ = enc.Encode([]string{library, dir, item.NamingFamily, class})
 	var collection model.Collection
 	if item.CollectionID != "" {
-		var err error
-		collection, err = store.Get[model.Collection](ctx, q, "SELECT data FROM collections WHERE id=?", item.CollectionID)
+		var namingRevision int64
+		err := q.QueryRowContext(ctx, "SELECT id,library_id,name,kind,naming_revision FROM collections WHERE id=?", item.CollectionID).
+			Scan(&collection.ID, &collection.LibraryID, &collection.Name, &collection.Kind, &namingRevision)
 		if err != nil {
 			return "", planReferenceError(err)
 		}
-		_ = enc.Encode([]any{collection.ID, collection.LibraryID, collection.Name, collection.Kind, collection.Revision})
+		_ = enc.Encode([]any{collection.ID, collection.LibraryID, collection.Name, collection.Kind, namingRevision})
 		if err = hashCollectionMembers(ctx, q, collection, ownAssets, enc); err != nil {
 			return "", err
 		}
