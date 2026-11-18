@@ -1618,6 +1618,16 @@ paths:
       responses:
         '200': {description: Same task and operation identity with rotated executor lease, content: {application/json: {schema: {$ref: '#/components/schemas/DelegatedTask'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /ai/delegated-tasks/{id}/intake-status:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: reportIntakeExecutorStatus
+      description: Trusted claimed intelligent-intake executor only. Record a pause or resume for the current lease and batch revision. Report an actual transition once and replay the original key and body after a lost response. The batch detail provides the current observation. No heartbeat or completion report is accepted here.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BatchExecutorReport'}}}}
+      responses:
+        '200': {description: Stored observation receipt, content: {application/json: {schema: {$ref: '#/components/schemas/BatchExecutorStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /ai/delegated-tasks/{id}/calls:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
@@ -3188,9 +3198,34 @@ components:
       required: [batch, inputs, items, plans]
       properties:
         batch: {$ref: '#/components/schemas/Batch'}
+        executorStatus: {$ref: '#/components/schemas/BatchExecutorStatus'}
         inputs: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/BatchInput'}}
         items: {type: array, items: {$ref: '#/components/schemas/BatchItem'}}
         plans: {type: array, items: {$ref: '#/components/schemas/PlanSummary'}}
+    BatchExecutorReason:
+      type: string
+      enum: [host_unavailable, permission_required, budget_exhausted, needs_attention, operation_uncertain]
+    BatchExecutorReport:
+      type: object
+      additionalProperties: false
+      required: [generation, batchRevision, expectedStatusRevision, state]
+      properties:
+        generation: {type: integer, format: int64, minimum: 1}
+        batchRevision: {type: integer, format: int64, minimum: 1}
+        expectedStatusRevision: {type: integer, format: int64, minimum: 0}
+        state: {type: string, enum: [paused, claimed], description: claimed records resuming an already held task}
+        reason: {$ref: '#/components/schemas/BatchExecutorReason'}
+    BatchExecutorStatus:
+      type: object
+      required: [state, source, revision, batchRevision]
+      properties:
+        state: {type: string, enum: [not_configured, not_ready, awaiting_claim, claimed, lease_inactive, paused]}
+        source: {type: string, enum: [deployment, batch, queue, lease, worker]}
+        revision: {type: integer, format: int64, minimum: 0, description: Executor status revision independent of the batch business revision}
+        batchRevision: {type: integer, format: int64, minimum: 1}
+        generation: {type: integer, format: int64, minimum: 1}
+        reason: {$ref: '#/components/schemas/BatchExecutorReason'}
+        reportedAt: {type: string, format: date-time, description: Server time of a worker-reported transition}
     IntakeInput:
       type: object
       required: [id]
