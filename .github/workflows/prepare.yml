@@ -151,8 +151,7 @@ jobs:
           retention-days: 7
           path: |
             web/dist/
-            web/test-results/
-            web/playwright-report/
+            web/test-results/**/*.png
   server-packages:
     needs: web
     uses: ./.github/workflows/server-packages.yml

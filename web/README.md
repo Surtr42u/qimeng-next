@@ -41,7 +41,7 @@ npx playwright install --with-deps chromium webkit
 npm run test:e2e
 ```
 
-依赖按已提交的 `package-lock.json` 安装。更新锁文件时，在完整工作流手动启用 `refresh_locks`。浏览器 mock 项目阻止 Service Worker，让全部合成 API 请求可被拦截。独立的 `live` 作业连接同次 Go 服务并运行 PWA worker。截图保存在各自的测试制品中。[云端生成与锁核对](../docs/verification.md)
+依赖按已提交的 `package-lock.json` 安装。更新锁文件时，在完整工作流手动启用 `refresh_locks`。浏览器 mock 项目阻止 Service Worker，让全部合成 API 请求可被拦截。独立的 `live` 作业连接同次 Go 服务并运行 PWA worker。公开的浏览器制品包含构建输出和合成测试截图；用例名与失败断言保存在作业日志。原始 Playwright 跟踪和含跟踪附件的 HTML 报告只留在生成它们的临时机器，避免上传请求头和会话 Cookie。[云端生成与锁核对](../docs/verification.md)
 
 另有 `npm run test:live` 真实服务闭环：仅在 `CI=true`、`QIMENG_E2E_BASE_URL=http://127.0.0.1:18481` 且提供一次性 `QIMENG_E2E_TOKEN` 时运行。CI先启动同提交Go服务并托管同提交`web/dist`，PATH需ffmpeg/ffprobe，并通过`QIMENG_E2E_LIBRARY_ROOT`提供已加入服务受信storage配置的云端临时根。测试只在该根创建每次独立子目录，从原服务器根路径文本框注册；路径不放查询串或日志。测试在云端生成合成PNG与短视频，实际登录、建库、上传、编辑、推荐回读、播放和时间轴持久化；该项目不使用route mock，不连接8420或任何既有库。执行结果仍以根状态页中的提交SHA与CI日志为准。
 
