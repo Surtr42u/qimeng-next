@@ -2751,7 +2751,7 @@ components:
             assetId: {type: string}
             hash: {type: string}
             publishedContentVersion: {type: integer, format: int64, minimum: 1, description: Version actually published by this upload. Absent before ingestion or when a legacy receipt cannot prove it.}
-            explicitTaxonomy: {type: boolean, description: The owner explicitly supplied taxonomy, including an empty selection}
+            explicitTaxonomy: {type: boolean, description: "The owner explicitly supplied taxonomy, including an empty selection"}
             errorCode: {type: string}
             errorMessage: {type: string}
             createdAt: {type: string, format: date-time}
