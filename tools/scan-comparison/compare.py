@@ -255,7 +255,11 @@ def measure(api, version, library, phase, pid):
             return datetime.fromisoformat(item[field].replace("Z", "+00:00"))
         internal_ms = (timestamp("updatedAt") - timestamp("createdAt")).total_seconds() * 1000
     else:
-        require(item["fileCount"] == total, f"installed library count differs: {item['fileCount']}")
+        # The legacy list reads SQL counts before fetching the in-memory scan state.
+        # A poll crossing the last move merge can combine a pre-merge count with idle.
+        # Open a fresh read after observing completion, outside the timed interval.
+        settled, = api.call("GET", "/api/v1/libraries")
+        require(settled["fileCount"] == total, f"installed library count differs: {settled['fileCount']}")
         metrics = api.call("GET", "/metrics", text=True).splitlines()
         duration, = [line.split()[1] for line in metrics if line.startswith("scan_duration_seconds ")]
         internal_ms = float(duration) * 1000
