@@ -1,10 +1,6 @@
 # 当前状态
 
-更新于 2026-11-20。本仓已按所有者授权公开，以 MIT 许可证发布。公开验收使用隔离目录和合成资料。真实资料切换、手机安装与 NAS 实机验收以各自的本机记录为准。
-
-`8b2c415` 已合入两项审查修复。扫描把原件被同名目录取代的情况登记为缺件，并保留原索引和人工资料。Web 补发浏览事件时，同一作品等待恢复，队列里的其他作品仍可继续。[PR 18 与完整检查](https://github.com/Surtr42u/qimeng-next/pull/18) · [发布、迁移与恢复交接](handover.md)
-
-11 月 20 日的 Android 对照使用旧正式包 `74597408`。新版已在隔离服务中取得三个统计窗口的白卡截图，以及作者资料、筛选与媒体网格依次排列的截图。手机端和服务端的缩略图缓存分别计量，Go 的低空间及恢复补齐回归已通过。[旧版实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44588916908) · [新版阶段截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44591454981/artifacts/14564568156) · [缓存后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44588983656/job/135790515054) · [功能与验收范围](../android/UI_PARITY_TASKS.md)
+更新于 2026-11-19。本仓已按所有者授权公开，以 MIT 许可证发布。公开验收使用隔离目录和合成资料。真实资料切换、手机安装与 NAS 实机验收以各自的本机记录为准。
 
 2026-11-19，主线在 `407ed69` 之后合入三档后台预热、大图展示解码、Web 维护界面和随包许可，合并提交为 `55d4963`。取 Windows 与 Android 包、确认正常后台缓存和安排实体设备验收，按接手手册从对应主线作业继续。下文保留各自所列提交的历史测量。[PR #17](https://github.com/Surtr42u/qimeng-next/pull/17) · [主线产品作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44556256306) · [接手手册](handover.md)
 
@@ -19,6 +15,8 @@
 在 `6d19173`，五个 Ubuntu 云端作业按当前签名索引核验 FFmpeg 软件包。PR 验收中有四台复用全部 87 个缓存包，合入后的主线有三台复用。各台分别刷新索引并实际安装。主线 22 项云端作业全部通过。[同机计时与缓存损坏恢复](https://github.com/Surtr42u/qimeng-next/pull/10) · [合入后的主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44483277173)
 
 ## 系统审查后的客户端验收
+
+11 月 20 日的 Android 对照使用旧正式包 `74597408`。新版已在隔离服务中取得三个统计窗口的白卡截图，以及作者资料、筛选与媒体网格依次排列的截图。手机端和服务端的缩略图缓存分别计量，Go 的低空间及恢复补齐回归已通过。[旧版实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44588916908) · [新版阶段截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44591454981/artifacts/14564568156) · [缓存后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44588983656/job/135790515054) · [功能与验收范围](../android/UI_PARITY_TASKS.md)
 
 Web 的 `9c2a5f7` 与安装版 `74597408` 使用相同的字体、媒体、主题和视口比较。桌面与窄屏的首页、相册、详情六组均通过，锚点偏差均在 1 CSS 像素内，退出详情后两端回到原相册及原滚动位置。[六组测量与截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44455888042/job/135330670726)
 
