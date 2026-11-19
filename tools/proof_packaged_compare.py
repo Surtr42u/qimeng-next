@@ -14,11 +14,12 @@ import struct
 import subprocess
 import tempfile
 import time
+import zipfile
 import zlib
 
 from proof_packaged_baseline import BASELINE, core, package, request, running
 
-CANDIDATE = "31996fc4b671c6d1efcd8f6861a247a36a1a88c9"
+CANDIDATE = "49249ea79c718b251f777b38ab7401acd691f686"
 PORTS = {"baseline": 18493, "candidate": 18494}
 
 
@@ -60,15 +61,27 @@ def verify_static(app, port, candidate):
                 other = identity["etag"] if enc == "gzip" else chosen["etag"]
                 s, _, b = request(port, url, headers={"Accept-Encoding": enc, "If-None-Match": other})
                 assert s == 200 and b == expected
-            s, h, b = request(port, url, headers={"Accept-Encoding": "gzip", "Range": "bytes=7-19"})
-            assert (s, h["content-range"], b) == (206, f"bytes 7-19/{len(raw)}", raw[7:20])
-            assert "content-encoding" not in h
-            s, h, b = request(port, url, headers={"Accept-Encoding": "gzip, identity;q=0", "Range": "bytes=7-19"})
+            for enc, expected, etag, wire_encoding in [("gzip", body, chosen["etag"], "gzip"),
+                                                        ("gzip, identity;q=0", body, chosen["etag"], "gzip"),
+                                                        ("identity", raw, identity["etag"], "identity")]:
+                ready = {"Accept-Encoding":enc,"Range":"bytes=7-19","If-Range":etag}
+                s, h, b = request(port, url, headers=ready)
+                assert (s, h["content-range"], b) == (206, f"bytes 7-19/{len(expected)}", expected[7:20])
+                assert h.get("content-encoding","identity") == wire_encoding and int(h["content-length"]) == len(b)
+                s, h, b = request(port, url, headers={**ready,"If-Range":'"different"'})
+                assert s == 200 and b == expected
+                for conditional in ["If-Match","If-Unmodified-Since"]:
+                    condition = '"different"' if conditional=="If-Match" else "Sun, 06 Nov 1994 08:49:37 GMT"
+                    s, h, b = request(port, url, headers={"Accept-Encoding":enc,conditional:condition})
+                    assert s == 412 and not b and "content-encoding" not in h
+            s, h, b = request(port, url, headers={"Accept-Encoding":"gzip","Range":"bytes=0-2,7-19"})
             assert s == 200 and b == body and h["content-encoding"] == "gzip"
             s, h, _ = request(port, url, headers={"Accept-Encoding": "gzip;q=0, *;q=0"})
             assert s == 406 and h["vary"] == "Accept-Encoding"
             checks.update(HEAD=True, sameValidator304=True, otherRepresentation200=True,
-                          rangeIdentity206=True, rangeGzipOnly200=True, noAcceptable406=True, weightedNegotiation=True)
+                          rangeIdentity206=True, rangeGzip206=True, gzipMultipartFull200=True,
+                          mismatchedIfRangeFull200=True, failedPreconditions412=True,
+                          noAcceptable406=True, weightedNegotiation=True)
         out[url] = dict(mime=chosen["content-type"], encoding=chosen.get("content-encoding", "identity"),
                         encodedBytes=len(body), decodedBytes=len(original), encodedSHA256=sha(body),
                         decodedSHA256=sha(original), identitySHA256=sha(raw), checks=checks)
@@ -107,6 +120,7 @@ def seed(port, admin):
     s, h, b = request(port, url, headers={**headers, "Range":"bytes=6-31"})
     assert s == 206 and b == png[6:32] and h["content-range"] == f"bytes 6-31/{len(png)}"
     assert "content-encoding" not in h and h["cache-control"] == "private, no-cache"
+    authenticated_range = h["content-range"]
     s, h, _ = request(port, url, headers={"Accept-Encoding":"gzip"})
     assert s == 401 and "no-store" in h["cache-control"]
     s, h, _ = request(port, "/api/v1/sessions", method="POST", headers={"Origin":base,"Content-Type":"application/json"},
@@ -114,7 +128,7 @@ def seed(port, admin):
     assert s == 201 and h["cache-control"] == "no-store"
     cookie = SimpleCookie(); cookie.load(h["set-cookie"])
     return cookie["qimeng_session"].value, dict(ordinaryUpload=True, sourceSHA256=sha(png), originalSize=len(png),
-           authenticatedRange=h.get("content-range", f"bytes 6-31/{len(png)}"), unauthorizedOriginal=401, sessionCache="no-store")
+           authenticatedRange=authenticated_range, unauthorizedOriginal=401, sessionCache="no-store")
 
 
 @contextmanager
@@ -150,6 +164,7 @@ def capture(path):
                     log.seek(0); raise RuntimeError(log.read().decode())
                 if path.exists() and path.stat().st_size >= 24:
                     break
+                request(PORTS["baseline"], "/healthz")
                 time.sleep(.05)
             else:
                 raise TimeoutError("Capture did not open")
@@ -169,11 +184,11 @@ def read_packets(path):
     assert data[:4] == b"\xd4\xc3\xb2\xa1" and struct.unpack_from("<I",data,20)[0] == 1
     i = 24
     while i < len(data):
-        sec,us,captured,_ = struct.unpack_from("<4I",data,i); i += 16
+        sec,us,captured,original = struct.unpack_from("<4I",data,i); i += 16
         frame = data[i:i+captured]; i += captured
         assert frame[12:14] == b"\x08\0"
         ip = frame[14:]; tcp = ip[(ip[0]&15)*4:]
-        port = int.from_bytes(tcp[:2],"big"); length = int.from_bytes(ip[2:4],"big")
+        port = int.from_bytes(tcp[:2],"big"); length = int.from_bytes(ip[2:4],"big") or original-14
         yield (sec*1000+us/1000,port,length-(ip[0]&15)*4-(tcp[12]>>4)*4,length)
 
 
@@ -192,13 +207,17 @@ def compare():
     with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
         work = Path(temporary)
         cookies = {}
+        web_digests = {}
         for label, commit in (("baseline",BASELINE),("candidate",CANDIDATE)):
-            archive, app = package(Path("build")/label, work/label/"pkg", commit)
+            directory = Path("build/baseline") if label=="baseline" else Path("build/published/qimeng-next-package-linux-amd64")
+            archive, app = package(directory, work/label/"pkg", commit)
             port = PORTS[label]; admin = secrets.token_urlsafe(40)
             stack.enter_context(running(app,work/label/"data",port,admin))
             cookies[label], fixture = seed(port,admin)
             files = [p for p in app.rglob("*") if p.is_file()]
             static = verify_static(app,port,label=="candidate")
+            web_digests[label] = {p.relative_to(app/"web").as_posix():sha(p.read_bytes())
+                                  for p in (app/"web").rglob("*") if p.is_file() and p.suffix!=".gz"}
             result["package"][label] = dict(commit=commit,zipBytes=archive.stat().st_size,
                 extractedFileBytes=sum(p.stat().st_size for p in files), executableBytes=(app/"qimeng-next").stat().st_size,
                 webLogicalBytes=sum(p.stat().st_size for p in (app/"web").rglob("*") if p.is_file()),
@@ -206,6 +225,27 @@ def compare():
                 packageDiskAllocatedBytes=sum(p.stat().st_blocks*512 for p in files),
                 sidecarBytes=sum(p.stat().st_size for p in (app/"web").rglob("*.gz")), checksumsVerified=True,
                 fixture=fixture, **static)
+        assert web_digests["baseline"] == web_digests["candidate"]
+        result["identicalExistingWebFiles"] = len(web_digests["baseline"])
+        result["platformPackages"] = {}
+        canonical = result["package"]["candidate"]["core"]
+        for archive in sorted(Path("build/published").glob("*/*.zip")):
+            name = archive.stem
+            assert sha(archive.read_bytes()) == Path(str(archive)+".sha256").read_text().split()[0]
+            with zipfile.ZipFile(archive) as pkg:
+                src = json.loads(pkg.read(name+"/SOURCE.json"))
+                assert src["sourceCommit"] == CANDIDATE
+                checks = {path: digest for digest,path in (line.split("  ",1) for line in pkg.read(name+"/SHA256SUMS").decode().splitlines())}
+                pairs = {}
+                for url, expected in canonical.items():
+                    relative = "web"+url
+                    raw = pkg.read(name+"/"+relative); compressed = pkg.read(name+"/"+relative+".gz")
+                    assert sha(raw) == checks[relative] == expected["decodedSHA256"]
+                    assert sha(compressed) == checks[relative+".gz"] and gzip.decompress(compressed) == raw
+                    assert compressed[3] == 0 and compressed[4:8] == bytes(4)
+                    pairs[url] = {"bytes":len(compressed), "sha256":sha(compressed)}
+                result["platformPackages"][src["target"]] = {"zipBytes":archive.stat().st_size,"core":pairs}
+        assert len(result["platformPackages"]) == 3
         result["network"]["loopback"] = "native loopback HTTP/1.1"
         result["network"]["restricted"] = "Linux loopback tc netem; two directions each 20 ms one-way, 10 Mbit/s; 40 ms nominal RTT"
         for network in result["network"]:

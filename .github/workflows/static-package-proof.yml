@@ -8,7 +8,7 @@ permissions:
 jobs:
   compare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {persist-credentials: false}
@@ -19,18 +19,33 @@ jobs:
           name: qimeng-next-package-linux-amd64
           path: build/baseline
       - run: python tools/proof_packaged_baseline.py
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          run-id: 44488450557
-          github-token: ${{ github.token }}
-          name: qimeng-next-package-linux-amd64
-          path: build/candidate
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: {node-version: '24', cache: npm, cache-dependency-path: web/package-lock.json}
       - working-directory: web
         run: |
           npm ci
           npx --no-install playwright install --with-deps --only-shell chromium
+      - name: Wait for the three final same-commit published archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: '44489484242'
+          SOURCE_SHA: 49249ea79c718b251f777b38ab7401acd691f686
+        run: |
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN --jq .head_sha)" = "$SOURCE_SHA"
+          for i in {1..75}; do
+            count=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts --jq '[.artifacts[] | select(.name | startswith("qimeng-next-package-"))] | length')
+            if [ "$count" = 3 ]; then exit 0; fi
+            terminal=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/jobs --jq '[.jobs[] | select(.name | contains("Server package")) | select(.conclusion=="failure" or .conclusion=="cancelled")] | length')
+            if [ "$terminal" -gt 0 ]; then exit 1; fi
+            sleep 15
+          done
+          exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: 44489484242
+          github-token: ${{ github.token }}
+          pattern: qimeng-next-package-*
+          path: build/published
       - run: |
           if ! command -v tcpdump >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y tcpdump; fi
           python tools/proof_packaged_compare.py
