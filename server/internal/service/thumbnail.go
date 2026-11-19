@@ -238,6 +238,9 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 	if e != nil {
 		return e
 	}
+	if e = s.verifySelectedImage(ctx, a, source); e != nil {
+		return e
+	}
 	if e = ctx.Err(); e != nil {
 		return e
 	}

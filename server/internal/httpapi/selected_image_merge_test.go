@@ -92,8 +92,26 @@ func checkPhysicalOriginal(t *testing.T, f *fixture, a model.Asset, original []b
 
 func TestSelectedImageMergeReadsAndPreservesEveryNativeOriginal(t *testing.T) {
 	source, rep, donor, original := selectedImageFixture(t)
-	upload, controlBytes := source.upload("independent.png", 54, nil)
-	control := *source.complete(upload).Asset
+	root, err := source.s.Root.LibraryPath(source.library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "independent.png"), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if job := source.scan("scan-unselected-copy"); job.State != "completed" || job.Added != 1 {
+		t.Fatal("an unselected equal file must keep its own identity", job)
+	}
+	controls := assetsAt(t, source, "?q=independent")
+	if len(controls.Items) != 1 || controls.Items[0].Hash != rep.Hash || controls.Items[0].ID == rep.ID {
+		t.Fatal("missing independent equal file")
+	}
+	control := controls.Items[0]
+	upload, controlBytes := source.upload("replacement.png", 54, map[string]any{"replaceAssetId": control.ID, "expectedContentVersion": control.ContentVersion})
+	replacement := source.complete(upload).Asset
+	if replacement == nil || replacement.ID != control.ID || replacement.ContentVersion != control.ContentVersion+1 {
+		t.Fatal("explicit replacement failed for the unrelated equal image")
+	}
 	upload, _ = source.upload("discard.png", 55, nil)
 	discard := *source.complete(upload).Asset
 	decode(t, source.json("DELETE", fmt.Sprintf("/assets/%s?expectedRevision=%d", discard.ID, discard.Revision), "trash-independent", struct{}{}, 200), &discard)
@@ -169,6 +187,15 @@ func TestSelectedImageMergeReadsAndPreservesEveryNativeOriginal(t *testing.T) {
 		"size": len(original), "mimeType": "image/png", "mode": "ordinary", "replaceAssetId": rep.ID, "expectedContentVersion": 1}, 409)
 	decode(t, f.json("PUT", "/assets/"+rep.ID+"/favorite", "favorite-visible", map[string]bool{"favorite": true}, 200), &rep)
 	decode(t, f.json("DELETE", fmt.Sprintf("/assets/%s?expectedRevision=%d", rep.ID, rep.Revision), "trash-visible", struct{}{}, 200), &rep)
+	decode(t, f.json("GET", "/trash", "", nil, 200), &trash)
+	if len(trash.Items) != 2 || *trash.TotalMatched != 2 {
+		t.Fatal("trash must show the recoverable representative and the unrelated deletion")
+	}
+	for _, item := range trash.Items {
+		if item.ID != rep.ID && item.ID != discard.ID {
+			t.Fatal("retained original exposed to trash cleanup")
+		}
+	}
 	f.json("GET", old+"/content", "", nil, 404)
 	f.json("GET", old+"/thumbnail", "", nil, 404)
 	f.json("DELETE", fmt.Sprintf("/trash/%s?expectedRevision=%d", rep.ID, rep.Revision), "purge-retained-representative", struct{}{}, 409)
@@ -199,7 +226,7 @@ func TestSelectedImageMergeReadsAndPreservesEveryNativeOriginal(t *testing.T) {
 	}
 	checkPhysicalOriginal(t, reopened, rep, original)
 	checkPhysicalOriginal(t, reopened, donor, original)
-	assertNativeOriginal(t, reopened, control.ID, 1, controlBytes)
+	assertNativeOriginal(t, reopened, control.ID, replacement.ContentVersion, controlBytes)
 }
 
 func TestSelectedImageMergeScanAndBackupCheckPhysicalContent(t *testing.T) {
@@ -209,7 +236,17 @@ func TestSelectedImageMergeScanAndBackupCheckPhysicalContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := filepath.Join(root, filepath.FromSlash(rep.RelativePath))
-	changed := pngBytes(t, 110)
+	var changed []byte
+	for shade := 0; shade < 256; shade++ {
+		other := pngBytes(t, uint8(shade))
+		if len(other) == len(original) && !bytes.Equal(other, original) {
+			changed = other
+			break
+		}
+	}
+	if changed == nil {
+		t.Fatal("missing equal-length valid PNG fixture")
+	}
 	if err = os.WriteFile(name, changed, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -227,6 +264,23 @@ func TestSelectedImageMergeScanAndBackupCheckPhysicalContent(t *testing.T) {
 	decode(t, f.json("GET", "/assets/"+rep.ID, "", nil, 200), &current)
 	if current.Hash != rep.Hash || current.ContentVersion != rep.ContentVersion {
 		t.Fatal("scan lost the expected original digest or version")
+	}
+	// A file copy can preserve the original timestamp. Size and mtime alone
+	// cannot identify the bytes used for a versioned response or new thumbnail.
+	if err = os.Chtimes(name, *rep.ContentMtime, *rep.ContentMtime); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{donor.ID, rep.ID} {
+		var response service.Error
+		decode(t, f.json("GET", "/assets/"+id+"/content?version=1", "", nil, 409), &response)
+		if response.Code != "content_mismatch" {
+			t.Fatal("read of changed reviewed content lost the digest error", response.Code)
+		}
+	}
+	var preview service.Error
+	decode(t, f.json("GET", "/assets/"+donor.ID+"/thumbnail?size=lg&version=1", "", nil, 409), &preview)
+	if preview.Code != "content_mismatch" {
+		t.Fatal("a new thumbnail must use the verified reviewed bytes", preview.Code)
 	}
 	checkPhysicalOriginal(t, f, donor, original)
 	if err = os.WriteFile(name, original, 0600); err != nil {

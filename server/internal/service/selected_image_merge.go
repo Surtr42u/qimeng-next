@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/store"
 )
 
@@ -26,4 +27,15 @@ func requireDiscardableOriginal(ctx context.Context, q store.Querier, id string)
 		return Fail(409, "merge_original_protected", "此原件属于已校对的合并组，需要保留以供恢复。")
 	}
 	return nil
+}
+
+func (s *Service) verifySelectedImage(ctx context.Context, a model.Asset, source mediaInput) error {
+	if a.MediaType != "image" {
+		return nil
+	}
+	retained, err := selectedImageOriginal(ctx, s.DB.DB, a.ID)
+	if err != nil || !retained {
+		return err
+	}
+	return source.verify(ctx, s, a.Hash, a.Size)
 }

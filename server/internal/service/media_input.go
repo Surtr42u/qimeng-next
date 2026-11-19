@@ -82,7 +82,7 @@ func (m mediaInput) release(s *Service) error {
 }
 func (m mediaInput) verify(ctx context.Context, s *Service, hash string, size int64) error {
 	if m.file == nil {
-		return s.verify(m.name, hash, size)
+		return s.verifyContext(ctx, m.name, hash, size)
 	}
 	digest := sha256.New()
 	reader := io.NewSectionReader(m.file, 0, size)
@@ -107,7 +107,7 @@ func (m mediaInput) verify(ctx context.Context, s *Service, hash string, size in
 		return err
 	}
 	if info.Size() != size || hex.EncodeToString(digest.Sum(nil)) != hash {
-		return Fail(409, "content_mismatch", "研究原件的长度或摘要已变化。")
+		return Fail(409, "content_mismatch", "媒体原件的长度或摘要已变化。")
 	}
 	return nil
 }

@@ -801,6 +801,20 @@ func (s *Service) availablePath(ctx context.Context, library, relative string) (
 	return "", Fail(409, "name_exhausted", "无法分配可用文件名。")
 }
 func (s *Service) Content(ctx context.Context, id string, versions ...int64) (*os.File, model.Asset, error) {
+	file, a, err := s.openContent(ctx, id, versions)
+	if err != nil {
+		return nil, a, err
+	}
+	// Verify the pinned file outside the writer lock. A filesystem edit must
+	// not be served under the digest and content version of a retained image.
+	if err = s.verifySelectedImage(ctx, a, mediaInput{file: file}); err != nil {
+		file.Close()
+		return nil, a, err
+	}
+	return file, a, nil
+}
+
+func (s *Service) openContent(ctx context.Context, id string, versions []int64) (*os.File, model.Asset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, e := s.AssetDetail(ctx, id)
