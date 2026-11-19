@@ -288,6 +288,79 @@ class AndroidRealServerTest {
     }
 
     @Test(timeout = 240_000)
+    fun ordinaryUploadUsesAuthorSourceAndFileNameSuggestions() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        assertFalse(runBlocking { graph.media.capabilities().aiConfigured })
+        val suffix = UUID.randomUUID().toString().take(8)
+        val family = "上传建议-$suffix"
+        val authorChannel = "作者渠道$suffix"
+        val assetChannel = "作品渠道$suffix"
+        val library = runBlocking { graph.media.createLibrary("普通上传 $suffix", false) }
+        val alias = "检索别名$suffix"
+        val author = runBlocking { graph.media.createNamedAuthor(target, listOf("合成作者$suffix", alias), UUID.randomUUID().toString()) }
+        setSyntheticAcquisitionOptions(graph, target, authorChannel, assetChannel)
+        val seedKey = UUID.randomUUID().toString()
+        val (source, _) = writeMetadataImage("seed-$suffix")
+        val seed = runBlocking {
+            graph.queue.state.value!!.drafts.filter { it.intakeGroup == null }.forEach { graph.uploads.discardDraft(it.id) }
+            val id = graph.uploads.receive(listOf(source), intakeGroup = seedKey).single()
+            graph.uploads.renameDraft(id, "$family 01.png")
+            graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, target = target, inputIds = listOf(id), batchKey = seedKey)
+            id
+        }
+        await("ordinary-name-seed", graph) { graph.queue.state.value!!.transfers.single { it.id == seed }.state == TransferState.SUCCEEDED }
+        val (_, originalBytes) = writeMetadataImage("new-$suffix")
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
+        compose.onNodeWithText("数据管理").performClick()
+        compose.onNodeWithText("上传文件").performClick()
+        val list = compose.onNodeWithTag("upload-list")
+        compose.waitUntil(30_000) { model.libraries.value.any { it.id == library.id } }
+        list.performScrollToNode(hasText(library.name))
+        compose.onNodeWithText(library.name).performClick()
+        compose.waitUntil(20_000) { model.uploadLibrary.value == library.id }
+        compose.runOnIdle { model.receiveFiles(listOf(source)) }
+        await("ordinary-suggest-draft", graph) { graph.queue.state.value?.drafts?.count { it.intakeGroup == null } == 1 }
+        val draft = graph.queue.state.value!!.drafts.single { it.intakeGroup == null }
+        list.performScrollToNode(hasText("作者与来源"))
+        compose.onNodeWithText("作者与来源").performClick()
+        list.performScrollToNode(hasText("选择作者"))
+        compose.onNodeWithText("选择作者").performClick()
+        editVisibleField("upload-author-search", alias)
+        val authorTag = "upload-author-search:${author.id}"
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag(authorTag).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag(authorTag).performClick()
+        compose.onNodeWithText("应用").performClick()
+        list.performScrollToNode(hasTestTag("upload-author-source:$authorChannel"))
+        compose.onNodeWithTag("upload-author-source:$authorChannel").performClick()
+        list.performScrollToNode(hasTestTag("upload-asset-source:$assetChannel"))
+        compose.onNodeWithTag("upload-asset-source:$assetChannel").performClick()
+        list.performScrollToNode(hasTestTag("draft-name:${draft.id}"))
+        editVisibleField("draft-name:${draft.id}", family)
+        val suggested = "$family 02.png"
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(suggested).fetchSemanticsNodes().isNotEmpty() }
+        list.performScrollToNode(hasText(suggested))
+        screenshot("real-server-ordinary-upload-suggestion.png")
+        compose.onNodeWithText(suggested).performClick()
+        compose.onNodeWithTag("draft-name:${draft.id}").assertTextEquals("$family 02")
+        compose.onNodeWithText("锁定").assertExists()
+        list.performScrollToNode(hasText("开始上传（1 项）"))
+        compose.onNodeWithText("开始上传（1 项）").performClick()
+        await("ordinary-upload-readback", graph) { graph.queue.state.value!!.transfers.any { it.id == draft.id && it.state == TransferState.SUCCEEDED } }
+        val transfer = graph.queue.state.value!!.transfers.single { it.id == draft.id }
+        val asset = runBlocking { graph.media.asset(requireNotNull(transfer.assetId), target) }
+        assertEquals(suggested, asset.name)
+        assertEquals(draft.originalName, asset.originalName)
+        assertEquals(listOf(author.id), asset.authorIds)
+        assertEquals(listOf(assetChannel), asset.acquisitionSources)
+        assertEquals(listOf(authorChannel), runBlocking { graph.media.author(author.id, target).acquisitionSources })
+        val providerBytes = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver.openInputStream(source)!!.use { it.readBytes() }
+        assertArrayEquals(originalBytes, providerBytes)
+    }
+
+    @Test(timeout = 240_000)
     fun playRealVideoThroughTheLandscapeWindow() {
         val graph = runBlocking { isolatedServerGraph() }
         val video = runBlocking {

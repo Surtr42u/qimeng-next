@@ -9,8 +9,7 @@ import media.qimeng.next.sdk.model.NamingPreviewInput
 class NamingRepository internal constructor(private val settings: SecureSettings, private val provider: ApiProvider) {
     suspend fun inspect(request: NamingRequest): NamingInspection {
         val api = provider.api(settings.session.value ?: error("请先登录服务器"))
-        val suggestions = api.suggestNames(id = request.libraryId, directory = request.directory, q = request.family,
-            mediaType = DefaultApi.MediaTypeSuggestNames.entries.first { it.value == request.numberClass }).bodyOrThrow()
+        val suggestions = suggestions(api, request.libraryId, request.directory, request.family, request.numberClass)
         val matches = suggestions.items.map { NamingSuggestion(it.family, it.suggestedName) }
         if (request.family.isBlank() && request.collectionId == null) return NamingInspection(matches, suggestions.truncated, null, null)
         val context = api.getNamingContext(id = request.libraryId, directory = request.directory, family = request.family,
@@ -37,4 +36,13 @@ class NamingRepository internal constructor(private val settings: SecureSettings
         }
         return NamingInspection(matches, suggestions.truncated, position, preview)
     }
+
+    suspend fun fileStems(target: Session, libraryId: String, directory: String, prefix: String, numberClass: String): List<String> =
+        suggestions(provider.api(target), libraryId, directory, prefix, numberClass).items.map { item ->
+            item.suggestedName.removeSuffix(lockedFileExtension(item.suggestedName))
+        }.distinct()
+
+    private suspend fun suggestions(api: DefaultApi, libraryId: String, directory: String, prefix: String, numberClass: String) =
+        api.suggestNames(id = libraryId, directory = directory, q = prefix,
+            mediaType = DefaultApi.MediaTypeSuggestNames.entries.first { it.value == numberClass }).bodyOrThrow()
 }
