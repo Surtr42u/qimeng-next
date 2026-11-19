@@ -4,8 +4,11 @@
   justify-content: center;
   gap: 4px;
   white-space: nowrap;
-  /* Keep the old flex footprint: the 14px icon used to sit on its own line.
-     The icon and gap now use 18px of the pill's original horizontal padding. */
-  margin-block: 7px;
+  /* Keep the old 14px icon line in the flex footprint as one length.
+     Two half-margins round separately at the page's 110% zoom. */
+  margin-block-end: 14px;
+  position: relative;
+  inset-block-start: 7px;
+  /* The icon and gap now occupy 18px of the original horizontal padding. */
   padding-inline: 3px;
 }

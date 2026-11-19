@@ -22,9 +22,10 @@ for (const width of [1440, 390]) {
       const icon = node.querySelector("svg")!.getBoundingClientRect();
       const filename = document.createRange();
       filename.selectNodeContents(node.previousElementSibling!);
-      return { gap: label.left - icon.right, middle: Math.abs((label.top + label.bottom - icon.top - icon.bottom) / 2),
+      return { iconWidth: icon.width, gap: label.left - icon.right, middle: Math.abs((label.top + label.bottom - icon.top - icon.bottom) / 2),
         labelLines: text.getClientRects().length, filenameLines: filename.getClientRects().length };
     });
+    expect(shape.iconWidth).toBeGreaterThanOrEqual(14);
     expect(shape.gap).toBeGreaterThanOrEqual(3);
     expect(shape.middle).toBeLessThan(3);
     expect(shape.labelLines).toBe(1);
@@ -36,32 +37,21 @@ for (const width of [1440, 390]) {
         const { x, y, width, height } = node.getBoundingClientRect();
         return [x, y, width, height];
       }));
-      const masked = (variant: string) => page.screenshot({
-        style: 'button[title="复制完整文件名"] { visibility: hidden !important; }', animations: "disabled",
-        path: testInfo.outputPath(`detail-outside-copy-${width}-${variant}.png`),
-      });
-      const scroll = () => page.locator(".content, .asset-overlay, .upnext-list").evaluateAll(nodes =>
-        nodes.map(node => [node.className, node.scrollLeft, node.scrollTop, node.scrollHeight]));
+      const capture = async (name: string) => {
+        await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+        return page.screenshot({ path: testInfo.outputPath(name), animations: "disabled" });
+      };
+      await capture(`detail-copy-dark-${width}.png`);
+      const mask = await page.addStyleTag({ content: 'button[title="复制完整文件名"] { visibility: hidden !important; }' });
       await copy.evaluate(node => node.classList.remove("asset-file-copy"));
+      const before = await capture(`detail-outside-copy-${width}-baseline.png`);
       const original = await boxes();
-      const originalScroll = await scroll();
-      const before = await masked("baseline");
       await copy.evaluate(node => node.classList.add("asset-file-copy"));
+      const after = await capture(`detail-outside-copy-${width}-candidate.png`);
       const current = await boxes();
-      const currentScroll = await scroll();
-      const drift = Math.max(...current.flatMap((rect, i) => rect.map((n, j) => Math.abs(n - original[i]![j]!))));
-      expect(drift).toBeLessThan(0.05);
-      const after = await masked("candidate");
-      if (!after.equals(before)) {
-        const currentRepeat = await masked("candidate-repeat");
-        await copy.evaluate(node => node.classList.remove("asset-file-copy"));
-        const originalRepeat = await masked("baseline-repeat");
-        await copy.evaluate(node => node.classList.add("asset-file-copy"));
-        console.info("copy comparison", { width, original, current, originalScroll, currentScroll, drift,
-          baselineReproduced: before.equals(originalRepeat), candidateReproduced: after.equals(currentRepeat) });
-      }
+      await mask.evaluate(node => node.remove());
+      expect(current).toEqual(original);
       expect(after.equals(before), "pixels outside the copy button").toBe(true);
-      await page.screenshot({ path: testInfo.outputPath(`detail-copy-dark-${width}.png`), animations: "disabled" });
     }
     if (browserName === "chromium") {
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
