@@ -121,7 +121,8 @@ export function adapter(side, inventory) {
         blockCount: blocks.length, candidateCount: 0, conflicts: [] };
       if (path.endsWith("/profile")) return response({ authorId, editable: true, blocks });
       if (path.endsWith("/updates")) return response({ authorId, revision: 1, trackUpdates: false, feedUrl: "", items: [] });
-      if (path.endsWith("/candidates")) return response({ items: [] });
+      if (path.endsWith("/candidates")) return response({ items: [{ id: "sample-candidate", authorId,
+        block: "basic", state: "pending", baseRevision: 1, createdAt: fixedTime, values: { summary: "合成候选资料" }, evidence: [] }] });
       if (path.endsWith("/archives")) return response({ items: [archive] });
       if (path.endsWith("/archives/sample-archive")) return response({ ...archive, blocks });
     }

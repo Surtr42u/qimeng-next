@@ -42,7 +42,12 @@ function instrument({ author, profile, archives, detail, ai, side }) {
         const el = document.querySelector(selector);
         return el?.getClientRects().length && !el.closest("[inert]") && !el.matches(":disabled");
       }) && (!target.endsWith("/home") && target !== "/" || document.querySelectorAll("#page-home .card").length === 10)) {
-        window.sample = { target, ms: Math.round(performance.now() - start) };
+        window.sample ??= { target, ms: Math.round(performance.now() - start) };
+        if (target === profile) {
+          if (document.querySelector("main .creator-candidate button:not(:disabled)")) {
+            window.sample.reviewMs = Math.round(performance.now() - start);
+          } else requestAnimationFrame(check);
+        }
       } else requestAnimationFrame(check);
     };
     requestAnimationFrame(check);
@@ -75,6 +80,11 @@ async function runTrajectory(name, round, journey) {
     else await page.goto(server.origin + path, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(path => window.sample?.target === path, path, { timeout: 12000 });
     const ms = await page.evaluate(() => window.sample.ms);
+    let reviewMs;
+    if (path === profile) {
+      await page.waitForFunction(() => window.sample?.reviewMs !== undefined);
+      reviewMs = await page.evaluate(() => window.sample.reviewMs);
+    }
     if (path === "/" || path === "/app/home") {
       await expect(page.locator("#page-home .card")).toHaveCount(10);
       await page.evaluate(() => document.fonts.ready.then(() => true));
@@ -93,7 +103,7 @@ async function runTrajectory(name, round, journey) {
         totalBytes: requests.reduce((n, r) => n + r.outBytes, 0) };
     };
     const whole = traffic(server, start);
-    const row = { name, round, journey, stage, ms,
+    const row = { name, round, journey, stage, ms, reviewMs,
       delta: { ...sum(segment.requests), wireOut: segment.wireOut, wireIn: segment.wireIn },
       cumulative: { ...sum(whole.requests), wireOut: whole.wireOut, wireIn: whole.wireIn },
       scripts: segment.requests.filter(r => r.path.endsWith(".js")).map(r => ({ path: r.path, bytes: r.outBytes })) };
