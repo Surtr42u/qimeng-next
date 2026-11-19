@@ -1,5 +1,27 @@
 # 绮梦 Next 发布与验收交接
 
+## 本轮交接
+
+2026-11-20 核对时，主线为 `3599fcb2726cb0c8dcd9ff9ded430730df9e4a3a`。#18 已修复同名目录导致的缺件误判和 Web 事件队列阻塞，合入提交为 `8b2c415`。#21 在 `a98bb43` 同步了 18 份发布、迁移、后台预热与设备交接文档。#23 的历史视频缩略图修复按已核验的容器文件头选择处理方式，检查通过后合入 `3599fcb`。[PR #18](https://github.com/Surtr42u/qimeng-next/pull/18) · [PR #21](https://github.com/Surtr42u/qimeng-next/pull/21) · [PR #23](https://github.com/Surtr42u/qimeng-next/pull/23)
+
+#23 合入后的主线 Windows 包仍在构建，按该作业核对产物。[主线 Windows 包](https://github.com/Surtr42u/qimeng-next/actions/runs/44600225546)
+
+PDF 审查的 13 项均有修复提交，其中 2 项已随 #18 入主线。其余条目按下表对应 PR 的验收与合入记录核对。表中 SHA 是本次核对时的分支 HEAD，继续工作前以远端为准。
+
+| 仍在验收的范围 | 当时的 HEAD 与入口 |
+|---|---|
+| 手机与 Web 统一图标，以及 Android 缓存、统计、作者、视频、浏览和管理界面 | `20411c52bcc28d6eed8edf817d51ef239d679d00`。前一版 Kotlin 编译发现批量编辑调用了旧入口。当前提交将批量编辑和视频仪器用例接到 `updateEditableAsset`，沿用版本修订，新提交待云端验收。[正式 PR #19](https://github.com/Surtr42u/qimeng-next/pull/19) |
+| 上传恢复、归档核验、包时区和热度同分排序。上传恢复沿用原身份与提交回执。 | `88326565bbc0c1de3126ba77c13f6dd354630aa7`。[正式 PR #20](https://github.com/Surtr42u/qimeng-next/pull/20) |
+| Web 维护目录暂存与两代恢复、AI 领取后的故障接续、长文本续读。#06 的 IndexedDB 事务中止修补 `218b887` 已纳入该 PR。 | `dac0e175f4224b42fc213f44a5307c280d3c72d4`。[正式 PR #22](https://github.com/Surtr42u/qimeng-next/pull/22) · [事务中止专项复验](https://github.com/Surtr42u/qimeng-next/actions/runs/44600471485) |
+
+Android 分项 QA 使用独立提交和指定 API 35 云模拟器。本次核对时以下作业仍在运行，结论查各自的 JUnit 与云端制品。合成证据的范围是对应提交、云模拟器和样本。[作者、统计与视频（3c497cb）](https://github.com/Surtr42u/qimeng-next/actions/runs/44597671389) · [管理（6d7f050）](https://github.com/Surtr42u/qimeng-next/actions/runs/44597431852) · [浏览（519b239）](https://github.com/Surtr42u/qimeng-next/actions/runs/44599363766)
+
+1. 获取远端分支和对应 PR，核对当前 HEAD。针对失败作业收集对应 SHA 的 JUnit、Playwright 失败材料及日志，从失败用例继续。
+2. 合入后锁定产品主线 SHA、正式作业及安装包。核对包的来源与摘要，手机升级前在私有环境核对签名与目标已有版本。[正式包核对步骤](#2-从主线取包并核对安装目标)
+3. 沿用已完成的迁移结果。私有 PC 从现有 Next 实例按正常入口回读，手机覆盖升级后另行核对已有数据、启动及对应流程，实体 NAS 到现场验证持久卷、停启及回读。真实库计数、路径、签名、设备和原件信息由所有者私下留存。[恢复与回退](#4-保留恢复身份与回退点) · [NAS 部署](quickstart.md#nas)
+
+## 已发布基线与通用步骤
+
 2026-11-19 23:34（北京时间）合入的产品提交为 `55d4963716673030537e6b7b245a3662e8da3c7d`。对应主线作业已通过，已出具 Windows 服务包、桌面安装包与 Android 纯客户端和内嵌 APK。后续维护按下列步骤核对所选产品 SHA、作业结论和制品摘要。真实设备的安装版本、迁移回执和后台预热进度由所有者在私有交接中续记。[PR #17](https://github.com/Surtr42u/qimeng-next/pull/17) · [主线产品作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44556256306)
 
 11 月 20 日继续按安装版 `74597408` 对照手机界面。已在指定模拟器取得未修改旧发行包的统计、作者、缓存、视频与导航画面。新版的各项改动及当前合入状态由对应 PR 记录，已安装版本由目标环境的包摘要核对。Android 同包名和原签名的覆盖升级复用已迁好的数据。[旧版画面与证据](https://github.com/Surtr42u/qimeng-next/actions/runs/44588916908) · [Android 集成](https://github.com/Surtr42u/qimeng-next/pull/19) · [扫描与事件处理](https://github.com/Surtr42u/qimeng-next/pull/18) · [上传、归档与部署](https://github.com/Surtr42u/qimeng-next/pull/20)
