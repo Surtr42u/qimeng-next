@@ -40,6 +40,9 @@ def catalog(kind, size, hue, data_root):
     directory = Path(call("GET", f"{library_path}/location")["rootPath"]).resolve(strict=True)
     if data_root not in directory.parents:
         raise RuntimeError("Synthetic library escaped the isolated data root")
+    if kind == "cos":
+        directory = directory / "Synthetic creator" / "Synthetic collection"
+        directory.mkdir(parents=True)
     for index in range(size):
         (directory / f"sample_{kind}_{index:02}.png").write_bytes(png(hue, index))
     job = call("POST", f"{library_path}/scans", {"expectedRevision": library["revision"]})
@@ -55,6 +58,9 @@ def catalog(kind, size, hue, data_root):
     assets = call("GET", f"/assets?libraryId={library['id']}&limit=100")["items"]
     if len(assets) != size:
         raise RuntimeError(f"Expected {size} assets in the {kind} fixture, got {len(assets)}")
+    partition = call("GET", f"/assets?libraryId={library['id']}&kind={kind}&limit=100")["items"]
+    if {asset["id"] for asset in partition} != {asset["id"] for asset in assets}:
+        raise RuntimeError(f"The {kind} fixture did not acquire its intended browse partition")
     return sorted(assets, key=lambda item: item["fileName"])
 
 
