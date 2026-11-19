@@ -307,3 +307,59 @@ func TestSelectedImageMergeScanAndBackupCheckPhysicalContent(t *testing.T) {
 		t.Fatal("archive accepted a same-length damaged member")
 	}
 }
+
+func TestSelectedImageMergeScanCannotAdoptAnUnselectedCopyAfterOriginalGoesMissing(t *testing.T) {
+	f, rep, donor, original := selectedImageFixture(t)
+	root, err := f.s.Root.LibraryPath(f.library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const event = "reviewed-image-visit"
+	f.json("POST", "/assets/"+rep.ID+"/events", "", map[string]any{"eventId": event, "kind": "view", "contentVersion": rep.ContentVersion}, 200)
+	registered := filepath.Join(root, filepath.FromSlash(rep.RelativePath))
+	held := filepath.Join(f.s.Config.DataDir, "outside-library.png")
+	if err = os.Rename(registered, held); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "independent.png"), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	job := f.scan("new-copy-with-missing-representative")
+	if job.State != "partial" || job.Added != 1 || job.Moved != 0 || job.Missing != 1 || len(job.Issues) != 1 ||
+		job.Issues[0].RelativePath != rep.RelativePath || job.Issues[0].Code != "missing_original" {
+		t.Fatal("scan must report the registered original missing and index the new copy independently", job)
+	}
+	copies := assetsAt(t, f, "?q=independent")
+	if len(copies.Items) != 1 {
+		t.Fatal("independent physical copy missing from the catalog")
+	}
+	independent := copies.Items[0]
+	if independent.ID == rep.ID || independent.ID == donor.ID || independent.Hash != rep.Hash || independent.ViewCount != 0 {
+		t.Fatal("the new physical copy adopted a reviewed identity or its activity")
+	}
+	var linked model.Asset
+	decode(t, f.json("GET", "/assets/"+donor.ID, "", nil, 200), &linked)
+	if linked.ID != rep.ID || linked.RelativePath != rep.RelativePath || linked.ViewCount != 1 {
+		t.Fatal("the legacy link changed its physical target")
+	}
+	var history model.Page[model.Event]
+	decode(t, f.json("GET", "/history", "", nil, 200), &history)
+	if len(history.Items) != 1 || history.Items[0].EventID != event || history.Items[0].AssetID != rep.ID ||
+		history.Items[0].Asset == nil || history.Items[0].Asset.RelativePath != rep.RelativePath {
+		t.Fatal("history followed the unselected copy")
+	}
+	checkPhysicalOriginal(t, f, donor, original)
+
+	if err = os.Rename(held, registered); err != nil {
+		t.Fatal(err)
+	}
+	const reviewedMove = "approved/renamed.png"
+	decode(t, f.json("POST", "/assets/"+rep.ID+"/move", "explicit-reviewed-move", map[string]any{
+		"expectedRevision": linked.Revision, "relativePath": reviewedMove}, 200), &rep)
+	decode(t, f.json("GET", "/assets/"+donor.ID, "", nil, 200), &linked)
+	if linked.ID != rep.ID || linked.RelativePath != reviewedMove || linked.ViewCount != 1 {
+		t.Fatal("explicit move lost the reviewed link or history")
+	}
+	assertNativeOriginal(t, f, donor.ID, rep.ContentVersion, original)
+	assertNativeOriginal(t, f, independent.ID, independent.ContentVersion, original)
+}
