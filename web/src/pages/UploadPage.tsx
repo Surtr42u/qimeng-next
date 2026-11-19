@@ -12,6 +12,7 @@ import { ManagePageHeader } from "../components/LegacyManageHeader";
 import { MoreLibraries } from "../components/MoreLibraries";
 import { ErrorNotice, Loading } from "../components/Feedback";
 import { droppedFiles } from "../lib/drop-files";
+import { ApiError } from "../lib/errors";
 import { UploadDestinationCard } from "./UploadDestinationCard";
 import { UploadRow } from "./UploadQueueList";
 import { ServerImportPanel } from "./ServerImportPanel";
@@ -87,7 +88,13 @@ export function UploadPage() {
       };
       if (mode === "ordinary" && (automaticName || collectionId)) {
         setBusy("正在预览选定文件的名称…");
-        setNamePreview(await previewNamingFiles(files, naming, collections.find(item => item.id === collectionId)?.kind));
+        try {
+          setNamePreview(await previewNamingFiles(files.filter(file => file.size > 0), naming, collections.find(item => item.id === collectionId)?.kind));
+        } catch (failure) {
+          if (!(failure instanceof ApiError && failure.code === "unsupported_media")) throw failure;
+          setNamePreview([]);
+          setError(new Error("本批含无法预览名称的文件。有效文件仍按所选规则命名，结果见本批报告。"));
+        }
       } else setNamePreview([]);
       setBusy("正在登记本批文件…");
       await upload.queue.add(files, {
@@ -156,7 +163,7 @@ export function UploadPage() {
         <input ref={filePicker} type="file" multiple hidden aria-label="选择要上传的文件" onChange={event => pick(event.target)} />
         <input ref={directoryPicker} type="file" multiple hidden {...{ webkitdirectory: "" }} aria-label="选择要上传的文件夹" onChange={event => pick(event.target)} />
         <section className="chart-card upload-queue" aria-label="上传任务">
-          <div className="upload-queue-head"><div><h3><ListChecks aria-hidden />上传队列 <span>{entries.length}</span></h3><p className="rank-note">{entries.length ? "成功 " + count("ingested") + " · 失败 " + count("failed") + " · 待整理 " + count("staged") + " · 待重选 " + count("waiting_file") : "本次会话的进度与结果"}</p></div><div className="upload-queue-actions">
+          <div className="upload-queue-head"><div><h3><ListChecks aria-hidden />上传队列 <span>{entries.length}</span></h3><p className="rank-note">{entries.length ? "成功 " + count("ingested") + " · 失败 " + (count("failed") + count("rejected")) + " · 待整理 " + count("staged") + " · 待重选 " + count("waiting_file") : "本次会话的进度与结果"}</p></div><div className="upload-queue-actions">
             {unsettled && <button className="pill" type="button" onClick={() => void upload.queue?.cancelAll()}>全部取消</button>}
             {entries.some(item => isQueueTerminal(item.phase)) && <button className="pill" type="button" title="仅移除已结束任务的列表记录，不删除已上传文件" onClick={() => void upload.queue?.clearFinished()}>清理已结束记录</button>}
           </div></div>

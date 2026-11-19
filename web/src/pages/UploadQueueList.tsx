@@ -8,7 +8,7 @@ import { bytes } from "../lib/format";
 const phaseNames: Record<UploadPhase, string> = {
   waiting_file: "需重新选择文件", queued: "排队中", hashing: "核验文件内容",
   uploading: "上传中", completing: "服务器处理中…", ingested: "已完成",
-  staged: "已接收，等待整理", duplicate: "重复内容，未新增", failed: "失败",
+  staged: "已接收，等待整理", duplicate: "重复内容，未新增", failed: "失败", rejected: "失败",
   paused: "已暂停", cancelled: "已取消",
 };
 
@@ -17,7 +17,7 @@ export function UploadRow({ entry }: { entry: QueueEntry }) {
   const reselect = useRef<HTMLInputElement>(null);
   const active = ["hashing", "uploading", "completing", "queued"].includes(entry.phase);
   const progress = entry.phase === "hashing" ? entry.hashProgress : entry.offset;
-  const status = entry.phase === "ingested" ? "done" : entry.phase === "waiting_file" ? "needs-file" : entry.phase === "cancelled" ? "canceled" : entry.phase;
+  const status = entry.phase === "ingested" ? "done" : entry.phase === "waiting_file" ? "needs-file" : entry.phase === "cancelled" ? "canceled" : entry.phase === "rejected" ? "failed" : entry.phase;
   const statusText = entry.phase === "uploading" ? `上传中 ${Math.floor(entry.offset / entry.size * 100)}%` : phaseNames[entry.phase];
   return (
     <li className={`upload-task upload-task--${status}`}>
