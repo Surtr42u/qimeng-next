@@ -1,0 +1,36 @@
+name: Ubuntu FFmpeg dependency experiment
+on:
+  push:
+    branches: [codex/verified-ci-media-cache]
+    paths: ['.github/workflows/ci-media-proof.yml']
+permissions:
+  contents: read
+jobs:
+  apt-behavior:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Measure the runner's native Ubuntu APT transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          echo "image=$ImageOS/$ImageVersion ubuntu=$VERSION_ID/$VERSION_CODENAME architecture=$(dpkg --print-architecture)"
+          apt-get --version | sed -n '1p'
+          ls /etc/apt/sources.list.d
+          test -s /etc/apt/sources.list.d/ubuntu.sources
+          grep -E '^(Types|URIs|Signed-By):' /etc/apt/sources.list.d/ubuntu.sources
+          archives=$(mktemp -d /var/tmp/ffmpeg-proof.XXXXXXXX)
+          chmod 755 "$archives"
+          apt=(sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=false -o "Dir::Cache::archives=$archives")
+          time "${apt[@]}" --error-on=any update
+          time "${apt[@]}" -qq -o Acquire::ForceHash=SHA256 --print-uris --no-remove --no-install-recommends --reinstall install ffmpeg > "$RUNNER_TEMP/apt-plan"
+          sed -n '1,3p' "$RUNNER_TEMP/apt-plan"
+          awk '$4 ~ /^SHA256:/ {n++; bytes+=$3} END {print "plan_packages="n, "plan_bytes="bytes; if(!n) exit 1}' "$RUNNER_TEMP/apt-plan"
+          time "${apt[@]}" -y --download-only --no-remove --no-install-recommends --reinstall install ffmpeg
+          time "${apt[@]}" -y --no-download --no-remove --no-install-recommends --reinstall install ffmpeg
+          ffmpeg -v error -nostdin -f lavfi -i testsrc2=s=32x24:r=2 -frames:v 2 -c:v ffv1 -flags:v +bitexact -fflags +bitexact "$RUNNER_TEMP/sample.avi"
+          result=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=codec_name,width,height,nb_read_frames -of csv=p=0 "$RUNNER_TEMP/sample.avi")
+          echo "probe=$result"
+          test "$result" = ffv1,32,24,2
+          sha256sum "$RUNNER_TEMP/sample.avi"
