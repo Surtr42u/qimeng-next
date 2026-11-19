@@ -314,7 +314,9 @@ private val researchSourceNames = mapOf("fxtwitter" to "FxTwitter", "pixiv" to "
 
 @Composable
 private fun PermissionRow(label: String, selected: Boolean, enabled: Boolean, changed: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(selected, enabled, Role.Checkbox, changed),
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(
+        value = selected, enabled = enabled, role = Role.Checkbox, onValueChange = changed,
+    ),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Checkbox(selected, onCheckedChange = null, enabled = enabled)
         Text(label, Modifier.weight(1f))
