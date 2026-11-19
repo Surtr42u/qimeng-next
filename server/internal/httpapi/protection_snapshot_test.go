@@ -185,17 +185,55 @@ func TestProtectionRetryUsesPublishedSnapshotBeforeReceipt(t *testing.T) {
 // A pre-upgrade report and its issued permits can survive independently of any
 // currently mounted target. Exercise their persisted format on every platform.
 func TestLegacyProtectionAndPermitReplayRequireSnapshotMembership(t *testing.T) {
+	checkLegacyPermitMembership(t, false)
+}
+
+func TestLegacyPermitReplayUsesIndependentSnapshotMembership(t *testing.T) {
+	checkLegacyPermitMembership(t, true)
+}
+
+func completedProtection(t *testing.T, f *fixture, batchID, key string) service.BatchProtection {
+	t.Helper()
+	var queued service.BatchProtection
+	decode(t, f.json("POST", "/batches/"+batchID+"/protections", key, struct{}{}, 202), &queued)
+	proof := awaitProtection(t, f, batchID, queued.ID)
+	if proof.State != "completed" {
+		t.Fatalf("independent protection did not complete: %s", proof.ErrorCode)
+	}
+	return proof
+}
+
+func checkLegacyPermitMembership(t *testing.T, useIndependentCopy bool) {
+	t.Helper()
 	f := setup(t)
 	batch, first, pending := batchWithPendingSecondUpload(t, f)
-	interruptCheckpointReceipt(t, f, "/backups")
+	var independent service.BatchProtection
+	var target string
+	if useIndependentCopy {
+		target = distinctProtectionTarget(t, f)
+		independent = completedProtection(t, f, batch.ID, "historical-independent-snapshot")
+	} else {
+		interruptCheckpointReceipt(t, f, "/backups")
+	}
 	second := f.complete(pending)
-	var checkpoint service.Backup
-	decode(t, f.json("POST", "/backups", interruptedCheckpointKey, struct{}{}, 201), &checkpoint)
+	checkpoint := service.Backup{ID: independent.CheckpointID, SnapshotHash: independent.SnapshotHash}
+	if !useIndependentCopy {
+		decode(t, f.json("POST", "/backups", interruptedCheckpointKey, struct{}{}, 201), &checkpoint)
+	}
 	name := filepath.Join(f.s.Config.DataDir, "backups", checkpoint.ID, "snapshot.sqlite")
 	checkProtectionSnapshot(t, name, batch, first, second, false)
 	info, err := os.Stat(name)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if useIndependentCopy {
+		checkProtectionSnapshot(t, filepath.Join(target, "instances", independent.InstanceID, "snapshots", independent.SnapshotHash+".sqlite"), batch, first, second, false)
+		if err = os.Rename(name, name+".held"); err != nil {
+			t.Fatal(err)
+		}
+		// A later independent backup contains both originals. Its SQLite file
+		// and the shared object for the second upload cannot prove membership.
+		completedProtection(t, f, batch.ID, "both-originals-now-independent")
 	}
 	ctx := context.Background()
 	owner, err := f.s.Authenticate(ctx, testSecret)
@@ -205,6 +243,7 @@ func TestLegacyProtectionAndPermitReplayRequireSnapshotMembership(t *testing.T) 
 	proof := service.BatchProtection{
 		ID: "synthetic-old-proof", InstanceID: f.s.InstanceID, BatchID: batch.ID, ManifestFingerprint: batch.ManifestFingerprint,
 		CheckpointID: checkpoint.ID, SnapshotHash: checkpoint.SnapshotHash, SnapshotBytes: info.Size(), State: "completed",
+		TargetID: independent.TargetID, FailureDomain: independent.FailureDomain,
 		ProofHash: fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic legacy receipt"))), CreatedAt: time.Now().UTC(),
 	}
 	for ordinal, result := range []model.UploadResult{first, second} {

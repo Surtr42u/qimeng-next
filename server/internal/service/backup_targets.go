@@ -79,6 +79,18 @@ func (s *Service) backupTarget(ctx context.Context, id string) (BackupTarget, Ba
 	}
 	return target, info, nil
 }
+
+func (s *Service) protectionTarget(ctx context.Context, p BatchProtection) (BackupTarget, error) {
+	target, info, err := s.backupTarget(ctx, p.TargetID)
+	if err != nil {
+		return target, err
+	}
+	if !info.DistinctVolume || target.FailureDomain != p.FailureDomain {
+		return target, Fail(409, "backup_target_changed", "独立备份目标配置或卷归属已变化，来源必须保留。")
+	}
+	return target, nil
+}
+
 func (s *Service) BackupTargets(ctx context.Context, p model.Principal) (model.Page[BackupTargetInfo], error) {
 	result := model.Page[BackupTargetInfo]{Items: []BackupTargetInfo{}}
 	if e := Authorize(p, "admin", ""); e != nil {
@@ -103,7 +115,11 @@ func (s *Service) BackupTargets(ctx context.Context, p model.Principal) (model.P
 }
 
 func verifyTargetObject(ctx context.Context, root *os.Root, name, expected string, size int64) error {
-	file, e := root.Open(name)
+	return readTargetObject(ctx, root, name, expected, size, io.Discard)
+}
+
+func readTargetObject(ctx context.Context, root *os.Root, name, expected string, size int64, dst io.Writer) error {
+	file, e := root.OpenFile(name, os.O_RDONLY|syncReadFlags, 0)
 	if e != nil {
 		return e
 	}
@@ -115,31 +131,20 @@ func verifyTargetObject(ctx context.Context, root *os.Root, name, expected strin
 	if !stat.Mode().IsRegular() || stat.Size() != size {
 		return Fail(409, "backup_target_content_changed", "目标备份对象长度改变，不能作为清理依据。")
 	}
-	hash := sha256.New()
-	buffer := make([]byte, 128<<10)
-	for {
-		if e = ctx.Err(); e != nil {
-			return e
-		}
-		n, readErr := file.Read(buffer)
-		if n > 0 {
-			if _, e = hash.Write(buffer[:n]); e != nil {
-				return e
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return readErr
-		}
+	actual, n, e := hashReaderContext(ctx, io.TeeReader(io.LimitReader(file, size), dst), nil)
+	if e != nil {
+		return e
 	}
-	if hex.EncodeToString(hash.Sum(nil)) != expected {
-		return Fail(409, "backup_target_content_changed", "目标备份对象摘要改变，不能作为清理依据。")
+	current, e := root.Lstat(name)
+	if e != nil {
+		return e
+	}
+	if n != size || actual != expected || current.Size() != size || syncPathLink(current) || !os.SameFile(stat, current) {
+		return Fail(409, "backup_target_content_changed", "目标备份对象已变化，不能作为清理依据。")
 	}
 	return nil
 }
-func copyTargetObject(ctx context.Context, root *os.Root, targetRoot, temporary, destination, hash string, size, reserve int64, open func() (io.ReadCloser, error)) error {
+func copyTargetObject(ctx context.Context, root *os.Root, temporary, destination, hash string, size, reserve int64, open func() (io.ReadCloser, error)) error {
 	if _, e := root.Lstat(destination); e == nil {
 		return verifyTargetObject(ctx, root, destination, hash, size)
 	} else if !errors.Is(e, os.ErrNotExist) {
@@ -161,7 +166,7 @@ func copyTargetObject(ctx context.Context, root *os.Root, targetRoot, temporary,
 		return e
 	}
 	digest := sha256.New()
-	writer := io.MultiWriter(&restoreWriter{ctx: ctx, root: targetRoot, reserve: reserve, file: out}, digest)
+	writer := io.MultiWriter(&restoreWriter{ctx: ctx, root: root.Name(), reserve: reserve, file: out}, digest)
 	_, e = io.CopyN(writer, source, size)
 	if e == nil && hex.EncodeToString(digest.Sum(nil)) != hash {
 		e = Fail(409, "backup_source_changed", "输入内容在备份期间变化。")

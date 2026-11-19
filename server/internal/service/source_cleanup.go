@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"regexp"
 	"time"
 
@@ -55,7 +54,7 @@ type cleanupPermitView struct {
 	VerifySnapshot bool `json:"verifySnapshot"`
 }
 
-func (s *Service) permitView(ctx context.Context, principal model.Principal, record cleanupPermitView, cache map[string]map[string]ProtectedInput) (CleanupPermit, error) {
+func (s *Service) permitView(ctx context.Context, principal model.Principal, record cleanupPermitView, cache map[string]legacySnapshotResult) (CleanupPermit, error) {
 	p := record.CleanupPermit
 	if p.State == "issued" && !p.ExpiresAt.After(time.Now()) {
 		p.State = "expired"
@@ -73,7 +72,9 @@ func (s *Service) permitView(ctx context.Context, principal model.Principal, rec
 		p.State = "revoked"
 		return p, nil
 	}
-	if err = s.verifyLegacyProtectionItems(ctx, protection, []ProtectedInput{item}, cache); err != nil {
+	files := protectionFiles{service: s, proof: protection}
+	defer files.close()
+	if err = files.verifyLegacyProtectionItems(ctx, []ProtectedInput{item}, cache); err != nil {
 		var app *Error
 		if errors.As(err, &app) && (app.Code == "input_version_unverified" || app.Code == "manifest_changed") {
 			p.State = "revoked"
@@ -130,7 +131,7 @@ func (s *Service) CleanupPermits(ctx context.Context, p model.Principal, batchID
 		items = items[:n]
 	}
 	// Old permits from the same batch protection share one immutable checkpoint.
-	snapshots := make(map[string]map[string]ProtectedInput)
+	snapshots := make(map[string]legacySnapshotResult)
 	for _, item := range items {
 		v, err := s.permitView(ctx, p, item, snapshots)
 		if err != nil {
@@ -158,23 +159,17 @@ func (s *Service) verifyProtectionForCleanup(ctx context.Context, p BatchProtect
 	if p.InstanceID != s.InstanceID || p.State != "completed" || p.ProofHash == "" {
 		return Fail(409, "protection_not_ready", "当前实例尚无可用于清理的完整保护证明。")
 	}
+	files := protectionFiles{service: s, proof: p}
+	defer files.close()
 	if !p.snapshotInputsVerified {
-		if err := s.verifyLegacyProtectionItems(ctx, p, []ProtectedInput{item}, nil); err != nil {
+		if err := files.verifyLegacyProtectionItems(ctx, []ProtectedInput{item}, nil); err != nil {
 			return err
 		}
 	}
-	target, info, e := s.backupTarget(ctx, p.TargetID)
+	root, e := files.openTarget(ctx)
 	if e != nil {
 		return e
 	}
-	if !info.DistinctVolume || target.FailureDomain != p.FailureDomain {
-		return Fail(409, "backup_target_changed", "独立备份目标已变化，来源必须保留。")
-	}
-	root, e := os.OpenRoot(target.Path)
-	if e != nil {
-		return e
-	}
-	defer root.Close()
 	evidence, e := protectionEvidence(p)
 	if e != nil {
 		return e
@@ -182,13 +177,16 @@ func (s *Service) verifyProtectionForCleanup(ctx context.Context, p BatchProtect
 	if digest(evidence) != p.ProofHash {
 		return Fail(409, "protection_changed", "保护证明内容不一致。")
 	}
-	for _, object := range []struct {
-		name, hash string
-		size       int64
-	}{{protectionReceipt(p), p.ProofHash, int64(len(evidence))}, {protectionSnapshot(p), p.SnapshotHash, p.SnapshotBytes}, {protectionObject(item.Hash), item.Hash, item.Size}} {
-		if e = verifyTargetObject(ctx, root, object.name, object.hash, object.size); e != nil {
+	if e = verifyTargetObject(ctx, root, protectionReceipt(p), p.ProofHash, int64(len(evidence))); e != nil {
+		return e
+	}
+	if !files.targetSnapshotVerified {
+		if e = verifyTargetObject(ctx, root, protectionSnapshot(p), p.SnapshotHash, p.SnapshotBytes); e != nil {
 			return e
 		}
+	}
+	if e = verifyTargetObject(ctx, root, protectionObject(item.Hash), item.Hash, item.Size); e != nil {
+		return e
 	}
 	source, e := s.backupSource(ctx, archive.File{Kind: "asset", ObjectID: item.AssetID, ContentVersion: item.ContentVersion, SHA256: item.Hash, Size: item.Size})
 	if e != nil {
@@ -272,12 +270,8 @@ func (s *Service) IssueCleanupPermit(ctx context.Context, p model.Principal, bat
 		if e := Authorize(w.Principal, "source.cleanup", batchID); e != nil {
 			return nil, 0, e
 		}
-		target, targetInfo, e := s.backupTarget(ctx, protection.TargetID)
-		if e != nil {
+		if _, e := s.protectionTarget(ctx, protection); e != nil {
 			return nil, 0, e
-		}
-		if !targetInfo.DistinctVolume || target.FailureDomain != protection.FailureDomain {
-			return nil, 0, Fail(409, "backup_target_changed", "许可提交前独立目标归属已变化。")
 		}
 		batch, e := s.Batch(ctx, batchID)
 		if e != nil {
