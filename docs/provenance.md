@@ -1,5 +1,7 @@
 # 来源与实现纪律
 
+旧 PC v26 离线迁移先复核旧版备份和封存数据库能分别提供哪些事实。三位实施代理分别负责文件与归档、作者与目录资料、互动历史，另一位独立核对旧版写入格式与 Next 恢复流程。主代理负责身份与时区规则、分支整合和交付验收。各代理按自己的运行记录确认 GPT-6.2 Astra 和 max 推理。公开测试使用旧仓固定提交的 schema 与合成数据。[旧版 schema 来源](https://github.com/Surtr42u/qimeng-media/tree/d0215962bb1e9c29baabeed9fc9dc5c8b4b94555/server/migrations) · [目录双驱动回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44503664071) · [历史活动与 HTTP 回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44501702272) · [整库归档与双平台恢复](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179)
+
 2026-11-18 公开前复核了 7 个远端分支和待发布的 Git 内容、当时全部 52 次云运行的日志及 293 件保留产物的目录。测试报告、网络跟踪和合成图片按内容及来源复核，构建二进制按来源和样本核验。两份带临时测试会话的旧附件已在保存校验副本后撤下。公开时 GitHub 密钥扫描和推送保护均已开启。新制品的范围与提交前隐私检查见[安全说明](../SECURITY.md)。
 
 本仓库 2026-11-17 从空目录初始化，依据用户已确认产品要求重新实现。参考项目为 [Surtr42u/qimeng-media，d0215962](https://github.com/Surtr42u/qimeng-media/tree/d0215962)，只作业务规则、公式、使用教训、界面布局与验收依据，不复制业务源码或历史补丁实现。

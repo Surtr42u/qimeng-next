@@ -2,6 +2,8 @@
 
 更新于 2026-11-19。本仓已按所有者授权公开，以 MIT 许可证发布。开发产物用于空目录验收，真实资料切换、用户设备安装与 NAS 实机验收尚未执行。
 
+旧 PC v26 的离线转换器可从已封存的 SQLite、显式选择的原件副本和旧回收站生成 Next 整库备份。Windows x64 和 Linux x64 均用旧仓 26 个正式迁移建立合成库，运行发布工具完成转换、校验、恢复和服务回读。两份相同内容保留各自的资产 ID，磁盘回收站中的原件可恢复。验收覆盖来源变化、空间不足、未知非空表与已有目的地。个人库的覆盖报告及逐文件对账由所有者在本机留存。[操作说明](legacy-cold.md) · [Windows 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179/job/135491534166) · [Linux 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179/job/135491533907)
+
 系统审查修复已在 `21b4b6d` 合入主线。该提交通过了 22 项云端作业，包括备份中断后逐项核对旧快照、普通上传停库后重启、执行器跨日认领和 Windows 切服失败时保留原窗口。[合入记录与逐项发现](https://github.com/Surtr42u/qimeng-next/pull/7) · [主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44468473213)
 
 `77e260a` 已合入复扫写入、恢复后的作者身份与备份凭证、同标签页视频续播，以及智能批次翻页和换宿主接续的修复。Windows 专项从实际打开的目录确认恢复副本与来源隔离，并经正式媒体接口读回原件。三个原生服务包自 `befa334` 起在取得监听端口后才升级数据库。端口占用时的旧库及释放端口后的升级均已用历史结构的合成样本验证。[恢复与跨端验收](https://github.com/Surtr42u/qimeng-next/pull/8) · [Windows 目录与原件回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44480574562/job/135411516322) · [三平台升级](https://github.com/Surtr42u/qimeng-next/pull/9)
