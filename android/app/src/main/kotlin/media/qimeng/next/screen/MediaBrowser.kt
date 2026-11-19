@@ -295,7 +295,8 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     leading != null -> QimengDimens.ListBottomContentPadding
                     else -> 24.dp
                 }),
-                modifier = Modifier.padding(top = QimengDimens.SpaceM).fillMaxSize().pointerInput(key, pinchEnabled) {
+                modifier = Modifier.padding(top = QimengDimens.SpaceM).fillMaxSize()
+                    .then(if (leading == null) Modifier else Modifier.testTag("author-media-scroll")).pointerInput(key, pinchEnabled) {
                     if (!pinchEnabled) return@pointerInput
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)

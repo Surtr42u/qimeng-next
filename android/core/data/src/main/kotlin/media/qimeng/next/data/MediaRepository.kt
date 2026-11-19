@@ -394,7 +394,7 @@ private fun ApiAsset.toModel(target: Session): Asset {
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,
-    fileCount, viewCount, acquisitionSources.orEmpty())
+    fileCount, viewCount, acquisitionSources.orEmpty(), txtOrder, createdAt)
 private fun ApiBatch.toModel(target: Session) = TaskReport(id, revision, mode.value, state.value,
     "${label} · ${if (manifestState.value == "sealed") "原始清单 $expectedInputs 项" else "原始清单尚未核验"} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList(), target)
 internal fun BatchInput.intakeFailure(): String? {

@@ -7,8 +7,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -27,6 +25,10 @@ import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Author
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.component.*
+import media.qimeng.next.ui.icon.DeleteIcon
+import media.qimeng.next.ui.icon.EditPencilIcon
+import media.qimeng.next.ui.icon.LabelTagIcon
+import media.qimeng.next.ui.icon.MoreVertIcon
 import media.qimeng.next.ui.icon.SearchIcon
 import java.util.UUID
 
@@ -59,7 +61,6 @@ internal fun AuthorDirectoryScreen(library: LibraryViewModel, model: AuthorDirec
         model.dismissError(); author = row
         draft = when (mode) {
             "rename" -> row?.let { (listOf(it.name) + it.aliases).distinct().joinToString(" / ") }.orEmpty()
-            "sources" -> row?.acquisitionSources.orEmpty().joinToString("\n")
             else -> ""
         }
         dialog = mode
@@ -96,15 +97,33 @@ internal fun AuthorDirectoryScreen(library: LibraryViewModel, model: AuthorDirec
         }
     }
     val mode = dialog ?: return
+    val close = { dialog = null; model.dismissError() }
+    if (mode == "sources") {
+        val selected = author ?: return
+        val source by model.sourceRecord.collectAsStateWithLifecycle()
+        LaunchedEffect(target, selected.id) { model.loadSources(selected.id) }
+        AuthorSourcesDialog(
+            selected, source, busy, error,
+            onRetry = { model.loadSources(selected.id) },
+            onSave = { record, values, done -> model.sources(record, values, done) },
+            onClose = { model.closeSources(); close() },
+        )
+        return
+    }
     val names = draft.split('/').map(String::trim).filter(String::isNotEmpty).distinct()
     val key = rememberSaveable(mode, draft) { UUID.randomUUID().toString() }
-    val close = { dialog = null; model.dismissError() }
-    AlertDialog(onDismissRequest = { if (!busy) close() }, title = { Text(when (mode) {
-        "create" -> "新建作者"; "rename" -> "修改作者名"; "sources" -> "来源 / 出处"; else -> "删除作者" }) },
+    var confirmDiscard by rememberSaveable { mutableStateOf(false) }
+    val initialName = author?.let { (listOf(it.name) + it.aliases).distinct().joinToString(" / ") }.orEmpty()
+    val cancel: () -> Unit = {
+        if (!busy) {
+            if (mode != "delete" && draft != initialName) confirmDiscard = true else close()
+        }
+    }
+    AlertDialog(onDismissRequest = cancel, containerColor = MaterialTheme.colorScheme.surface, title = { Text(when (mode) {
+        "create" -> "新建作者"; "rename" -> "修改作者名"; else -> "删除作者" }) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             error?.let { ErrorNotice(it) }
             if (mode == "delete") Text("删除「${author?.name}」？关联的媒体文件会保留。")
-            else if (mode == "sources") OutlinedTextField(draft, { draft = it }, enabled = !busy, label = { Text("获取渠道（每行一条）") })
             else {
                 QimengCapsuleTextField(draft, { draft = it }, Modifier.testTag("author-name-draft"), placeholder = "作者名", singleLine = true, enabled = !busy)
                 Text("多个别名用「 / 」分隔", style = MaterialTheme.typography.bodySmall)
@@ -113,11 +132,14 @@ internal fun AuthorDirectoryScreen(library: LibraryViewModel, model: AuthorDirec
             when (mode) {
                 "create" -> model.create(names, key, close)
                 "rename" -> author?.let { model.rename(it, names, close) }
-                "sources" -> author?.let { model.sources(it, draft.lines().map(String::trim).filter(String::isNotEmpty).distinct(), close) }
                 "delete" -> author?.let { model.delete(it, close) }
             }
-        }, enabled = !busy && (mode !in setOf("create", "rename") || names.isNotEmpty())) { Text(if (mode == "delete") "删除" else "确定") } },
-        dismissButton = { TextButton(onClick = close, enabled = !busy) { Text("取消") } })
+        }, enabled = !busy && (mode !in setOf("create", "rename") || names.isNotEmpty())) {
+            if (mode == "delete") Text("删除", color = MaterialTheme.colorScheme.error) else Text("确定")
+        } }, dismissButton = { TextButton(onClick = cancel, enabled = !busy) { Text("取消") } })
+    if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("放弃未保存的修改？") },
+        confirmButton = { TextButton(onClick = { confirmDiscard = false; close() }) { Text("放弃修改") } },
+        dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } })
 }
 
 @Composable
@@ -130,20 +152,35 @@ private fun AuthorDirectoryRow(author: Author, busy: Boolean, open: () -> Unit, 
             AuthorAvatar(author.id, author.name)
             Column(Modifier.weight(1f)) {
                 Text(author.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (author.kind == "cos") Text("COS", style = MaterialTheme.typography.labelSmall)
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (author.kind == "cos") Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                        Text("COS", Modifier.padding(horizontal = 6.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
+                    }
                     author.fileCount?.let { Text("$it 个文件", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
-            OutlinedButton(onClick = follow, enabled = !busy, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
+            OutlinedButton(onClick = follow, enabled = !busy, modifier = Modifier.height(36.dp), shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                contentPadding = PaddingValues(horizontal = 12.dp), colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (author.followed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                )) {
                 Text(if (author.followed) "已关注" else "关注", style = MaterialTheme.typography.labelMedium)
             }
             if (author.kind != "cos" && author.id != "unknown") Box {
-                IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.MoreVert, "作者操作", Modifier.size(20.dp)) }
-                DropdownMenu(menu, { menu = false }, modifier = Modifier.width(168.dp), shape = RoundedCornerShape(16.dp)) {
-                    listOf("sources" to "来源 / 出处", "rename" to "改名", "delete" to "删除").forEach { (mode, name) ->
-                        DropdownMenuItem(text = { Text(name) }, onClick = { menu = false; action(mode) }, enabled = !busy)
-                    }
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(MoreVertIcon, "${author.name}的作者操作", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                DropdownMenu(menu, { menu = false }, modifier = Modifier.width(168.dp), shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp, shadowElevation = 6.dp,
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))) {
+                    DropdownMenuItem(text = { Text("来源 / 出处", style = MaterialTheme.typography.bodyMedium) },
+                        leadingIcon = { Icon(LabelTagIcon, null, Modifier.size(18.dp)) }, onClick = { menu = false; action("sources") }, enabled = !busy)
+                    DropdownMenuItem(text = { Text("改名", style = MaterialTheme.typography.bodyMedium) },
+                        leadingIcon = { Icon(EditPencilIcon, null, Modifier.size(18.dp)) }, onClick = { menu = false; action("rename") }, enabled = !busy)
+                    val danger = MaterialTheme.colorScheme.error
+                    HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    DropdownMenuItem(text = { Text("删除", color = danger, style = MaterialTheme.typography.bodyMedium) },
+                        leadingIcon = { Icon(DeleteIcon, null, Modifier.size(18.dp), tint = danger) }, onClick = { menu = false; action("delete") }, enabled = !busy)
                 }
             }
         }

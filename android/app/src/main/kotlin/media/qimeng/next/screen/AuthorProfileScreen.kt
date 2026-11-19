@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,7 +28,13 @@ import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.*
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.component.QimengTopBar
+import media.qimeng.next.ui.theme.QimengDimens
+import java.text.DateFormat
+import java.time.OffsetDateTime
+import java.util.Date
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: String? = null, model: AuthorProfileViewModel = viewModel()) {
     val state by model.profile.collectAsStateWithLifecycle()
@@ -47,43 +54,52 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
     LaunchedEffect(showArchives, authorId) { if (showArchives) model.loadArchives() }
     val document = state.data?.takeIf { it.authorId == authorId }
     val author by library.author.collectAsStateWithLifecycle()
+    val entry = author?.takeIf { it.id == authorId && archiveId == null }
     Column(Modifier.fillMaxSize()) {
-      media.qimeng.next.ui.component.QimengTopBar("资料与维护", onBack = library::back)
-      LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Row {
-            TextButton(onClick = { model.load(authorId, archiveId) }, enabled = !busy) { Text("刷新资料") }
-            if (archiveId != null) Text("历史档案 · 只读")
-        } }
+      QimengTopBar("资料与维护", Modifier.testTag("author-profile-top-bar"), onBack = library::back)
+      LazyColumn(
+          Modifier.weight(1f).navigationBarsPadding().testTag("author-profile-overview"),
+          contentPadding = PaddingValues(horizontal = QimengDimens.ScreenPaddingHorizontal, vertical = 12.dp),
+          verticalArrangement = Arrangement.spacedBy(16.dp),
+      ) {
+        item(key = "author-identity") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (entry != null) {
+                    Text(entry.name, style = MaterialTheme.typography.titleLarge)
+                }
+                if (archiveId != null) CreatorDetailLabel("历史档案 · 只读")
+                document?.blocks?.find { it.block == "accounts" }?.let { CreatorDetailLabel(identityLabel(it.values.identityStatus)) }
+            }
+        }
         if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.error?.let { item { ErrorNotice(it) { model.load(authorId, archiveId) } } }
-        error?.let { item { ErrorNotice(it) } }
+        if (editing == null) error?.let { item { ErrorNotice(it) } }
         if (document != null) {
-            items(document.blocks, key = { it.block }) { block -> ContentCard {
-                Text(profileBlockName(block.block), style = MaterialTheme.typography.titleLarge)
-                Text(sourceName(block.source), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            items(document.blocks, key = { it.block }) { block ->
+              val editable = document.editable && archiveId == null
+              val startEdit: (() -> Unit)? = if (editable) ({ candidateId = null; editing = block.block }) else null
+              CreatorProfileGroup(profileBlockName(block.block), !busy && !state.loading, startEdit) {
+                when (block.block) {
+                    "x" -> CreatorXDetails(block.values)
+                    "basic" -> CreatorBasicDetails(entry, block.values)
+                    "accounts" -> CreatorAccountDetails(block.values)
+                }
                 block.avatar?.let { ProfileAvatarImage(it, 96.dp) }
-                ProfileValueText(block.values, collapsible = true)
-                if (block.evidence.isNotEmpty()) {
-                    var evidence by rememberSaveable(authorId, block.block) { mutableStateOf(false) }
-                    TextButton(onClick = { evidence = !evidence }) { Text(if (evidence) "收起依据" else "查看依据") }
-                    if (evidence) block.evidence.forEach { EvidenceText(it) }
+                if (editable && block.block == "x") FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { model.prepareAvatar(document, block.revision); picker.launch(arrayOf("image/jpeg", "image/png", "image/gif", "image/webp")) }, enabled = !busy) { Text("上传头像") }
+                    TextButton(onClick = { remoteAvatar = true }, enabled = !busy) { Text("从网址获取头像") }
+                    if (block.avatar != null) TextButton(onClick = { clearAvatar = true }, enabled = !busy) { Text("清除头像") }
                 }
-                if (document.editable && archiveId == null) {
-                    TextButton(onClick = { candidateId = null; editing = block.block }, enabled = !busy && !state.loading) { Text("编辑${profileBlockName(block.block)}") }
-                    if (block.block == "x") {
-                        Row {
-                            TextButton(onClick = { model.prepareAvatar(document, block.revision); picker.launch(arrayOf("image/jpeg", "image/png", "image/gif", "image/webp")) }, enabled = !busy) { Text("上传头像") }
-                            TextButton(onClick = { remoteAvatar = true }, enabled = !busy) { Text("从网址获取头像") }
-                        }
-                        if (block.avatar != null) TextButton(onClick = { clearAvatar = true }, enabled = !busy) { Text("清除头像") }
-                    }
-                }
-            } }
-            if (document.editable && archiveId == null) {
-                item { AuthorUpdatesSection(authorId, document, settings = true, details = {}) }
-                author?.takeIf { it.id == authorId && it.kind != "cos" }?.let { entry -> item { AuthorManagementTools(library, entry) } }
+                CreatorEvidence(block)
+              }
             }
-            item { TextButton(onClick = { showCandidates = !showCandidates }) { Text(if (showCandidates) "收起候选资料" else "查看候选资料") } }
+            if (archiveId == null) item(key = "author-subscription") { AuthorUpdatesSection(authorId, document, settings = true, details = {}, authorName = entry?.name.orEmpty()) }
+            item(key = "author-candidates") {
+                CreatorSection {
+                    Text("候选资料", style = MaterialTheme.typography.titleSmall)
+                    TextButton(onClick = { showCandidates = !showCandidates }) { Text(if (showCandidates) "收起候选资料" else "查看候选资料") }
+                }
+            }
             if (showCandidates) {
                 candidates.error?.let { item { ErrorNotice(it) { model.loadCandidates() } } }
                 if (candidates.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
@@ -95,7 +111,7 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
                     val current = document.blocks.find { it.block == candidate.block }
                     if (candidate.state == "pending" && document.editable && archiveId == null) {
                         if (current?.revision != candidate.baseRevision) Text("当前资料已变化。请对照候选，手工编辑当前资料；不会自动覆盖。")
-                        Row {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { candidateId = candidate.id; editing = candidate.block }, enabled = !busy && current?.revision == candidate.baseRevision) { Text("载入候选草稿") }
                             TextButton(onClick = { model.dismiss(document, candidate) }, enabled = !busy) { Text("不采用") }
                         }
@@ -103,6 +119,7 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
                 } }
                 if (candidates.cursor != null) item { TextButton(onClick = { model.loadCandidates(true) }, enabled = !candidates.loading) { Text("更多候选") } }
             }
+            if (document.editable) entry?.takeIf { it.kind != "cos" }?.let { item(key = "author-management") { AuthorManagementTools(library, it) } }
             if (archiveId == null) item { TextButton(onClick = { showArchives = !showArchives }) { Text(if (showArchives) "收起保留档案" else "查看合并 / 删除保留档案") } }
             if (showArchives) {
                 archives.error?.let { item { ErrorNotice(it) { model.loadArchives() } } }
@@ -116,13 +133,14 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
                 if (archives.loaded && archives.items.isEmpty()) item { Text("暂无保留档案") }
             }
         }
+        item { TextButton(onClick = { model.load(authorId, archiveId) }, enabled = !busy && !state.loading) { Text("刷新资料") } }
     }
     }
     if (document != null) {
         val block = document.blocks.find { it.block == editing }
         val candidate = candidates.items.find { it.id == candidateId }
-        if (block != null && (candidateId == null || candidate != null)) ProfileEditor(document, block, candidate, model) { editing = null; candidateId = null }
-        else if (editing != null && candidateId != null) AlertDialog(onDismissRequest = { editing = null; candidateId = null },
+        if (block != null && document.editable && (candidateId == null || candidate != null)) ProfileEditor(entry?.name.orEmpty(), document, block, candidate, model) { editing = null; candidateId = null }
+        else if (editing != null && candidateId != null && (candidates.loaded || candidates.error != null)) AlertDialog(onDismissRequest = { editing = null; candidateId = null },
             title = { Text("请重新选择候选") }, text = { Text("当前列表尚未载入这条候选，不能把它当作当前资料。") },
             confirmButton = { TextButton(onClick = { editing = null; candidateId = null; showCandidates = true; model.loadCandidates() }) { Text("载入候选列表") } })
         val x = document.blocks.find { it.block == "x" }
@@ -164,26 +182,97 @@ private fun ProfileAvatarImage(avatar: ProfileAvatar, size: Dp) {
 }
 
 @Composable
-private fun ProfileValueText(values: ProfileValues, collapsible: Boolean = false) {
-    values.identityStatus?.let { Text(mapOf("empty" to "资料待完善", "candidate" to "资料待核实", "verified" to "身份已确认")[it] ?: it) }
-    listOf("账号" to values.handle, "显示名称" to values.displayName, "X 主页" to values.profileUrl,
-        "简介原文" to values.biographyOriginal, "中文译文" to values.biographyZh, "公开昵称" to values.publicName,
-        "概要" to values.summary, "特殊情况备注" to values.remark, "私人备注" to values.note).forEach { (name, value) ->
-        if (!value.isNullOrEmpty()) {
-            val folded = collapsible && (name == "中文译文" || value.length > 300)
-            var show by rememberSaveable(name) { mutableStateOf(false) }
-            if (folded) TextButton(onClick = { show = !show }) { Text(if (show) "收起$name" else "查看$name") }
-            else Text(name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (name == "X 主页") PublicAuthorLink(value, value)
-            else if (!folded || show) Text(value)
-            else if (name != "中文译文") Text(value, maxLines = 3, overflow = TextOverflow.Ellipsis)
+private fun CreatorProfileGroup(title: String, enabled: Boolean, onEdit: (() -> Unit)?, content: @Composable ColumnScope.() -> Unit) {
+    CreatorSection {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            if (onEdit != null) TextButton(onClick = onEdit, enabled = enabled) { Text("编辑$title") }
+        }
+        content()
+    }
+}
+
+@Composable
+private fun CreatorXDetails(values: ProfileValues) {
+    var showTranslation by rememberSaveable { mutableStateOf(false) }
+    Text(values.biographyOriginal?.takeIf(String::isNotBlank) ?: "尚未收录 X 简介。", style = MaterialTheme.typography.bodyMedium)
+    values.biographyZh?.takeIf(String::isNotBlank)?.let { translated ->
+        TextButton(onClick = { showTranslation = !showTranslation }) { Text(if (showTranslation) "收起中文译文" else "查看中文译文") }
+        if (showTranslation) Text(translated, style = MaterialTheme.typography.bodyMedium)
+    }
+    val names = listOfNotNull(values.displayName, values.handle).filter(String::isNotBlank)
+    if (names.isNotEmpty()) CreatorDetailLabel(names.joinToString(" · "))
+    PublicAuthorLink("前往 X ↗", values.profileUrl)
+}
+
+@Composable
+private fun CreatorBasicDetails(author: Author?, values: ProfileValues) {
+    var showSummary by rememberSaveable { mutableStateOf(false) }
+    if (author != null) {
+        Text(author.txtOrder?.let { "作者清单第 $it 位" } ?: "未记录清单顺序", style = MaterialTheme.typography.bodyMedium)
+        val receivedAt = author.createdAt?.let { Date.from(OffsetDateTime.parse(it).toInstant()) }
+        CreatorDetailLabel(receivedAt?.let { "入库记录 ${DateFormat.getDateTimeInstance().format(it)}" } ?: "入库时间未记录")
+        CreatorDetailLabel("历史批量导入仅能确认记录入库时间，原始加入日期未记录。")
+    }
+    CreatorDetailLabel("公开昵称")
+    Text(values.publicName?.takeIf(String::isNotBlank) ?: "尚未填写", style = MaterialTheme.typography.bodyMedium)
+    CreatorDetailLabel("整理简介")
+    val summary = values.summary?.takeIf(String::isNotBlank)
+    Text(summary?.substringBefore("\n\n") ?: "尚未填写", style = MaterialTheme.typography.bodyMedium,
+        maxLines = 3, overflow = TextOverflow.Ellipsis)
+    if (summary != null) {
+        TextButton(onClick = { showSummary = !showSummary }) { Text(if (showSummary) "收起完整说明" else "查看完整说明") }
+        if (showSummary) Text(summary, style = MaterialTheme.typography.bodyMedium)
+    }
+    listOf("特殊情况备注" to values.remark, "私人备注" to values.note).forEach { (label, text) ->
+        if (!text.isNullOrBlank()) {
+            CreatorDetailLabel(label)
+            Text(text, style = MaterialTheme.typography.bodyMedium)
         }
     }
-    values.accounts.orEmpty().forEach { account ->
-        Text("${account.platform} · ${account.identifier}", style = MaterialTheme.typography.titleSmall)
-        if (account.url.isNotEmpty()) PublicAuthorLink(account.url, account.url)
-        if (account.publishingUrl.isNotEmpty()) PublicAuthorLink("发布入口：${account.publishingUrl}", account.publishingUrl)
+}
+
+@Composable
+private fun CreatorAccountDetails(values: ProfileValues) {
+    val accounts = values.accounts.orEmpty()
+    if (accounts.isEmpty()) CreatorDetailLabel("尚未填写账号来源")
+    accounts.forEach { account ->
+        Text(listOf(account.platform, account.identifier).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.titleSmall)
+        PublicAuthorLink("主页 ↗", account.url)
+        PublicAuthorLink("发布入口 ↗", account.publishingUrl)
     }
+}
+
+@Composable
+private fun CreatorEvidence(block: ProfileBlock) {
+    if (block.source == "empty" && block.evidence.isEmpty()) return
+    var showEvidence by rememberSaveable { mutableStateOf(false) }
+    TextButton(onClick = { showEvidence = !showEvidence }) { Text(if (showEvidence) "收起核验记录" else "查看核验记录") }
+    if (showEvidence) {
+        val provenance = listOfNotNull(sourceName(block.source), block.updatedAt).joinToString(" · ")
+        CreatorDetailLabel(provenance)
+        block.evidence.forEach { EvidenceText(it) }
+    }
+}
+
+@Composable
+private fun CreatorDetailLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun ProfileValueText(values: ProfileValues) {
+    values.identityStatus?.let { Text(identityLabel(it)) }
+    listOf("账号" to values.handle, "显示名称" to values.displayName, "X 主页" to values.profileUrl,
+        "简介原文" to values.biographyOriginal, "中文译文" to values.biographyZh, "公开昵称" to values.publicName,
+        "整理简介" to values.summary, "特殊情况备注" to values.remark, "私人备注" to values.note).forEach { (name, value) ->
+        if (!value.isNullOrEmpty()) {
+            CreatorDetailLabel(name)
+            if (name == "X 主页") PublicAuthorLink(value, value)
+            else Text(value)
+        }
+    }
+    if (values.accounts != null) CreatorAccountDetails(values)
 }
 
 @Composable
@@ -191,8 +280,10 @@ private fun EvidenceText(evidence: ProfileEvidence) {
     Text("${evidence.title} · ${mapOf("unverified" to "未核实", "candidate" to "候选依据", "confirmed" to "已确认依据")[evidence.status] ?: "状态待核对"}", style = MaterialTheme.typography.bodySmall)
     if (evidence.url.isNotEmpty()) Text(evidence.url, style = MaterialTheme.typography.bodySmall)
     if (evidence.note.isNotEmpty()) Text(evidence.note, style = MaterialTheme.typography.bodySmall)
+    evidence.checkedAt?.let { CreatorDetailLabel(it) }
 }
 
-internal fun profileBlockName(value: String) = mapOf("x" to "X 资料", "basic" to "基本资料", "accounts" to "其他账号")[value] ?: value
+internal fun profileBlockName(value: String) = mapOf("x" to "X 资料", "basic" to "基础资料", "accounts" to "账号来源")[value] ?: value
+private fun identityLabel(value: String?) = when (value) { "verified" -> "身份已确认"; "candidate" -> "资料待核实"; else -> "资料待完善" }
 private fun sourceName(value: String) = mapOf("empty" to "尚未完善", "human" to "人工保存", "merged" to "合并保留", "imported" to "导入资料", "native_delivery" to "原生交付")[value] ?: value
 private fun candidateState(value: String) = mapOf("pending" to "待确认候选", "applied" to "已采用", "dismissed" to "未采用")[value] ?: value
