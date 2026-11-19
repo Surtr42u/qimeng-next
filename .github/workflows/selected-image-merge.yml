@@ -2,14 +2,18 @@ name: Owner-selected native image merge
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'codex/selected-image-merge-*']
+    branches: [main]
     paths: &merge_paths
       - '.github/workflows/selected-image-merge.yml'
       - 'tools/selected-merge/**'
       - 'server/cmd/qimeng-merge-selected/**'
       - 'server/internal/assetmerge/**'
-      - 'server/internal/store/migrations/0045_*.sql'
+      - 'server/internal/store/migrations/**'
       - 'server/internal/service/selected*.go'
+      - 'server/internal/service/files.go'
+      - 'server/internal/service/scans.go'
+      - 'server/internal/service/media_input.go'
+      - 'server/internal/httpapi/selected_image_merge_test.go'
       - 'server/internal/service/backup*.go'
       - 'server/internal/storage/**'
       - 'docs/selected-image-merge.md'
