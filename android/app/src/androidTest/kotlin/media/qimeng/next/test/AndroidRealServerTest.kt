@@ -211,6 +211,78 @@ class AndroidRealServerTest {
     }
 
     @Test(timeout = 240_000)
+    fun maintainsExtractionVocabularyFromDataManagement() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
+        compose.onNodeWithText("数据管理").performClick()
+        compose.onNodeWithText("词表维护").performScrollTo().performClick()
+        compose.onNodeWithText("原名提取词表").performClick()
+        val list = compose.onNodeWithTag("extraction-vocabulary-list")
+        fun press(label: String) {
+            val node = hasText(label) and hasClickAction() and isEnabled()
+            list.performScrollToNode(node)
+            compose.onNode(node).performClick()
+        }
+        fun add(button: String, value: String) {
+            press(button)
+            editVisibleField("extraction-term", value)
+            compose.onNodeWithText("确定").performClick()
+        }
+        val target = requireNotNull(graph.settings.session.value)
+        val before = runBlocking { graph.extractionVocabulary.read(target) }
+        val suffix = UUID.randomUUID().toString().take(8)
+        val group = "合成出处$suffix"
+        val variant = "合成变体$suffix"
+        val role = "合成角色$suffix"
+        val alias = "合成别名$suffix"
+        val stopWord = "合成停用$suffix"
+        val attemptedWord = "保留草稿$suffix"
+        val externalWord = "外部编辑$suffix"
+        compose.waitUntil(30_000) { compose.onAllNodesWithText("添加停用词").fetchSemanticsNodes().isNotEmpty() }
+        add("添加停用词", stopWord)
+        add("添加出处组", group)
+        list.performScrollToNode(hasText(group))
+        compose.onNodeWithTag("extraction-group:$group").performClick()
+        add("添加变体", variant)
+        add("添加角色", role)
+        press("角色别名")
+        add("添加别名", alias)
+        press("保存修改")
+        await("extraction-vocabulary-rebuild", graph) {
+            val current = graph.extractionVocabulary.read(target)
+            current.revision == before.revision + 1 && current.rebuildState == "completed"
+        }
+        val saved = runBlocking { graph.extractionVocabulary.read(target) }
+        assertTrue(stopWord in saved.layer.stopWords)
+        assertEquals(listOf(variant), saved.layer.groups.single { it.canonical == group }.variants)
+        assertEquals(listOf(alias), saved.layer.groups.single { it.canonical == group }.roles.single { it.canonical == role }.aliases)
+        list.performScrollToIndex(0)
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithText("已保存 · 服务端重算完成 · 修订 ${saved.revision}").fetchSemanticsNodes().isNotEmpty()
+        }
+        screenshot("real-server-extraction-vocabulary.png")
+
+        add("添加停用词", attemptedWord)
+        val newer = runBlocking { graph.extractionVocabulary.save(target, saved.revision,
+            saved.layer.copy(stopWords = saved.layer.stopWords + externalWord), UUID.randomUUID().toString()) }
+        press("保存修改")
+        list.performScrollToIndex(0)
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithText("服务端词表已被修改。本次草稿仍保留。").fetchSemanticsNodes().isNotEmpty()
+        }
+        list.performScrollToNode(hasText(attemptedWord))
+        compose.onNodeWithText(attemptedWord).assertExists()
+        assertEquals(newer.revision, runBlocking { graph.extractionVocabulary.read(target) }.revision)
+        press("读取服务端新词表")
+        compose.onNodeWithText("放弃并读取").performClick()
+        list.performScrollToIndex(0)
+        compose.waitUntil(15_000) { compose.onAllNodesWithText(externalWord).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(attemptedWord).assertDoesNotExist()
+    }
+
+    @Test(timeout = 240_000)
     fun mixedProviderInputsRetainEveryDispositionAndOnlyUploadGoodMedia() = runBlocking {
         mixedUploadRoundTrip(isolatedServerGraph())
     }

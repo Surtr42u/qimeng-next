@@ -88,7 +88,7 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
                 val detailRoute = route.startsWith("asset:")
-                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage", "thumbnail-cache") || route.startsWith("author:") ||
+                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage", "thumbnail-cache", "source-rules") || route.startsWith("author:") ||
                     route.startsWith("profile:") || route.startsWith("profile-archive:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
@@ -113,6 +113,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
                                 route.startsWith("stats-detail:") -> route.split(':').let { StatsDetailScreen(model, it[1], it[2]) }
                                 route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
+                                route == "source-rules" -> session?.let { ExtractionVocabularyScreen(it, transportRevision, model::back) }
                                 route.startsWith("collection:") -> MediaBrowser(model, route, collectionId = route.substringAfter(':'))
                                 route.startsWith("tag:") -> MediaBrowser(model, route, initialTag = route.substringAfter(':'))
                                 route.startsWith("ranking:") -> ActivityRankingScreen(model, route.split(':')[1], route.split(':')[2])
@@ -122,7 +123,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
                                 route == "upload" -> UploadScreen(model)
                                 route == "archive-folder" -> ArchiveSettingsScreen(model::back)
-                                route == "maintenance" -> MaintenanceScreen(model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
+                                route == "maintenance" -> MaintenanceScreen(model, model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(preferences.theme, preferences.material,
                                     { model.savePreferences(preferences.copy(theme = it)) }, { model.savePreferences(preferences.copy(material = it)) }, model::back)

@@ -17,7 +17,6 @@ import media.qimeng.next.sdk.model.BatchCreate
 import media.qimeng.next.sdk.model.BatchInputsSet
 import media.qimeng.next.sdk.model.BatchInputCancel
 import media.qimeng.next.sdk.model.IntakeInput
-import media.qimeng.next.sdk.model.EventCreate
 import media.qimeng.next.sdk.model.UploadCreate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -49,21 +48,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                         if (failure is IOException && (failure !is ApiFailure || failure.status == 429 || failure.status >= 500)) retry = true
                     }
                 }
-            graph.queue.state.value!!.events.filter { sameTarget(it.target, target) && it.failure == null }.forEach { event ->
-                try {
-                    api.recordEvent(id = event.assetId, eventCreate = EventCreate(eventId = event.id,
-                        kind = EventCreate.Kind.entries.first { it.value == event.kind }, contentVersion = event.contentVersion,
-                        positionMs = event.positionMs, sessionId = event.sessionId, seconds = event.seconds, occurredAt = event.occurredAt)).bodyOrThrow()
-                    graph.queue.update { it.copy(events = it.events.filterNot { item -> item.id == event.id }) }
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: ApiFailure) {
-                    if (failure.status in setOf(400, 404, 409)) {
-                        graph.queue.update { snapshot -> snapshot.copy(events = snapshot.events.map {
-                            if (it.id == event.id) it.copy(failure = failure.message) else it
-                        }) }
-                    } else throw failure
-                } catch (_: IOException) { retry = true }
-            }
+            retry = graph.activityEvents.flush(target, api) || retry
             val pending = graph.queue.state.value!!.transfers.filter { ownsTarget(it.target) &&
                 (it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) || (it.state == TransferState.CANCELLED && !it.cancelConfirmed)) }
             if (pending.isNotEmpty()) setForeground(notification())
