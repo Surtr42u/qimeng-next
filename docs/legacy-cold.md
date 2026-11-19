@@ -1,6 +1,6 @@
 # 从已封存的旧版 PC v26 影库迁入 Next
 
-Windows 工具包带有 `qimeng-legacy-convert.exe` 和同一提交的 `qimeng-backup.exe`。前者从旧资料制作原生 `.qnext`，后者校验归档、恢复到新的 Next 数据目录。`SHA256SUMS` 用于核对这两个程序。`cloud-receipt.json` 记录产生工具包的提交、运行平台及合成库验收结果。
+从离线转换工作流下载通过验收的平台制品 `qimeng-legacy-cold-windows-amd64` 或 `qimeng-legacy-cold-linux-amd64`。其中的 `qimeng-legacy-convert` 从旧资料制作原生 `.qnext`，同提交的 `qimeng-backup` 校验归档、恢复到新的 Next 数据目录。Windows 程序带 `.exe` 后缀。下载后核对 `SHA256SUMS` 及 `cloud-receipt.json` 的提交、平台和合成验收结果。[离线转换工作流](https://github.com/Surtr42u/qimeng-next/actions/workflows/legacy-cold.yml)
 
 ## 准备私有输入
 
@@ -61,4 +61,4 @@ if ($LASTEXITCODE -ne 0) { throw '恢复未完成，请保留现场' }
 
 `problem.table` 与 `problem.rowId` 可在匹配摘要的封存源里定位失败行。磁盘问题的 `locatorSHA256` 采用 UTF-8 编码；未建档原件以 `旧库ID/原相对路径` 取 SHA-256，回收站问题以 `trash` 下的相对路径取 SHA-256。报告接受新发现的空表并标记其状态。未知非空表、无法核对的实际原件与未解释的真实业务记录会阻止归档完成。原生格式上限为 50 万个文件和 64 MiB 清单。
 
-云端验证使用旧仓固定提交的 26 个公开迁移脚本生成合成库，再调用正式程序。真实冷数据库、媒体、主机路径、覆盖报告和运行收据仅保存在操作者的私有位置。[旧版表结构](https://github.com/Surtr42u/qimeng-media/tree/d0215962bb1e9c29baabeed9fc9dc5c8b4b94555/server/migrations) · [同提交云端验证](../.github/workflows/legacy-cold.yml)
+云端验证使用旧仓固定提交的 26 个公开迁移脚本生成合成库，再调用正式程序。真实冷数据库、媒体、主机路径、覆盖报告和运行收据仅保存在操作者的私有位置。[旧版表结构](https://github.com/Surtr42u/qimeng-media/tree/d0215962bb1e9c29baabeed9fc9dc5c8b4b94555/server/migrations) · [Windows 与 Linux 的实际转换和恢复](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179)

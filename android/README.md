@@ -4,6 +4,8 @@
 
 云端提供两种开发用 APK，最低系统版本声明为 Android 8.0（API 26）。连接现有 PC/NAS 影库，选 `Cloud verification` 中 `android` 作业的 `android-first-check` 制品。需要手机离线运行，选 `android-embedded` 作业的 `android-embedded-check` 制品。下载前核对对应作业和提交。首次打开后按运行模式选「NAS / 电脑」或「本机」。云端模拟器与真机验收进度见[当前状态](../docs/status.md)。
 
+两种 Next APK 共用 `media.qimeng.next`，旧安装版 `74597408` 使用 `media.qimeng.app`。实际手机交付选对应主线 SHA 的 APK，先核对包名、证书和目标，保留两套应用各自的数据。所有者只授权后台时，核查限于明确指定的物理设备与允许的状态，不自动亮屏、启动到前台或截图。Compose 实际画面在允许屏显后单独验收。[主线包与设备交接](../docs/handover.md) · [旧版构建声明](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/android/app/build.gradle.kts)
+
 ## 分层
 
 Gradle 的有效变体依赖、生产源集、纯客户端 APK 及服务决策回读由[模块门禁](architecture/README.md)记录。已安装版本的同场景截图采集见[旧版截图基准](baseline/README.md)。

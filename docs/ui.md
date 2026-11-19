@@ -28,6 +28,8 @@
 
 AI 接入子页沿用旧仓 `74597408` 的 `web/src/pages/SettingsPage.tsx` 设置卡与表单样式，以及 `web/src/components/manage/ManagePageHeader.tsx` 返回页头。Next 的[接入页](../web/src/pages/AIAccessPage.tsx)使用现有授权查询和操作。Android 的「我的 → AI 接入」也分三步核对并签发，凭据弹窗和历史权限详情见 [Android 使用说明](../android/README.md#当前源码行为)。
 
+2026-11-19 的 Web 维护改动中，原图详情的授权范围只到「复制完整文件名」按钮自身。浏览器用例检查图标与文字同行、剪贴板回读，以及按钮以外的布局与画面。备份页另外检查折叠、换行与操作可达性；AI 接入另有授权操作及宽窄布局的专项。候选 `3fc9507` 的浏览器作业通过 125 项、跳过 1 项。已有可见对照足以交付此次修改。[复制按钮用例](../web/e2e/detail-parity.spec.ts) · [备份页用例](../web/e2e/backup-parity.spec.ts) · [正式浏览器作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44553147191/job/135663162270) · [安装版可见对照](https://github.com/Surtr42u/qimeng-next/actions/runs/44553053027)
+
 ## 仍需接通或单独验证
 
 - 监控目录按注册位置求和，同卷可重复计入。出现续页时概览标明已读取范围。各系统能提供的 CPU、内存与卷读数取决于宿主系统，浏览器合成图与目标机器实际读数分别验收。

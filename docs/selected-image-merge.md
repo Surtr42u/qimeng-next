@@ -1,6 +1,6 @@
 # 在原生恢复副本合并已校对的图片
 
-先用转换器以独立 ID 迁入全部旧资产。保管完整的未合并 `.qnext`、独立 SHA-256、旧封存库、原件和私有覆盖报告。合并只接受所有者逐组明确选择的原生图片。每组指定一个代表 ID、实际目标文件名、每个成员的身份以及对应来源帖。当前内容必须在同一库、同一目录，大小、原生类型、当前版本与完整字节摘要须匹配。[旧 PC 整库迁入](legacy-cold.md) · [原生恢复](migration.md#完整归档与隔离恢复)
+先用转换器以独立 ID 迁入全部旧资产。保管完整的未合并 `.qnext`、独立 SHA-256、旧封存库、原件和私有覆盖报告。合并只接受所有者逐组明确选择的原生图片。每组指定一个代表 ID、实际目标文件名、每个成员的身份以及对应来源帖。当前内容必须在同一库、同一目录，大小、原生类型、当前版本与完整字节摘要须匹配。[旧 PC 整库迁入](https://github.com/Surtr42u/qimeng-next/blob/main/docs/legacy-cold.md) · [原生恢复](https://github.com/Surtr42u/qimeng-next/blob/main/docs/migration.md#完整归档与隔离恢复)
 
 ## 准备与执行
 
@@ -40,4 +40,4 @@ qimeng-merge-selected apply --archive ARCHIVE --sha256 DIGEST --stage P/work --r
 | 已有 `attempt.json`，尚无完整 `ready.json` | 工作副本仍属这次私有尝试。保留诊断和预像，先核验未合并归档，再从它恢复至新的专用工作目录。如果磁盘仅够一份工作库，所有者可先处置这次有标记的失败工作副本后重新恢复。 |
 | 需要恢复所有原身份、位置和原始历史 | 使用完整未合并 `.qnext` 和独立摘要恢复至新的数据目录，可按逐项基线再核对。 |
 
-工具与同提交的恢复程序由双平台合成工作流打包，下载后核对 `SHA256SUMS`。[Windows 与 Linux 工作流](../.github/workflows/selected-image-merge.yml)
+双平台作业分别提供 `qimeng-selected-image-merge-windows-amd64` 和 `qimeng-selected-image-merge-linux-amd64`。下载通过验收的对应平台制品，先核对 `SHA256SUMS` 和 `cloud-receipt.json`，再使用包内配套的恢复与合并命令。[Windows 与 Linux 工作流](https://github.com/Surtr42u/qimeng-next/actions/workflows/selected-image-merge.yml)
