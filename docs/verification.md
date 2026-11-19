@@ -12,6 +12,8 @@
 
 普通云测直接使用已有 Next 数据行核对旧回执、未分日票数与已退役写入口。维护者需要复现早期导入行为时可单独选择 `archived-import`。这个测试适配器只编入指定测试，发布二进制和原生验收均独立于它。
 
+现行 `server` 作业在 `go vet` 后对全部包执行两组互补的 `go test -race`。一组用 `-run` 选择原生数据、选择性合并、恢复等指定用例，另一组用同一表达式 `-skip` 执行其余用例。随后用原生 SQLite 驱动复验存储、服务和 HTTP 包。已封存的 PC v26 转换和已选图片合并各有 Windows、Linux 的独立正式工具作业。[Go 分组变更](https://github.com/Surtr42u/qimeng-next/pull/16) · [转换工作流](../.github/workflows/legacy-cold.yml) · [合并工作流](../.github/workflows/selected-image-merge.yml)
+
 OpenAPI 生成的 Go、Kotlin、TypeScript 和 Python 契约随各组检查提供。仓库中的 `api/sdk.lock` 记录来源与每个生成文件的摘要。独立的 `lock-check` 将生成结果、Go 校验和及依赖锁与当前提交比较。Windows 使用 `npm ci` 和 Cargo 的锁定模式。收取云端产物时只提交所需的锁文件。
 
 Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming`。归档下载、作者总表、片段与可读作者资料均按字节流交付。云端会核对这些方法的实际签名，避免手机在收到大备份时先把整个响应放进内存。
@@ -249,6 +251,7 @@ Windows 作业使用同一提交的 Go 服务和正式 stdio MCP 执行器登记
 | Web、桌面、Android | `web` 编译并做单元测试，`web-ui` 在桌面与移动视口运行浏览器测试，`live` 使用同一份 Web 构建连接真实 Go。Windows 连接壳看 `windows`。Android 依变更看 `android`、`android-ui` 或本机运行链上的 `android-native`、`android-embedded`、`android-local-ui`。新旧画面对照单列 |
 | AI、MCP 宿主 | `ai` 的执行器用例、`live` 的真实 Go 调用，以及受影响的 `mcp-compat`、`hermes` 客户端结果 |
 | PC/NAS 打包、启动与恢复 | `server-packages` 中对应 CPU 和操作系统的作业、产品 ZIP、SHA-256、登录页与隔离恢复记录。设备安装和 NAS 实机另记 |
+| 展示缩略图与后台预热 | 先观察未浏览合成输入的 256/512/1024 三份缓存，再从正式 HTTP 读回同一 JPEG 及未改变的原件。超预算拒绝与研究材料独立验证。实体设备只在授权范围内查实际缓存和尺寸。[HTTP 用例](../server/internal/httpapi/thumbnail_warmup_test.go) · [交付核对步骤](handover.md) |
 
 ## 必须覆盖的实际行为
 
