@@ -33,7 +33,9 @@ public final class FixtureProvider extends ContentProvider {
 
     private File file(Uri uri) {
         String name = uri.getLastPathSegment();
-        if (!"android-synthetic.png".equals(name) && !"android-synthetic.mp4".equals(name)) {
+        if (!"android-synthetic.png".equals(name) && !"android-synthetic.mp4".equals(name)
+                && !"known-empty.png".equals(name) && !"unknown-empty.png".equals(name)
+                && !"mixed-good.png".equals(name) && !"mixed-notes.txt".equals(name)) {
             throw new IllegalArgumentException("Unknown synthetic input");
         }
         return new File(Objects.requireNonNull(getContext()).getFilesDir(), "fixture-" + name);
@@ -54,7 +56,7 @@ public final class FixtureProvider extends ContentProvider {
         MatrixCursor.RowBuilder row = result.newRow();
         for (String column : columns) {
             if (OpenableColumns.DISPLAY_NAME.equals(column)) row.add(uri.getLastPathSegment());
-            else if (OpenableColumns.SIZE.equals(column)) row.add(selected.length());
+            else if (OpenableColumns.SIZE.equals(column) && !"unknown-empty.png".equals(uri.getLastPathSegment())) row.add(selected.length());
             else row.add(null);
         }
         return result;

@@ -581,11 +581,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val family = uploadFamily.value.trim().takeIf { mode == UploadMode.ORDINARY && (uploadAutoName.value || uploadCollectionId.value != null) }?.takeIf(String::isNotBlank)
         val options = UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank), family,
             if (uploadAuthorIds.value.isEmpty()) emptyList() else uploadAuthorSources.value.lines().map(String::trim).filter(String::isNotEmpty))
-        if (mode == UploadMode.ORDINARY && (uploadAutoName.value || options.collectionId != null)) {
+        val namingDrafts = draftFiles.filter { it.bytes > 0 }
+        if (mode == UploadMode.ORDINARY && (uploadAutoName.value || options.collectionId != null) && namingDrafts.isNotEmpty()) {
             val inspection = graph.naming.inspect(NamingRequest(libraryId, directory, family.orEmpty(), options.collectionId,
-                if (draftFiles.isNotEmpty() && draftFiles.all { it.mimeType.startsWith("video/") }) "video" else "image",
-                options.note, draftFiles.map { NamingFile(it.id, it.name) }))
-            check(inspection.preview != null) { "请先填写作品基名并选择文件" }
+                if (namingDrafts.all { it.mimeType.startsWith("video/") }) "video" else "image",
+                options.note, namingDrafts.map { NamingFile(it.id, it.name) }))
+            check(inspection.canSubmit) { "请先填写作品基名并选择文件" }
         }
         check(sameTarget(target, session.value)) { "服务器已改变，请重新确认上传位置" }
         graph.uploads.enqueue(libraryId, directory, mode, options, target, inputs, reviewed = draftFiles, editedStems = stems)

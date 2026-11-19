@@ -43,6 +43,7 @@ internal fun UploadNamingCard(enabled: Boolean, family: String, collectionId: St
                 }, style = MaterialTheme.typography.titleSmall)
                 Text("${position.family} · ${position.directory.ifEmpty { "影库根目录" }}", style = MaterialTheme.typography.bodySmall)
             }
+            if (current?.inspection?.unsupportedInputs == true) Text("本批含无法预览名称的文件。有效文件仍按所选规则命名，结果见本批报告。", style = MaterialTheme.typography.bodySmall)
             current?.inspection?.preview?.let { preview ->
                 Text("本批名称预览", style = MaterialTheme.typography.titleSmall)
                 preview.names.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }

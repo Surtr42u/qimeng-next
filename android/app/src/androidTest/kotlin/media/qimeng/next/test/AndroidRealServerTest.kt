@@ -211,6 +211,11 @@ class AndroidRealServerTest {
     }
 
     @Test(timeout = 240_000)
+    fun mixedProviderInputsRetainEveryDispositionAndOnlyUploadGoodMedia() = runBlocking {
+        mixedUploadRoundTrip(isolatedServerGraph())
+    }
+
+    @Test(timeout = 240_000)
     fun playRealVideoThroughTheLandscapeWindow() {
         val graph = runBlocking { isolatedServerGraph() }
         val video = runBlocking {

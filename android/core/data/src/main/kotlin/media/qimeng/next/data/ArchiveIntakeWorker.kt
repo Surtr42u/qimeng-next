@@ -32,7 +32,7 @@ class ArchiveIntakeWorker(context: Context, parameters: WorkerParameters) : Coro
                 val journal = requireNotNull(graph.queue.state.value)
                 if (journal.batches.none { it.key == group.id }) {
                     val remaining = group.inputs.count { input -> journal.pendingInputs.none { it.id == input.id } }
-                    val active = journal.drafts.size + journal.transfers.count { it.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED) }
+                    val active = journal.drafts.size + journal.transfers.count { !it.state.isFinished() }
                     if (active + remaining > 200) {
                         archive.store.state(id, "preparing", "正在等待传输队列腾出空间")
                         archive.changed()

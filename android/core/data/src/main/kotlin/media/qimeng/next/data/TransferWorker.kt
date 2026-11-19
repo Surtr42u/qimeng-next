@@ -38,9 +38,17 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
             val initial = requireNotNull(graph.queue.state.value)
             val withTransfers = initial.transfers.mapTo(mutableSetOf(), Transfer::batchKey)
-            initial.batches.filter { sameTarget(it.target, target) && it.manifestFingerprint == null && it.key !in withTransfers }
-                .forEach { prepareBatch(it.key) }
             var retry = false
+            // Reconcile seals written by older clients even if all their local rows are failed or already finished.
+            initial.batches.filter { sameTarget(it.target, target) && !it.inputsChecked && (it.manifestFingerprint != null || it.key !in withTransfers) }
+                .forEach { batch ->
+                    try { prepareBatch(batch.key) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) {
+                        graph.queue.reportProblem(safeFailure(failure))
+                        if (failure is IOException && (failure !is ApiFailure || failure.status == 429 || failure.status >= 500)) retry = true
+                    }
+                }
             graph.queue.state.value!!.events.filter { sameTarget(it.target, target) && it.failure == null }.forEach { event ->
                 try {
                     api.recordEvent(id = event.assetId, eventCreate = EventCreate(eventId = event.id,
@@ -59,7 +67,9 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             val pending = graph.queue.state.value!!.transfers.filter { ownsTarget(it.target) &&
                 (it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) || (it.state == TransferState.CANCELLED && !it.cancelConfirmed)) }
             if (pending.isNotEmpty()) setForeground(notification())
-            pending.forEach { task ->
+            pending.forEach { pendingTask ->
+                val task = current(pendingTask.id) ?: return@forEach
+                if (task.state == TransferState.REJECTED) return@forEach
                 if (task.state == TransferState.CANCELLED) {
                     if (!sameTarget(task.target, graph.settings.session.value)) return@forEach
                     try { confirmCancellation(task) }
@@ -112,13 +122,13 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
 
     private suspend fun transfer(initial: Transfer) {
         val api = graph.provider.api(initial.target)
-        if (current(initial.id)?.state == TransferState.CANCELLED) return
+        if (current(initial.id)?.state?.isFinished() != false) return
         update(initial.id) { it.copy(state = TransferState.UPLOADING, message = "核对传输进度") }
         var task = current(initial.id) ?: return
         if (!ownsTarget(task.target)) return
         prepareBatch(task.batchKey)
         task = current(task.id) ?: return
-        if (isStopped || task.state == TransferState.CANCELLED || !ownsTarget(task.target)) return
+        if (isStopped || task.state.isFinished() || !ownsTarget(task.target)) return
         check(task.sourceHash?.length == 64) { "传输快照缺少完整摘要，请重新选择文件" }
         var upload = if (task.uploadId == null) {
             api.createUpload(idempotencyKey = "upload-${task.id}", uploadCreate = UploadCreate(libraryId = task.libraryId,
@@ -176,24 +186,39 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 transfers = snapshot.transfers.map { if (it.batchKey == batch.key) it.copy(batchId = created.id) else it }) }
             batch = graph.queue.state.value!!.batches.first { it.key == batch.key }
         }
-        if (batch.manifestFingerprint == null) {
-            val sealed = api.setBatchInputs(id = requireNotNull(batch.serverId), idempotencyKey = "manifest-${batch.key}",
+        if (batch.inputsChecked) return batch
+        val serverId = requireNotNull(batch.serverId)
+        val fingerprint = batch.manifestFingerprint ?: run {
+            val sealed = api.setBatchInputs(id = serverId, idempotencyKey = "manifest-${batch.key}",
                 batchInputsSet = BatchInputsSet(expectedManifestRevision = 1, inputs = batch.inputs.map {
                     IntakeInput(id = it.id, originalFileName = it.originalFileName,
                         nameState = IntakeInput.NameState.entries.first { state -> state.value == it.nameState },
                         propertySize = it.size, expectedHash = it.expectedHash)
                 })).bodyOrThrow()
             check(sealed.manifestState.value == "sealed" && sealed.manifestFingerprint.isNotBlank()) { "服务器未封存原始输入清单" }
-            graph.queue.update { snapshot -> snapshot.copy(batches = snapshot.batches.map {
-                if (it.key == batch.key) it.copy(manifestFingerprint = sealed.manifestFingerprint) else it
-            }) }
-            batch = graph.queue.state.value!!.batches.first { it.key == batch.key }
+            sealed.manifestFingerprint
         }
-        return batch
+        val report = api.getBatch(serverId).bodyOrThrow()
+        check(report.batch.manifestFingerprint == fingerprint && report.inputs.map { it.id } == batch.inputs.map { it.id }) {
+            "服务器报告与原始输入清单不一致，已停止传输"
+        }
+        val rejected = report.inputs.mapNotNull { input -> input.intakeFailure()?.let { input.id to it } }.toMap()
+        graph.queue.update { snapshot -> snapshot.copy(
+            batches = snapshot.batches.map { if (it.key == key && ownsTarget(it.target)) it.copy(manifestFingerprint = fingerprint, inputsChecked = true) else it },
+            transfers = snapshot.transfers.map { task ->
+                val reason = rejected[task.id]
+                if (task.batchKey == key && ownsTarget(task.target) && reason != null) task.copy(state = TransferState.REJECTED, message = reason) else task
+            },
+            intakeFailures = snapshot.intakeFailures.map { failure ->
+                val reason = rejected[failure.id]
+                if (failure.batchKey == key && reason != null) failure.copy(message = reason) else failure
+            }) }
+        return graph.queue.state.value!!.batches.first { it.key == key }
     }
 
     private suspend fun confirmCancellation(task: Transfer) {
         val batch = prepareBatch(task.batchKey)
+        if (current(task.id)?.state != TransferState.CANCELLED) return
         val api = graph.provider.api(task.target)
         try {
             val result = api.cancelBatchInput(id = requireNotNull(batch.serverId), inputId = task.id,

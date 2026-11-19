@@ -41,7 +41,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
         val initialCount = saved.pendingInputs.count { it.intakeGroup == intakeGroup }
         val selection = uris.mapIndexed { index, uri ->
             val entry = archive?.get(index)
-            uri to OriginalInput(entry?.id ?: UUID.randomUUID().toString(), entry?.name, entry?.size?.takeIf { it > 0 },
+            uri to OriginalInput(entry?.id ?: UUID.randomUUID().toString(), entry?.name, entry?.size?.takeIf { it >= 0 },
                 nameState = if (entry == null) "unavailable" else "known", intakeGroup = intakeGroup)
         }
         val reserved = saved.pendingInputs.mapTo(mutableSetOf(), OriginalInput::id)
@@ -50,7 +50,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
         queue.update { previous ->
             require(initialCount + additions.size <= 100) { "待传清单每批最多 100 项，请先处理已有选择" }
             check(previous.intakeFailures.count { it.batchKey == null } + additions.size <= 200 && previous.drafts.size + additions.size +
-                previous.transfers.count { it.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED) } <= 200) { "请先处理已有队列，再选择这一批文件" }
+                previous.transfers.count { !it.state.isFinished() } <= 200) { "请先处理已有队列，再选择这一批文件" }
             previous.copy(pendingInputs = previous.pendingInputs + additions)
         }
         selection.forEachIndexed { index, (uri, original) ->
@@ -72,11 +72,13 @@ class UploadRepository internal constructor(private val context: Context, val qu
                     if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) declaredSize = cursor.getLong(sizeIndex).takeIf { it >= 0 }
                 }
             }
-            require(nameKnown) { "无法读取原始文件名，输入仍保留在清单中" }
             val preview = archive?.get(index)
             check(preview == null || (name == preview.name && (preview.size == null || preview.size == declaredSize))) { "归档来源已改变，原始清单保留" }
-            require(name.isNotBlank() && name.length <= 240 && '/' !in name && '\\' !in name) { "文件名无效或过长" }
-            queue.update { it.copy(pendingInputs = it.pendingInputs.map { input -> if (input.id == id) input.copy(originalFileName = name, nameState = "known", size = declaredSize?.takeIf { size -> size > 0 }) else input }) }
+            val validName = nameKnown && name.isNotBlank() && name.length <= 240 && '/' !in name && '\\' !in name
+            queue.update { it.copy(pendingInputs = it.pendingInputs.map { input -> if (input.id == id) input.copy(
+                originalFileName = name.takeIf { validName }, nameState = if (validName) "known" else "unavailable", size = declaredSize) else input }) }
+            require(nameKnown) { "无法读取原始文件名，输入仍保留在清单中" }
+            require(validName) { "文件名无效或过长" }
             if (DocumentsContract.isDocumentUri(context, uri)) {
                 readSourceMetadata { context.contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED), null, null, null) }?.use { cursor ->
                     if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it > 0 }?.let { sourceMtime = Instant.ofEpochMilli(it).toString() }
@@ -106,7 +108,8 @@ class UploadRepository internal constructor(private val context: Context, val qu
                         output.fd.sync()
                     }
                 } ?: error("无法读取所选文件")
-                require(count > 0 && (declaredSize == null || declaredSize == count)) { "文件长度已变化，请重新选择" }
+                // EOF is a known size even when the provider omitted its size. Go records empty inputs in the sealed manifest.
+                require(count == 0L || declaredSize == null || declaredSize == count) { "文件长度已变化，请重新选择" }
                 val draft = UploadDraft(id, name, mime, count, id, digest.digest().joinToString("") { "%02x".format(it) }, name, sourceMtime, intakeGroup)
                 queue.update { previous ->
                     previous.copy(drafts = previous.drafts + draft, pendingInputs = previous.pendingInputs.map {
@@ -221,7 +224,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
 
     suspend fun cancel(id: String) {
         queue.update { it.copy(transfers = it.transfers.map { item ->
-            if (item.id == id && item.state != TransferState.SUCCEEDED) item.copy(state = TransferState.CANCELLED,
+            if (item.id == id && !item.state.isFinished()) item.copy(state = TransferState.CANCELLED,
                 message = "已停止本机发送，等待服务器确认取消；已提交的结果保留") else item
         }) }
         schedule()
@@ -229,7 +232,8 @@ class UploadRepository internal constructor(private val context: Context, val qu
 
     suspend fun clearFinished() = intakeLock.withLock {
         val snapshot = queue.state.value ?: return@withLock
-        val finished = snapshot.transfers.filter { (it.state == TransferState.SUCCEEDED && it.archiveSourceState in setOf(null, "done", "blocked")) ||
+        val finished = snapshot.transfers.filter { it.state == TransferState.REJECTED ||
+            (it.state == TransferState.SUCCEEDED && it.archiveSourceState in setOf(null, "done", "blocked")) ||
             (it.state == TransferState.CANCELLED && it.cancelConfirmed) }
         val removed = withContext(Dispatchers.IO) { finished.filter {
             val file = File(spool, it.spoolName)

@@ -105,7 +105,9 @@ data class InventoryStats(val assets: Long, val images: Long, val videos: Long, 
 data class ServerCapabilities(val aiConfigured: Boolean, val recommendations: Boolean, val rankings: Boolean)
 
 enum class UploadMode { ORDINARY, INTELLIGENT }
-enum class TransferState { QUEUED, UPLOADING, WAITING, SUCCEEDED, FAILED, CANCELLED }
+enum class TransferState { QUEUED, UPLOADING, WAITING, SUCCEEDED, FAILED, CANCELLED, REJECTED }
+
+fun TransferState.isFinished() = this == TransferState.SUCCEEDED || this == TransferState.CANCELLED || this == TransferState.REJECTED
 
 /** A transport record only. The server owns asset identities and all domain decisions. */
 data class Transfer(
@@ -143,7 +145,7 @@ data class OriginalInput(val id: String, val originalFileName: String? = null, v
     val nameState: String = "unavailable", val intakeGroup: String? = null)
 data class TransferBatch(val key: String, val target: Session, val libraryId: String, val mode: UploadMode, val label: String,
     val inputs: List<OriginalInput>, val serverId: String? = null, val manifestFingerprint: String? = null,
-    val relativeDirectory: String? = null, val options: UploadOptions? = null)
+    val relativeDirectory: String? = null, val options: UploadOptions? = null, val inputsChecked: Boolean = false)
 data class QueueSnapshot(val transfers: List<Transfer> = emptyList(), val events: List<PendingEvent> = emptyList(), val drafts: List<UploadDraft> = emptyList(),
     val intakeFailures: List<IntakeFailure> = emptyList(), val pendingInputs: List<OriginalInput> = emptyList(), val batches: List<TransferBatch> = emptyList())
 
@@ -164,6 +166,6 @@ fun collectionPredecessor(task: Transfer, transfers: List<Transfer>): Transfer? 
     val collection = task.options.collectionId ?: return null
     return transfers.asSequence().takeWhile { it.id != task.id }.firstOrNull {
         sameTarget(it.target, task.target) && it.libraryId == task.libraryId && it.options.collectionId == collection &&
-            it.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED)
+            !it.state.isFinished()
     }
 }

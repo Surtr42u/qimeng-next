@@ -44,9 +44,10 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val stems by model.editedStems.collectAsStateWithLifecycle()
     val drafts = queue?.drafts.orEmpty().filter { it.intakeGroup == null }
     var numberClass by rememberSaveable { mutableStateOf("image") }
-    val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null)
+    val namingDrafts = drafts.filter { it.bytes > 0 }
+    val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null) && namingDrafts.isNotEmpty()
     val namingRequest = if (needsNaming && selected.isNotEmpty()) NamingRequest(selected, directory, family.trim(), collectionId, numberClass, note,
-        drafts.map { NamingFile(it.id, it.withEditedStem(stems[it.id]).name) }) else null
+        namingDrafts.map { NamingFile(it.id, it.withEditedStem(stems[it.id]).name) }) else null
     LaunchedEffect(namingRequest) { naming.inspect(namingRequest) }
     var showGuide by rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) model.receiveFiles(it) }
@@ -91,7 +92,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                         model::setUploadAutoName, model::setUploadFamily, { numberClass = it }, { naming.inspect(namingRequest) })
                     Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled } &&
                         drafts.all { draft -> stems[draft.id]?.let(draft::validStem) != false } &&
-                        (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.preview != null)),
+                        (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.canSubmit == true)),
                         modifier = Modifier.fillMaxWidth()) { Text(if (busy) "上传中…" else "开始上传（${drafts.size} 项）") }
                 }
             }
@@ -118,7 +119,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (canRetry(transfer.state)) TextButton(onClick = { model.retryUpload(transfer.id) }, enabled = !busy) { Text("重试") }
                     if (transfer.archiveSourceState == "blocked") TextButton(onClick = { model.retryArchiveSource(transfer) }, enabled = !busy) { Text("重新核对备份和来源") }
-                    if (transfer.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED)) TextButton(onClick = { model.cancelUpload(transfer.id) }, enabled = !busy) { Text("停止") }
+                    if (!transfer.state.isFinished()) TextButton(onClick = { model.cancelUpload(transfer.id) }, enabled = !busy) { Text("停止") }
                     transfer.batchId?.let { batch -> TextButton(onClick = { model.openReport(batch) }) { Text("报告") } }
                     transfer.assetId?.let { id -> TextButton(onClick = { model.openAsset(id) }) { Text("查看媒体") } }
                 }
