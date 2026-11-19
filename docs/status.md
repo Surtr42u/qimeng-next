@@ -2,11 +2,13 @@
 
 更新于 2026-11-19。本仓已按所有者授权公开，以 MIT 许可证发布。开发产物用于空目录验收，真实资料切换、用户设备安装与 NAS 实机验收尚未执行。
 
-系统审查修复已在 `21b4b6d` 合入主线。与该提交文件树相同的候选通过了 22 项云端作业，包括备份中断后逐项核对旧快照、普通上传停库后重启、执行器跨日认领和 Windows 切服失败时保留原窗口。[合入记录与逐项发现](https://github.com/Surtr42u/qimeng-next/pull/7) · [集成验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44458471380)
+系统审查修复已在 `21b4b6d` 合入主线。该提交通过了 22 项云端作业，包括备份中断后逐项核对旧快照、普通上传停库后重启、执行器跨日认领和 Windows 切服失败时保留原窗口。[合入记录与逐项发现](https://github.com/Surtr42u/qimeng-next/pull/7) · [主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44468473213)
 
 ## 系统审查后的客户端验收
 
 Web 的 `9c2a5f7` 与安装版 `74597408` 使用相同的字体、媒体、主题和视口比较。桌面与窄屏的首页、相册、详情六组均通过，锚点偏差均在 1 CSS 像素内，退出详情后两端回到原相册及原滚动位置。[六组测量与截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44455888042/job/135330670726)
+
+在 `41f63f5`，同一标签页返回相册再立即打开视频，会恢复 Go 保存的续播位置。延迟到达的详情响应保留用户当前的播放位置。初始暂停时拖动、键盘调整或明确回到零均可保存，整段操作的播放次数保持零。[正常导航与独立回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44471416242/job/135382443911)
 
 Android 的 `cf6fecd` 在 API 35 云模拟器通过 28 项联网与 1 项离线仪器测试。普通与智能混合选择分别回读有效媒体和失败输入。切到另一实例后，旧任务的报告和媒体可在返回原实例后打开。离线构建由应用启动随包的 Go 服务并验证重连。[联网与离线作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44453878482)
 
@@ -54,14 +56,14 @@ Android 已接回旧版四档导航、首页间距及标签底部弹层。旧版
 | 范围 | 实际执行结果 |
 |---|---|
 | Go 与文件 | Linux 和 Windows 2025 都在独立卷上保护合成原件，核对数据库检查点与原件摘要后，经正式 stdio MCP 移入系统回收站。Windows 发出一个清理许可，重启执行器后用原键重试，得到同一回执，同名新文件和库内原件均保留。[Linux 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44354939835/job/134981903185) · [Windows 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44384433852/job/135085794715) |
-| Go 扫描 | 集成候选 `f573310` 与交付基线 `8f4321a`、安装版同机各测三轮。2,048 张小图首扫中位数从基线的 2,429.97 ms 降到 2,325.01 ms。少量变动复扫为 190.60 ms，同场基线 186.75 ms，安装版 122.49 ms。最终 2,052 份物理原件和 Next 的逐项内容版本均已核对。[两次三版对照及测量范围](verification.md#手动扫描的同机对照) |
+| Go 扫描 | 2,048 张小图中改写 16 张、移动 8 张、新增 4 张后，集成候选 `577fadd` 的复扫中位数为 100.14 ms，同场主线 `21b4b6d` 为 113.07 ms，安装版为 61.74 ms。两场独立计数都确认单独结算跳过项的提交从 15 次降至 0 次，2,052 份最终原件和内容版本已核对。[两场三版对照、慢样本与写入计数](verification.md#普通库少量变动复扫) |
 | 文件身份 | `ff92b48` 与安装版在同一云机执行了两种操作。换成同尺寸、同时间戳、字节不同的新图时，旧版沿用了原图身份，新版为新图分配了新身份并报告原件缺失。字节相同的原图移动且时间戳改变时，旧版分配了新身份，新版保住原身份。[两种情况的云端记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44320603158) |
 | 命名与作者导入 | `7600949` 的查询计划和 HTTP 回归确认，自动补全只从索引读取当前目录，再合并磁盘上尚未登记的占号文件。已验证 v2 作者资料显式覆盖前的快照、重复交付回读，以及人工清空、订阅与候选保护。外部存储整根与子目录均可注册、上传和重启恢复。[后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44318828263/job/134852628470) |
 | Android 本机 | API 35 运行内嵌 Go，实际上传合成 H.264，再从接收页复制实例 ID、目标视频 ID 和内容版本，逐一从系统剪贴板回读，并与 Go 返回值核对。上传、重新连接和接电扫描也在隔离库验收。[内嵌设备记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44363806975/job/135016521774) |
 | Android 客户端 | `627010c` 的 API 35 联网仪器全部通过，核心界面 6 项、真实 Go 数据 13 项、应用 4 项。首次播放、恢复全屏前方向、暂停后从 Go 回读、再次打开从保存位置播放均通过。首次和续播都取得彩色解码表面及系统窗口。[联网仪器](https://github.com/Surtr42u/qimeng-next/actions/runs/44378759221/job/135068792040) · [原图与 JUnit](https://github.com/Surtr42u/qimeng-next/actions/runs/44378759221/artifacts/14462729347) |
 | Web 与桌面 | 浏览器在两个独立 Go 服务间签发资料包，回读目标实际 TXT、逐项回执，并在刷新后按设备找到原记录。Windows 的 `4012001` 在云机完成 NSIS 安装、原生窗口最大化/最小化、真实鼠标打开带认证会话的原件、HTTP Range、切换服务关闭旧窗口、退出及卸载。[Web 双实例实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44354939835/job/134981903063) · [Windows 完整操作](https://github.com/Surtr42u/qimeng-next/actions/runs/44354017708/job/134978093760) |
 | PC／NAS 启动包 | `89edb6a` 的 Windows x64、Linux x64、Linux ARM64 服务端包各自通过启动、登录与隔离恢复。[三个发行包的作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44305961259) |
-| AI 执行器与 MCP | `0325a6d` 的独立 stdio 客户端、Pi、官方 TypeScript SDK 和 Hermes 作业通过。受限合成 TLS 来源验证了研究只执行一次、重放复用回执和预算。Hermes 使用合成模型响应，核对实际宿主的工具发现、结果与拒绝写入。[独立客户端与研究](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037437) · [Hermes 宿主](https://github.com/Surtr42u/qimeng-next/actions/runs/44309342079/job/134820037531) |
+| AI 执行器与 MCP | `c0760bc` 的 26 项真实 Go 与正式 worker 集成全部通过。50 个合成原件的清单及恢复的原计划都能翻完并只提交一次。重复同一页仍受无进展限制。换宿主后可显式续接原任务，已失效的租约会被拒绝。Pi、官方 TypeScript SDK 和 Hermes 宿主验证另有对应作业。[执行器及独立客户端](https://github.com/Surtr42u/qimeng-next/actions/runs/44471246374/job/135381725569) · [兼容性和实测范围](mcp-compatibility.md) |
 | 数据升级 | Next 使用自己的数据库迁移、整库归档和选择性交付版本。云验收从早期 Next 结构升级，重开数据库，在新目录恢复并回读关联与历史。已有 v2 导入记录可读，新的个人旧资料迁入留给单独的一次性工具。[原生升级与恢复](migration.md) |
 
 可按作业查看 [e9fe1df 集成记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44264832227) 和 [此前的本机启动检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44238104432)。
