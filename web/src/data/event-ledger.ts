@@ -1,22 +1,44 @@
 import { api, read } from "./client";
 import type { Schema } from "./client";
+import { ApiError } from "../lib/errors";
 import { localReadAll, localWrite } from "./storage";
 import { queryClient } from "./query";
 
-type PendingEvent = {
+type EventRow = {
   id: string;
   scope: string;
   assetId: string;
   body: Schema<"EventCreate">;
   confirmed: boolean;
 };
-type Health = { pending: number; error?: string; storageError?: string };
+type RejectedEvent = EventRow & { rejection: { code: string; message: string } };
+type StoredEvent = EventRow | RejectedEvent;
+type Health = {
+  pending: number;
+  rejected: readonly RejectedEvent[];
+  error?: string;
+  storageError?: string;
+};
+const capacity = 2000;
+const capacityError = "本机浏览记录达到 2000 条，请先补发待处理的记录或清除已拒绝的记录。";
+const eventFields = ["kind", "contentVersion", "sessionId", "seconds", "occurredAt", "positionMs"] as const;
+
+function isPermanentRejection(error: unknown): error is ApiError {
+  return error instanceof ApiError && (
+    (error.status === 409 && ["content_changed", "event_conflict"].includes(error.code)) ||
+    (error.status === 400 && ["invalid_event", "missing_progress_position"].includes(error.code))
+  );
+}
+
 export class EventLedger {
-  private pending = new Map<string, PendingEvent>();
+  private rows = new Map<string, StoredEvent>();
+  // A rejected row only needs work until its local receipt is durable.
+  private outstanding = new Set<string>();
   private listeners = new Set<() => void>();
-  private health: Health = { pending: 0 };
+  private health: Health = { pending: 0, rejected: [] };
   private running = false;
   private disposed = false;
+  private restoreFailed = false;
   private ready: Promise<void>;
   private controller?: AbortController;
   constructor(readonly scope: string) {
@@ -30,15 +52,25 @@ export class EventLedger {
   };
   getSnapshot = () => this.health;
   private publish(patch: Partial<Health> = {}) {
-    this.health = { ...this.health, ...patch, pending: this.pending.size };
+    const rejected = patch.rejected ?? this.health.rejected;
+    this.health = { ...this.health, ...patch, pending: this.rows.size - rejected.length };
     this.listeners.forEach((listener) => listener());
+  }
+  private publishRejections(patch: Partial<Health> = {}) {
+    const rejected = [...this.rows.values()].filter((entry): entry is RejectedEvent => "rejection" in entry);
+    this.publish({ ...patch, rejected });
   }
   private async restore() {
     try {
-      for (const entry of await localReadAll<PendingEvent>("events"))
-        if (entry.scope === this.scope) this.pending.set(entry.id, entry);
-      this.publish();
+      for (const entry of await localReadAll<StoredEvent>("events")) {
+        if (entry.scope !== this.scope || this.rows.has(entry.id)) continue;
+        this.rows.set(entry.id, entry);
+        if (!("rejection" in entry)) this.outstanding.add(entry.id);
+      }
+      this.restoreFailed = false;
+      this.publishRejections({ storageError: undefined });
     } catch {
+      this.restoreFailed = true;
       this.publish({
         storageError:
           "浏览记录的本地恢复不可用，关闭页面可能丢失尚未补发的记录。",
@@ -49,19 +81,21 @@ export class EventLedger {
     await this.ready;
     if (this.disposed)
       throw new Error("影库连接已改变，未将旧记录发送到新影库。");
-    if (this.pending.size >= 2000) {
-      const message = "待补发浏览记录达到 2000 条，请先恢复连接并重试补发。";
-      this.publish({ error: message });
-      throw new Error(message);
+    const id = `${this.scope}:${body.eventId}`;
+    const existing = this.rows.get(id);
+    if (existing) {
+      if (existing.assetId !== assetId || eventFields.some(key => existing.body[key] !== body[key]))
+        throw new Error("本机已有同一事件身份的不同记录，已保留原记录。");
+      void this.flush();
+      return;
     }
-    const entry: PendingEvent = {
-      id: `${this.scope}:${body.eventId}`,
-      scope: this.scope,
-      assetId,
-      body,
-      confirmed: false,
-    };
-    this.pending.set(entry.id, entry);
+    if (this.rows.size >= capacity) {
+      this.publish({ error: capacityError });
+      throw new Error(capacityError);
+    }
+    const entry: EventRow = { id, scope: this.scope, assetId, body, confirmed: false };
+    this.rows.set(id, entry);
+    this.outstanding.add(id);
     try {
       await localWrite("events", entry);
     } catch {
@@ -73,51 +107,61 @@ export class EventLedger {
     this.publish();
     void this.flush();
   }
+  private async post(entry: EventRow, signal: AbortSignal): Promise<StoredEvent> {
+    try {
+      await read(api.POST("/assets/{id}/events", {
+        params: { path: { id: entry.assetId } },
+        body: entry.body,
+        signal,
+      }));
+    } catch (error) {
+      if (!isPermanentRejection(error)) throw error;
+      return { ...entry, rejection: { code: error.code, message: error.message } };
+    }
+    entry.confirmed = true;
+    try {
+      await localWrite("events", entry);
+    } catch {
+      this.publish({
+        storageError:
+          "浏览记录已获服务端确认，但本地收据尚未保存；重复补发仍沿用原事件身份。",
+      });
+    }
+    return entry;
+  }
   async flush() {
     await this.ready;
-    if (this.running || this.disposed) return;
+    if (this.running || this.disposed || (!this.outstanding.size && !this.restoreFailed)) return;
     this.running = true;
     this.controller = new AbortController();
+    let received = false;
     try {
-      for (const entry of this.pending.values()) {
+      if (this.restoreFailed) await this.restore();
+      for (const id of this.outstanding) {
         if (this.disposed) break;
-        if (!entry.confirmed) {
-          await read(
-            api.POST("/assets/{id}/events", {
-              params: { path: { id: entry.assetId } },
-              body: entry.body,
-              signal: this.controller.signal,
-            }),
-          );
-          entry.confirmed = true;
+        let entry = this.rows.get(id)!;
+        if (!entry.confirmed && !("rejection" in entry))
+          entry = await this.post(entry, this.controller.signal);
+        if ("rejection" in entry) {
+          this.rows.set(id, entry);
           try {
             await localWrite("events", entry);
+            this.outstanding.delete(id);
           } catch {
-            this.publish({
-              storageError:
-                "浏览记录已获服务端确认，但本地收据尚未保存；重复补发仍沿用原事件身份。",
-            });
+            this.publish({ storageError: "服务器的拒绝原因尚未保存到本机，请重试保存。" });
           }
+          this.publishRejections();
+          continue;
         }
-        await localWrite("events", entry.id);
-        this.pending.delete(entry.id);
+        received = true;
+        await localWrite("events", id);
+        this.outstanding.delete(id);
+        this.rows.delete(id);
         this.publish();
       }
       this.publish({
         error: undefined,
-        ...(this.pending.size === 0 ? { storageError: undefined } : {}),
-      });
-      await queryClient.invalidateQueries({
-        predicate: (query) =>
-          query.queryKey[0] === "remote" &&
-          [
-            "stats",
-            "history",
-            "overview",
-            "trends",
-            "review",
-            "rankings",
-          ].includes(String(query.queryKey[3])),
+        ...(this.outstanding.size === 0 && !this.restoreFailed ? { storageError: undefined } : {}),
       });
     } catch (error) {
       if (!this.disposed)
@@ -129,9 +173,30 @@ export class EventLedger {
         });
     } finally {
       this.running = false;
-      if (!this.disposed && this.pending.size > 0 && !this.health.error)
-        void this.flush();
     }
+    if (received && !this.disposed) {
+      await queryClient.invalidateQueries({
+        queryKey: ["remote", this.scope],
+        predicate: (query) =>
+          ["stats", "history", "overview", "trends", "review", "rankings"].includes(String(query.queryKey[3])),
+      });
+    }
+  }
+  async clearRejected(id: string) {
+    const row = this.rows.get(id);
+    if (this.disposed || !row || !("rejection" in row)) return;
+    const unsaved = this.outstanding.delete(id);
+    try {
+      await localWrite("events", id);
+    } catch (error) {
+      if (unsaved && this.rows.get(id) === row) this.outstanding.add(id);
+      throw error;
+    }
+    this.rows.delete(id);
+    this.publishRejections({
+      ...(this.health.error === capacityError ? { error: undefined } : {}),
+      ...(!this.outstanding.size && !this.restoreFailed ? { storageError: undefined } : {}),
+    });
   }
   dispose() {
     this.disposed = true;
