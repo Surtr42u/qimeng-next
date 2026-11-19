@@ -4,6 +4,10 @@
 
 系统审查修复已在 `21b4b6d` 合入主线。该提交通过了 22 项云端作业，包括备份中断后逐项核对旧快照、普通上传停库后重启、执行器跨日认领和 Windows 切服失败时保留原窗口。[合入记录与逐项发现](https://github.com/Surtr42u/qimeng-next/pull/7) · [主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44468473213)
 
+`77e260a` 已合入复扫写入、恢复后的作者身份与备份凭证、同标签页视频续播，以及智能批次翻页和换宿主接续的修复。Windows 专项从实际打开的目录确认恢复副本与来源隔离，并经正式媒体接口读回原件。三个原生服务包自 `befa334` 起在取得监听端口后才升级数据库。端口占用时的旧库及释放端口后的升级均已用历史结构的合成样本验证。[恢复与跨端验收](https://github.com/Surtr42u/qimeng-next/pull/8) · [Windows 目录与原件回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44480574562/job/135411516322) · [三平台升级](https://github.com/Surtr42u/qimeng-next/pull/9)
+
+在 `6d19173`，五个 Ubuntu 云端作业按当前签名索引核验并复用 FFmpeg 软件包。完整 PR 验收中，一台从 Ubuntu 取得 87 个包，另四台从 Actions 缓存取回同一批包。各台均另外刷新了签名索引并实际安装。[同机计时、缓存损坏恢复与五项正式作业](https://github.com/Surtr42u/qimeng-next/pull/10)
+
 ## 系统审查后的客户端验收
 
 Web 的 `9c2a5f7` 与安装版 `74597408` 使用相同的字体、媒体、主题和视口比较。桌面与窄屏的首页、相册、详情六组均通过，锚点偏差均在 1 CSS 像素内，退出详情后两端回到原相册及原滚动位置。[六组测量与截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44455888042/job/135330670726)
