@@ -1,18 +1,121 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"qimeng.local/next/server/internal/backup"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 	"qimeng.local/next/server/internal/store"
 )
+
+func TestNativeBackupChecksRecordedFileTimes(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	modified := time.Date(2024, time.January, 8, 16, 0, 0, 0, time.UTC)
+	u, _ := f.upload("dated-original.png", 166, map[string]any{"sourceMtime": modified})
+	known := f.complete(u).Asset
+	u, _ = f.upload("historical-original.png", 167, nil)
+	historical := f.complete(u).Asset
+	if _, err := f.s.DB.DB.Exec("UPDATE asset_locations SET content_mtime=NULL WHERE asset_id=?", historical.ID); err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint service.Backup
+	decode(t, f.json("POST", "/backups", "mtime-checkpoint", struct{}{}, 201), &checkpoint)
+	f.json("POST", "/backups/"+checkpoint.ID+"/export", "mtime-export", struct{}{}, 202)
+	if exported := awaitBackup(t, f, checkpoint.ID); exported.ExportState != "completed" {
+		t.Fatalf("export: %+v", exported)
+	}
+	file, err := os.Open(filepath.Join(f.s.Config.DataDir, "backups", checkpoint.ID, "archive.qnext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	payloads := map[string][]byte{}
+	base, err := backup.Read(ctx, file, func(entry backup.File, reader io.Reader) error {
+		body, err := io.ReadAll(reader)
+		payloads[entry.StoragePath] = body
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withOffset := modified.In(time.FixedZone("fixture", 8*60*60))
+	conflicting := modified.Add(time.Minute)
+	for _, test := range []struct {
+		name       string
+		manifestAt *time.Time
+		valid      bool
+	}{
+		{"equivalent offset", &withOffset, true},
+		{"absent in manifest", nil, true},
+		{"conflicting instant", &conflicting, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := base
+			manifest.Files = slices.Clone(base.Files)
+			for i, entry := range manifest.Files {
+				switch entry.ObjectID {
+				case known.ID:
+					manifest.Files[i].ModifiedAt = test.manifestAt
+				case historical.ID:
+					manifest.Files[i].ModifiedAt = &modified
+				}
+			}
+			var raw bytes.Buffer
+			if err := backup.Write(ctx, &raw, manifest, func(entry backup.File) (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(payloads[entry.StoragePath])), nil
+			}, nil); err != nil {
+				t.Fatal(err)
+			}
+			hash := sha256.Sum256(raw.Bytes())
+			expected := hex.EncodeToString(hash[:])
+			root := t.TempDir()
+			source, destination := filepath.Join(root, "fixture.qnext"), filepath.Join(root, "restored")
+			if err := os.WriteFile(source, raw.Bytes(), 0600); err != nil {
+				t.Fatal(err)
+			}
+			verified, verifyErr := service.VerifyBackup(ctx, source, expected)
+			restored, restoreErr := service.RestoreBackup(ctx, service.RestoreOptions{ArchivePath: source, Destination: destination, ExpectedSHA256: expected, ReserveBytes: 1})
+			if !test.valid {
+				for _, err := range []error{verifyErr, restoreErr} {
+					if err == nil || !strings.Contains(err.Error(), "asset modification time does not match snapshot") {
+						t.Fatalf("expected timestamp disagreement with valid archive SHA-256, got %v", err)
+					}
+				}
+				if _, err := os.Stat(filepath.Join(destination, "qimeng.sqlite")); !os.IsNotExist(err) {
+					t.Fatalf("conflicting archive published a database: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(destination, "RESTORE_INCOMPLETE")); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if verifyErr != nil || restoreErr != nil || verified.ArchiveHash != expected || restored.ArchiveHash != expected {
+				t.Fatalf("compatible archive failed: verify %v, restore %v", verifyErr, restoreErr)
+			}
+			for _, entry := range manifest.Files {
+				info, err := os.Stat(filepath.Join(destination, filepath.FromSlash(entry.StoragePath)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !info.ModTime().Equal(modified) {
+					t.Fatalf("original modification time was %s, want %s", info.ModTime(), modified)
+				}
+			}
+		})
+	}
+}
 
 func awaitBackup(t *testing.T, f *fixture, id string) service.Backup {
 	t.Helper()

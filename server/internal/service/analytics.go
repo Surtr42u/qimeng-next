@@ -143,7 +143,7 @@ func (s *Service) Rankings(ctx context.Context, period, kind, cursor string, cou
 	rows, e := s.DB.DB.QueryContext(ctx, `WITH activity AS (SELECT asset_id,sum(views+plays) AS score FROM asset_daily_stats WHERE day>=? GROUP BY asset_id),votes AS(SELECT asset_id,count(*) AS score FROM likes WHERE day>=? GROUP BY asset_id)
  SELECT a.id,coalesce(activity.score,0)+coalesce(votes.score,0)+CASE WHEN ?='all' THEN coalesce(lb.unattributed_count,0) ELSE 0 END AS heat FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN activity ON activity.asset_id=a.id LEFT JOIN votes ON votes.asset_id=a.id LEFT JOIN like_baselines lb ON lb.asset_id=a.id
  WHERE a.trashed=0 AND coalesce(json_extract(lib.data,'$.enabled'),1)=1 AND (?='' OR `+assetPartition+`=?) AND (?='' OR a.media_type=?) AND (?='all' OR coalesce(activity.score,0)+coalesce(votes.score,0)>0)
- ORDER BY heat DESC,coalesce(json_extract(a.data,'$.sourceMtime'),a.created_at) DESC,a.id LIMIT ? OFFSET ?`, cutoff, cutoff, period, kind, kind, mediaType, mediaType, period, n+1, offset)
+ ORDER BY heat DESC,a.file_date DESC,a.id LIMIT ? OFFSET ?`, cutoff, cutoff, period, kind, kind, mediaType, mediaType, period, n+1, offset)
 	if e != nil {
 		return result, e
 	}

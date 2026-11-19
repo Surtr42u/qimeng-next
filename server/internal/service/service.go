@@ -205,26 +205,16 @@ func New(config Config) (*Service, error) {
 		s.Close()
 		return nil, err
 	}
-	uploadRows, err := db.DB.QueryContext(ctx, "SELECT id,json_extract(data,'$.libraryId') FROM uploads")
-	if err != nil {
-		s.Close()
-		return nil, err
-	}
-	for uploadRows.Next() {
-		var id, libraryID string
-		if err = uploadRows.Scan(&id, &libraryID); err != nil {
-			uploadRows.Close()
-			s.Close()
-			return nil, err
+	// File IO on uploads and retired objects runs outside catalog transactions.
+	// Resolve only the requested row so published receipts do not grow memory.
+	root.SetUploadLibraryLookup(func(id string) (string, error) {
+		var libraryID string
+		err := db.DB.QueryRow("SELECT json_extract(data,'$.libraryId') FROM uploads WHERE id=?", id).Scan(&libraryID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
 		}
-		root.RegisterUpload(id, libraryID)
-	}
-	err = uploadRows.Err()
-	uploadRows.Close()
-	if err != nil {
-		s.Close()
-		return nil, err
-	}
+		return libraryID, err
+	})
 	s.InstanceID, err = store.Get[string](ctx, db.DB, "SELECT json_quote(value) FROM settings WHERE key='instance_id'")
 	if errors.Is(err, sql.ErrNoRows) {
 		s.InstanceID = ID()

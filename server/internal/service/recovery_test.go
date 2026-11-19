@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
-	"strconv"
+	"os"
 	"testing"
 	"time"
 
@@ -55,16 +56,26 @@ func stagedUpload(t *testing.T, s *Service, library string, shade uint8, name st
 	return u
 }
 func TestPublishedIntentRecoversSameAssetAndReceipt(t *testing.T) {
-	for _, copyPublication := range []bool{false, true} {
-		t.Run("copy="+strconv.FormatBool(copyPublication), func(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		copy   bool
+		commit bool
+	}{
+		{"prepared link", false, false},
+		{"prepared copy", true, false},
+		{"committed link", false, true},
+		{"committed copy", true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			config := Config{DataDir: t.TempDir(), AdminToken: "synthetic-recovery-secret-0000000000000000", ReserveBytes: 1}
+			config.StorageRoots = map[string]string{"external": t.TempDir()}
 			s, e := New(config)
 			if e != nil {
 				t.Fatal(e)
 			}
 			r := testMutation(t, s, "library-create", func(w *Write) (any, int, error) {
-				v, e := s.CreateLibrary(ctx, w, "Recovery", "regular")
+				v, e := s.CreateLibrary(ctx, w, "Recovery", "regular", "external", "media")
 				return v, 201, e
 			})
 			var l model.Library
@@ -76,7 +87,7 @@ func TestPublishedIntentRecoversSameAssetAndReceipt(t *testing.T) {
 			a := model.Asset{ID: digest([]byte("asset:" + u.ID))[:32], LibraryID: l.ID, FileName: u.FileName, OriginalFileName: u.FileName, RelativePath: u.FileName, MediaType: "image", MimeType: "image/png", Size: u.Size, Hash: u.Hash, Revision: 1, TagsRevision: 1, AuthorsRevision: 1, ContentVersion: 1, AuthorID: "unknown", AuthorIDs: []string{"unknown"}, AuthorStatus: "unknown", Tags: []string{}, Characters: []string{}, SourceIDs: []string{}, CharacterIDs: []string{}, AcquisitionSources: []string{}, CreatedAt: now, UpdatedAt: now, ProbeState: "unavailable"}
 			a.ContentURL = "/api/v1/assets/" + a.ID + "/content"
 			w := &Write{s: s, ctx: ctx, Principal: model.Principal{ID: "owner", Scopes: []string{"admin"}}, operation: "complete-crash", key: "crash-receipt-key", inputHash: digest([]byte("original-input"))}
-			j, e := s.prepareFile(ctx, w, fileIntent{ID: "synthetic-publish-intent", Kind: "ingest", Source: uploadPath(u.ID), Target: assetPath(a), UploadID: u.ID, After: a, CopyPublication: copyPublication})
+			j, e := s.prepareFile(ctx, w, fileIntent{ID: "synthetic-publish-intent", Kind: "ingest", Source: uploadPath(u.ID), Target: assetPath(a), UploadID: u.ID, After: a, CopyPublication: test.copy})
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -90,6 +101,22 @@ func TestPublishedIntentRecoversSameAssetAndReceipt(t *testing.T) {
 			}
 			if _, e = s.Run(ctx, w.Principal, "backup-during-publication", "backup-during-publication-key", nil, func(write *Write) (any, int, error) { v, e := s.CreateBackup(ctx, write); return v, 201, e }); e == nil {
 				t.Fatal("backup claimed a consistent manifest while publication was prepared")
+			}
+			if test.commit {
+				tx, err := s.DB.DB.BeginTx(ctx, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = s.commitFile(ctx, tx, &j); err != nil {
+					tx.Rollback()
+					t.Fatal(err)
+				}
+				if err = tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, e = s.Root.Stat(uploadPath(u.ID)); e != nil {
+				t.Fatal("staging disappeared before cleanup", e)
 			}
 			if e = s.Close(); e != nil {
 				t.Fatal(e)
@@ -112,6 +139,9 @@ func TestPublishedIntentRecoversSameAssetAndReceipt(t *testing.T) {
 			}
 			if restored.State != "ingested" || restored.AssetID != a.ID {
 				t.Fatal("upload did not reconcile")
+			}
+			if _, e = s.Root.Stat(uploadPath(u.ID)); !errors.Is(e, os.ErrNotExist) {
+				t.Fatalf("recovered intent did not remove its reconciled staging link: %v", e)
 			}
 			result, e := s.Run(ctx, w.Principal, w.operation, w.key, []byte("original-input"), func(*Write) (any, int, error) { t.Fatal("recovered receipt was not replayed"); return nil, 0, nil })
 			if e != nil {

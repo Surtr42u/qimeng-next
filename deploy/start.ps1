@@ -53,6 +53,7 @@ $start.UseShellExecute = $false
 foreach ($name in @($start.EnvironmentVariables.Keys)) { if ($name -like 'QIMENG_*') { $start.EnvironmentVariables.Remove($name) } }
 $start.EnvironmentVariables['QIMENG_ADMIN_TOKEN'] = [Convert]::ToBase64String($random)
 $start.EnvironmentVariables['QIMENG_ADMIN_PASSWORD'] = $plain
+if ($env:QIMENG_TIMEZONE) { $start.EnvironmentVariables['QIMENG_TIMEZONE'] = $env:QIMENG_TIMEZONE }
 if ($env:QIMENG_RESEARCH_LENS_ENDPOINT) {
   $start.EnvironmentVariables['QIMENG_RESEARCH_LENS_ENDPOINT'] = $env:QIMENG_RESEARCH_LENS_ENDPOINT
   $start.EnvironmentVariables['QIMENG_RESEARCH_SIDECAR_TOKEN'] = $env:QIMENG_RESEARCH_SIDECAR_TOKEN

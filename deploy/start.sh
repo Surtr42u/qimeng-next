@@ -57,7 +57,9 @@ fi
 # entries of the child and never command-line arguments.
 lens_endpoint=${QIMENG_RESEARCH_LENS_ENDPOINT:-}
 sidecar_token=${QIMENG_RESEARCH_SIDECAR_TOKEN:-}
+service_timezone=${QIMENG_TIMEZONE:-}
 for key in ${!QIMENG_@}; do unset "$key"; done
+if [[ -n "$service_timezone" ]]; then export QIMENG_TIMEZONE="$service_timezone"; fi
 if [[ -n "$lens_endpoint" ]]; then
   export QIMENG_RESEARCH_LENS_ENDPOINT="$lens_endpoint" QIMENG_RESEARCH_SIDECAR_TOKEN="$sidecar_token"
 fi

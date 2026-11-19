@@ -12,11 +12,13 @@ import secrets
 import signal
 import socket
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import time
 import urllib.request
 import zipfile
+import zlib
 
 import preview_notices
 
@@ -115,6 +117,45 @@ def check_occupied_upgrade(app: Path, state: Path, port: int) -> dict:
     return {"instanceId": instance, "author": author, "schemaVersionBefore": ledger[-1][0]}
 
 
+def check_timezone(origin: str, password: str, catalog: Path) -> None:
+    def png_chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    png = b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+    png += png_chunk(b"IDAT", zlib.compress(b"\x00\x11\x22\x33")) + png_chunk(b"IEND", b"")
+    session = ""
+
+    def send(path: str, body: dict | bytes, *, method: str = "POST") -> dict:
+        headers = {"Origin": origin, "Idempotency-Key": "package-timezone-" + secrets.token_hex(12)}
+        if session:
+            headers["Authorization"] = "Bearer " + session
+        if isinstance(body, bytes):
+            headers.update({"Content-Type": "application/octet-stream", "Upload-Offset": "0"})
+        else:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(body).encode("utf-8")
+        request = urllib.request.Request(origin + "/api/v1/" + path, data=body, headers=headers, method=method)
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.load(response)
+
+    session = send("sessions", {"password": password, "label": "Synthetic timezone check"})["token"]
+    library = send("libraries", {"name": "Synthetic timezone library", "kind": "regular"})
+    upload = send("uploads", {"libraryId": library["id"], "mode": "ordinary", "fileName": "timezone.png",
+                              "mimeType": "image/png", "size": len(png)})
+    path = "uploads/" + upload["id"]
+    send(path + "/content", png, method="PUT")
+    asset = send(path + "/complete", {})["asset"]
+    for index, at in enumerate(("2025-01-01T15:59:59Z", "2025-01-01T16:00:00Z")):
+        send("assets/" + asset["id"] + "/events", {"eventId": f"timezone-view-{index}", "kind": "view",
+              "sessionId": "timezone-view-session", "contentVersion": asset["contentVersion"], "occurredAt": at})
+    with closing(sqlite3.connect(catalog.as_uri() + "?mode=ro", uri=True)) as db:
+        actual = db.execute("SELECT day,hour,views FROM asset_hourly_stats WHERE asset_id=? ORDER BY day,hour",
+                            (asset["id"],)).fetchall()
+    if actual != [("2025-01-01", 23, 1), ("2025-01-02", 0, 1)]:
+        raise RuntimeError(f"Packaged launcher failed to set Asia/Shanghai statistical day: {actual}")
+    print("Packaged launcher applied Asia/Shanghai across a date boundary.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", required=True)
@@ -155,6 +196,7 @@ def main() -> None:
         mode = "compose-media" if args.media_tools else "compose" if args.compose else "native"
         env = {**os.environ, "QIMENG_PACKAGE_STATE": str(state),
                "QIMENG_PACKAGE_PASSWORD_FILE": str(secret), "QIMENG_PACKAGE_PORT": str(port),
+               "QIMENG_TIMEZONE": "Asia/Shanghai",
                "QIMENG_PACKAGE_TEST_MODE": mode, "QIMENG_PACKAGE_TARGET": args.target,
                "QIMENG_PACKAGE_APP_DIR": str(app), "QIMENG_PACKAGE_TEST_DIR": str(work / "restore-check"),
                "QIMENG_PACKAGE_EVIDENCE_DIR": str(packages)}
@@ -193,6 +235,7 @@ def main() -> None:
                 prior["schemaVersionAfter"] = version
                 env["QIMENG_PACKAGE_PRIOR_RECORDS"] = json.dumps(prior)
             subprocess.run(["node", "tests/packaged-home.mjs"], cwd=ROOT / "web", env=env, check=True, timeout=180)
+            check_timezone(origin, secret.read_text("ascii"), state / "data/qimeng.sqlite")
         finally:
             if args.compose:
                 subprocess.run(["bash", str(app / "start.sh"), "nas-stop"], env=env, check=True, timeout=60)
