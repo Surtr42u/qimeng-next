@@ -1597,7 +1597,7 @@ paths:
   /ai/delegations/current/ready-batches:
     get:
       operationId: listReadyIntakeBatches
-      description: Read the oldest 16 unclaimed, sealed intelligent intakes within this live long-term executor grant. All declared transfers have settled and at least one verified staged upload is actionable. Polling has no side effects. Claim an item through startDelegatedTask with its readyManifestFingerprint.
+      description: Read the oldest 16 unclaimed, sealed intelligent intakes in the libraries this executor can ingest and organize. Research is optional. All declared transfers have settled and at least one verified staged upload is actionable. Polling has no side effects. Claim an item through startDelegatedTask with its readyManifestFingerprint.
       responses:
         '200': {description: Empty when there is no matching work, content: {application/json: {schema: {$ref: '#/components/schemas/ReadyIntakeBatches'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -2360,7 +2360,7 @@ components:
         batchId: {type: string}
         libraryId: {type: string}
         manifestFingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
-        maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100, description: Smaller of the batch research ceiling and this grant's ceiling. A zero ceiling still permits organizing this intake.}
     DelegatedTaskStart:
       type: object
       required: [kind, label, credentialSecret]
@@ -2374,7 +2374,7 @@ components:
         batchId: {type: string}
         readyManifestFingerprint: {type: string, pattern: '^[0-9a-f]{64}$', description: For a queue claim use kind intake and mode intelligent with the returned batch and library IDs. Readiness is rechecked atomically. An idempotent replay returns the original task.}
         mode: {type: string, enum: [ordinary, intelligent]}
-        maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100, description: Optional task ceiling within the parent grant. For a ready-manifest claim it can narrow the offered ceiling further. Prior batch research counts toward that ceiling.}
         researchProviders: {$ref: '#/components/schemas/ResearchProviderList'}
         allowImageLookup: {type: boolean, default: false, description: Explicitly request single-frame egress within this task's parent grant and research budget}
         authorId: {type: string}
@@ -2730,6 +2730,7 @@ components:
         batchId: {type: string}
         authorTaskId: {type: string}
         parentDelegationId: {type: string}
+        intakeResearchLimit: {type: integer, minimum: 0, maximum: 100, readOnly: true, description: Effective total research ceiling of a ready-manifest claim. Preserved on credential rotation.}
         assetTaskId: {type: string}
         deviceId: {type: string, description: Target bound to a device.apply credential}
         generation: {type: integer, format: int64}
@@ -3166,7 +3167,7 @@ components:
         libraryId: {type: string}
         mode: {type: string, enum: [ordinary, intelligent]}
         label: {type: string, maxLength: 200}
-        maxResearchCalls: {type: integer, minimum: 0, maximum: 100, default: 8}
+        maxResearchCalls: {type: integer, minimum: 0, maximum: 100, default: 8, description: Batch research ceiling. A ready-manifest claim may receive a smaller task ceiling.}
     Batch:
       allOf:
         - {$ref: '#/components/schemas/BatchCreate'}
@@ -3333,7 +3334,7 @@ components:
         batch: {$ref: '#/components/schemas/Batch'}
         policyVersion: {type: string}
         nextActions: {type: array, items: {type: string}}
-        remainingResearchCalls: {type: integer}
+        remainingResearchCalls: {type: integer, description: Unused research calls after applying the batch and current task ceilings and deducting research already charged to the batch.}
         inputs: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/BatchInput'}}
         items: {type: array, items: {$ref: '#/components/schemas/BatchItem'}}
         nextCursor: {type: string}

@@ -155,7 +155,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
                 .diskCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail").build(),
                 imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         }
-    } else PlayerSurface(player, fullscreen, canRotate, error, { error = null; if (staleContent) model.openAsset(asset.id) else player.prepare() },
+    } else PlayerSurface(player, fullscreen, canRotate, error, { error = null; if (staleContent) model.refreshAsset(asset.id) else player.prepare() },
         Modifier.fillMaxSize(), onPlaybackChromeChanged) { fullscreen = !fullscreen }
     if (activated && !fullscreen) IconButton(onClick = { timeline = true; player.pause() }, modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(8.dp)) {
         Icon(Icons.Outlined.BookmarkAdd, "时间轴标记", tint = Color.White)

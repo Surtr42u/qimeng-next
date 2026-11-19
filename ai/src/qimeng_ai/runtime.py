@@ -28,9 +28,7 @@ DESCRIPTION_SCHEMA = {"type": "object", "properties": {"tool": {"type": "string"
 
 class Runtime:
     def __init__(self, config: Config, *, contract=None, transport=None):
-        # Daily control-plane budget is distinct from each persistent business task.
-        self.config = replace(config, task_id="control:" + date.today().isoformat(), max_seconds=86400) if config.task_id == "interactive" else config
-        self.task_max_seconds = config.max_seconds
+        self.config = config
         self.contract = contract or load_contract()
         self.transport = transport or Transport(config, self.contract)
         self.operations = {value["tool"]: (identifier, value) for identifier, value
@@ -53,9 +51,13 @@ class Runtime:
             raise ToolError("API_INCOMPATIBLE", "目标服务 API 版本与工具包不兼容")
         if self.instance_id is not None and instance["id"] != self.instance_id:
             raise ToolError("INSTANCE_CHANGED", "同地址实例已变化，请由可信端重新绑定")
-        if self.base_state is None:
+        config = self.config
+        daily_control = config.task_id == "interactive"
+        if daily_control:
+            config = replace(config, task_id="control:" + date.today().isoformat(), max_seconds=86400)
+        if self.base_state is None or self.base_state.config.task_id != config.task_id:
             self.instance_id = instance["id"]
-            self.base_state = State(self.config, self.instance_id, self.contract["openapiSha256"])
+            self.base_state = State(config, self.instance_id, self.contract["openapiSha256"], daily_control=daily_control)
             self.state = self.base_state
         return self.base_state
 
@@ -126,7 +128,7 @@ class Runtime:
         else:
             self.transport.active_token = state.task_credential(task_id) if task_id else None
         if task_id:
-            state = State(replace(self.config, task_id=task_id, max_seconds=self.task_max_seconds), self.instance_id, self.contract["openapiSha256"])
+            state = State(replace(self.config, task_id=task_id), self.instance_id, self.contract["openapiSha256"])
         self.state = state
         return state
 

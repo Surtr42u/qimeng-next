@@ -76,8 +76,7 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def warm_files(root, manifest):
-    # Both copies get the same explicit page-cache warming outside every timed phase.
+def read_originals(root, manifest):
     for path, (size, stamp, digest) in manifest.items():
         target = root / path
         data = target.read_bytes()
@@ -191,25 +190,29 @@ def proc_number(pid, file, field):
     raise ValueError(f"missing /proc field {field}")
 
 
-def snapshot(version, data, library_id, manifest):
+def snapshot(version, data, library_id, manifest, rewritten):
     # Outside the stopwatch. Read the live catalog through a read-only connection.
     if version == "installed":
         db = data / "scan.sqlite"
-        sql = "SELECT rel_path,asset_id,size_bytes,mtime,NULL FROM assets WHERE library_id=?"
+        sql = "SELECT rel_path,asset_id,size_bytes,mtime,NULL,NULL FROM assets WHERE library_id=?"
     else:
         db = data / "qimeng.sqlite"
-        sql = """SELECT relative_path,id,size,json_extract(data,'$.contentMtime'),hash FROM assets
+        sql = """SELECT relative_path,id,size,json_extract(data,'$.contentMtime'),hash,
+                        json_extract(data,'$.contentVersion') FROM assets
                  WHERE library_id=? AND trashed=0"""
     with contextlib.closing(sqlite3.connect(db.as_uri() + "?mode=ro", uri=True)) as connection:
         records = connection.execute(sql, (library_id,)).fetchall()
     require(len(records) == len(manifest), "catalog row count differs from fixture")
     identities = {}
-    for path, asset_id, size, stamp, digest in records:
+    for path, asset_id, size, stamp, digest, content_version in records:
         expected_size, expected_stamp, expected_hash = manifest[path]
         require((size, datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
                 == (expected_size, expected_stamp), f"catalog metadata differs at {path}")
         if version != "installed":
             require(digest == expected_hash, f"catalog hash differs at {path}")
+            expected_version = 2 if path in rewritten else 1
+            require(content_version == expected_version,
+                    f"content version at {path}: expected {expected_version}, got {content_version}")
         identities[path] = asset_id
     require(set(identities) == set(manifest) and len(set(identities.values())) == len(manifest),
             "catalog paths or identities are not one-to-one")
@@ -287,7 +290,8 @@ def trial(version, binary, index, corpus, original, temp):
             for phase in PHASES:
                 if phase == "sparse":
                     moved = sparse_changes(media, manifest)
-                warm_files(media, manifest)
+                # Identical page-cache warming for all three binaries before timing.
+                read_originals(media, manifest)
                 row = measure(api, version, library, phase, pid)
                 # On both fresh processes no thumbnail tick can run before 30 seconds.
                 # Reject contaminated comparisons if the whole trial outlives that window.
@@ -295,9 +299,24 @@ def trial(version, binary, index, corpus, original, temp):
                 require(end_age < 30, f"{version} trial {index} exceeded thumbnail quiet window ({end_age:.1f}s)")
                 cache = data / ("thumbs" if version == "installed" else "cache")
                 require(not any(p.is_file() for p in cache.rglob("*")), "thumbnail generation overlapped scan")
-                after = snapshot(version, data, library["id"], manifest)
+                rewritten = {filename(i) for i in range(REWRITES)} if phase == "sparse" else set()
+                after = snapshot(version, data, library["id"], manifest, rewritten)
                 for path, asset_id in before.items():
                     require(after[moved.get(path, path)] == asset_id, f"scan lost identity at {path}")
+                if phase == "sparse":
+                    # Read the actual originals after the last timed POST, including the
+                    # installed scanner which does not store a content digest.
+                    physical = {p.relative_to(media).as_posix() for p in media.rglob("*.png") if p.is_file()}
+                    require(physical == manifest.keys() and len(physical) == FILES + ADDITIONS,
+                            "final physical PNG paths differ from the expected corpus")
+                    read_originals(media, manifest)
+                    row["physical_originals_verified"] = len(physical)
+                    row["physical_bytes_verified"] = sum(size for size, _, _ in manifest.values())
+                    if version != "installed":
+                        row["versions_verified"] = {
+                            "rewritten_advanced": len(rewritten), "moved_unchanged": len(moved),
+                            "new_at_one": ADDITIONS, "other_unchanged": FILES - len(rewritten) - len(moved),
+                        }
                 before = after
                 row.update(version=version, trial=index, process_age_s=end_age)
                 results.append(row)
@@ -310,7 +329,8 @@ def report(evidence, metadata, rows):
     lines = ["## 完整手动扫描", "", f"旧版 \x60{metadata['installed_sha']}\x60，Next \x60{metadata['next_sha']}\x60。",
              f"同一 {metadata['platform']} 运行器，Go {metadata['go']}，CGO=0。每轮使用新进程和空数据库。",
              f"{FILES} 张不同的 32×32 RGB PNG，{DIRECTORIES} 个目录，合计 {metadata['bytes']:,} 字节。",
-             f"少量变动包含 {REWRITES} 张原位改写、{MOVES} 张移动、{ADDITIONS} 张新增。每轮核对全部路径、大小、mtime 和已有 ID，Next 同时核对全部内容 SHA-256。",
+             f"少量变动包含 {REWRITES} 张原位改写、{MOVES} 张移动、{ADDITIONS} 张新增。每轮核对全部路径、大小、mtime 和已有 ID。"
+             f"末次计时结束后再读全部 {FILES + ADDITIONS:,} 份物理原件核对长度和 SHA-256。Next 同时逐项核对目录中的摘要与内容版本。",
              "", "| 阶段 | 版本 | HTTP 毫秒（3 次） | HTTP 中位数 ms | 后端中位数 ms | 进程写入中位数 MiB | 截至该阶段 RSS 高水位中位数 MiB | 入库总数 |",
              "|---|---|---|---:|---:|---:|---:|---:|"]
     if metadata.get("before_next_sha"):

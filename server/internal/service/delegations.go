@@ -337,9 +337,6 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 	if researchLimit < 0 || researchLimit > d.MaxResearchCalls {
 		return result, Fail(403, "research_budget_denied", "任务研究预算超出长期授权。")
 	}
-	if e = validateResearchProviders(in.ResearchProviders, d.CanResearch, researchLimit); e != nil {
-		return result, e
-	}
 	p := model.Principal{ID: w.ID("delegated-credential"), Label: in.Label, Scopes: []string{"read"}, ParentDelegationID: d.ID, Generation: 1, ExpiresAt: limitExpiry(d, 24*time.Hour)}
 	isNewBatch := false
 	switch in.Kind {
@@ -347,7 +344,6 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 		if !d.CanIngest || !containsString(d.LibraryIDs, in.LibraryID) {
 			return result, Fail(403, "library_scope_denied", "首次配置未授权此库的接收任务。")
 		}
-		budget := researchLimit
 		mode := in.Mode
 		if mode == "" {
 			mode = "intelligent"
@@ -361,9 +357,10 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 			if e != nil {
 				return result, e
 			}
-			if b.LibraryID != in.LibraryID || b.Mode != mode || b.MaxResearchCalls > budget {
+			if b.LibraryID != in.LibraryID || b.Mode != mode || in.ReadyManifestFingerprint == nil && b.MaxResearchCalls > researchLimit {
 				return result, Fail(409, "batch_not_claimable", "批次范围、预算或状态不符合本授权。")
 			}
+			researchLimit = min(researchLimit, b.MaxResearchCalls)
 			var exists int
 			e = s.DB.DB.QueryRowContext(ctx, "SELECT count(*) FROM delegated_tasks WHERE task_id=?", b.ID).Scan(&exists)
 			if e != nil {
@@ -375,6 +372,7 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 			claimable := b.State == "waiting_executor" || b.State == "receiving"
 			if in.ReadyManifestFingerprint != nil {
 				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ready_intake_batches WHERE batch_id=? AND manifest_fingerprint=?)`, b.ID, *in.ReadyManifestFingerprint).Scan(&claimable)
+				p.IntakeResearchLimit = &researchLimit
 			} else if b.State == "partial" {
 				e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id
  WHERE i.batch_id=? AND i.cancelled=0 AND i.rejection_code='' AND (i.upload_id IS NULL OR u.state IN ('receiving','staged')))`, b.ID).Scan(&claimable)
@@ -386,7 +384,7 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 				return result, Fail(409, "batch_not_claimable", "批次没有可接手的待处理输入，或所选清单已变化。")
 			}
 		} else {
-			b, e = s.prepareBatch(ctx, w.ID("batch"), model.Batch{LibraryID: in.LibraryID, Mode: mode, Label: in.Label, MaxResearchCalls: budget})
+			b, e = s.prepareBatch(ctx, w.ID("batch"), model.Batch{LibraryID: in.LibraryID, Mode: mode, Label: in.Label, MaxResearchCalls: researchLimit})
 			if e != nil {
 				return result, e
 			}
@@ -396,7 +394,7 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 		result.Batch = &b
 		p.BatchID = b.ID
 		p.Scopes = append(p.Scopes, "ingest")
-		if d.CanResearch {
+		if d.CanResearch && (p.IntakeResearchLimit == nil || researchLimit > 0) {
 			p.Scopes = append(p.Scopes, "research")
 		}
 		if d.CanOrganize {
@@ -458,6 +456,9 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 	default:
 		return result, Fail(400, "invalid_task_kind", "任务类别必须是 intake、author 或 asset。")
 	}
+	if e = validateResearchProviders(in.ResearchProviders, d.CanResearch, researchLimit); e != nil {
+		return result, e
+	}
 	q, e := w.Q()
 	if e != nil {
 		return result, e
@@ -484,9 +485,6 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 	}
 	if e = saveDelegatedCredential(ctx, q, p, in.CredentialSecret); e != nil {
 		return result, e
-	}
-	if result.Batch != nil {
-		researchLimit = result.Batch.MaxResearchCalls
 	}
 	if !p.Has("research") || researchLimit == 0 {
 		providers = []string{}

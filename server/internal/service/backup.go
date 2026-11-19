@@ -40,9 +40,9 @@ func (s *Service) CreateBackup(ctx context.Context, w *Write) (Backup, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return Backup{}, e
 	}
-	return s.createBackupCheckpoint(ctx, w)
+	return s.createBackupCheckpoint(ctx, w, nil)
 }
-func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write) (Backup, error) {
+func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write, inspect func(*sql.DB) error) (Backup, error) {
 	b := Backup{ID: w.ID("backup"), State: "awaiting_external_backup", ExportState: "not_started", CreatedAt: time.Now().UTC()}
 	directory := "backups/" + b.ID
 	var pending int
@@ -96,6 +96,11 @@ func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write) (Backup,
 	b.SnapshotHash, _, e = s.hashFile(snapshot)
 	if e != nil {
 		return b, e
+	}
+	if inspect != nil {
+		if e = inspect(snapshotDB); e != nil {
+			return b, e
+		}
 	}
 	b.AssetCount, b.ManifestHash, e = s.publishCheckpointManifest(ctx, snapshotDB, b)
 	if e != nil {

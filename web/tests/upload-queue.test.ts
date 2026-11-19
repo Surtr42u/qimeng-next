@@ -28,7 +28,7 @@ vi.mock("../src/data/storage", () => ({
 vi.mock("../src/data/hash", () => ({ fileDigest: mocks.digest }));
 vi.mock("../src/data/query", () => ({ invalidateLibrary: mocks.invalidate }));
 import { UploadQueue } from "../src/data/upload-queue";
-import type { QueueEntry } from "../src/data/upload-queue";
+import type { QueueEntry, UploadBatchPreparation } from "../src/data/upload-queue";
 
 const file = () =>
   new File(["synthetic media"], "fixture.jpg", {
@@ -51,7 +51,11 @@ beforeEach(() => {
   mocks.write.mockResolvedValue(undefined);
   mocks.writeGroup.mockResolvedValue(undefined);
   mocks.digest.mockResolvedValue("source-digest");
-  mocks.get.mockResolvedValue(upload());
+  mocks.get.mockImplementation((path: string) => {
+    if (path !== '/batches/{id}') return Promise.resolve(upload());
+    const manifest = mocks.put.mock.calls.filter(call => call[0] === '/batches/{id}/inputs').at(-1)![1].body.inputs;
+    return Promise.resolve({ batch: sealed(manifest.length), inputs: manifest.map((input: { id: string }) => ({ ...input, state: 'pending' })) });
+  });
   mocks.put.mockImplementation((path: string, options: { body: { inputs?: unknown[] } }) => Promise.resolve(path === '/batches/{id}/inputs' ? sealed(options.body.inputs?.length ?? 0) : upload('receiving', file().size)));
   mocks.remove.mockResolvedValue(undefined);
   mocks.post.mockImplementation((path: string) =>
@@ -76,6 +80,30 @@ describe("durable upload behavior", () => {
   const storedUpload = (phase: QueueEntry['phase'], mode: 'ordinary' | 'intelligent' = 'ordinary'): QueueEntry => ({
     id: 'stored-selection', scope: 'instance-fixture:device-fixture', request: { ...target, mode, fileName: file().name, size: file().size, mimeType: file().type, expectedHash: 'source-digest' },
     name: file().name, libraryName: '合成库', size: file().size, modified: file().lastModified, digest: 'source-digest', uploadId: 'upload-fixture', phase, offset: file().size, hashProgress: file().size, createdAt: '2026-01-01T00:00:00Z',
+  });
+  it('restores rejected inputs from an older sealed queue without needing the files again', async () => {
+    const names = ['empty.png', 'good.png', 'notes.txt'];
+    const entries = names.map((name, index): QueueEntry => {
+      const original = storedUpload('failed', 'intelligent');
+      return { ...original, id: `input-${index}`, uploadId: undefined, name, size: index === 0 ? 0 : 8, offset: 0,
+        batchPlanId: 'old-plan', request: { ...original.request, batchId: batch.id, fileName: name, inputId: `input-${index}` } };
+    });
+    const inputs = entries.map(entry => ({ id: entry.id, nameState: 'known' as const, originalFileName: entry.name, size: entry.size }));
+    const plan: UploadBatchPreparation = { id: 'old-plan', scope: entries[0]!.scope, input: { ...target, mode: 'intelligent', label: 'old selection', maxResearchCalls: 8 },
+      inputs, batchId: batch.id, manifestKey: 'original-key', sealed: true, fingerprint: sealed(3).manifestFingerprint };
+    mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? entries : [plan]));
+    mocks.get.mockResolvedValue({ batch: sealed(3), inputs: inputs.map((input, index) => ({ ...input,
+      state: index === 1 ? 'pending' : 'failed', errorCode: ['empty_input', undefined, 'unsupported_media'][index] })) });
+    const queue = await initialized();
+    await vi.waitFor(() => expect(queue.getSnapshot().entries.map(entry => entry.phase)).toEqual(['rejected', 'waiting_file', 'rejected']));
+    queue.retry('input-0');
+    await queue.cancel('input-2');
+    await queue.clearFinished();
+    expect(queue.getSnapshot().entries.map(entry => entry.id)).toEqual(['input-1']);
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    expect(mocks.post).not.toHaveBeenCalled();
+    expect(mocks.put).not.toHaveBeenCalled();
+    queue.dispose();
   });
   it('publishes an earlier ordinary staged row with its original completion key and no local file', async () => {
     const stored = storedUpload('staged');
@@ -353,6 +381,7 @@ it('aborts cancellation with the session and does not reconcile using a later se
   mocks.digest.mockImplementation((_file: File, signal: AbortSignal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
   const queue = await initialized();
   await queue.add([file()], target, '合成库');
+  mocks.get.mockClear();
   mocks.post.mockImplementation((_path: string, options: { signal: AbortSignal }) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })));
   const cancelling = queue.cancel(queue.getSnapshot().entries[0]!.id);
   await vi.waitFor(() => expect(mocks.post.mock.calls.some(call => call[0] === '/batches/{id}/inputs/{inputId}/cancel')).toBe(true));

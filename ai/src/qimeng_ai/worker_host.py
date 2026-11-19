@@ -147,7 +147,7 @@ class WorkerHost:
             raise ToolError("WORKER_HOST_RESPONSE", "本机模型没有返回有效工具调用或结束消息") from None
 
 
-def offered_tools(runtime, allow_image_lookup, scopes, research_left):
+def offered_tools(runtime, allow_image_lookup, scopes, research):
     definitions = {}
     wire = {}
     for tool in runtime.tools(discovery=False):
@@ -155,13 +155,23 @@ def offered_tools(runtime, allow_image_lookup, scopes, research_left):
         if (name not in INTAKE_TOOLS or tool["scope"] not in runtime.config.permissions
                 or tool["scope"] not in scopes and "admin" not in scopes):
             continue
+        if name in GROUPS["research"] and research is None:
+            continue
         if name == "platform.artifact.read" and not runtime.config.allow_media_to_model:
             continue
-        if name == "research.image.search" and not allow_image_lookup:
+        if name == "research.image.search" and not (allow_image_lookup and research["imageLookupEnabled"] and research["imageLookupAllowed"]):
             continue
-        if name in {"research.provider.query", "research.image.search"} and research_left <= 0:
+        if name == "research.provider.query" and not (research["enabled"] and research["allowedProviders"]):
+            continue
+        if name in {"research.provider.query", "research.image.search"} and research["remainingResearchCalls"] <= 0:
             continue
         schema = tool["inputSchema"]
+        if name == "research.provider.query":
+            schema["properties"]["provider"]["enum"] = research["allowedProviders"]
+        if name == "research.submit":
+            schema["properties"]["body"]["properties"]["callsUsed"]["maximum"] = research["remainingResearchCalls"]
+            if research["remainingResearchCalls"] == 0 and not any(q["state"] != "pending" for q in research.get("queries", [])):
+                continue
         # Runtime.tools returns fresh schemas. The worker supplies these trusted arguments.
         hidden = {"taskId", "Idempotency-Key"}
         if name in BATCH_TOOLS:
@@ -177,10 +187,10 @@ def offered_tools(runtime, allow_image_lookup, scopes, research_left):
 
 
 def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_lookup, usage, on_active):
-    intake = WorkerIntake(runtime, batch_id, report)
     scope = runtime.transport.call("getCurrentSession", {})["scopes"]
-    batch = intake.report["batch"]
-    definitions, schemas = offered_tools(runtime, allow_image_lookup, scope, batch["maxResearchCalls"] - batch["researchCalls"])
+    intake = WorkerIntake(runtime, batch_id, report, "research" in scope and "research" in runtime.config.permissions)
+    policy = intake.research
+    definitions, schemas = offered_tools(runtime, allow_image_lookup, scope, policy)
     initial = intake.summary()
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": "处理已接收的智能批次，当前清单为 " + encode(initial)}]
@@ -195,6 +205,9 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
             return "stopped"
         if remaining <= 0:
             raise ToolError("TASK_BUDGET_EXHAUSTED", "当前任务时间额度已用尽")
+        if intake.research is not policy:
+            policy = intake.research
+            definitions, schemas = offered_tools(runtime, allow_image_lookup, scope, policy)
         wire, groups = intake.tools(schemas)
         usage.schema_bytes = max(usage.schema_bytes, len(encode(wire).encode()))
         reviewed = intake.reviewed()
@@ -266,6 +279,8 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
                         intake.observed_choices(name, args, value)
                         if operation in {"plan.prepare", "plan.read"}:
                             value = intake.preview(full_result(runtime, value), offset, intake.excluded if operation == "plan.prepare" else None)
+                        elif name in {"research.provider.query", "research.image.search"} and value.get("state") != "pending":
+                            intake.refresh()
                         elif name in {"research.submit", "plan.commit"}:
                             if name == "plan.commit" and not any(row["state"] in {"pending", "receiving", "staged"}
                                     for row in full_result(runtime, value)["inputs"]):

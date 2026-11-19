@@ -31,7 +31,7 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 
 ### 手动扫描的同机对照
 
-同一台 Ubuntu 24.04、4 vCPU 运行器按轮换顺序启动三个版本，每版三轮。每轮从新进程、空媒体索引开始，使用 16 个目录中的 2,048 张不同的 32×32 PNG，共 6,496,256 字节。每阶段先读热原件，再从手动 POST 发出计时到首次观察到成功终态，测试客户端以 10 毫秒间隔轮询。原样复扫后，原位改写 16 张、移动 8 张、新增 4 张，再次扫描。三个版本均核对全部路径、大小、修改时间与已有身份，最终各有 2,052 项。两版 Next 还逐项核对 SHA-256。[合成数据与计时脚本](../tools/scan-comparison/compare.py)
+同一台 Ubuntu 24.04、4 vCPU 运行器按轮换顺序启动三个版本，每版三轮。每轮从新进程、空媒体索引开始，使用 16 个目录中的 2,048 张不同的 32×32 PNG，共 6,496,256 字节。每阶段先读热原件，再从手动 POST 发出计时到首次观察到成功终态，测试客户端以 10 毫秒间隔轮询。原样复扫后，原位改写 16 张、移动 8 张、新增 4 张，再次扫描。三个版本逐项核对路径、大小、mtime 和原有 ID，末次计时结束后回读 2,052 份物理原件核对长度与 SHA-256。两版 Next 另核对目录中的内容摘要与版本，16 个改写项各加一版，8 个移动项及其余 2,024 个原有项保持原版本，4 个新增项从第一版开始。独立的小样本用例在移动前通过 API 加标签和收藏，再按原资产 ID 回读。[合成数据与计时脚本](../tools/scan-comparison/compare.py) · [身份与人工资料用例](../tools/scan-comparison/identity_check.py)
 
 包含原生内容版本、文件位置、标签身份和集合成员的 `034d2aa` 与分表前的 `b972bec`、已安装版在同场分三轮轮换。计时、目录核对、身份反例与扫描回归均通过。[本轮原始数据和回归日志](https://github.com/Surtr42u/qimeng-next/actions/runs/44351821418)
 
@@ -78,9 +78,25 @@ Go 格式有差异时，该作业失败，并提供同一提交的 `go-format-co
 | 事务、进度与写入 | 常规库按单资产事务写媒体及角色，进度通过事件总线节流发送。WAL 使用 FULL 同步。[事务](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/enrich.go#L155) · [进度](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/scanner.go#L516) · [数据库配置](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/store/store.go#L115) | b3847e3 也逐资产提交，并将资产、关系和进度一起落库。efa6234 对常规库中新发现且不超过 1 MiB 的 PNG/JPEG/GIF，最多先准备 32 项。写入阶段遇到 20 毫秒预算边界便在文件间释放写锁，保留 WAL/FULL。文件哈希与图片探测在事务外完成。已知路径、同内容候选、未决发布走逐项复核，故障回滚失败项并保存已完成前缀。[原逐项提交](https://github.com/Surtr42u/qimeng-next/blob/b3847e36cd0b6ef38389bd0b0ce14497a64c8285/server/internal/service/scans.go#L550) · [小批提交](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scan_batch.go#L87) · [数据库配置](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/store/sqlite_portable.go#L15) |
 | 自动处理 | 已有路径的写通知可局部处理，大小和 mtime 都相同直接结束。未知路径、删除、改名、目录变化或局部处理失败会请求整库对账，另有独立轮询。[局部更新](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/watch_update.go#L17) · [轮询](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/server/internal/scanner/background.go#L118) | 已有文件写通知也可按路径处理，大小与 mtime 相同时仍读内容核对哈希。新增、改名、删除和目录变化合并整库对账，缩略图另由后台补齐。对照试验关闭监听，手动复扫不承担监控事件的实测含义。[通知分类](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/library_watch.go#L248) · [写通知哈希](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/scans.go#L403) · [缩略图主管](https://github.com/Surtr42u/qimeng-next/blob/efa62347b256e5a30488aae3e30e2e9d82272101/server/internal/service/preview_maintenance.go#L19) |
 
+Next 扫描 PNG、JPEG 和 GIF 时，用同一受控文件句柄读至 EOF 计算 SHA-256，再从该句柄的起点解码图片头及 JPEG 方向。提交时按库内路径复核原件身份、长度和 mtime，包含批量提交里的逐件复核。原样手动复扫继续按目录签名跳过未变项。外部工具探测使用现有的平台路径。[扫描读取](../server/internal/service/scan_inspection.go) · [批量发布](../server/internal/service/scan_batch.go) · [内置格式与方向用例](../server/internal/service/scan_inspection_test.go)
+
+监听收到写入与目录结构变化时，Next 会同时盘点整库并核对相应路径的内容摘要。队列繁忙时，新到通知与待重试的路径一起保留。待核验路径超过 128 个或操作系统报告通知溢出时，该次扫描逐件重算摘要。合成回归覆盖等长原位改写后还原 mtime、同批新增、排队冲突和通知溢出，并把变更后的原件、标签与备注从导出归档恢复到独立实例。[通知合并与重试](../server/internal/service/library_watch.go) · [扫描与恢复用例](../server/internal/service/scan_watch_test.go)
+
 按上述条件和固定样本推算，Next 首扫送入 SHA-256 的字节数为 6,496,256，原样手动复扫为 0，小批变动的 28 个路径合计 88,816 字节。此处按文件长度计算哈希输入量，操作系统页缓存会影响物理磁盘读取。试验采集了进程写入字节，没有逐次追踪 fsync，也未将端到端差额拆成哈希、目录系统调用和 SQL 各自的耗时。旧版可借鉴的做法包括按窄字段批量读取、用目录差集筛小缺件候选、将耗时探测放在写锁外，以及在提交时复核原件和当前记录。[合成数据与计时脚本](../tools/scan-comparison/compare.py)
 
 分类关系独立存储后，在同一云机扫描 2,048 张合成小图。新资产没有文字线索或候选证据时省去空行，首次扫描三轮中位数从 2,424.91 降至 1,902.84 毫秒，进程写入从 107.82 降至 69.18 MiB。原样复扫为 71.22 毫秒。少量修改、移动和新增后的复扫为 155.57 毫秒，同机安装旧版为 114.68 毫秒。三版均逐项核对身份和路径，Next 另核对内容 SHA-256。以上只描述该组合成文件与该台云机。[同机三版、身份与逐轮数据](https://github.com/Surtr42u/qimeng-next/actions/runs/44381286901)
+
+`c3aa424` 与交付基线 `8f4321a`、安装版 `74597408` 又在同一台 Linux 云机轮换三轮。下表是手动请求至观察到成功终态的中位数，单位为毫秒。[逐轮耗时、写入量与身份核对](https://github.com/Surtr42u/qimeng-next/actions/runs/44452369764/job/135319171439)
+
+| 操作 | 安装版 | 交付基线 | 共用原件句柄后 |
+|---|---:|---:|---:|
+| 首扫 2,048 张 PNG | 1,384.67 | 1,104.25 | 1,069.77 |
+| 原样复扫 | 37.50 | 57.69 | 55.78 |
+| 改写 16 张、移动 8 张、新增 4 张后复扫 | 62.24 | 112.23 | 112.90 |
+
+在这台机器上，少量变动复扫仍比安装版慢约 51 毫秒。末轮计时后重新读取了全部 2,052 份原件并比较长度与 SHA-256，两版 Next 还逐项校验了资产 ID 和内容版本。独立移动用例保留了收藏和人工标签。这次测量使用热文件缓存，关闭了目录监听，覆盖的是手动扫描路径。
+
+文件意图和幂等回执的改动集成后，`f573310` 在另一台云机与相同两个参照版本各跑三轮。按安装版、交付基线、集成版的顺序，首扫中位数分别为 2,491.90、2,429.97、2,325.01 毫秒，原样复扫为 79.75、90.98、91.07 毫秒，少量变动复扫为 122.49、186.75、190.60 毫秒。少量变动阶段各进程写入中位数为 2.21、2.55、4.11 MiB。末轮全部原件、身份、版本及独立移动用例均通过。[集成候选逐轮记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44457609793/job/135336361587)
 
 ### 上传完成期间的独立编辑
 

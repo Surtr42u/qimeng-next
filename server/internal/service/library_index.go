@@ -75,7 +75,7 @@ func (s *Service) DeleteLibrary(ctx context.Context, w *Write, id string, revisi
 		{"SELECT EXISTS(SELECT 1 FROM uploads WHERE json_extract(data,'$.libraryId')=? AND state IN ('receiving','staged'))", "library_upload_active", "此库有未完成上传，请先完成或取消。"},
 		{`SELECT EXISTS(SELECT 1 FROM batches b WHERE json_extract(b.data,'$.libraryId')=? AND json_extract(b.data,'$.state') NOT IN ('completed','cancelled')
    AND (json_extract(b.data,'$.state')!='partial' OR EXISTS(SELECT 1 FROM batch_inputs i WHERE i.batch_id=b.id AND i.cancelled=0 AND i.rejection_code='' AND i.upload_id IS NULL)))`, "library_batch_active", "此库有尚未结束的接收批次，请先完成或取消。"},
-		{"SELECT EXISTS(SELECT 1 FROM file_intents WHERE json_extract(data,'$.After.libraryId')=? AND state!='done')", "library_publication_pending", "文件发布或收尾尚未完成，请先恢复原操作。"},
+		{"SELECT EXISTS(SELECT 1 FROM file_intents WHERE json_extract(data,'$.After.libraryId')=? AND state NOT IN ('done','cancelled'))", "library_publication_pending", "文件发布或收尾尚未完成，请先恢复原操作。"},
 		{"SELECT EXISTS(SELECT 1 FROM batch_protections p JOIN batches b ON b.id=p.batch_id WHERE json_extract(b.data,'$.libraryId')=? AND p.state IN ('queued','running'))", "library_protection_active", "此库的独立保护正在执行。"},
 		{"SELECT EXISTS(SELECT 1 FROM source_cleanup_permits p JOIN batches b ON b.id=p.batch_id WHERE json_extract(b.data,'$.libraryId')=? AND p.state='issued' AND p.expires_at>qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now')))", "library_cleanup_active", "来源回收许可仍有效，请等待执行回执或许可过期。"},
 		{"SELECT EXISTS(SELECT 1 FROM backups WHERE json_extract(data,'$.exportState') IN ('queued','running')) AND EXISTS(SELECT 1 FROM assets WHERE library_id=?)", "library_backup_active", "完整归档正在读取原件，请等待导出完成。"},

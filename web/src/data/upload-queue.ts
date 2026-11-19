@@ -5,8 +5,9 @@ import { localReadAll, localWrite, localWriteGroup } from './storage';
 import { newId } from '../lib/id';
 import { invalidateLibrary } from './query';
 import { reportClientProblem } from '../lib/client-problems';
+import { intakeFailure } from '../lib/intake-failure';
 
-export type UploadPhase = 'waiting_file' | 'queued' | 'hashing' | 'uploading' | 'completing' | 'ingested' | 'staged' | 'duplicate' | 'failed' | 'paused' | 'cancelled';
+export type UploadPhase = 'waiting_file' | 'queued' | 'hashing' | 'uploading' | 'completing' | 'ingested' | 'staged' | 'duplicate' | 'failed' | 'rejected' | 'paused' | 'cancelled';
 export type QueueEntry = {
   id: string; scope: string; request: Schema<'UploadCreate'>; libraryName: string;
   name: string; size: number; modified: number; digest?: string; uploadId?: string;
@@ -26,9 +27,10 @@ export type UploadArchive = {
 export type UploadBatchPreparation = {
   id: string; scope: string; input: Schema<'BatchCreate'>; inputs: Schema<'IntakeInput'>[];
   manifestKey: string; batchId?: string; manifestRevision?: number; fingerprint?: string; sealed: boolean;
+  inputsChecked?: boolean;
 };
 type Snapshot = { entries: readonly QueueEntry[]; initialized: boolean; persistenceError?: string; preparing: boolean };
-const terminal = (phase: UploadPhase) => ['ingested', 'staged', 'cancelled', 'duplicate'].includes(phase);
+const terminal = (phase: UploadPhase) => ['ingested', 'staged', 'cancelled', 'duplicate', 'rejected'].includes(phase);
 export const isQueueTerminal = terminal;
 export class QueuedPreparationError extends Error {
   constructor(cause: unknown) {
@@ -83,9 +85,20 @@ export class UploadQueue {
       for (const item of stored.filter(item => item.scope === this.scope)) {
         if (!this.entries.has(item.id)) this.entries.set(item.id, this.restored(item));
       }
-      for (const batch of batches.filter(batch => batch.scope === this.scope)) this.batches.set(batch.id, batch);
+      const restoredBatches = batches.filter(batch => batch.scope === this.scope);
+      for (const batch of restoredBatches) this.batches.set(batch.id, batch);
       this.sortEntries();
       this.publish({ initialized: true });
+      // Older queues saved the seal but never read the rejected inputs. Reconcile without asking for their files.
+      for (const batch of restoredBatches) {
+        if (this.disposed) return;
+        if (!batch.inputsChecked) {
+          try { await this.prepareBatch(batch.id); }
+          catch (error) {
+            this.preparationError(batch.id, error);
+          }
+        }
+      }
       this.pump();
     } catch { this.publish({ initialized: true, persistenceError: '任务恢复不可用。本次上传仅当前页面有效，刷新可能无法恢复；请保留源文件。' }); }
   }
@@ -119,7 +132,7 @@ export class UploadQueue {
     if (pending) return pending;
     const batch = this.batches.get(id);
     if (!batch) return Promise.reject(new Error('原始输入清单记录缺失，未自动新建或推断批次。请保留源文件并核对服务器任务。'));
-    if (batch.sealed) {
+    if (batch.inputsChecked) {
       if (!batch.batchId) return Promise.reject(new Error('已封存清单缺少批次身份，未开始上传。'));
       for (const entry of this.entries.values()) if (entry.batchPlanId === id && (entry.request.batchId !== batch.batchId || entry.preparationFailed)) this.change(entry.id, { request: { ...entry.request, batchId: batch.batchId }, preparationFailed: false });
       return this.writes;
@@ -133,13 +146,36 @@ export class UploadQueue {
         batch.manifestRevision = created.manifestRevision;
         this.persistBatch(batch);
       }
-      if (batch.manifestRevision === undefined) throw new Error('缺少服务器原始输入清单修订，尚未开始上传。');
-      const sealed = await read(api.PUT('/batches/{id}/inputs', { params: { path: { id: batch.batchId }, header: operationHeaders(batch.manifestKey) }, body: { expectedManifestRevision: batch.manifestRevision, inputs: batch.inputs }, signal: controller.signal }));
-      if (sealed.manifestState !== 'sealed' || sealed.expectedInputs !== batch.inputs.length) throw new Error('服务器未确认完整原始输入清单，尚未开始上传。');
-      batch.sealed = true;
-      batch.manifestRevision = sealed.manifestRevision;
-      batch.fingerprint = sealed.manifestFingerprint;
-      const entries = [...this.entries.values()].filter(entry => entry.batchPlanId === id).map((entry): QueueEntry => ({ ...entry, request: { ...entry.request, batchId: batch.batchId }, preparationFailed: false, ...(entry.preparationFailed && entry.phase === 'failed' && this.files.has(entry.id) ? { phase: 'queued', error: undefined } : {}) }));
+      if (!batch.sealed) {
+        if (batch.manifestRevision === undefined) throw new Error('缺少服务器原始输入清单修订，尚未开始上传。');
+        const sealed = await read(api.PUT('/batches/{id}/inputs', { params: { path: { id: batch.batchId }, header: operationHeaders(batch.manifestKey) }, body: { expectedManifestRevision: batch.manifestRevision, inputs: batch.inputs }, signal: controller.signal }));
+        if (sealed.manifestState !== 'sealed' || sealed.expectedInputs !== batch.inputs.length) throw new Error('服务器未确认完整原始输入清单，尚未开始上传。');
+        batch.sealed = true;
+        batch.manifestRevision = sealed.manifestRevision;
+        batch.fingerprint = sealed.manifestFingerprint;
+      }
+      // An idempotent seal can replay an earlier summary. The current report owns the per-input outcomes.
+      const report = await read(api.GET('/batches/{id}', { params: { path: { id: batch.batchId } }, signal: controller.signal }));
+      if (report.batch.manifestFingerprint !== batch.fingerprint || report.inputs.length !== batch.inputs.length ||
+          report.inputs.some((input, index) => input.id !== batch.inputs[index]?.id)) throw new Error('服务器报告与原始输入清单不一致，已停止传输。');
+      const rejected = new Map<string, string>();
+      for (const input of report.inputs) {
+        const reason = intakeFailure(input);
+        if (reason) rejected.set(input.id, reason);
+      }
+      controller.signal.throwIfAborted();
+      batch.inputsChecked = true;
+      const entries = [...this.entries.values()].filter(entry => entry.batchPlanId === id).map((entry): QueueEntry => {
+        const checked = { ...entry, request: { ...entry.request, batchId: batch.batchId }, preparationFailed: false };
+        const reason = rejected.get(entry.id);
+        if (reason) {
+          this.files.delete(entry.id);
+          return { ...checked, phase: 'rejected', error: reason, archiveState: undefined };
+        }
+        if (entry.preparationFailed && entry.phase === 'failed') return { ...checked,
+          phase: this.files.has(entry.id) || entry.uploadId ? 'queued' : 'waiting_file', error: undefined };
+        return checked;
+      });
       for (const entry of entries) this.entries.set(entry.id, entry);
       const records = [{ store: 'upload_batches' as const, item: structuredClone(batch) }, ...entries.map(entry => ({ store: 'uploads' as const, item: structuredClone(entry) }))];
       this.writes = this.writes.then(() => localWriteGroup(records)).catch(() => this.publish({ persistenceError: '清单已由服务器确认，但本地批次记录保存失败。请保留源文件，刷新后从任务报告核对。' }));
@@ -148,6 +184,12 @@ export class UploadQueue {
     })().finally(() => { this.preparing.delete(id); this.batchControllers.delete(id); });
     this.preparing.set(id, work);
     return work;
+  }
+  private preparationError(batchId: string, error: unknown) {
+    for (const entry of this.entries.values()) {
+      if (entry.batchPlanId === batchId && !terminal(entry.phase))
+        this.change(entry.id, { phase: 'failed', preparationFailed: true, error: error instanceof Error ? error.message : '原始输入清单尚未核对。' });
+    }
   }
   private change(id: string, patch: Partial<QueueEntry>, persist = true) {
     const current = this.entries.get(id);
@@ -179,7 +221,6 @@ export class UploadQueue {
     const limit = Math.min(100, this.maxItems);
     if (files.length > limit) throw new Error(`本批最多 ${limit} 项，本次选择尚未登记或上传。请分批选择，不会截取前 ${limit} 项。`);
     if (this.entries.size + files.length > 500) throw new Error('队列记录最多 500 项，请先清理已结束记录。');
-    if (files.some(file => file.size < 1)) throw new Error('当前选择含空文件，尚未创建批次。请移除空文件后重新选择。');
     const plan: UploadBatchPreparation = {
       id: newId(), scope: this.scope, sealed: false, manifestKey: newId(), inputs: [],
       input: { libraryId: target.libraryId, mode: target.mode, label: `${files.length} 个文件 · ${new Date().toLocaleString('zh-CN')}`, maxResearchCalls: target.mode === 'intelligent' ? 8 : 0 },
@@ -219,7 +260,7 @@ export class UploadQueue {
       this.publish();
       await this.prepareBatch(plan.id);
     } catch (error) {
-      for (const entry of prepared) this.change(entry.id, { phase: 'failed', preparationFailed: true, error: `原始输入清单尚未确认，未上传文件。${error instanceof Error ? error.message : '请重试当前队列项。'}` });
+      this.preparationError(plan.id, error);
       throw new QueuedPreparationError(error);
     } finally { this.publish({ preparing: false }); this.pump(); }
   }
@@ -244,6 +285,7 @@ export class UploadQueue {
         await this.prepareBatch(entry.batchPlanId);
         if (this.disposed || signal.aborted) return;
         entry = this.entries.get(id)!;
+        if (terminal(entry.phase)) return;
       }
       if (file) {
         this.change(id, { phase: 'hashing', error: undefined });
@@ -313,7 +355,13 @@ export class UploadQueue {
       }
       this.files.set(id, file);
     }
-    if (!this.files.has(id) && !entry.uploadId) { this.change(id, { phase: 'waiting_file' }); return; }
+    if (!this.files.has(id) && !entry.uploadId) {
+      if (entry.preparationFailed && entry.batchPlanId) {
+        const batchId = entry.batchPlanId;
+        void this.prepareBatch(batchId).then(() => this.pump()).catch(error => this.preparationError(batchId, error));
+      } else this.change(id, { phase: 'waiting_file' });
+      return;
+    }
     this.change(id, { phase: 'queued', error: undefined }); this.pump();
   }
   pause(id: string) { const entry = this.entries.get(id); if (!entry || terminal(entry.phase)) return; this.active.get(id)?.abort(); this.change(id, { phase: 'paused' }); }
@@ -327,6 +375,7 @@ export class UploadQueue {
       if (entry.batchPlanId && entry.request.inputId) {
         await this.prepareBatch(entry.batchPlanId);
         controller.signal.throwIfAborted();
+        if (this.entries.get(id)?.phase === 'rejected') return;
         const batch = this.batches.get(entry.batchPlanId);
         if (!batch?.batchId || !batch.fingerprint) throw new Error('原始输入清单身份尚未确认，未把本项标为已取消。');
         await read(api.POST('/batches/{id}/inputs/{inputId}/cancel', { params: { path: { id: batch.batchId, inputId: entry.request.inputId }, header: operationHeaders(`${entry.id}-cancel-input`) }, body: { manifestFingerprint: batch.fingerprint }, signal: controller.signal }));

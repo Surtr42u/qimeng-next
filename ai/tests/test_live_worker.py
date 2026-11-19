@@ -1,5 +1,6 @@
 """An App submits real files. Only the local model is scripted in this integration."""
 import asyncio
+from datetime import date
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,9 +12,17 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.request
 
+from mcp import Client
+
 from live_fixture import CloudGoFixture
+from qimeng_ai.config import Config
+from qimeng_ai.errors import ToolError
+from qimeng_ai.runtime import Runtime
+from qimeng_ai.state import encode
+from qimeng_ai.worker import run_worker
 
 
 class ChatHost(BaseHTTPRequestHandler):
@@ -53,8 +62,9 @@ class ChatHost(BaseHTTPRequestHandler):
                 args = {"plan": preview["plan"]}
             calls = [{"id": "call_" + str(len(self.server.requests)), "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args)}}]
-        reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}],
-                 "usage": {"prompt_tokens": 17, "completion_tokens": 6}}
+        reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}]}
+        if behavior != "without_usage":
+            reply["usage"] = {"prompt_tokens": 17, "completion_tokens": 6}
         raw = json.dumps(reply).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -84,14 +94,8 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.host.release.set)
         self.library = self.request("POST", "/libraries", {"name": "Queue " + self._testMethodName, "kind": "regular"},
                                     key="auto-lib-" + self._testMethodName)
-        grant = self.request("POST", "/ai/delegations", {
-            "label": "Explicit App executor", "libraryIds": [self.library["id"]], "authorIds": [],
-            "allAuthors": False, "allowedFields": [], "candidateBlocks": [], "allowClear": False,
-            "canIngest": True, "canOrganize": True, "canResearch": True, "canLookupImages": True,
-            "maxResearchCalls": 1, "maxUpdates": 1,
-            "maxTasksPerDay": 1 if self._testMethodName.startswith("test_app_receives") else 12, "validDays": 1})
-        self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
-        self.secret = grant["credential"]["token"]
+        self.secret = self.grant(can_research=True, limit=1, images=True,
+                                 daily=1 if self._testMethodName.startswith("test_app_receives") else 12)
         self.env = {"PATH": os.environ["PATH"], "PYTHONPATH": os.environ["PYTHONPATH"],
                     "QIMENG_API_BASE": os.environ["QIMENG_TEST_BASE"], "QIMENG_API_TOKEN": self.secret,
                     "QIMENG_AI_STATE_DIR": str(self.root / "state"), "QIMENG_AI_PERMISSIONS": "read,delegate,organize,research",
@@ -99,9 +103,20 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                     "QIMENG_AI_WORKER_MODEL": "fixture", "QIMENG_AI_WORKER_TOKEN": self.host.host_key,
                     "QIMENG_AI_WORKER_POLL_SECONDS": "1", "QIMENG_AI_WORKER_IMAGE_LOOKUP": "true"}
 
-    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=0):
-        batch = self.request("POST", "/batches", {"libraryId": self.library["id"], "label": name,
-                             "mode": mode, "maxResearchCalls": research_calls}, key=name + "-batch")
+    def grant(self, *, can_research, limit, images, daily=12):
+        grant = self.request("POST", "/ai/delegations", {
+            "label": "Explicit App executor", "libraryIds": [self.library["id"]], "authorIds": [],
+            "allAuthors": False, "allowedFields": [], "candidateBlocks": [], "allowClear": False,
+            "canIngest": True, "canOrganize": True, "canResearch": can_research, "canLookupImages": images,
+            "maxResearchCalls": limit, "maxUpdates": 1, "maxTasksPerDay": daily, "validDays": 1})
+        self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
+        return grant["credential"]["token"]
+
+    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=None):
+        body = {"libraryId": self.library["id"], "label": name, "mode": mode}
+        if research_calls is not None:
+            body["maxResearchCalls"] = research_calls
+        batch = self.request("POST", "/batches", body, key=name + "-batch")
         source = self.root / (name + ".png")
         color = hashlib.sha256(name.encode()).hexdigest()[:6]
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
@@ -141,6 +156,79 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                 process.wait()
         self.assertEqual(process.returncode, expected, stderr)
         return json.loads(stderr if expected else stdout)
+
+    async def test_daily_control_recovers_parked_claim_without_renewing_owned_task(self):
+        runtime = Runtime(Config.load({**self.env, "QIMENG_AI_MAX_CALLS": "2"}))
+        self.addCleanup(runtime.close)
+        owned = self.submit("worker-owned-ledger")
+        self.host.behavior[owned] = "offline"
+        def poll():
+            return {row["batchId"]: row["state"] for row in run_worker(runtime, once=True, env=self.env)["batches"]}
+
+        with patch("qimeng_ai.runtime.date") as calendar:
+            calendar.today.return_value = date(2026, 1, 1)
+            self.assertEqual(poll(), {owned: "WORKER_HOST_UNAVAILABLE"})
+            for _ in range(2):
+                runtime.call("platform.session", {"taskId": owned})
+            runtime.call("platform.session", {})
+            self.assertEqual(runtime.call("platform.budget", {})["calls"], 2)
+            new = self.submit("worker-next-day")
+            self.assertEqual(poll()[new], "TASK_BUDGET_EXHAUSTED")
+            with runtime.connect().transaction() as db:
+                row = db.execute("SELECT claim_key,paused,revision FROM worker_claims WHERE batch=?", (new,)).fetchone()
+            self.assertEqual((row["paused"], row["revision"]), ("TASK_BUDGET_EXHAUSTED", None))
+            await asyncio.sleep(1.1)
+            self.assertNotIn(new, poll())
+            calendar.today.return_value = date(2026, 1, 2)
+            self.assertEqual(poll(), {new: "completed"})
+            self.assertEqual(runtime.call("platform.budget", {"taskId": owned})["local"]["calls"], 2)
+            self.assertEqual(self.request("GET", "/batches/" + owned)["inputs"][0]["state"], "staged")
+            self.assertEqual(runtime.call("platform.budget", {})["calls"], 1)
+            receipt = runtime.transport.call("getOperation", {"key": row["claim_key"]})
+            self.assertEqual(receipt["response"]["taskId"], new)
+            item, = self.request("GET", "/batches/" + new)["inputs"]
+            self.assertEqual(self.request("GET", "/assets/" + item["assetId"])["hash"], self.source_sha)
+
+    async def test_interrupted_claim_keeps_original_key_across_elapsed_control_day(self):
+        runtime = Runtime(Config.load(self.env))
+        self.addCleanup(runtime.close)
+        original_call = runtime.transport.call
+        def drop_claim_reply(operation, arguments):
+            response = original_call(operation, arguments)
+            if operation == "startDelegatedTask":
+                raise ToolError("NETWORK_ERROR", "合成认领应答中断", uncertain=True)
+            return response
+
+        batch = self.submit("worker-claim-interrupted")
+        with patch("qimeng_ai.runtime.date") as calendar:
+            calendar.today.return_value = date(2026, 1, 1)
+            with patch.object(runtime.transport, "call", side_effect=drop_claim_reply):
+                failed, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual(failed["state"], "NETWORK_ERROR")
+            control = runtime.connect()
+            with control.transaction() as db:
+                row = db.execute("SELECT claim_key,body FROM worker_claims WHERE batch=?", (batch,)).fetchone()
+                db.execute("UPDATE tasks SET started=started-max_seconds WHERE id=?", (control.config.task_id,))
+            self.assertEqual(runtime.transport.call("listReadyIntakeBatches", {})["items"], [])
+            await asyncio.sleep(1.1)
+            expired, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual(expired["state"], "TASK_BUDGET_EXHAUSTED")
+            calendar.today.return_value = date(2026, 1, 2)
+            body = json.loads(row["body"])
+            for key, label in (("changed-operation-key", body["label"]), (row["claim_key"], "另一个请求")):
+                with self.assertRaises(ToolError) as blocked:
+                    runtime.call("task.start", {"operationId": key, "body": {**body, "label": label}})
+                self.assertEqual(blocked.exception.code, "WRITE_UNRESOLVED")
+            self.assertEqual([p["key"] for p in runtime.call("platform.budget", {})["pending"]], [row["claim_key"]])
+            await asyncio.sleep(1.1)
+            done, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual((done["batchId"], done["state"]), (batch, "completed"))
+            self.assertEqual(runtime.call("platform.budget", {})["pending"], [])
+            receipt = runtime.transport.call("getOperation", {"key": row["claim_key"]})
+            self.assertEqual((receipt["response"]["taskId"], receipt["response"]["credential"]["generation"]), (batch, 1))
+            final = self.request("GET", "/batches/" + batch)
+            self.assertEqual([p["state"] for p in final["plans"]], ["completed"])
+            self.assertEqual(self.request("GET", "/assets/" + final["inputs"][0]["assetId"])["hash"], self.source_sha)
 
     async def test_app_receives_mixed_work_across_process_death_without_a_chat_prompt(self):
         self.submit("worker-ordinary", mode="ordinary")
@@ -223,6 +311,59 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["state"], "completed")
         self.assertEqual(len(self.request("GET", "/batches/" + batch)["plans"]), 1)
 
+    async def test_default_app_batches_publish_with_zero_or_limited_research(self):
+        cases = [
+            ("android-no-research", None, False, 0, False, True),
+            ("web-zero-budget", 8, True, 0, False, True),
+            ("web-local-research", 8, True, 1, False, True),
+            ("android-frame-opt-in", None, True, 3, True, True),
+            ("web-organize-worker", 8, True, 3, True, False),
+        ]
+        for label, app_limit, allowed, limit, images, local_research in cases:
+            with self.subTest(label=label):
+                secret = self.grant(can_research=allowed, limit=limit, images=images)
+                env = {**self.env, "QIMENG_API_TOKEN": secret}
+                if not local_research:
+                    env.update(QIMENG_AI_PERMISSIONS="read,delegate,organize", QIMENG_AI_WORKER_IMAGE_LOOKUP="false")
+                batch = self.submit(label, mixed=True, research_calls=app_limit)
+                self.host.requests.clear()
+                effective = limit if local_research else 0
+                def script(results):
+                    if not results:
+                        return "worker_tools", {"group": "research"}
+                    if effective and len(results) == 1:
+                        return "research_submit", {"input": 1, "body": {"outcome": "unknown", "candidates": [], "callsUsed": 1}}
+                    if "plan" not in results[-1]:
+                        return "plan_prepare_originals", {}
+                    return "plan_commit", {"plan": results[-1]["plan"]}
+                self.host.scripts[batch] = script
+                outcome, = (await self.worker(env=env))["batches"]
+                self.assertEqual((outcome["batchId"], outcome["state"]), (batch, "partial"))
+                first, expanded = self.host.requests[:2]
+                report = first["messages"][1]["content"]
+                self.assertEqual(json.loads(report[report.index("{"):])["remainingResearchCalls"], effective)
+                def functions(request):
+                    return {entry["function"]["name"]: entry["function"]["parameters"] for entry in request["tools"]}
+                groups = functions(first)["worker_tools"]["properties"]["group"]["enum"]
+                self.assertEqual("research" in groups, effective > 0)
+                tools = functions(expanded)
+                self.assertNotIn("platform_artifact_read", tools)
+                self.assertNotIn("research_provider_query", tools)
+                self.assertEqual("research_image_search" in tools, bool(images and effective))
+                if effective:
+                    self.assertEqual(tools["research_submit"]["properties"]["body"]["properties"]["callsUsed"]["maximum"], effective)
+                    if effective == 1:
+                        self.assertNotIn("research_submit", functions(self.host.requests[2]))
+                    self.assertEqual(outcome["modelUsage"]["toolResults"][1], {"tool": "research.submit", "code": "ok"})
+                else:
+                    self.assertFalse(any(name.startswith("research_") for name in tools))
+                    self.assertEqual(outcome["modelUsage"]["toolResults"][0]["code"], "INVALID_INPUT")
+                final = self.request("GET", "/batches/" + batch)
+                self.assertEqual((final["batch"]["maxResearchCalls"], final["batch"]["researchCalls"]), (8, int(bool(effective))))
+                good, bad = final["inputs"]
+                self.assertEqual((good["state"], bad["state"], bad["errorCode"]), ("ingested", "failed", "unsupported_media"))
+                self.assertEqual(self.request("GET", "/assets/" + good["assetId"])["hash"], self.source_sha)
+
     async def test_worker_rechecks_frozen_intent_and_original_plan_on_real_go(self):
         batch = self.submit("worker-intent-race", mixed=True, research_calls=1)
         path = "/batches/" + batch
@@ -275,6 +416,7 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_naming_and_evidenced_author_selection_use_distinct_worker_inputs(self):
         batch = self.submit("worker-optional-author", research_calls=1)
+        self.host.behavior[batch] = "without_usage"
         path = "/batches/" + batch
         detail = self.request("GET", path)
         upload = detail["items"][0]["upload"]
@@ -311,6 +453,39 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(actual["plans"]), 1)
         asset = self.request("GET", "/assets/" + actual["inputs"][0]["assetId"])
         self.assertEqual((asset["authorIds"], asset["hash"]), ([author["id"]], upload["hash"]))
+        self.assertIsNone(outcome["modelUsage"]["promptTokens"])
+        self.assertIsNone(outcome["modelUsage"]["completionTokens"])
+
+        stdio = self.process(self.root, self.secret, self.env["QIMENG_AI_PERMISSIONS"],
+                             {"QIMENG_AI_TASK_ID": "interactive", "QIMENG_AI_ALLOW_MEDIA_TO_MODEL": "false"})
+        async with Client(stdio) as client:
+            listed = (await client.list_tools()).tools
+        names = {tool.name for tool in listed}
+        self.assertEqual(len(names), len(listed))
+        self.assertTrue({"task.start", "task.resume", "source.recycle", "platform.artifact.read", "research.image.search"} <= names)
+
+        def schema_sample(schemas):
+            return {"toolCount": len(schemas), "inputSchemaBytes": len(encode(schemas).encode("utf-8"))}
+        samples = {"stdioDefault": schema_sample([tool.input_schema for tool in listed])}
+        for label, index in (("workerFirst", 0), ("workerAuthors", 2)):
+            sent = self.host.requests[index]["tools"]
+            names = {tool["function"]["name"] for tool in sent}
+            self.assertEqual("author_query" in names, label == "workerAuthors")
+            self.assertTrue(names.isdisjoint({"task_start", "task_resume", "author_profile_update", "source_recycle",
+                                              "research_image_search", "platform_artifact_read", "collection_query"}))
+            samples[label] = {**schema_sample([tool["function"]["parameters"] for tool in sent]),
+                              "sentToolsBytes": len(encode(sent).encode("utf-8"))}
+        self.assertLess(samples["workerFirst"]["toolCount"], samples["workerAuthors"]["toolCount"])
+        self.assertLess(samples["workerFirst"]["inputSchemaBytes"], samples["workerAuthors"]["inputSchemaBytes"])
+        evidence = {"toolMenus": samples, "verifiedAssetAuthorAndHash": True,
+                    "promptTokens": None, "completionTokens": None, "cost": None}
+        print("Intake tool measurements " + encode(evidence), flush=True)
+        if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(summary, "a", encoding="utf-8") as report:
+                report.write("\n### 智能整理工具目录实测\n\n| 入口 | 工具数 | 输入 Schema 字节 | Worker 工具数组字节 |\n|---|---:|---:|---:|\n")
+                for label, sample in samples.items():
+                    report.write(f"| {label} | {sample['toolCount']} | {sample['inputSchemaBytes']} | {sample.get('sentToolsBytes', '')} |\n")
+                report.write("\n按 UTF-8 紧凑 JSON 计数。脚本宿主完成作者选择，独立回读的资产作者和摘要一致。模型用量与费用未提供。\n")
 
     async def test_original_name_preview_and_mixed_intent_require_a_separate_plan_choice(self):
         batch = self.submit("worker-original-intents", mixed=True)

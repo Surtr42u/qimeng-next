@@ -1,4 +1,5 @@
-﻿param([Parameter(Mandatory)][int]$OwnerPid, [string]$FirstOrigin, [string]$SecondOrigin, [string]$Evidence)
+﻿param([Parameter(Mandatory)][int]$OwnerPid, [string]$FirstOrigin, [string]$SecondOrigin,
+    [string]$OfflineOrigin, [string]$ConfigDirectory, [string]$Evidence, [switch]$Restored)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
     throw 'This test requires a hosted Windows runner.'
@@ -59,16 +60,19 @@ function Wait-Until([string]$description, [scriptblock]$operation) {
     throw "Timed out waiting for $description ($count visible application windows)."
 }
 
-function Get-Control([string]$name, [System.Windows.Automation.ControlType]$type, [IntPtr]$within = [IntPtr]::Zero) {
+function Get-Control([string]$name, [System.Windows.Automation.ControlType]$type, [IntPtr]$within = [IntPtr]::Zero, [bool]$enabled = $true) {
     Wait-Until $name {
         $handles = if ($within -eq [IntPtr]::Zero) { [QimengTestWindow]::Visible($OwnerPid) } else { @($within) }
         foreach ($hwnd in $handles) {
             $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
             $byName = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $name)
-            $byType = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type)
-            $match = [System.Windows.Automation.AndCondition]::new($byName, $byType)
+            $match = $byName
+            if ($type) {
+                $byType = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type)
+                $match = [System.Windows.Automation.AndCondition]::new($byName, $byType)
+            }
             $element = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $match)
-            if ($element -and $element.Current.IsEnabled) { return @{ Handle = $hwnd; Element = $element } }
+            if ($element -and $element.Current.IsEnabled -eq $enabled) { return @{ Handle = $hwnd; Element = $element } }
         }
     }
 }
@@ -95,7 +99,37 @@ function Connect-Library($inputControl, [string]$origin) {
     Invoke-Control (Get-Control '保存并连接' ([System.Windows.Automation.ControlType]::Button) $inputControl.Handle)
 }
 
+function Get-SavedOrigin([string]$name) {
+    (Get-Content -LiteralPath (Join-Path $ConfigDirectory $name) -Raw -Encoding UTF8 | ConvertFrom-Json).origin
+}
+
+function Confirm-Rejection([string]$message, [string]$attemptedOrigin) {
+    [void](Get-Control $message $null $login.Handle)
+    $visible = [QimengTestWindow]::Visible($OwnerPid)
+    if ($visible -notcontains $login.Handle -or $visible -notcontains $library -or $visible -notcontains $media) {
+        throw 'The failed switch did not preserve the settings, library and original windows.'
+    }
+    $field = Get-Control '服务器地址' $edit $login.Handle
+    if ($field.Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -cne $attemptedOrigin) {
+        throw 'The failed address must remain editable for a retry.'
+    }
+    [void](Get-Control '保存并连接' $button $login.Handle)
+    if ((Get-SavedOrigin 'connection.json') -cne "$FirstOrigin/" -or
+        (Test-Path -LiteralPath (Join-Path $ConfigDirectory 'connection.previous.json'))) {
+        throw 'The failed switch changed the saved connection.'
+    }
+}
+
+function Close-Library($control) {
+    try { Invoke-Control $control } catch [System.Windows.Automation.ElementNotAvailableException] {}
+}
+
 $button = [System.Windows.Automation.ControlType]::Button
+if ($Restored) {
+    Close-Library (Get-Control 'Close two' $button)
+    Write-Output 'Verified the second library reopened on a normal launch.'
+    return
+}
 $edit = [System.Windows.Automation.ControlType]::Edit
 $login = Get-Control '服务器地址' $edit
 Save-DialogImage $login
@@ -123,8 +157,26 @@ Write-Output 'Verified native titlebar and original media window.'
 # Bring the existing settings window back and exercise its production save path again.
 [void][QimengTestWindow]::ShowWindow($login.Handle, 9)
 [void][QimengTestWindow]::SetForegroundWindow($login.Handle)
+Connect-Library (Get-Control '服务器地址' $edit $login.Handle) $OfflineOrigin
+Confirm-Rejection '无法连接影库，请检查服务器地址和网络后重试' $OfflineOrigin
 Connect-Library (Get-Control '服务器地址' $edit $login.Handle) $SecondOrigin
+Confirm-Rejection '此地址未返回有效的影库实例信息，请检查地址后重试' $SecondOrigin
+Invoke-Control (Get-Control '保存并连接' $button $login.Handle)
+Confirm-Rejection '实例地址发生重定向，请填写最终服务器地址后重试' $SecondOrigin
+Invoke-Control (Get-Control '保存并连接' $button $login.Handle)
+[void](Get-Control '正在连接…' $button $login.Handle $false)
+Confirm-Rejection '影库响应超时，请稍后重试' $SecondOrigin
+$beforeRetry = [QimengTestWindow]::IsZoomed($library)
+Invoke-Control (Get-Control 'Maximize one' $button $library)
+[void](Wait-Until 'first library still owns its native titlebar' { [QimengTestWindow]::IsZoomed($library) -ne $beforeRetry })
+[void](Get-Control 'Original media proof' $button $media)
+Write-Output 'Verified failed switches preserve the active library, original, saved address and retry form.'
+[void][QimengTestWindow]::SetForegroundWindow($login.Handle)
+Invoke-Control (Get-Control '保存并连接' $button $login.Handle)
 $close = Get-Control 'Close two' $button
 [void](Wait-Until 'previous windows to close' { -not [QimengTestWindow]::IsWindow($library) -and -not [QimengTestWindow]::IsWindow($media) })
-try { Invoke-Control $close } catch [System.Windows.Automation.ElementNotAvailableException] {}
+if ((Get-SavedOrigin 'connection.json') -cne "$SecondOrigin/" -or (Get-SavedOrigin 'connection.previous.json') -cne "$FirstOrigin/") {
+    throw 'A successful switch must save the new origin and preserve the previous one.'
+}
+Close-Library $close
 Write-Output 'Verified server switching and requested native close.'

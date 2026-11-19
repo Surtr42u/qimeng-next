@@ -36,8 +36,16 @@ func (s *Service) matchingReceipt(ctx context.Context, principalID, operation, k
 	}
 	var previous string
 	var result Result
-	err := s.DB.DB.QueryRowContext(ctx, "SELECT input_hash,response,status FROM idempotency WHERE principal_id=? AND operation=? AND key=?",
-		principalID, operation, key).Scan(&previous, &result.Body, &result.Status)
+	var committed bool
+	// A durable file intent already binds the input, even when a changed
+	// request would otherwise return early (such as moving to the current name).
+	err := s.DB.DB.QueryRowContext(ctx, `SELECT input_hash,response,status,1 FROM idempotency
+		WHERE principal_id=?1 AND operation=?2 AND key=?3
+		UNION ALL
+		SELECT coalesce(json_extract(data,'$.InputHash'),''),NULL,0,0 FROM file_intents
+		WHERE state IN ('prepared','committed') AND json_extract(data,'$.PrincipalID')=?1
+		AND json_extract(data,'$.Operation')=?2 AND json_extract(data,'$.Key')=?3 LIMIT 1`,
+		principalID, operation, key).Scan(&previous, &result.Body, &result.Status, &committed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Result{}, false, nil
 	}
@@ -47,7 +55,7 @@ func (s *Service) matchingReceipt(ctx context.Context, principalID, operation, k
 	if previous != hash {
 		return Result{}, false, Fail(409, "idempotency_conflict", "同一幂等键的输入已经改变。")
 	}
-	return result, true, nil
+	return result, committed, nil
 }
 
 // Operation never exposes another principal's receipt. A key may be reused for

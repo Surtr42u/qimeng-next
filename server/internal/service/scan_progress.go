@@ -19,7 +19,7 @@ type scanWorker struct {
 
 // Called after commit with the mutation lock held. The child context reaches
 // file reads and ffprobe as well as workers still waiting for a scan slot.
-func (s *Service) launchScan(job ScanJob, paths []string) {
+func (s *Service) launchScan(job ScanJob, targets scanTargets) {
 	ctx, stop := context.WithCancel(s.workCtx)
 	if s.scanWorkers == nil {
 		s.scanWorkers = make(map[string]scanWorker)
@@ -30,7 +30,7 @@ func (s *Service) launchScan(job ScanJob, paths []string) {
 	go func() {
 		defer s.workers.Done()
 		defer func() { stop(); s.mu.Lock(); delete(s.scanWorkers, job.ID); s.mu.Unlock() }()
-		s.scanLibrary(worker.ctx, job.ID, paths)
+		s.scanLibrary(worker.ctx, job.ID, targets)
 	}()
 }
 func (s *Service) stopLibraryScans(id string) {
@@ -63,6 +63,8 @@ type scanRun struct {
 	prepared   []scannedFile
 	preparedAt time.Time
 	manualFull bool
+	targets    scanTargets
+	hashBuffer []byte
 }
 
 func (s *Service) skipScannedEntry(ctx context.Context, run *scanRun) error {

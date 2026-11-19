@@ -33,6 +33,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val directory by model.uploadDirectory.collectAsStateWithLifecycle()
     val mode by model.uploadMode.collectAsStateWithLifecycle()
     val queue by model.queue.collectAsStateWithLifecycle()
+    val session by model.session.collectAsStateWithLifecycle()
     val queueError by model.queueError.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
@@ -44,9 +45,10 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val stems by model.editedStems.collectAsStateWithLifecycle()
     val drafts = queue?.drafts.orEmpty().filter { it.intakeGroup == null }
     var numberClass by rememberSaveable { mutableStateOf("image") }
-    val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null)
+    val namingDrafts = drafts.filter { it.bytes > 0 }
+    val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null) && namingDrafts.isNotEmpty()
     val namingRequest = if (needsNaming && selected.isNotEmpty()) NamingRequest(selected, directory, family.trim(), collectionId, numberClass, note,
-        drafts.map { NamingFile(it.id, it.withEditedStem(stems[it.id]).name) }) else null
+        namingDrafts.map { NamingFile(it.id, it.withEditedStem(stems[it.id]).name) }) else null
     LaunchedEffect(namingRequest) { naming.inspect(namingRequest) }
     var showGuide by rememberSaveable { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) model.receiveFiles(it) }
@@ -91,7 +93,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                         model::setUploadAutoName, model::setUploadFamily, { numberClass = it }, { naming.inspect(namingRequest) })
                     Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled } &&
                         drafts.all { draft -> stems[draft.id]?.let(draft::validStem) != false } &&
-                        (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.preview != null)),
+                        (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.canSubmit == true)),
                         modifier = Modifier.fillMaxWidth()) { Text(if (busy) "上传中…" else "开始上传（${drafts.size} 项）") }
                 }
             }
@@ -107,10 +109,12 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
             Text("来源文件保留，修复后可重新选择。", style = MaterialTheme.typography.bodySmall)
         } }
         items(queue?.transfers.orEmpty().asReversed(), key = { "transfer:${it.id}" }) { transfer ->
-            ContentCard {
+            val onTarget = sameTarget(transfer.target, session)
+            ContentCard(Modifier.testTag("transfer:${transfer.id}")) {
                 Text(transfer.name, style = MaterialTheme.typography.titleMedium)
                 Text(transfer.message)
                 Text("目标：${transfer.target.label}", style = MaterialTheme.typography.bodySmall)
+                if (!onTarget && (transfer.batchId != null || transfer.assetId != null)) Text("连接此任务原来的服务器后可查看结果", style = MaterialTheme.typography.bodySmall)
                 if (transfer.state == TransferState.UPLOADING || transfer.state == TransferState.QUEUED) {
                     LinearProgressIndicator(progress = { if (transfer.bytes == 0L) 0f else (transfer.offset.toDouble() / transfer.bytes).toFloat() }, modifier = Modifier.fillMaxWidth())
                     Text("${formatBytes(transfer.offset)} / ${formatBytes(transfer.bytes)}", style = MaterialTheme.typography.bodySmall)
@@ -118,9 +122,9 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (canRetry(transfer.state)) TextButton(onClick = { model.retryUpload(transfer.id) }, enabled = !busy) { Text("重试") }
                     if (transfer.archiveSourceState == "blocked") TextButton(onClick = { model.retryArchiveSource(transfer) }, enabled = !busy) { Text("重新核对备份和来源") }
-                    if (transfer.state !in setOf(TransferState.SUCCEEDED, TransferState.CANCELLED)) TextButton(onClick = { model.cancelUpload(transfer.id) }, enabled = !busy) { Text("停止") }
-                    transfer.batchId?.let { batch -> TextButton(onClick = { model.openReport(batch) }) { Text("报告") } }
-                    transfer.assetId?.let { id -> TextButton(onClick = { model.openAsset(id) }) { Text("查看媒体") } }
+                    if (!transfer.state.isFinished()) TextButton(onClick = { model.cancelUpload(transfer.id) }, enabled = !busy) { Text("停止") }
+                    transfer.batchId?.let { batch -> TextButton(onClick = { model.openReport(batch, transfer.target) }, enabled = onTarget) { Text("报告") } }
+                    transfer.assetId?.let { id -> TextButton(onClick = { model.openAsset(id, target = transfer.target) }, enabled = onTarget) { Text("查看媒体") } }
                 }
             }
         }
@@ -236,21 +240,21 @@ private fun BatchTasksScreen(model: LibraryViewModel) {
         items(state.items, key = { it.id }) { task -> ContentCard {
             Text(task.summary, style = MaterialTheme.typography.titleMedium)
             Text("${stateName(task.state)} · ${task.createdAt}")
-            TextButton(onClick = { model.openReport(task.id) }) { Text("逐项结果") }
+            TextButton(onClick = { model.openReport(task.id, task.target) }) { Text("逐项结果") }
         } }
         if (state.cursor != null) item { TextButton(onClick = { model.loadReports(true) }, enabled = !state.loading) { Text("加载更多任务") } }
     }
 }
 
 @Composable
-fun TaskDetailScreen(model: LibraryViewModel, id: String) {
+fun TaskDetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     val report by model.report.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     var cancelling by rememberSaveable(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { if (report?.id != id) model.openReport(id) }
-    val task = report?.takeIf { it.id == id }
+    LaunchedEffect(id) { if (report?.id != id) model.refreshReport(id) }
+    val task = report?.takeIf { it.id == id && sameTarget(it.target, target) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { TextButton(onClick = { model.openReport(id) }) { Text("刷新报告") } }
+        item { TextButton(onClick = { model.refreshReport(id) }) { Text("刷新报告") } }
         if (task == null) item { Text("报告尚未读取") } else {
             item { ContentCard {
                 Text(stateName(task.state), style = MaterialTheme.typography.headlineSmall)
@@ -262,7 +266,7 @@ fun TaskDetailScreen(model: LibraryViewModel, id: String) {
                 Text(item.fileName, style = MaterialTheme.typography.titleMedium)
                 Text(stateName(item.state))
                 if (item.message.isNotBlank()) Text(item.message)
-                item.assetId?.let { asset -> TextButton(onClick = { model.openAsset(asset) }) { Text("查看入库结果") } }
+                item.assetId?.let { asset -> TextButton(onClick = { model.openAsset(asset, target = task.target) }) { Text("查看入库结果") } }
             } }
         }
     }

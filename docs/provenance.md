@@ -27,3 +27,5 @@
 2026-11-19 起，维护者按所有者要求继续在桌面会话协调开发，编译、测试、依赖核对和性能测量都由 GitHub Actions 执行。三位 GPT-6.2 Astra / max 子代理分别复核并实现协议与混合文件清单、数据库和研究网关、Android 数据层与 MCP 消费。维护者整合改动，用云端生成物和实际用户操作核对每一批。该阶段暂停界面改版。[原生数据与多端验收](https://github.com/Surtr42u/qimeng-next/pull/1) · [别名与稳定身份](https://github.com/Surtr42u/qimeng-next/pull/2) · [出处角色、清单、图片查证](https://github.com/Surtr42u/qimeng-next/pull/3)
 
 随后按原讨论逐项核对 22 条产品要求和 36 个场景，补上 App 提交后的自动认领、可执行的下一步和跨端停等原因。三位 GPT-6.2 Astra / max 子代理负责 Go 的授权与并发、执行器的认领与中断恢复、标准 MCP 及真实模型验证。Qwen3-4B 在隔离云机上接收中文短任务并自行选择工具，验收端独立回读 Go 的实际结果。[受限任务与真实模型](https://github.com/Surtr42u/qimeng-next/pull/4) · [App 智能批次与恢复](https://github.com/Surtr42u/qimeng-next/pull/5)
+
+以 `8f4321a` 为起点的系统审查分两轮进行。四个只读审查分别检查数据与恢复、三端客户端、AI 与 MCP、测试与性能。另一组代理实施修复和回归用例，云端验收代理核对实际运行，主代理负责排序、归并与复核。主代理和每位子代理均从各自当轮的运行记录确认了 GPT-6.2 Astra、max 推理。性能对照使用独立数据库及合成原件。[同机扫描记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44452369764) · [协议来源锁的生成作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44454623724/job/135326529499)

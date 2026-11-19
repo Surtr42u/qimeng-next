@@ -42,15 +42,19 @@ func (s *Service) activeScanLibrary(ctx context.Context, run *scanRun) (ScanJob,
 	return j, library, err
 }
 
-// Hashing and probing already finished without the mutation lock. Reopen the
+func (file scannedFile) sameOriginal(current os.FileInfo) bool {
+	return current.Mode().IsRegular() && !syncPathLink(current) && os.SameFile(file.initial, current) &&
+		current.Size() == file.initial.Size() && current.ModTime().Equal(file.initial.ModTime())
+}
+
+// Hashing and probing already finished without the mutation lock. Check the
 // physical location through its registered root immediately before publishing.
 func (s *Service) scanOriginalStable(file scannedFile) (bool, error) {
-	current, err := s.Root.Stat(file.full)
+	current, err := s.Root.Lstat(file.full)
 	if err != nil {
 		return false, err
 	}
-	return os.SameFile(file.initial, current) && file.size == file.initial.Size() &&
-		current.Size() == file.size && file.initial.ModTime().Equal(current.ModTime()), nil
+	return file.size == file.initial.Size() && file.sameOriginal(current), nil
 }
 
 func skipScanIssue(j *ScanJob, relative, code string) {

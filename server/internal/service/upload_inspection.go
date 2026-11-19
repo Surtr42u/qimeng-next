@@ -62,6 +62,10 @@ func (s *Service) RunUploadCompletion(ctx context.Context, p model.Principal, id
 	case <-s.workCtx.Done():
 		return Result{}, s.workCtx.Err()
 	}
+	return s.completeInspectedUpload(ctx, p, id, operation, key, input)
+}
+
+func (s *Service) completeInspectedUpload(ctx context.Context, p model.Principal, id, operation, key string, input []byte) (Result, error) {
 	p, err := s.currentWritePrincipal(ctx, p)
 	if err != nil {
 		return Result{}, err
@@ -69,7 +73,7 @@ func (s *Service) RunUploadCompletion(ctx context.Context, p model.Principal, id
 	prepared, inspectionErr := s.prepareUploadInspection(ctx, p, id)
 	defer prepared.close()
 	return s.Run(ctx, p, operation, key, input, func(w *Write) (any, int, error) {
-		if prepared != nil {
+		if syncPlatformSupported {
 			w.preparedUpload = id
 		}
 		result, err := s.completeUpload(ctx, w, id, prepared, inspectionErr)
@@ -149,15 +153,8 @@ func (s *Service) inspectOpenedUpload(ctx context.Context, file *os.File, u mode
 // live pathname, inode and native change clock have all been rechecked. This
 // also detects equal-size rewrites whose modification time was restored.
 func (s *Service) checkUploadInspection(ctx context.Context, u model.Upload, checked *uploadInspection) error {
-	library, err := s.library(ctx, u.LibraryID)
-	if err != nil {
-		return err
-	}
-	if !library.Enabled {
-		return Fail(409, "library_disabled", "库已停用。")
-	}
 	name := uploadPath(u.ID)
-	if err = s.safe(name); err != nil {
+	if err := s.safe(name); err != nil {
 		return err
 	}
 	current, err := s.Root.Open(name)

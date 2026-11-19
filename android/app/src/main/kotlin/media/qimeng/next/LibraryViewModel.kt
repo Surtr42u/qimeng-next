@@ -125,7 +125,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 detailGeneration.next()
                 reactionRetries.clear()
                 lists.values.forEach { it.value = ListState() }
-                mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null
+                mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null; mutableReport.value = null
+                discardForeignObjectRoutes(connection)
                 mutableAssetAuthors.value = emptyList()
                 tagReads.next()
                 mutableTags.value = emptyList(); mutableTagCursor.value = null
@@ -282,7 +283,37 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun disconnect() = action { repository.disconnect(); saved["route"] = "main" }
     fun clearMessage() { mutableMessage.value = null }
 
-    fun openAsset(id: String, sourceKey: String? = null) {
+    private fun ownsObjectRoutes(target: Session) =
+        saved.get<String>("objectInstance") == target.instanceId && saved.get<String>("objectEndpoint") == target.baseUrl
+
+    private fun discardForeignObjectRoutes(target: Session?) {
+        if (target != null && ownsObjectRoutes(target)) return
+        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("task:")
+        val stack = saved.get<ArrayList<String>>("backStack").orEmpty()
+        val retained = stack.filterNot(::objectRoute)
+        if (objectRoute(route.value)) {
+            saved["route"] = retained.lastOrNull() ?: "main"
+            saved["backStack"] = ArrayList(retained.dropLast(1))
+        } else if (retained.size != stack.size) saved["backStack"] = ArrayList(retained)
+    }
+
+    private fun bindObjectTarget(target: Session): Boolean {
+        if (!sameTarget(target, session.value)) {
+            mutableMessage.value = "请先连接任务原来的服务器"
+            return false
+        }
+        discardForeignObjectRoutes(target)
+        saved["objectInstance"] = target.instanceId
+        saved["objectEndpoint"] = target.baseUrl
+        return true
+    }
+
+    private fun targetForRefresh(destination: String) = session.value?.takeIf { route.value == destination && ownsObjectRoutes(it) }
+
+    fun refreshAsset(id: String) { targetForRefresh("asset:$id")?.let { openAsset(id, target = it) } }
+
+    fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value) {
+        if (target == null || !bindObjectTarget(target)) return
         if (route.value != "asset:$id" || saved.get<String>("viewAsset") != id) {
             saved["viewSession"] = UUID.randomUUID().toString()
             saved["viewAsset"] = id
@@ -296,13 +327,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val connection = connectionGeneration
         detailJob = viewModelScope.launch {
             try {
-                val result = repository.asset(id)
-                if (!detailGeneration.isCurrent(ticket) || connection != connectionGeneration) return@launch
+                val result = repository.asset(id, target)
+                if (!detailGeneration.isCurrent(ticket) || connection != connectionGeneration || !sameTarget(target, session.value)) return@launch
                 mutableAsset.value = result
-                val names = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
-                if (detailGeneration.isCurrent(ticket) && connection == connectionGeneration) mutableAssetAuthors.value = names
+                val names = coroutineScope { result.authorIds.map { async { repository.author(it, target) } }.awaitAll() }
+                if (detailGeneration.isCurrent(ticket) && connection == connectionGeneration && sameTarget(target, session.value)) mutableAssetAuthors.value = names
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (detailGeneration.isCurrent(ticket)) mutableMessage.value = explain(failure) }
+            catch (failure: Exception) { if (detailGeneration.isCurrent(ticket) && sameTarget(target, session.value)) mutableMessage.value = explain(failure) }
         }
     }
 
@@ -313,7 +344,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val next = source.getOrNull(index + direction) ?: return
         // A sibling replaces the detail scene, without growing its return stack.
         saved["route"] = "asset:${next.id}"
-        openAsset(next.id)
+        openAsset(next.id, target = next.target)
     }
 
     fun detailPosition(id: String): Pair<Int, Int> {
@@ -352,7 +383,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun saveAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long, onSaved: () -> Unit) = action {
         val result = repository.updateAuthors(asset, ids, names, revision, authorsRevision)
         publishAsset(result)
-        mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it) } }.awaitAll() }
+        mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it, result.target) } }.awaitAll() }
         onSaved()
     }
     fun saveRelations(asset: Asset, sources: List<String>, characters: List<String>, onSaved: () -> Unit) = action {
@@ -376,7 +407,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun createTag(name: String, onSaved: (String) -> Unit) = action { onSaved(repository.createTag(name)) }
     fun refreshTagsState() = action {
-        mutableAsset.value?.let { publishAsset(repository.asset(it.id)) }
+        mutableAsset.value?.let { publishAsset(repository.asset(it.id, it.target)) }
         readTags(false)
     }
     fun viewSessionId(): String = saved.get<String>("viewSession") ?: UUID.randomUUID().toString().also { saved["viewSession"] = it }
@@ -448,9 +479,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         repository.purge(asset)
         trashState.value = trashState.value.copy(items = trashState.value.items.filterNot { it.id == asset.id })
     }
-    fun openReport(id: String) {
+    fun refreshReport(id: String) { targetForRefresh("task:$id")?.let { openReport(id, it) } }
+
+    fun openReport(id: String, target: Session? = session.value) {
+        if (target == null || !bindObjectTarget(target)) return
         navigate("task:$id"); mutableReport.value = null
-        action { val result = repository.report(id); if (route.value == "task:$id") mutableReport.value = result }
+        action {
+            val result = repository.report(id, target)
+            if (route.value == "task:$id" && sameTarget(target, session.value)) mutableReport.value = result
+        }
     }
     fun cancelReport() = action { mutableReport.value?.let { mutableReport.value = repository.cancelReport(it) } }
     fun loadStatistics() = action { mutableStats.value = repository.statistics() }
@@ -581,11 +618,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val family = uploadFamily.value.trim().takeIf { mode == UploadMode.ORDINARY && (uploadAutoName.value || uploadCollectionId.value != null) }?.takeIf(String::isNotBlank)
         val options = UploadOptions(uploadAuthorIds.value, uploadCollectionId.value, uploadNote.value, uploadSources.value.lines().filter(String::isNotBlank), family,
             if (uploadAuthorIds.value.isEmpty()) emptyList() else uploadAuthorSources.value.lines().map(String::trim).filter(String::isNotEmpty))
-        if (mode == UploadMode.ORDINARY && (uploadAutoName.value || options.collectionId != null)) {
+        val namingDrafts = draftFiles.filter { it.bytes > 0 }
+        if (mode == UploadMode.ORDINARY && (uploadAutoName.value || options.collectionId != null) && namingDrafts.isNotEmpty()) {
             val inspection = graph.naming.inspect(NamingRequest(libraryId, directory, family.orEmpty(), options.collectionId,
-                if (draftFiles.isNotEmpty() && draftFiles.all { it.mimeType.startsWith("video/") }) "video" else "image",
-                options.note, draftFiles.map { NamingFile(it.id, it.name) }))
-            check(inspection.preview != null) { "请先填写作品基名并选择文件" }
+                if (namingDrafts.all { it.mimeType.startsWith("video/") }) "video" else "image",
+                options.note, namingDrafts.map { NamingFile(it.id, it.name) }))
+            check(inspection.canSubmit) { "请先填写作品基名并选择文件" }
         }
         check(sameTarget(target, session.value)) { "服务器已改变，请重新确认上传位置" }
         graph.uploads.enqueue(libraryId, directory, mode, options, target, inputs, reviewed = draftFiles, editedStems = stems)

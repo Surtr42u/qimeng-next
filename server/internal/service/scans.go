@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,9 +86,9 @@ func (s *Service) Scans(ctx context.Context, libraryID, state, cursor string, li
 	return page, nil
 }
 func (s *Service) StartScan(ctx context.Context, w *Write, libraryID string, revision int64) (ScanJob, error) {
-	return s.startScan(ctx, w, libraryID, revision, "manual", nil)
+	return s.startScan(ctx, w, libraryID, revision, "manual", scanTargets{inventory: true})
 }
-func (s *Service) startScan(ctx context.Context, w *Write, libraryID string, revision int64, trigger string, paths []string) (ScanJob, error) {
+func (s *Service) startScan(ctx context.Context, w *Write, libraryID string, revision int64, trigger string, targets scanTargets) (ScanJob, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return ScanJob{}, e
 	}
@@ -120,7 +122,7 @@ func (s *Service) startScan(ctx context.Context, w *Write, libraryID string, rev
 		return ScanJob{}, Fail(429, "scan_capacity", "扫描队列已满，请等待现有任务完成。")
 	}
 	scope := "library"
-	if len(paths) > 0 {
+	if !targets.inventory {
 		scope = "paths"
 	}
 	now := time.Now().UTC()
@@ -137,7 +139,7 @@ func (s *Service) startScan(ctx context.Context, w *Write, libraryID string, rev
 			return job, e
 		}
 	}
-	w.after = append(w.after, func() error { s.launchScan(job, paths); return nil })
+	w.after = append(w.after, func() error { s.launchScan(job, targets); return nil })
 	return job, nil
 }
 func (s *Service) CancelScan(ctx context.Context, w *Write, id string) (ScanJob, error) {
@@ -198,13 +200,13 @@ func (s *Service) scanProgress(ctx context.Context, id, relative, code string, s
 	j.UpdatedAt = time.Now().UTC()
 	return saveScan(ctx, s.DB.DB, j)
 }
-func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
+func (s *Service) scanLibrary(ctx context.Context, id string, targets scanTargets) {
 	j, e := s.admitScan(ctx, id)
-	run := &scanRun{id: id, lastFlush: time.Now(), manualFull: j.Trigger == "manual" && len(paths) == 0}
+	run := &scanRun{id: id, lastFlush: time.Now(), manualFull: j.Trigger == "manual", targets: targets}
 	if e == nil {
 		defer s.releaseScan()
 		run.library, e = s.library(ctx, j.LibraryID)
-		if e == nil && len(paths) == 0 {
+		if e == nil && targets.inventory {
 			e = s.walkLibrary(ctx, run, "", 0)
 			if len(run.prepared) > 0 && ctx.Err() == nil {
 				e = errors.Join(e, s.flushPreparedScans(ctx, run))
@@ -213,6 +215,7 @@ func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
 				e = s.scanMissing(ctx, id, j.LibraryID)
 			}
 		} else if e == nil {
+			paths := slices.Sorted(maps.Keys(targets.writes))
 			var known map[string]scanSignature
 			known, e = s.scanSignatures(ctx, j.LibraryID, paths)
 			if e == nil {
@@ -220,7 +223,7 @@ func (s *Service) scanLibrary(ctx context.Context, id string, paths []string) {
 					if e = ctx.Err(); e != nil {
 						break
 					}
-					if e = s.scanFile(ctx, run, relative, true, known[relative]); e != nil {
+					if e = s.scanFile(ctx, run, relative, known[relative]); e != nil {
 						break
 					}
 				}
@@ -345,7 +348,7 @@ func (s *Service) walkLibrary(ctx context.Context, run *scanRun, relative string
 				if e = s.walkLibrary(ctx, run, child, depth+1); e != nil {
 					return e
 				}
-			} else if e = s.scanFile(ctx, run, child, false, known[child]); e != nil {
+			} else if e = s.scanFile(ctx, run, child, known[child]); e != nil {
 				return e
 			}
 		}
@@ -357,7 +360,7 @@ func (s *Service) walkLibrary(ctx context.Context, run *scanRun, relative string
 		}
 	}
 }
-func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, writeNotice bool, previous scanSignature) error {
+func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, previous scanSignature) error {
 	jobID, libraryID := run.id, run.library.ID
 	if len(run.prepared) > 0 && time.Since(run.preparedAt) >= scanGatherWindow {
 		if err := s.flushPreparedScans(ctx, run); err != nil {
@@ -392,31 +395,31 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, w
 		depth := strings.Count(relative, "/")
 		unchanged = run.library.Kind != "cos" || depth == 0 || previous.DirectoryAuthor != "" && (depth < 2 || previous.COSWork != "")
 	}
-	if unchanged && !writeNotice {
+	if unchanged && !run.targets.verifyAll && !run.targets.writes[relative] {
 		return s.skipScannedEntry(ctx, run)
 	}
-	batchable := !writeNotice && previous.RelativePath == "" && run.library.Kind == "regular" &&
+	batchable := run.targets.inventory && previous.RelativePath == "" && run.library.Kind == "regular" &&
 		builtinImage(mime) && initial.Size() <= scanBatchFileBytes
 	if !batchable && len(run.prepared) > 0 {
 		if e = s.flushPreparedScans(ctx, run); e != nil {
 			return e
 		}
 	}
-	hash, size, e := s.hashFileContext(ctx, full)
-	if e != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return s.scanProgress(ctx, jobID, relative, "read_failed", true)
+	file := scannedFile{relative: relative, full: full, kind: kind, initial: initial, probe: model.Asset{ID: "scan", MimeType: mime}}
+	var skipHash string
+	if unchanged {
+		skipHash = previous.Hash
 	}
-	if unchanged && hash == previous.Hash {
+	issue := s.inspectScanOriginal(ctx, run, &file, skipHash)
+	if e = ctx.Err(); e != nil {
+		return e
+	}
+	if issue != "" {
+		return s.scanProgress(ctx, jobID, relative, issue, true)
+	}
+	if file.hash == skipHash {
 		return s.skipScannedEntry(ctx, run)
 	}
-	probe := model.Asset{ID: "scan", MimeType: mime}
-	if e = s.probe(ctx, full, &probe); e != nil {
-		return s.scanProgress(ctx, jobID, relative, "invalid_media", true)
-	}
-	file := scannedFile{relative: relative, full: full, kind: kind, hash: hash, size: size, initial: initial, probe: probe}
 	if !batchable {
 		return s.commitScannedFile(ctx, run, file)
 	}

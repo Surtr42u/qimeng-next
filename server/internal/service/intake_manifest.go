@@ -138,9 +138,17 @@ func sealIntakeInputs(ctx context.Context, q store.Querier, batch model.Batch, i
 }
 
 func (s *Service) batchInputs(ctx context.Context, q store.Querier, id string) ([]model.BatchInput, error) {
+	return readBatchInputs(ctx, q, id, true)
+}
+
+func readBatchInputs(ctx context.Context, q store.Querier, id string, hasRejectionCode bool) ([]model.BatchInput, error) {
+	rejection := "''"
+	if hasRejectionCode {
+		rejection = "i.rejection_code"
+	}
 	rows, e := q.QueryContext(ctx, `SELECT i.data,i.ordinal,coalesce(i.upload_id,''),
- CASE WHEN i.rejection_code!='' THEN 'failed' WHEN i.cancelled=1 THEN 'cancelled' ELSE coalesce(u.state,'pending') END,
- coalesce(json_extract(u.data,'$.assetId'),''),coalesce(nullif(i.rejection_code,''),json_extract(u.data,'$.errorCode'),'')
+ CASE WHEN `+rejection+`!='' THEN 'failed' WHEN i.cancelled=1 THEN 'cancelled' ELSE coalesce(u.state,'pending') END,
+ coalesce(json_extract(u.data,'$.assetId'),''),coalesce(nullif(`+rejection+`,''),json_extract(u.data,'$.errorCode'),'')
  FROM batch_inputs i LEFT JOIN uploads u ON u.id=i.upload_id WHERE i.batch_id=? ORDER BY i.ordinal LIMIT 101`, id)
 	if e != nil {
 		return nil, e

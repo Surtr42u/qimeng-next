@@ -50,11 +50,38 @@ type CleanupPermit struct {
 	Receipt        *CleanupReceipt `json:"receipt,omitempty"`
 }
 
-func permitView(p CleanupPermit) CleanupPermit {
+type cleanupPermitView struct {
+	CleanupPermit
+	VerifySnapshot bool `json:"verifySnapshot"`
+}
+
+func (s *Service) permitView(ctx context.Context, principal model.Principal, record cleanupPermitView, cache map[string]map[string]ProtectedInput) (CleanupPermit, error) {
+	p := record.CleanupPermit
 	if p.State == "issued" && !p.ExpiresAt.After(time.Now()) {
 		p.State = "expired"
 	}
-	return p
+	if p.State != "issued" || !record.VerifySnapshot {
+		return p, nil
+	}
+	protection, err := s.BatchProtection(ctx, principal, p.BatchID, p.ProtectionID)
+	if err != nil {
+		return p, err
+	}
+	item, err := protectedInput(protection, p.InputID)
+	if err != nil || protection.State != "completed" || protection.InstanceID != s.InstanceID || protection.InstanceID != p.InstanceID || protection.ProofHash != p.ProofHash ||
+		item.AssetID != p.AssetID || item.ContentVersion != p.ContentVersion || item.Hash != p.Hash || item.Size != p.Size {
+		p.State = "revoked"
+		return p, nil
+	}
+	if err = s.verifyLegacyProtectionItems(ctx, protection, []ProtectedInput{item}, cache); err != nil {
+		var app *Error
+		if errors.As(err, &app) && (app.Code == "input_version_unverified" || app.Code == "manifest_changed") {
+			p.State = "revoked"
+			return p, nil
+		}
+		return p, err
+	}
+	return p, nil
 }
 
 const cleanupPermitProjection = `SELECT CASE WHEN p.state='issued' AND NOT EXISTS(
@@ -63,20 +90,22 @@ const cleanupPermitProjection = `SELECT CASE WHEN p.state='issued' AND NOT EXIST
  AND a.id=json_extract(p.data,'$.assetId') AND a.hash=json_extract(p.data,'$.hash') AND a.size=json_extract(p.data,'$.size')
  AND json_extract(u.data,'$.publishedContentVersion')=json_extract(p.data,'$.contentVersion')
  AND json_extract(a.data,'$.contentVersion')=json_extract(p.data,'$.contentVersion'))
- THEN json_set(p.data,'$.state','revoked') ELSE p.data END FROM source_cleanup_permits p `
+ THEN json_set(p.data,'$.state','revoked')
+ WHEN p.state='issued' AND NOT EXISTS(SELECT 1 FROM batch_protections b WHERE b.id=p.protection_id AND json_extract(b.data,'$.snapshotInputsVerified')=1)
+ THEN json_set(p.data,'$.verifySnapshot',json('true')) ELSE p.data END FROM source_cleanup_permits p `
 
 func (s *Service) CleanupPermit(ctx context.Context, p model.Principal, id string) (CleanupPermit, error) {
-	v, e := store.Get[CleanupPermit](ctx, s.DB.DB, cleanupPermitProjection+"WHERE p.id=?", id)
+	v, e := store.Get[cleanupPermitView](ctx, s.DB.DB, cleanupPermitProjection+"WHERE p.id=?", id)
 	if e != nil {
-		return v, Normalize(e)
+		return v.CleanupPermit, Normalize(e)
 	}
 	if e = Authorize(p, "source.cleanup", v.BatchID); e != nil {
-		return v, e
+		return v.CleanupPermit, e
 	}
 	if v.CredentialID != p.ID {
-		return v, Fail(403, "cleanup_credential_mismatch", "此许可不属于当前可信执行器。")
+		return v.CleanupPermit, Fail(403, "cleanup_credential_mismatch", "此许可不属于当前可信执行器。")
 	}
-	return permitView(v), nil
+	return s.permitView(ctx, p, v, nil)
 }
 func (s *Service) CleanupPermits(ctx context.Context, p model.Principal, batchID, inputID, cursor string, limit int) (model.Page[CleanupPermit], error) {
 	result := model.Page[CleanupPermit]{Items: []CleanupPermit{}}
@@ -92,7 +121,7 @@ func (s *Service) CleanupPermits(ctx context.Context, p model.Principal, batchID
 	if e != nil {
 		return result, e
 	}
-	items, e := store.List[CleanupPermit](ctx, s.DB.DB, cleanupPermitProjection+"WHERE p.batch_id=? AND p.principal_id=? AND (?='' OR p.input_id=?) AND p.id>? ORDER BY p.id LIMIT ?", batchID, p.ID, inputID, inputID, seek.ID, n+1)
+	items, e := store.List[cleanupPermitView](ctx, s.DB.DB, cleanupPermitProjection+"WHERE p.batch_id=? AND p.principal_id=? AND (?='' OR p.input_id=?) AND p.id>? ORDER BY p.id LIMIT ?", batchID, p.ID, inputID, inputID, seek.ID, n+1)
 	if e != nil {
 		return result, e
 	}
@@ -100,10 +129,15 @@ func (s *Service) CleanupPermits(ctx context.Context, p model.Principal, batchID
 		result.NextCursor = makeSeek(filter, "id", "", items[n-1].ID)
 		items = items[:n]
 	}
-	for i := range items {
-		items[i] = permitView(items[i])
+	// Old permits from the same batch protection share one immutable checkpoint.
+	snapshots := make(map[string]map[string]ProtectedInput)
+	for _, item := range items {
+		v, err := s.permitView(ctx, p, item, snapshots)
+		if err != nil {
+			return result, err
+		}
+		result.Items = append(result.Items, v)
 	}
-	result.Items = items
 	return result, nil
 }
 func protectedInput(p BatchProtection, inputID string) (ProtectedInput, error) {
@@ -123,6 +157,11 @@ func (s *Service) verifyProtectionForCleanup(ctx context.Context, p BatchProtect
 	}
 	if p.InstanceID != s.InstanceID || p.State != "completed" || p.ProofHash == "" {
 		return Fail(409, "protection_not_ready", "当前实例尚无可用于清理的完整保护证明。")
+	}
+	if !p.snapshotInputsVerified {
+		if err := s.verifyLegacyProtectionItems(ctx, p, []ProtectedInput{item}, nil); err != nil {
+			return err
+		}
 	}
 	target, info, e := s.backupTarget(ctx, p.TargetID)
 	if e != nil {

@@ -26,6 +26,15 @@ func (s *Service) Batch(ctx context.Context, id string) (model.Batch, error) {
 	b, e := store.Get[model.Batch](ctx, s.DB.DB, "SELECT data FROM batches WHERE id=?", id)
 	return b, Normalize(e)
 }
+
+func remainingBatchResearch(b model.Batch, p model.Principal) int {
+	limit := b.MaxResearchCalls
+	if p.IntakeResearchLimit != nil {
+		limit = min(limit, *p.IntakeResearchLimit)
+	}
+	return max(0, limit-b.ResearchCalls)
+}
+
 func (s *Service) CreateBatch(ctx context.Context, w *Write, in model.Batch) (model.Batch, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
 		return in, e
@@ -225,6 +234,7 @@ func (s *Service) Context(ctx context.Context, p model.Principal, id, cursor str
 		}
 	}
 	actions := []string{}
+	remainingResearch := remainingBatchResearch(d.Batch, p)
 	if d.Batch.State != "cancelled" && d.Batch.State != "completed" {
 		for _, item := range d.Items {
 			switch item.Upload.State {
@@ -232,7 +242,7 @@ func (s *Service) Context(ctx context.Context, p model.Principal, id, cursor str
 				actions = appendUnique(actions, "appendUpload", "completeUpload")
 			case "staged":
 				actions = appendUnique(actions, "preparePlan")
-				if item.ResearchOutcome == "" && d.Batch.ResearchCalls < d.Batch.MaxResearchCalls {
+				if item.ResearchOutcome == "" && remainingResearch > 0 {
 					actions = appendUnique(actions, "submitResearch")
 				}
 			case "duplicate":
@@ -254,7 +264,7 @@ func (s *Service) Context(ctx context.Context, p model.Principal, id, cursor str
 			}
 		}
 	}
-	if d.Batch.ManifestState == "sealed" && d.Batch.State != "cancelled" && d.Batch.State != "completed" && d.Batch.ResearchCalls >= d.Batch.MaxResearchCalls && p.Has("research") {
+	if d.Batch.ManifestState == "sealed" && d.Batch.State != "cancelled" && d.Batch.State != "completed" && remainingResearch == 0 && p.Has("research") {
 		var available bool
 		e = s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM research_provider_calls c
 		 JOIN uploads u ON u.id=c.subject_id AND c.subject_hash=json_extract(u.data,'$.hash')
@@ -295,7 +305,7 @@ func (s *Service) Context(ctx context.Context, p model.Principal, id, cursor str
 			}
 		}
 	}
-	result := map[string]any{"batch": d.Batch, "policyVersion": "2", "nextActions": actions, "remainingResearchCalls": d.Batch.MaxResearchCalls - d.Batch.ResearchCalls, "inputs": inputs, "items": items, "limitations": limitations}
+	result := map[string]any{"batch": d.Batch, "policyVersion": "2", "nextActions": actions, "remainingResearchCalls": remainingResearch, "inputs": inputs, "items": items, "limitations": limitations}
 	if end < total {
 		result["nextCursor"] = nextCursor(end, key)
 	}
@@ -337,7 +347,7 @@ func (s *Service) SubmitResearch(ctx context.Context, w *Write, id string, in mo
 	if u.BatchID != id || u.Hash == "" || u.Hash != in.ExpectedHash || u.State != "staged" {
 		return b, Fail(409, "research_scope_conflict", "研究结果不适用于当前批次输入版本。")
 	}
-	if in.CallsUsed < 0 || in.CallsUsed > 100 || in.CallsUsed > b.MaxResearchCalls-b.ResearchCalls || in.CallsUsed == 0 && len(in.ProviderQueryIDs) == 0 {
+	if in.CallsUsed < 0 || in.CallsUsed > 100 || in.CallsUsed > remainingBatchResearch(b, w.Principal) || in.CallsUsed == 0 && len(in.ProviderQueryIDs) == 0 {
 		return b, Fail(409, "research_budget_exhausted", "研究额度已用尽或缺少已计费的查询凭据。")
 	}
 	if e = s.checkProviderEvidence(ctx, id, u, in); e != nil {

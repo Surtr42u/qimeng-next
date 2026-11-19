@@ -8,4 +8,6 @@ data class NamingPosition(val family: String, val directory: String, val nextWor
     val nextPage: Int?, val nextChapter: Int?, val numberClass: String)
 data class NamingPreview(val names: List<String>, val reserved: Boolean)
 data class NamingInspection(val suggestions: List<NamingSuggestion>, val truncated: Boolean,
-    val position: NamingPosition?, val preview: NamingPreview?)
+    val position: NamingPosition?, val preview: NamingPreview?, val unsupportedInputs: Boolean = false) {
+    val canSubmit get() = preview != null || unsupportedInputs
+}

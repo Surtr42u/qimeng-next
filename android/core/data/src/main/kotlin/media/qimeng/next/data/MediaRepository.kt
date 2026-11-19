@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicLong
 import media.qimeng.next.sdk.model.Asset as ApiAsset
 import media.qimeng.next.sdk.model.Author as ApiAuthor
 import media.qimeng.next.sdk.model.Batch as ApiBatch
+import media.qimeng.next.sdk.model.BatchInput
 
 /** Only this data boundary knows generated DTOs. UI and ViewModels use client models. */
 class MediaRepository internal constructor(val settings: SecureSettings, private val provider: ApiProvider) {
@@ -194,9 +195,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     suspend fun searchSuggestions(query: String, recommend: Boolean = false): List<SearchWord> = provider.api(target())
         .getSearchSuggestions(q = query, recommend = recommend, limit = 10).bodyOrThrow().items.map { SearchWord(it.id, it.type.value, it.name) }
 
-    suspend fun asset(id: String): Asset {
-        val target = target()
-        return provider.api(target).getAsset(id).bodyOrThrow().toModel(target)
+    suspend fun asset(id: String, target: Session = target()): Asset {
+        val record = provider.api(target).getAsset(id).bodyOrThrow()
+        check(sameTarget(target, session.value)) { "请先连接此媒体原来的服务器" }
+        return record.toModel(target)
     }
 
     suspend fun selectableVideo(target: Session, id: String): Asset {
@@ -272,7 +274,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return Page(page.items.map { it.toModel() }, page.nextCursor, page.totalMatched)
     }
 
-    suspend fun author(id: String): Author = provider.api(target()).getAuthor(id).bodyOrThrow().toModel()
+    suspend fun author(id: String, target: Session = target()): Author = provider.api(target).getAuthor(id).bodyOrThrow().toModel()
     suspend fun follow(author: Author, target: Session = target()): Author {
         val input = AuthorUpdate(expectedRevision = author.revision, following = !author.followed)
         return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
@@ -327,8 +329,9 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun reports(cursor: String? = null): Page<TaskReport> {
-        val page = provider.api(target()).listBatches(cursor = cursor, limit = 50).bodyOrThrow()
-        return Page(page.items.map { it.toModel() }, page.nextCursor)
+        val target = target()
+        val page = provider.api(target).listBatches(cursor = cursor, limit = 50).bodyOrThrow()
+        return Page(page.items.map { it.toModel(target) }, page.nextCursor)
     }
     suspend fun authorTasks(cursor: String? = null): Page<AuthorTaskReport> {
         val page = provider.api(target()).listAuthorTasks(cursor = cursor, limit = 50).bodyOrThrow()
@@ -340,24 +343,25 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         if (!result.isSuccessful) result.bodyOrThrow()
     }
 
-    suspend fun report(id: String): TaskReport {
-        val result = provider.api(target()).getBatch(id).bodyOrThrow()
+    suspend fun report(id: String, target: Session = target()): TaskReport {
+        val result = provider.api(target).getBatch(id).bodyOrThrow()
+        check(sameTarget(target, session.value)) { "请先连接此报告原来的服务器" }
         val received = result.items.associateBy { it.upload.id }
         val items = if (result.inputs.isNotEmpty()) result.inputs.map { input ->
             val item = input.uploadId?.let(received::get)
             TaskItem(input.id, input.originalFileName ?: "第${input.ordinal + 1}项（名称读取失败）", input.state.value,
-                if (item == null) {
+                input.intakeFailure() ?: if (item == null) {
                     if (input.state.value == "cancelled") "此输入已取消，原始清单保留" else "此输入尚未传到服务器，仍计入原始清单"
                 } else listOfNotNull(item.upload.errorMessage,
                     if (result.batch.mode.value == "ordinary") "普通上传，无需研究" else researchMessage(item.researchOutcome)).joinToString(" · "), input.assetId)
         } else result.items.map {
             TaskItem(it.upload.id, it.upload.fileName, it.upload.state.value, "已收到的文件；旧批次的原始清单不可核验", it.upload.assetId)
         }
-        return result.batch.toModel().copy(items = items)
+        return result.batch.toModel(target).copy(items = items)
     }
     suspend fun cancelReport(report: TaskReport): TaskReport {
-        provider.api(target()).cancelBatch(id = report.id, revisionRequest = RevisionRequest(expectedRevision = report.revision)).bodyOrThrow()
-        return this.report(report.id)
+        provider.api(report.target).cancelBatch(id = report.id, revisionRequest = RevisionRequest(expectedRevision = report.revision)).bodyOrThrow()
+        return this.report(report.id, report.target)
     }
 
     suspend fun statistics(): InventoryStats {
@@ -391,8 +395,16 @@ private fun ApiAsset.toModel(target: Session): Asset {
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,
     fileCount, viewCount, acquisitionSources.orEmpty())
-private fun ApiBatch.toModel() = TaskReport(id, revision, mode.value, state.value,
-    "${label} · ${if (manifestState.value == "sealed") "原始清单 $expectedInputs 项" else "原始清单尚未核验"} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList())
+private fun ApiBatch.toModel(target: Session) = TaskReport(id, revision, mode.value, state.value,
+    "${label} · ${if (manifestState.value == "sealed") "原始清单 $expectedInputs 项" else "原始清单尚未核验"} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList(), target)
+internal fun BatchInput.intakeFailure(): String? {
+    if (state.value != "failed" || uploadId != null) return null
+    return when (errorCode) {
+        "empty_input" -> "文件为空，未创建上传。"
+        "unsupported_media" -> "不支持此文件格式，未创建上传。"
+        else -> "原始输入校验失败，未创建上传。"
+    }
+}
 private fun researchMessage(outcome: String): String? = when (outcome) {
     "", "not_run", "pending" -> "尚未执行研究"
     "unknown" -> "已研究，尚未查明"

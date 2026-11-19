@@ -92,11 +92,11 @@ fun AppRoot(model: LibraryViewModel) {
                         }
                         SingleSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) {
                             when {
-                                route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'))
+                                route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'), session)
                                 route.startsWith("author:") -> AuthorCollectionScreen(model, route.substringAfter(':'))
                                 route.startsWith("profile:") -> AuthorProfileScreen(route.substringAfter(':'), model)
                                 route.startsWith("profile-archive:") -> AuthorProfileScreen(route.split(':')[1], model, archiveId = route.split(':')[2])
-                                route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'))
+                                route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'), session)
                                 route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
                                 route.startsWith("stats-detail:") -> route.split(':').let { StatsDetailScreen(model, it[1], it[2]) }
                                 route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
