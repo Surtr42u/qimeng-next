@@ -67,6 +67,8 @@ Android 普通应用在私有数据目录也会遇到硬链接被拒绝。文件
 
 `internal/domain` 是纯规则；`internal/model` 是业务记录；`internal/store` 负责追加迁移和持久化；`internal/service` 实现明确用例与文件恢复；`internal/httpapi` 只适配协议；`cmd/qimeng` 管理运行配置和生命周期。SDK 由根目录云端流水线从 OpenAPI 生成，服务端不手写客户端 SDK。
 
+一次性的 `cmd/qimeng-legacy-convert` 通过 `internal/legacycold` 只读访问已封存的旧 PC v26 资料，在私有新目录制作原生备份。普通服务和 Android 均独立于这个命令。归档由 `cmd/qimeng-backup` 验证和恢复。[操作与私有覆盖报告](../docs/legacy-cold.md)
+
 数据库启动时先将已记录的迁移逐个与本程序核对，检查通过才运行待执行的 SQL。每项迁移与其校验记录在同一事务提交。启动与备份验证共享迁移定义。SQLite 会保留建表 SQL 的文本，因此迁移记录表沿用原始定义，以便旧备份通过相同的完整性检查。[架构边界](../docs/architecture.md#module-boundaries) · [工程检查](../docs/verification.md#engineering-gates)
 
 以下检查使用云端环境。日常验证直接读取提交的源码。

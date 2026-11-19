@@ -1,0 +1,118 @@
+name: Offline PC v26 conversion and native restore
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: &archive_paths
+      - '.github/workflows/legacy-cold.yml'
+      - 'docs/legacy-cold.md'
+      - 'tools/legacy-cold/**'
+      - 'server/cmd/qimeng-legacy-convert/**'
+      - 'server/cmd/qimeng-backup/**'
+      - 'server/internal/legacycold/**'
+      - 'server/internal/service/cold_catalog.go'
+      - 'server/internal/backup/**'
+      - 'server/internal/service/backup*.go'
+      - 'server/internal/service/files.go'
+      - 'server/internal/service/disk*.go'
+      - 'server/internal/storage/root.go'
+      - 'server/internal/storage/publish*.go'
+      - 'server/internal/store/migrations/**'
+      - 'server/internal/store/migrations*.go'
+      - 'server/internal/store/backup_validation*.go'
+      - 'server/internal/store/sqlite*.go'
+      - 'server/internal/store/store.go'
+      - 'server/internal/store/asset*.go'
+      - 'server/go.mod'
+      - 'server/go.sum'
+  pull_request:
+    paths: *archive_paths
+permissions: {contents: read}
+jobs:
+  source-checks:
+    name: Synthetic source and projection checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Surtr42u/qimeng-media
+          ref: d0215962bb1e9c29baabeed9fc9dc5c8b4b94555
+          path: reference-v26
+          sparse-checkout: server/migrations
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache-dependency-path: server/go.sum}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.13'}
+      - name: Generate the contract for HTTP readback tests
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python tools/generate_sdks.py --target go
+          python - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "tools/legacy-cold")
+          import smoke
+          smoke.fixture(Path("reference-v26/server/migrations"), Path(os.environ["RUNNER_TEMP"]) / "cancellation-test")
+          PY
+      - working-directory: server
+        env: {QIMENG_COLD_SYNTHETIC_FIXTURE: '${{ runner.temp }}/cancellation-test'}
+        run: go test -mod=readonly -count=1 ./internal/architecture ./internal/legacycold/...
+  conversion:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2025, platform: windows-amd64, ext: '.exe'}
+          - {os: ubuntu-24.04, platform: linux-amd64, ext: ''}
+    name: Convert, verify, restore and serve (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      REFERENCE_SHA: d0215962bb1e9c29baabeed9fc9dc5c8b4b94555
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {path: next, persist-credentials: false}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Surtr42u/qimeng-media
+          ref: ${{ env.REFERENCE_SHA }}
+          path: reference
+          sparse-checkout: server/migrations
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: next/server/go.mod, cache-dependency-path: next/server/go.sum}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.13'}
+      - name: Build isolated tools and the same revision of the server
+        shell: bash
+        env: {SUFFIX: '${{ matrix.ext }}'}
+        run: |
+          test "$(git -C reference rev-parse HEAD)" = "$REFERENCE_SHA"
+          python -m pip install PyYAML==6.0.3
+          python next/tools/generate_sdks.py --target go
+          mkdir -p package fixture-bin
+          cd next/server
+          go build -mod=readonly -trimpath -o "../../package/qimeng-legacy-convert$SUFFIX" ./cmd/qimeng-legacy-convert
+          go build -mod=readonly -trimpath -o "../../package/qimeng-backup$SUFFIX" ./cmd/qimeng-backup
+          go build -mod=readonly -trimpath -o "../../fixture-bin/qimeng-next$SUFFIX" ./cmd/qimeng
+      - name: Convert synthetic v26 data and read it through the restored server
+        shell: bash
+        run: python next/tools/legacy-cold/smoke.py --migrations reference/server/migrations --bin package --server fixture-bin --receipt package/cloud-receipt.json
+      - name: Include instructions and checksums for the two tools
+        shell: bash
+        env: {SUFFIX: '${{ matrix.ext }}'}
+        run: |
+          cp next/docs/legacy-cold.md package/README.md
+          cd package
+          sha256sum "qimeng-legacy-convert$SUFFIX" "qimeng-backup$SUFFIX" > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: qimeng-legacy-cold-${{ matrix.platform }}
+          path: package/
+          if-no-files-found: error
+          retention-days: 14
