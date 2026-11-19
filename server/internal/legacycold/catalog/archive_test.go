@@ -25,6 +25,17 @@ func TestColdCatalogNativeArchiveRestoresRawDecisionsAndClearedFields(t *testing
 	if err := f.run(); err != nil {
 		t.Fatal(err)
 	}
+	after, _, _ := f.restoreCatalog()
+	after.expect("9007199254740993", "SELECT json_extract(original,'$.value.sourceInteger') FROM migration_relation_origins WHERE input_id=? AND kind='cold26/author-profile'", sampleSource)
+	after.expect("1", "SELECT count(*) FROM migration_relation_origins WHERE input_id=? AND kind='cold26/unbound-protected-work'", sampleSource)
+	after.expect("text", "SELECT json_type(data,'$.values.summary') FROM author_profile_blocks WHERE author_id='writer' AND block='basic'")
+	after.expect("1  Writer\r\n作品\r\nabsent.png\r\n", "SELECT content FROM author_txt_fragments WHERE source_id=? AND name='owner.txt'", sampleSource)
+	after.expect("writer", "SELECT author_id FROM migration_author_aliases WHERE source_id=? AND source_author_id='writer'", sampleSource)
+}
+
+func (f *fixture) restoreCatalog() (*fixture, []byte, string) {
+	t := f.t
+	t.Helper()
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "checkpoint.sqlite")
 	f.native("VACUUM INTO ?", snapshot)
@@ -62,11 +73,6 @@ func TestColdCatalogNativeArchiveRestoresRawDecisionsAndClearedFields(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer native.DB.Close()
-	after := &fixture{t: t, target: native}
-	after.expect("9007199254740993", "SELECT json_extract(original,'$.value.sourceInteger') FROM migration_relation_origins WHERE input_id=? AND kind='cold26/author-profile'", sampleSource)
-	after.expect("1", "SELECT count(*) FROM migration_relation_origins WHERE input_id=? AND kind='cold26/unbound-protected-work'", sampleSource)
-	after.expect("text", "SELECT json_type(data,'$.values.summary') FROM author_profile_blocks WHERE author_id='writer' AND block='basic'")
-	after.expect("1  Writer\r\n作品\r\nabsent.png\r\n", "SELECT content FROM author_txt_fragments WHERE source_id=? AND name='owner.txt'", sampleSource)
-	after.expect("writer", "SELECT author_id FROM migration_author_aliases WHERE source_id=? AND source_author_id='writer'", sampleSource)
+	t.Cleanup(func() { native.DB.Close() })
+	return &fixture{t: t, target: native}, body, archivePath
 }

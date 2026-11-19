@@ -39,15 +39,16 @@ func (i *importer) importProfiles() error {
 		if !exists || len(raw) == 0 {
 			return sourceProblem("profile_owner_or_size_invalid")
 		}
-		if err := i.portableJSON(raw, true); err != nil {
+		portable, decisions, err := i.inspectJSON(raw, true)
+		if err != nil {
 			return err
 		}
 		var p coldProfile
 		var fields map[string]json.RawMessage
-		if err := decode(raw, &p); err != nil {
+		if err := decode(portable, &p); err != nil {
 			return err
 		}
-		if err := decode(raw, &fields); err != nil {
+		if err := decode(portable, &fields); err != nil {
 			return err
 		}
 		if p.AuthorID != id || p.Revision < 0 || (p.Status == "verified" && (p.Homepage == "" || len(p.Evidence) == 0)) {
@@ -77,11 +78,18 @@ func (i *importer) importProfiles() error {
 		if err != nil {
 			return err
 		}
-		// Retain the original avatar bytes as well as the normalized native
-		// image. Source revision, candidates, refresh metadata and unknown
-		// fields (including exact integers) remain round-trippable offline.
-		if err := i.origin("author-profile", []string{id}, map[string]any{"authorId": id, "updatedAt": updated,
-			"archiveId": archiveID, "value": json.RawMessage(raw), "projection": out}); err != nil {
+		fact := map[string]any{"authorId": id, "updatedAt": updated, "archiveId": archiveID, "value": portable, "projection": out}
+		if len(decisions) > 0 {
+			source := map[string]string{"sourceId": i.sourceID, "table": "kv_settings", "key": "creator_profile:" + id}
+			fact["valueDisposition"], fact["sealedSource"], fact["fields"] = "portable_query_redacted", source, decisions
+			for _, decision := range decisions {
+				if err := i.origin("profile-text-disposition", []string{id, decision.Field},
+					map[string]any{"authorId": id, "sealedSource": source, "decision": decision}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := i.origin("author-profile", []string{id}, fact); err != nil {
 			return err
 		}
 		if a.Placeholder {

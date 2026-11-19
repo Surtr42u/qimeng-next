@@ -82,7 +82,7 @@ func (i *importer) readSettings() error {
 			}
 			return i.origin("archived-setting", []string{key}, map[string]any{"key": key, "updatedAt": at, "value": json.RawMessage(raw)})
 		}
-		if err := i.portableJSON(raw, false); err != nil {
+		if _, _, err := i.inspectJSON(raw, false); err != nil {
 			return err
 		}
 		i.settings[key] = setting{raw, at}

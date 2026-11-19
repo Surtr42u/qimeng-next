@@ -49,6 +49,12 @@ if ($LASTEXITCODE -ne 0) { throw '恢复未完成，请保留现场' }
 | 已完成或待处理的旧操作 | AI 请求保留 HTTP 方法、状态和时间，上传回执保留录入的字节数、时间与可定位的旧资产行。维护任务及设备操作保留状态、时间、数量和父行关系。完整旧记录由封存 SQLite 留存。旧命令、主机路径、原始请求、租约和令牌均在旧源中保管。 |
 | 旧凭据、索引和文件 | 报告分别统计已排除的用户、会话、AI 客户端与可重建索引。库内非媒体文件计入 `unarchivedNonMediaFiles`；旧扫描器排除的隐藏或系统目录条目计入 `excludedOldScannerEntries`。这些文件、目录与外置作者文档须另行私下备份。工具不会把 TXT 或其他附件猜成一个媒体资产。 |
 
+作者档案中的公开归档链接可以在路径段中引用另一个 HTTP(S) 页面。转换器逐层检查嵌入网址的主机、路径、查询和片段，识别字面或百分号编码的公开引用，并保留原链接的拼写。整个检查离线完成。带登录信息的地址、本机或私有主机、封存库根和无法明确解析的多重编码会中止转换。
+
+旧档案只有四个描述性简介字段享有查询参数处理规则，即 `/biography`、`/candidate/biography`、`/xProfile/biography`、`/xProfile/biographyZh`。如果其中的公开 HTTP(S) 链接带凭据类查询参数，转换器仅移除对应的参数对，保留周围文字、普通参数及其原有顺序和编码。作者核心资料、公开块、候选、档案和来源留证全部使用同一份可携值。主页、头像、结构化来源、备注、动态标题和设置仍要求其内容本身可以携带。
+
+每个经过处理的字段在 `cold26/profile-text-disposition` 留一行。其 `decision.field` 是 JSON Pointer，`decision.action` 为 `remove_sensitive_url_query_parameters`，`decision.removedParameters` 是该字段移除的参数数。对应的 `cold26/author-profile` 行将 `valueDisposition` 记为 `portable_query_redacted`，`fields` 汇总以上处置，`value` 保存处理后的档案。这两类行的 `sealedSource` 都保存 `sourceId`、表名 `kv_settings` 和源记录键。需核对原文时，按这个定位读取摘要匹配的私有封存库。
+
 `problem.table` 与 `problem.rowId` 可在匹配摘要的封存源里定位失败行。磁盘问题的 `locatorSHA256` 采用 UTF-8 编码；未建档原件以 `旧库ID/原相对路径` 取 SHA-256，回收站问题以 `trash` 下的相对路径取 SHA-256。报告接受新发现的空表并标记其状态。未知非空表、无法核对的实际原件与未解释的真实业务记录会阻止归档完成。原生格式上限为 50 万个文件和 64 MiB 清单。
 
 云端验证使用旧仓固定提交的 26 个公开迁移脚本生成合成库，再调用正式程序。真实冷数据库、媒体、主机路径、覆盖报告和运行收据仅保存在操作者的私有位置。[旧版表结构](https://github.com/Surtr42u/qimeng-media/tree/d0215962bb1e9c29baabeed9fc9dc5c8b4b94555/server/migrations) · [同提交云端验证](../.github/workflows/legacy-cold.yml)
