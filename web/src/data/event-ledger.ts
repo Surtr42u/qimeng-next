@@ -2,7 +2,7 @@ import { api, read } from "./client";
 import type { Schema } from "./client";
 import { ApiError } from "../lib/errors";
 import { localReadAll, localWrite } from "./storage";
-import { queryClient } from "./query";
+import { invalidatePlaybackDetail, queryClient } from "./query";
 
 type EventRow = {
   id: string;
@@ -39,6 +39,7 @@ export class EventLedger {
   private running = false;
   private disposed = false;
   private restoreFailed = false;
+  private restoring = true;
   private ready: Promise<void>;
   private controller?: AbortController;
   constructor(readonly scope: string) {
@@ -51,6 +52,15 @@ export class EventLedger {
     };
   };
   getSnapshot = () => this.health;
+  hasEarlierProgress(assetId: string, version: number, sessionId: string) {
+    if (this.restoring) return true;
+    for (const id of this.outstanding) {
+      const entry = this.rows.get(id);
+      if (entry && !entry.confirmed && !("rejection" in entry) && entry.assetId === assetId &&
+          entry.body.kind === "progress" && entry.body.contentVersion === version && entry.body.sessionId !== sessionId) return true;
+    }
+    return false;
+  }
   private publish(patch: Partial<Health> = {}) {
     const rejected = patch.rejected ?? this.health.rejected;
     this.health = { ...this.health, ...patch, pending: this.rows.size - rejected.length };
@@ -68,9 +78,11 @@ export class EventLedger {
         if (!("rejection" in entry)) this.outstanding.add(entry.id);
       }
       this.restoreFailed = false;
+      this.restoring = false;
       this.publishRejections({ storageError: undefined });
     } catch {
       this.restoreFailed = true;
+      this.restoring = false;
       this.publish({
         storageError:
           "浏览记录的本地恢复不可用，关闭页面可能丢失尚未补发的记录。",
@@ -116,9 +128,12 @@ export class EventLedger {
       }));
     } catch (error) {
       if (!isPermanentRejection(error)) throw error;
+      if (entry.body.kind === "progress" && error.code === "content_changed" && !this.disposed)
+        invalidatePlaybackDetail(this.scope, entry.assetId);
       return { ...entry, rejection: { code: error.code, message: error.message } };
     }
     entry.confirmed = true;
+    if (entry.body.kind === "progress" && !this.disposed) invalidatePlaybackDetail(this.scope, entry.assetId);
     try {
       await localWrite("events", entry);
     } catch {
