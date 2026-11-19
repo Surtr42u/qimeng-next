@@ -17,18 +17,24 @@ for (const mode of ['ordinary', 'intelligent'] as const) {
     await expect(page.getByRole('heading', { name: '为你推荐' })).toBeVisible();
     await page.goto('/manage/upload');
     await page.getByRole('group', { name: '目标库' }).getByRole('button', { name, exact: true }).click();
-    await page.getByText('上传方式与作品命名', { exact: true }).click();
+    const options = page.locator('details.upload-options');
+    await options.getByText('上传方式与作品命名', { exact: true }).click();
+    const modeSelect = options.getByRole('combobox').filter({ has: page.locator('option[value="intelligent"]') });
+    await expect(modeSelect.locator('option')).toHaveText(['普通上传', '智能整理']);
+    await expect(modeSelect).toHaveValue('ordinary');
     const family = '合成作品';
     let expectedPath: string | undefined;
     if (mode === 'ordinary') {
-      await expect(page.getByLabel('上传方式', { exact: true })).toHaveValue('ordinary');
-      await page.getByLabel('按作品基名自动编号').check();
-      await page.getByLabel('作品基名', { exact: true }).fill(family);
+      await options.getByRole('checkbox', { name: '按作品基名自动编号', exact: true }).check();
+      await options.getByLabel('作品基名', { exact: true }).fill(family);
       const preview = await page.request.post(`/api/v1/libraries/${library.id}/naming/preview`, {
         data: { intent: 'new_work', family, items: [{ fileName: 'good.png' }] } });
       expect(preview.ok()).toBe(true);
       expectedPath = (await preview.json()).items[0].relativePath;
-    } else await page.getByLabel('上传方式', { exact: true }).selectOption('intelligent');
+    } else {
+      await modeSelect.selectOption({ label: '智能整理' });
+      await expect(modeSelect).toHaveValue('intelligent');
+    }
 
     const png = await page.evaluate(label => {
       const canvas = document.createElement('canvas');
@@ -45,17 +51,23 @@ for (const mode of ['ordinary', 'intelligent'] as const) {
       if (path === '/api/v1/uploads' && event.method() === 'POST') uploads.push(event.postDataJSON().inputId);
       if (path.startsWith('/api/v1/ai/') || path.startsWith('/api/v1/research/')) aiRequests.push(path);
     });
+    const addFiles = page.getByRole('button', { name: '选择文件并立即上传', exact: true });
+    await expect(addFiles).toBeEnabled();
     const picker = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: '选择文件并立即上传', exact: true }).click();
+    await addFiles.click();
     await (await picker).setFiles([
       { name: 'empty.png', mimeType: 'image/png', buffer: Buffer.alloc(0) },
       { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('synthetic text') },
       { name: 'good.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') },
     ]);
-    const rows = page.locator('.upload-task');
+    const queue = page.getByRole('region', { name: '上传任务', exact: true });
+    const rows = queue.locator('.upload-task');
+    const good = rows.filter({ hasText: 'good.png' });
+    const goodResult = mode === 'ordinary' ? '已完成' : '已接收，等待整理';
     await expect(rows).toHaveCount(3);
-    await expect(rows.filter({ hasText: 'good.png' })).toContainText(mode === 'ordinary' ? '已完成' : '已接收，等待整理', { timeout: 30_000 });
+    await expect(good).toContainText(goodResult, { timeout: 30_000 });
     await page.reload();
+    await expect(good).toContainText(goodResult);
     await expect(rows.filter({ hasText: 'empty.png' })).toContainText('文件为空');
     await expect(rows.filter({ hasText: 'notes.txt' })).toContainText('不支持此文件格式');
     await expect(rows.getByRole('button', { name: /重试|重选|取消/ })).toHaveCount(0);
@@ -66,6 +78,7 @@ for (const mode of ['ordinary', 'intelligent'] as const) {
     await expect(page.getByText('文件为空，未创建上传。', { exact: true })).toBeVisible();
     await expect(page.getByText('不支持此文件格式，未创建上传。', { exact: true })).toBeVisible();
     const report: components['schemas']['BatchDetail'] = await (await page.request.get(reportURL)).json();
+    expect(report.batch.mode).toBe(mode);
     expect(report.inputs.map(item => [item.originalFileName, item.state, item.errorCode])).toEqual([
       ['empty.png', 'failed', 'empty_input'], ['notes.txt', 'failed', 'unsupported_media'],
       ['good.png', mode === 'ordinary' ? 'ingested' : 'staged', undefined],
@@ -83,7 +96,7 @@ for (const mode of ['ordinary', 'intelligent'] as const) {
     } else expect(report.executorStatus).toMatchObject({ state: 'awaiting_claim', source: 'queue' });
 
     await page.goto('/manage/upload');
-    await page.getByRole('button', { name: '清理已结束记录' }).click();
+    await queue.getByRole('button', { name: '清理已结束记录', exact: true }).click();
     await expect(rows).toHaveCount(0);
     expect((await (await page.request.get(reportURL)).json()).inputs).toEqual(report.inputs);
   });
