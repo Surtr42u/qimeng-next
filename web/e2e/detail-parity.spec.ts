@@ -36,15 +36,31 @@ for (const width of [1440, 390]) {
         const { x, y, width, height } = node.getBoundingClientRect();
         return [x, y, width, height];
       }));
-      const masked = { style: 'button[title="复制完整文件名"] { visibility: hidden !important; }', animations: "disabled" as const };
+      const masked = (variant: string) => page.screenshot({
+        style: 'button[title="复制完整文件名"] { visibility: hidden !important; }', animations: "disabled",
+        path: testInfo.outputPath(`detail-outside-copy-${width}-${variant}.png`),
+      });
+      const scroll = () => page.locator(".content, .asset-overlay, .upnext-list").evaluateAll(nodes =>
+        nodes.map(node => [node.className, node.scrollLeft, node.scrollTop, node.scrollHeight]));
       await copy.evaluate(node => node.classList.remove("asset-file-copy"));
       const original = await boxes();
-      const before = await page.screenshot(masked);
+      const originalScroll = await scroll();
+      const before = await masked("baseline");
       await copy.evaluate(node => node.classList.add("asset-file-copy"));
       const current = await boxes();
+      const currentScroll = await scroll();
       const drift = Math.max(...current.flatMap((rect, i) => rect.map((n, j) => Math.abs(n - original[i]![j]!))));
       expect(drift).toBeLessThan(0.05);
-      expect((await page.screenshot(masked)).equals(before), "pixels outside the copy button").toBe(true);
+      const after = await masked("candidate");
+      if (!after.equals(before)) {
+        const currentRepeat = await masked("candidate-repeat");
+        await copy.evaluate(node => node.classList.remove("asset-file-copy"));
+        const originalRepeat = await masked("baseline-repeat");
+        await copy.evaluate(node => node.classList.add("asset-file-copy"));
+        console.info("copy comparison", { width, original, current, originalScroll, currentScroll, drift,
+          baselineReproduced: before.equals(originalRepeat), candidateReproduced: after.equals(currentRepeat) });
+      }
+      expect(after.equals(before), "pixels outside the copy button").toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`detail-copy-dark-${width}.png`), animations: "disabled" });
     }
     if (browserName === "chromium") {
