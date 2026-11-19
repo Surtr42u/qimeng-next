@@ -50,7 +50,15 @@ fun AppRoot(model: LibraryViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     val queueError by model.queueError.collectAsStateWithLifecycle()
-    val dark = when (preferences.theme) { ThemeChoice.SYSTEM -> isSystemInDarkTheme(); ThemeChoice.LIGHT -> false; ThemeChoice.DARK -> true }
+    val statistics = session != null && when {
+        route == "main" -> tab == 2
+        else -> route.startsWith("stats-detail:") || route.startsWith("review:") || route.startsWith("ranking:")
+    }
+    val dark = !statistics && when (preferences.theme) {
+        ThemeChoice.SYSTEM -> isSystemInDarkTheme()
+        ThemeChoice.LIGHT -> false
+        ThemeChoice.DARK -> true
+    }
     val view = LocalView.current
     val context = LocalContext.current
     val activity = LocalActivity.current
@@ -68,7 +76,11 @@ fun AppRoot(model: LibraryViewModel) {
     }
     DisposableEffect(imageLoader) { onDispose { imageLoader.shutdown() } }
     QimengTheme(dark) {
-        CompositionLocalProvider(LocalMediaImages provides imageLoader, LocalReducedMotion provides (preferences.reducedMotion || !ValueAnimator.areAnimatorsEnabled())) {
+        CompositionLocalProvider(
+            LocalMediaImages provides imageLoader,
+            LocalReducedMotion provides (preferences.reducedMotion || !ValueAnimator.areAnimatorsEnabled()),
+            LocalContentColor provides if (statistics) MaterialTheme.colorScheme.onBackground else LocalContentColor.current,
+        ) {
             if (session == null) {
                 LoginScreen(model)
             } else {
