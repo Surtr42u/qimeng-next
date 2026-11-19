@@ -1,0 +1,80 @@
+name: Web AI access browser evidence
+on:
+  push:
+    branches: ['proof/ai-access-layout']
+permissions:
+  contents: read
+concurrency:
+  group: ai-access-evidence-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  APP_SHA: d635a0f7b6d7aa0f26e8c96b77ee1cf3b19be78d
+jobs:
+  browser:
+    name: ${{ matrix.os }} browser checks and layout
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact application commit and evidence-only overlay
+        run: |
+          git merge-base --is-ancestor "$APP_SHA" HEAD
+          git diff --exit-code "$APP_SHA" HEAD -- . ':(exclude).github/workflows/proof-ai-access-layout.yml' ':(exclude)web/e2e/ai-access-proof.spec.ts'
+          echo "Application: $APP_SHA / proof: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the Web entry point from its own protocol and lockfile
+        working-directory: web
+        run: |
+          npm ci
+          npm run generate:api
+          npm run build
+      - name: Install Linux browsers and the reference CJK font
+        id: linux
+        if: runner.os == 'Linux'
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium webkit
+          sudo apt-get -o Acquire::Retries=2 -y install fonts-noto-cjk
+          fc-match 'Noto Sans CJK SC:lang=zh-cn'
+      - name: Install Windows Chromium
+        id: windows
+        if: runner.os == 'Windows'
+        working-directory: web
+        run: npx playwright install chromium
+      - name: Run access and settings regressions in desktop Chromium, mobile Chromium and WebKit
+        if: runner.os == 'Linux'
+        working-directory: web
+        run: npx playwright test e2e/ai-access.spec.ts e2e/settings-parity.spec.ts --project=chromium --project=mobile-chromium --project=webkit --reporter=list --retries=0
+      - name: Run access and settings regressions in Windows Chromium
+        if: runner.os == 'Windows'
+        working-directory: web
+        run: npx playwright test e2e/ai-access.spec.ts e2e/settings-parity.spec.ts --project=chromium --reporter=list --retries=0
+      - name: Exercise both viewports and capture the masked interface
+        if: ${{ !cancelled() && (steps.linux.outcome == 'success' || steps.windows.outcome == 'success') }}
+        env:
+          AI_LAYOUT_EVIDENCE: ${{ github.workspace }}/evidence
+        working-directory: web
+        run: npx playwright test e2e/ai-access-proof.spec.ts --project=chromium --reporter=list --retries=0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ !cancelled() && (steps.linux.outcome == 'success' || steps.windows.outcome == 'success') }}
+        with:
+          name: ai-access-${{ runner.os }}-views
+          path: |
+            evidence/*.png
+            evidence/*-measurements.json
+          if-no-files-found: error
+          retention-days: 14
