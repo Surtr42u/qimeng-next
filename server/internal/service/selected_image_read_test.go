@@ -99,8 +99,13 @@ func TestSelectedImageReadPreviewUsesCheckedDecoderInput(t *testing.T) {
 	if err = s.warmPreviews(ctx, previewScope{asset: a.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Root.Stat(previewPath(a.ID, a.ContentVersion, 512, false)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("obsolete preview survived selected cache maintenance", err)
+	for _, edge := range []int{512, 256, 1024} {
+		if _, err = s.Root.Stat(previewPath(a.ID, a.ContentVersion, edge, false)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("obsolete size %d survived selected cache maintenance: %v", edge, err)
+		}
+		if info, err := s.Root.Stat(previewPath(a.ID, a.ContentVersion, edge, true)); err != nil || info.Size() == 0 {
+			t.Fatalf("checked selected original was missing size %d: %v", edge, err)
+		}
 	}
 	ready, _, err := s.Thumbnail(ctx, a.ID, a.ContentVersion)
 	if err != nil {
