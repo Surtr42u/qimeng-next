@@ -1,6 +1,7 @@
 package media.qimeng.next.test
 
 import android.graphics.Color
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -40,6 +41,9 @@ class StatisticsAndHomeTest {
             val libraries = runBlocking { graph.media.libraryPage().items.associate { it.kind to it.id } }
             assertHomePartitions(model, libraries.getValue("regular"), libraries.getValue("cos"))
             assertRetryAndStatistics(model, graph, endpoint, token)
+        } catch (failure: Throwable) {
+            runCatching { check(captureCloudScreenshot("stats-flow-failure.png")) }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
         } finally {
             if (previous == null) runBlocking { graph.media.disconnect() }
             else settings.saveSession(previous, requireNotNull(previousToken))
@@ -119,7 +123,7 @@ class StatisticsAndHomeTest {
             assertOverviewColorsAndGeometry(window.range)
         }
 
-        openStatisticsCard("分类型趋势 ›")
+        openStatisticsCard(model, "分类型趋势 ›", "stats-detail:trends:all")
         awaitText("类型浏览趋势 · 全部")
         val periods = requireNotNull(model.analytics.value.data).trends.size
         val chartList = compose.onNode(hasScrollToIndexAction())
@@ -132,7 +136,7 @@ class StatisticsAndHomeTest {
         captureLightPage("stats-source-trends.png", "类型浏览趋势 · 全部")
         compose.onNodeWithContentDescription("返回").performClick()
 
-        openStatisticsCard("分布统计")
+        openStatisticsCard(model, "分布统计", "stats-detail:distribution:all")
         awaitText("常规 / COS")
         assertMetric("常规 / COS", "51 / 2")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("来源分布对比"))
@@ -140,7 +144,7 @@ class StatisticsAndHomeTest {
         captureLightPage("stats-partition-distribution.png", "分布统计")
         compose.onNodeWithContentDescription("返回").performClick()
 
-        openStatisticsCard("常看作者与标签")
+        openStatisticsCard(model, "常看作者与标签", "stats-detail:interests:all")
         awaitText("常看作者与标签 · 全部")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("常看标签"))
         compose.onNodeWithText("合成标签").assertIsDisplayed()
@@ -148,7 +152,7 @@ class StatisticsAndHomeTest {
         assertTagSearch(model, graph)
         compose.onNodeWithContentDescription("返回").performClick()
 
-        openStatisticsCard("浏览回顾")
+        openStatisticsCard(model, "浏览回顾", "review:all")
         awaitText("浏览时长")
         for (window in windows.reversed()) {
             compose.onNodeWithText(window.label).performClick()
@@ -227,10 +231,23 @@ class StatisticsAndHomeTest {
         return state.value.items
     }
 
-    private fun openStatisticsCard(label: String) {
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(label))
-        // The chart inside a statistics card handles its own taps. Use the visible heading link.
-        compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo().performTouchInput { click(center) }
+    private fun openStatisticsCard(model: LibraryViewModel, label: String, destination: String) {
+        val list = compose.onNode(hasScrollToIndexAction())
+        list.performScrollToNode(hasText(label))
+        val heading = compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo()
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val dockTop = compose.onNodeWithTag("navigation:stats").fetchSemanticsNode().boundsInRoot.top
+        val safeBottom = minOf(viewport.bottom, dockTop)
+        val delta = heading.fetchSemanticsNode().boundsInRoot.center.y - (viewport.top + safeBottom) / 2f
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, delta) }
+        compose.waitForIdle()
+        val target = heading.fetchSemanticsNode().boundsInRoot
+        assertTrue("Statistics heading $label must be visible above dock: $target, $viewport, $dockTop",
+            target.height > 0f && target.top >= viewport.top && target.bottom < safeBottom)
+        // Tap the heading, not the interactive chart or the navigation drawn over the list.
+        heading.performTouchInput { click(center) }
+        compose.waitForIdle()
+        assertEquals("Tap on $label landed on tab ${model.tab.value}", destination, model.route.value)
     }
 
     private fun awaitText(label: String) {

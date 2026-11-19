@@ -224,7 +224,9 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
 
     private fun openFromGrid(key: String, asset: Asset) {
         val board = hasTestTag("media-browser:$key")
-        val grid = hasScrollAction() and hasAnyAncestor(board)
+        // The author's filter chips also scroll horizontally. Target its actual media grid.
+        val grid = (if (key.startsWith("author:")) hasTestTag("author-media-scroll") else hasScrollToIndexAction()) and
+            hasAnyAncestor(board)
         val card = hasContentDescription(asset.name) and hasClickAction()
         compose.waitUntil(30_000) { compose.onAllNodes(grid).fetchSemanticsNodes().size == 1 }
         compose.onNode(grid).performScrollToNode(card)

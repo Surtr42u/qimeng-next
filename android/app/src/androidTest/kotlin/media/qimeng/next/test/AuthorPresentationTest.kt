@@ -207,15 +207,23 @@ class AuthorPresentationTest {
     }
 
     private fun assertOrder(last: SemanticsMatcher) {
+        grid.performScrollToIndex(0)
         val cardBounds = compose.onNode(card).getUnclippedBoundsInRoot()
         val countBounds = compose.onNode(count).getUnclippedBoundsInRoot()
         val filterBounds = compose.onNode(filters).getUnclippedBoundsInRoot()
-        val finalBounds = compose.onAllNodes(last).fetchSemanticsNodes().indices.minOf { index ->
-            compose.onAllNodes(last)[index].getUnclippedBoundsInRoot().top
-        }
         assertTrue("Card bottom $cardBounds must precede count $countBounds", cardBounds.bottom < countBounds.top)
         assertTrue("Count $countBounds must precede filters $filterBounds", countBounds.bottom < filterBounds.top)
-        assertTrue("Filter row $filterBounds must precede first loading or media item $finalBounds", filterBounds.bottom < finalBounds)
+
+        // At 320dp with enlarged type the full biography legitimately fills the viewport.
+        // Bring the filters and first media row into one frame, then measure both anew.
+        if (compose.onAllNodes(last).fetchSemanticsNodes().isEmpty()) grid.performScrollToKey("author-filters")
+        val adjacentFilters = compose.onNode(filters).getUnclippedBoundsInRoot()
+        val cells = compose.onAllNodes(last)
+        val indices = cells.fetchSemanticsNodes().indices
+        assertFalse("No first loading, empty, or media row below the author filters", indices.isEmpty())
+        val firstTop = indices.minOf { cells[it].getUnclippedBoundsInRoot().top }
+        assertTrue("Filter row $adjacentFilters must precede the first item $firstTop", adjacentFilters.bottom < firstTop)
+        grid.performScrollToIndex(0)
     }
 
     private fun assertDisjoint(first: SemanticsMatcher, second: SemanticsMatcher) {

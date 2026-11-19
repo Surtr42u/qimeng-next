@@ -11,6 +11,7 @@ import android.provider.DocumentsContract
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.platform.app.InstrumentationRegistry
@@ -218,7 +219,7 @@ class AndroidRealServerTest {
         val graph = runBlocking { isolatedServerGraph() }
         val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
         compose.runOnIdle { model.selectTab(3) }
-        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
+        scrollDataManagementAboveDock()
         compose.onNodeWithText("数据管理").performClick()
         awaitDataManagementDestination(model)
         compose.onNodeWithText("词表维护").performScrollTo().performClick()
@@ -311,7 +312,7 @@ class AndroidRealServerTest {
         val (source, originalBytes) = writeMetadataImage("new-$suffix")
         val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
         compose.runOnIdle { model.selectTab(3) }
-        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
+        scrollDataManagementAboveDock()
         compose.onNodeWithText("数据管理").performClick()
         awaitDataManagementDestination(model)
         compose.onNodeWithText("上传文件").performClick()
@@ -667,7 +668,7 @@ class AndroidRealServerTest {
         val waiting = requireNotNull(event(waitingSession))
         val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
         compose.runOnIdle { model.selectTab(3) }
-        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
+        scrollDataManagementAboveDock()
         compose.onNodeWithText("数据管理").performClick()
         awaitDataManagementDestination(model)
         compose.onNodeWithText("资料备份与归档").performScrollTo().performClick()
@@ -694,6 +695,28 @@ class AndroidRealServerTest {
             event(waitingSession) == null && graph.media.history().items.any { it.id == waiting.id && it.assetId == asset.id }
         }
         assertTrue(graph.queue.state.value!!.events.contains(foreign))
+    }
+
+    private fun scrollDataManagementAboveDock() {
+        val list = compose.onNodeWithTag("profile-settings-list")
+        val entry = hasText("数据管理") and hasClickAction()
+        list.performScrollToNode(entry)
+        compose.waitForIdle()
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val dockTop = listOf("home", "albums", "stats", "me").minOf { tab ->
+            compose.onNodeWithTag("navigation:$tab").fetchSemanticsNode().boundsInRoot.top
+        }
+        // The dock overlays the full-height list: ScrollToNode can leave the row behind it.
+        // Scroll the real list to center the row in the unobscured viewport, then retain the real tap.
+        val safeBottom = minOf(viewport.bottom, dockTop)
+        val targetY = (viewport.top + safeBottom) / 2f
+        val delta = compose.onNode(entry).fetchSemanticsNode().boundsInRoot.center.y - targetY
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scroll -> scroll(0f, delta) }
+        compose.waitForIdle()
+        val reachable = compose.onNode(entry).fetchSemanticsNode().boundsInRoot
+        assertTrue("Data-management row must be above the overlaid dock before tapping: " +
+            "row=$reachable viewport=$viewport dockTop=$dockTop",
+            reachable.top >= viewport.top && reachable.bottom < safeBottom)
     }
 
     private fun awaitDataManagementDestination(model: media.qimeng.next.LibraryViewModel) {
