@@ -125,8 +125,8 @@ jobs:
         run: |
           go mod tidy
           go vet ./...
-          native_flows='^Test(VideoSeeksOwnOnlyVersionedPlaybackState|NativeVideoRenameReplacementAndIsolatedRestore|PlanUsesItsOwnDirectoryAndRefusesAnOccupiedTargetWithoutRepeatingCompletedItems|NativeSelectiveDeliveryUsesTwoInstancesAndStableObjectReceipts|IndependentFavoriteAndDailyVoteKeepHistoryAcrossStaleViewsAndReplays)$'
-          go test -race -timeout 4m -v -run "$native_flows" ./internal/httpapi
+          native_flows='^Test(VideoSeeksOwnOnlyVersionedPlaybackState|PlanUsesItsOwnDirectoryAndRefusesAnOccupiedTargetWithoutRepeatingCompletedItems|IndependentFavoriteAndDailyVoteKeepHistoryAcrossStaleViewsAndReplays|(Native|SelectedImageMerge|LegacyProtection|LegacyPermit|PartialPlan|CompleteBackup|IncompleteRestore).*)$'
+          go test -race -timeout 4m -v -run "$native_flows" ./...
           go test -race -timeout 12m -v -skip "$native_flows" ./...
           go test -tags=qimeng_native_sqlite,sqlite_omit_load_extension -timeout 8m ./internal/store ./internal/service ./internal/httpapi
       - name: Reproduce a retired import on isolated data
