@@ -30,6 +30,10 @@ QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-source" QIMENG_LISTEN='127.0.0.1:18482
   QIMENG_ADMIN_TOKEN="$source_token" QIMENG_BACKUP_TARGETS='{}' QIMENG_DEFAULT_BACKUP_TARGET='' \
   "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-source.log" 2>&1 &
 source_pid=$!
+QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-statistics" QIMENG_LISTEN='127.0.0.1:18483' \
+  QIMENG_BACKUP_TARGETS='{}' QIMENG_DEFAULT_BACKUP_TARGET='' \
+  "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-statistics.log" 2>&1 &
+statistics_pid=$!
 finish() {
   result=$?
   trap - EXIT
@@ -37,9 +41,10 @@ finish() {
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next.ui.test/files android/build/cloud-screenshots/core-ui > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next/files/screenshots android/build/cloud-screenshots/app > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Pictures/QimengNextCloudTests android/build/cloud-screenshots/retained > /dev/null 2>&1 || true
-  kill "$service_pid" "$source_pid" 2>/dev/null || true
+  kill "$service_pid" "$source_pid" "$statistics_pid" 2>/dev/null || true
   wait "$service_pid" 2>/dev/null || true
   wait "$source_pid" 2>/dev/null || true
+  wait "$statistics_pid" 2>/dev/null || true
   exit "$result"
 }
 trap finish EXIT
@@ -57,8 +62,12 @@ prepare_transport() {
   fi
   local mappings
   mappings=$(adb -s emulator-5556 reverse --list)
-  for port in 18481 18482; do
-    if [[ $port == 18481 ]]; then pid=$service_pid; else pid=$source_pid; fi
+  for port in 18481 18482 18483; do
+    case "$port" in
+      18481) pid=$service_pid ;;
+      18482) pid=$source_pid ;;
+      18483) pid=$statistics_pid ;;
+    esac
     if ! kill -0 "$pid" 2>/dev/null; then
       exit_code=0
       wait "$pid" || exit_code=$?
@@ -84,12 +93,14 @@ prepare_transport() {
 ready=false
 for attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:18481/healthz > /dev/null &&
-     curl --fail --silent http://127.0.0.1:18482/healthz > /dev/null; then ready=true; break; fi
+     curl --fail --silent http://127.0.0.1:18482/healthz > /dev/null &&
+     curl --fail --silent http://127.0.0.1:18483/healthz > /dev/null; then ready=true; break; fi
   if ! kill -0 "$service_pid" 2>/dev/null; then transport_status 'startup: target host process exited'; exit 1; fi
   if ! kill -0 "$source_pid" 2>/dev/null; then transport_status 'startup: source host process exited'; exit 1; fi
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'Isolated Android server did not become ready'; exit 1; fi
+python tools/cloud_android_statistics_fixture.py
 ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
 prepare_transport core
 adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test.mp4" /data/local/tmp/qimeng-next-test.mp4
@@ -101,7 +112,8 @@ gradle --no-daemon --continue -p android -Pqimeng.embedded=false :core:ui:connec
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
 prepare_transport app
 gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest,media.qimeng.next.test.StatisticsAndHomeTest \
+  -Pandroid.testInstrumentationRunnerArguments.qimengStatisticsUrl=http://127.0.0.1:18483/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceUrl=http://127.0.0.1:18482/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceToken="$source_token" \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
