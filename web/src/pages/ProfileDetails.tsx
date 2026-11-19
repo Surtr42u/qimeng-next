@@ -2,7 +2,7 @@ import { SubscriptionEditor } from "./CreatorSubscription";
 import { useAuthorUpdates } from "../data/author-updates";
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import type { Schema } from "../data/client";
 import {
   useAuthorProfile,
@@ -20,6 +20,35 @@ import { ProfileAvatarEditor } from "./ProfileAvatarEditor";
 import { AuthorDetails } from "./AuthorDetails";
 import { AuthorOperations } from "./AuthorOperations";
 import { useAuthor } from "../data/manage";
+
+export function AuthorProfilePage() {
+  const { id = "" } = useParams();
+  const author = useAuthor(id);
+  return (
+    <div className="page" id="page-author-profile">
+      <header className="manage-page-head">
+        <Link className="manage-back" to={`/authors/${encodeURIComponent(id)}`}>
+          ← 返回作者主页
+        </Link>
+        <div className="manage-heading">
+          <div>
+            <h2 data-page-heading tabIndex={-1}>
+              作者资料
+            </h2>
+            <p>{author.data?.name ?? "账号、平台与核验信息"}</p>
+          </div>
+        </div>
+      </header>
+      {author.isPending ? (
+        <Loading />
+      ) : author.data ? (
+        <ProfileDetails author={author.data} />
+      ) : (
+        <ErrorNotice error={author.error} retry={() => void author.refetch()} />
+      )}
+    </div>
+  );
+}
 
 function ProfileGroup({
   title,
@@ -51,7 +80,7 @@ function ProfileGroup({
   );
 }
 
-export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
+function ProfileDetails({ author }: { author: Schema<"Author"> }) {
   const query = useAuthorProfile(author.id);
   const feed = useAuthorUpdates(author.id);
   const identity = useAuthor(author.id);
