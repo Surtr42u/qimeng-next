@@ -23,12 +23,23 @@ data class AIAccessPolicy(
     val canResearchAssets: Boolean = false,
     val assetFields: List<String> = emptyList(),
     val researchProviders: List<String> = emptyList(),
+    val canLookupImages: Boolean = false,
 )
+
+fun canGrantImageLookup(
+    canResearch: Boolean,
+    maxResearchCalls: Int,
+    libraryIds: List<String>,
+    canIngest: Boolean,
+    canResearchAssets: Boolean,
+): Boolean = canResearch && maxResearchCalls > 0 && libraryIds.isNotEmpty() && (canIngest || canResearchAssets)
+
 data class AIAccessGrant(
     val id: String,
     val state: String,
     val createdAt: String,
     val expiresAt: String,
     val policy: AIAccessPolicy,
-    val canLookupImages: Boolean,
-)
+) {
+    val canLookupImages: Boolean get() = policy.canLookupImages
+}

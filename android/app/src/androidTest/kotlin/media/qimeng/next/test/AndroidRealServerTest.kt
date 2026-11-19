@@ -496,18 +496,24 @@ class AndroidRealServerTest {
         return graph
     }
 
-    @Test fun verifyReadOnlyAccessFromProfile() = runBlocking<Unit> {
-        val graph = isolatedServerGraph()
-        val label = "云端只读接入 ${UUID.randomUUID().toString().take(8)}"
+    private fun openAIAccessFromProfile() {
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("navigation:me").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("navigation:me").performClick()
         compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("AI 接入"))
         compose.onNodeWithText("AI 接入").performClick()
+    }
+
+    @Test fun verifyReadOnlyAccessFromProfile() = runBlocking<Unit> {
+        val graph = isolatedServerGraph()
+        val label = "云端只读接入 ${UUID.randomUUID().toString().take(8)}"
+        openAIAccessFromProfile()
         compose.onNodeWithText("新增 AI 接入").performClick()
         compose.onNode(hasSetTextAction()).performTextReplacement(label)
         compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("允许单帧识图").assertDoesNotExist()
         compose.onNodeWithText("下一步").performClick()
         compose.onNodeWithText("执行动作 · 仅全库读取").assertExists()
+        compose.onNodeWithText("单帧识图 · 未授权").assertExists()
         compose.onNodeWithText("授权有效期 · 30 天").assertExists()
         try {
             compose.onNodeWithText("创建接入凭据").performClick()
@@ -524,6 +530,52 @@ class AndroidRealServerTest {
             compose.onNode(hasText("权限详情") and hasAnyAncestor(record)).performClick()
             compose.onNodeWithText("单帧识图 · 未授权").assertExists()
             compose.onNodeWithText("每日最多 20 个任务，每任务最多 100 次工具调用，有效 3600 秒").assertExists()
+        } finally {
+            graph.aiAccess.list("active").items.filter { it.policy.label == label }.forEach { graph.aiAccess.revoke(it.id) }
+        }
+    }
+
+    @Test fun verifySingleFrameAccessFromProfile() = runBlocking<Unit> {
+        val graph = isolatedServerGraph()
+        val label = "云端单帧接入 ${UUID.randomUUID().toString().take(8)}"
+        val target = graph.media.createLibrary("$label 影库", false)
+        openAIAccessFromProfile()
+        compose.onNodeWithText("新增 AI 接入").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement(label)
+        compose.onNodeWithText("新增媒体", exact = true).performScrollTo().performClick()
+        compose.onNodeWithText("研究", exact = true).performScrollTo().performClick()
+        compose.onNodeWithText("下一步").performClick()
+        val imageLookup = compose.onNodeWithText("允许单帧识图")
+        imageLookup.assertIsNotEnabled().assertIsOff()
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(target.name, exact = true).fetchSemanticsNodes().isNotEmpty() }
+        val library = compose.onNodeWithText(target.name, exact = true)
+        library.performScrollTo().performClick()
+        imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
+        imageLookup.assertIsOn()
+        val budget = compose.onNodeWithTag("ai-access-research-budget")
+        budget.performScrollTo().performTextReplacement("0")
+        imageLookup.assertIsNotEnabled().assertIsOff()
+        budget.performTextReplacement("2")
+        imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
+        compose.onNodeWithText("下一步").performClick()
+        val permission = "单帧识图 · 允许向已配置的识图服务发送一帧派生预览"
+        compose.onNodeWithText(permission, exact = true).assertExists()
+        try {
+            compose.onNodeWithText("创建接入凭据").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("显示凭据").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("已保存，关闭").performClick()
+            val grant = graph.aiAccess.list("active").items.single { it.policy.label == label }
+            assertTrue(grant.canLookupImages)
+            assertTrue(grant.policy.canIngest)
+            assertTrue(grant.policy.canResearch)
+            assertFalse(grant.policy.canResearchAssets)
+            assertFalse(grant.policy.canOrganize)
+            assertEquals(listOf(target.id), grant.policy.libraryIds)
+            assertEquals(2, grant.policy.maxResearchCalls)
+            val record = hasTestTag("ai-grant:${grant.id}")
+            compose.onNodeWithTag("ai-access-records").performScrollToNode(record)
+            compose.onNode(hasText("权限详情") and hasAnyAncestor(record)).performClick()
+            compose.onNode(hasText(permission) and hasAnyAncestor(record)).assertExists()
         } finally {
             graph.aiAccess.list("active").items.filter { it.policy.label == label }.forEach { graph.aiAccess.revoke(it.id) }
         }
