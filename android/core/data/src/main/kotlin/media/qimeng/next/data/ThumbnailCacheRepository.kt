@@ -66,7 +66,9 @@ class ThumbnailCacheRepository internal constructor(
     private var capturedConnection: Connection? = null
     @Volatile private var clearedConnection: Connection? = null
     private val prefetchState = MutableStateFlow<ThumbnailPrefetch?>(null)
+    private val diskChanges = MutableStateFlow(0L)
     val prefetch = prefetchState.asStateFlow()
+    val diskRevision = diskChanges.asStateFlow()
 
     private data class Connection(val target: Session, val revision: Long, val selection: ThumbnailCacheSelection)
     private data class Round(val connection: Connection, val allowed: Boolean, val cleared: Boolean)
@@ -123,9 +125,10 @@ class ThumbnailCacheRepository internal constructor(
                 currentCoroutineContext().ensureActive()
                 requireCurrent(preview.connection)
                 if (payload.verified) {
-                    disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = false) {
+                    val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = false) {
                         currentConnection() == preview.connection
                     }
+                    if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
                 }
                 requireCurrent(preview.connection)
                 payload.bytes to DataSource.NETWORK
@@ -156,7 +159,11 @@ class ThumbnailCacheRepository internal constructor(
             clearedConnection = current
             clearSignal.update { it + 1 }
         }
-        diskFor(selection.pool).clear(selection.instanceKey)
+        try {
+            diskFor(selection.pool).clear(selection.instanceKey)
+        } finally {
+            diskChanges.update { it + 1 }
+        }
     }
 
     suspend fun localCoverage(): Pair<ThumbnailCacheSelection, ThumbnailCoverage>? {
@@ -271,9 +278,11 @@ class ThumbnailCacheRepository internal constructor(
             val payload = download(preview, background = true)
             currentCoroutineContext().ensureActive()
             requireCurrent(preview.connection)
-            disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
+            val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
                 currentConnection() == preview.connection && clearedConnection != preview.connection
             }
+            if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
+            result
         }
     }
 
@@ -366,6 +375,7 @@ private fun unmeteredNetwork(context: Context): Flow<Boolean> = callbackFlow {
     val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             current = network
+            trySend(false)
         }
 
         override fun onLost(network: Network) {

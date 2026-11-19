@@ -38,8 +38,13 @@ internal class ThumbnailCacheViewModel(app: Application) : AndroidViewModel(app)
         launch {
             graph.settings.transportRevision.collectLatest {
                 page.update { it.copy(nas = null, local = null) }
+                var sampledRevision = -1L
                 while (true) {
-                    usageLock.withLock { refreshUsage() }
+                    val revision = repository.diskRevision.value
+                    if (revision != sampledRevision) {
+                        usageLock.withLock { refreshUsage() }
+                        sampledRevision = revision
+                    }
                     delay(5_000L)
                 }
             }
