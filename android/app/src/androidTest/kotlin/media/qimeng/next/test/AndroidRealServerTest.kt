@@ -755,13 +755,13 @@ class AndroidRealServerTest {
         openAIAccessFromProfile()
         compose.onNodeWithText("新增 AI 接入").performClick()
         compose.onNode(hasSetTextAction()).performTextReplacement(label)
-        compose.onNodeWithText("新增媒体", exact = true).performScrollTo().performClick()
-        compose.onNodeWithText("研究", exact = true).performScrollTo().performClick()
+        compose.onNodeWithText("新增媒体").performScrollTo().performClick()
+        compose.onNodeWithText("研究").performScrollTo().performClick()
         compose.onNodeWithText("下一步").performClick()
         val imageLookup = compose.onNodeWithText("允许单帧识图")
         imageLookup.assertIsNotEnabled().assertIsOff()
-        compose.waitUntil(20_000) { compose.onAllNodesWithText(target.name, exact = true).fetchSemanticsNodes().isNotEmpty() }
-        val library = compose.onNodeWithText(target.name, exact = true)
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(target.name).fetchSemanticsNodes().isNotEmpty() }
+        val library = compose.onNodeWithText(target.name)
         library.performScrollTo().performClick()
         imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
         imageLookup.assertIsOn()
@@ -772,7 +772,7 @@ class AndroidRealServerTest {
         imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
         compose.onNodeWithText("下一步").performClick()
         val permission = "单帧识图 · 允许向已配置的识图服务发送一帧派生预览"
-        compose.onNodeWithText(permission, exact = true).assertExists()
+        compose.onNodeWithText(permission).assertExists()
         try {
             compose.onNodeWithText("创建接入凭据").performClick()
             compose.waitUntil(20_000) { compose.onAllNodesWithText("显示凭据").fetchSemanticsNodes().isNotEmpty() }
