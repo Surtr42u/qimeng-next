@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import media.qimeng.next.model.Author
 import media.qimeng.next.model.Session
@@ -26,9 +27,12 @@ class AuthorDirectoryViewModel(application: Application) : AndroidViewModel(appl
     val busy = submitting.asStateFlow()
     private val mutationError = MutableStateFlow<String?>(null)
     val error = mutationError.asStateFlow()
+    private val mutableSourceRecord = MutableStateFlow(LoadState<Author>())
+    val sourceRecord = mutableSourceRecord.asStateFlow()
     private var selection: Pair<Session, AuthorDirectoryQuery>? = null
     private var read: Job? = null
     private var write: Job? = null
+    private var sourceRead: Job? = null
 
     fun select(target: Session, query: AuthorDirectoryQuery) {
         val next = target to query
@@ -36,6 +40,7 @@ class AuthorDirectoryViewModel(application: Application) : AndroidViewModel(appl
         if (next == previous) return
         if (previous?.first != target) {
             write?.cancel(); submitting.value = false; total.value = null; mutationError.value = null
+            if (previous != null) closeSources()
         }
         selection = next
         load(debounce = previous?.second?.word != query.word && query.word.isNotBlank())
@@ -66,6 +71,24 @@ class AuthorDirectoryViewModel(application: Application) : AndroidViewModel(appl
         }
     }
     fun dismissError() { mutationError.value = null }
+    fun loadSources(authorId: String) {
+        val target = session.value ?: return
+        sourceRead?.cancel()
+        mutableSourceRecord.value = LoadState(loading = true)
+        sourceRead = viewModelScope.launch {
+            try {
+                val author = media.author(authorId, target)
+                if (isActive && session.value == target) mutableSourceRecord.value = LoadState(data = author)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (isActive && session.value == target) mutableSourceRecord.value = LoadState(error = libraryError(failure))
+            }
+        }
+    }
+    fun closeSources() {
+        sourceRead?.cancel()
+        mutableSourceRecord.value = LoadState()
+    }
     fun follow(author: Author) = edit { media.follow(author, it) }
     fun create(names: List<String>, key: String, done: () -> Unit) = edit { target ->
         media.createNamedAuthor(target, names, key); total.value = null; done()

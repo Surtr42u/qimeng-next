@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -19,8 +20,9 @@ private val dimensions = listOf("partitions" to "分区", "works" to "作品", "
 
 @Composable
 internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls, rows: Map<String, FacetRowState>,
-                          onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit, authorKind: String? = null) {
-    if (authorKind != null) Text("本地作品 · ${total?.let { "筛选结果 $it 个文件" } ?: "正在读取"}", Modifier.padding(horizontal = 16.dp),
+                          onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit, authorKind: String? = null, loadFailed: Boolean = false) {
+    if (authorKind != null) Text("本地作品 · ${total?.let { "筛选结果 $it 个文件" } ?: if (loadFailed) "读取失败" else "正在读取"}",
+        Modifier.padding(horizontal = 16.dp).testTag("author-result-count"),
         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     else QimengTitleRow(title, total?.let { "$it 文件" }.orEmpty(), onBack = onBack,
         titleStyle = if (onBack == null) MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
@@ -41,7 +43,8 @@ internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls
         val next = shown[index].first
         controls.expanded = next != currentRow || !controls.expanded
         controls.row = next
-    }, dividerBeforeIndex = shown.lastIndex, pillModifier = shadow, modifier = Modifier.padding(horizontal = 16.dp).padding(top = if (authorKind == null) 0.dp else 8.dp))
+    }, dividerBeforeIndex = shown.lastIndex, pillModifier = shadow, modifier = Modifier.padding(horizontal = 16.dp)
+        .then(if (authorKind == null) Modifier else Modifier.padding(top = 8.dp).testTag("author-filter-dimensions")))
     val row = currentRow
     val state = rows[row] ?: return
     if (!controls.expanded) return
