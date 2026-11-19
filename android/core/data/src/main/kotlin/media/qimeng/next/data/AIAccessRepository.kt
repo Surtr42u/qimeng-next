@@ -49,6 +49,15 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
     }
 }
 
-private fun AIDelegation.toModel() = AIAccessGrant(id, label, state.value, expiresAt, libraryIds.toList(), authorIds.toList(), allAuthors,
-    allowedFields.map { it.value }, candidateBlocks.map { it.value }, canIngest, canResearch, canOrganize, maxTasksPerDay, maxUpdates, maxResearchCalls,
-    canRecycleSources == true, canResearchAssets == true, assetFields.orEmpty().map { it.value }, researchProviders.orEmpty().map { it.value })
+private fun AIDelegation.toModel() = AIAccessGrant(
+    id = id, state = state.value, createdAt = createdAt, expiresAt = expiresAt, canLookupImages = canLookupImages == true,
+    policy = AIAccessPolicy(
+        label = label, libraryIds = libraryIds.toList(), authorIds = authorIds.toList(), allAuthors = allAuthors,
+        allowedFields = allowedFields.map { it.value }, candidateBlocks = candidateBlocks.map { it.value }, allowClear = allowClear,
+        canIngest = canIngest, canResearch = canResearch, canOrganize = canOrganize, canRecycleSources = canRecycleSources == true,
+        canResearchAssets = canResearchAssets == true, assetFields = assetFields.orEmpty().map { it.value },
+        researchProviders = researchProviders.orEmpty().map { it.value },
+        maxResearchCalls = maxResearchCalls, maxUpdates = maxUpdates, maxTasksPerDay = maxTasksPerDay,
+        validDays = validDays, maxCallsPerTask = maxCallsPerTask ?: 100, taskSeconds = taskSeconds ?: 3600,
+    ),
+)

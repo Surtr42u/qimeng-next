@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,11 +68,21 @@ internal fun MaintenanceScreen(back: () -> Unit, upload: () -> Unit, archiveSett
                 state.error?.let { ErrorNotice(it) }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("备份恢复", "作者主表", "原件归档", "设备领取").forEachIndexed { index, name ->
-                FilterChip(selected = tab == index, enabled = !state.busy, onClick = { tab = index },
-                    modifier = Modifier.weight(1f).heightIn(min = 44.dp), shape = RoundedCornerShape(14.dp),
-                    label = { Text(name, style = MaterialTheme.typography.labelLarge, maxLines = 1) })
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            val labels = listOf("备份恢复", "作者主表", "原件归档", "设备领取")
+            val style = MaterialTheme.typography.labelLarge
+            val chipWidth = with(LocalDensity.current) { style.fontSize.toDp() } * 4 + 32.dp
+            val columns = if (maxWidth >= chipWidth * 4 + 24.dp) 4 else 2
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                labels.indices.chunked(columns).forEach { indices ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        indices.forEach { index ->
+                            FilterChip(selected = tab == index, enabled = !state.busy, onClick = { tab = index },
+                                modifier = Modifier.weight(1f).heightIn(min = 44.dp), shape = RoundedCornerShape(14.dp),
+                                label = { Text(labels[index], style = style) })
+                        }
+                    }
+                }
             }
         }
         when (tab) {

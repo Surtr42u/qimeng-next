@@ -402,6 +402,39 @@ class AndroidRealServerTest {
         return graph
     }
 
+    @Test fun verifyReadOnlyAccessFromProfile() = runBlocking {
+        val graph = isolatedServerGraph()
+        val label = "云端只读接入 ${UUID.randomUUID().toString().take(8)}"
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("navigation:me").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("navigation:me").performClick()
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("AI 接入"))
+        compose.onNodeWithText("AI 接入").performClick()
+        compose.onNodeWithText("新增 AI 接入").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement(label)
+        compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("执行动作 · 仅全库读取").assertExists()
+        compose.onNodeWithText("授权有效期 · 30 天").assertExists()
+        try {
+            compose.onNodeWithText("创建接入凭据").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("显示凭据").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("•••• •••• •••• ••••").assertExists()
+            compose.onNodeWithText("复制凭据").performClick()
+            compose.onNodeWithText("已复制").assertExists()
+            compose.onNodeWithText("已保存，关闭").performClick()
+            val grant = graph.aiAccess.list("active").items.single { it.policy.label == label }
+            assertFalse(grant.canLookupImages)
+            assertEquals(0, grant.policy.maxResearchCalls)
+            val record = hasTestTag("ai-grant:${grant.id}")
+            compose.onNodeWithTag("ai-access-records").performScrollToNode(record)
+            compose.onNode(hasText("权限详情") and hasAnyAncestor(record)).performClick()
+            compose.onNodeWithText("单帧识图 · 未授权").assertExists()
+            compose.onNodeWithText("每日最多 20 个任务，每任务最多 100 次工具调用，有效 3600 秒").assertExists()
+        } finally {
+            graph.aiAccess.list("active").items.filter { it.policy.label == label }.forEach { graph.aiAccess.revoke(it.id) }
+        }
+    }
+
     @Test fun wrongInstanceMaintenanceFolderKeepsItsGrantTemporary() = runBlocking {
         val instrument = InstrumentationRegistry.getInstrumentation()
         val resolver = instrument.targetContext.contentResolver

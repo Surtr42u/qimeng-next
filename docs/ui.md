@@ -26,7 +26,7 @@
 | 浏览事件 | 稳定详情会话、可见整秒停留、隐藏不计时；2000条有界本地队列，同事件ID补发 | 可见时钟、断线重放、收据清理失败不重发、实例隔离 |
 | 桌面 | 原连接窗、应用图标与无边框标题栏；按当前服务器 origin 和每次连接的窗口身份限定三键/拖动；配置页独占地址权限 | 地址与导航纯函数；Windows 构建、实际 WebView2 操作与设备另验收 |
 
-AI 接入子页沿用旧仓 `74597408` 的 `web/src/pages/SettingsPage.tsx` 设置卡与表单样式，以及 `web/src/components/manage/ManagePageHeader.tsx` 返回页头。Next 的[接入页](../web/src/pages/AIAccessPage.tsx)使用现有授权查询和操作。
+AI 接入子页沿用旧仓 `74597408` 的 `web/src/pages/SettingsPage.tsx` 设置卡与表单样式，以及 `web/src/components/manage/ManagePageHeader.tsx` 返回页头。Next 的[接入页](../web/src/pages/AIAccessPage.tsx)使用现有授权查询和操作。Android 的「我的 → AI 接入」也分三步核对并签发，凭据弹窗和历史权限详情见 [Android 使用说明](../android/README.md#当前源码行为)。
 
 ## 仍需接通或单独验证
 
