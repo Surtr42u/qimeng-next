@@ -800,37 +800,50 @@ func (s *Service) availablePath(ctx context.Context, library, relative string) (
 	}
 	return "", Fail(409, "name_exhausted", "无法分配可用文件名。")
 }
-func (s *Service) Content(ctx context.Context, id string, versions ...int64) (*os.File, model.Asset, error) {
-	file, a, err := s.openContent(ctx, id, versions)
+func (s *Service) Content(ctx context.Context, id string, versions ...int64) (io.ReadSeekCloser, model.Asset, error) {
+	var version int64
+	if len(versions) > 0 {
+		version = versions[0]
+	}
+	file, a, err := s.openContent(ctx, id, version, false)
 	if err != nil {
 		return nil, a, err
 	}
-	// Verify the pinned file outside the writer lock. A filesystem edit must
-	// not be served under the digest and content version of a retained image.
-	if err = s.verifySelectedImage(ctx, a, mediaInput{file: file}); err != nil {
-		file.Close()
+	if file != nil {
+		return file, a, nil
+	}
+	snapshot, a, err := s.snapshotSelectedImage(ctx, a.ID, a.ContentVersion, true)
+	if err != nil {
 		return nil, a, err
 	}
-	return file, a, nil
+	return snapshot, a, nil
 }
 
-func (s *Service) openContent(ctx context.Context, id string, versions []int64) (*os.File, model.Asset, error) {
+// Leave a retained image unopened until a snapshot slot is available. On
+// admission, resolve the current name and version again under the writer lock.
+func (s *Service) openContent(ctx context.Context, id string, version int64, snapshot bool) (*os.File, model.Asset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, e := s.AssetDetail(ctx, id)
 	if e != nil {
 		return nil, a, e
 	}
-	if len(versions) > 0 && versions[0] > 0 && versions[0] != a.ContentVersion {
+	if version > 0 && version != a.ContentVersion {
 		return nil, a, Fail(409, "content_changed", "媒体内容版本已变化，请刷新条目。")
 	}
 	if a.Trashed {
 		return nil, a, Fail(404, "not_found", "媒体位于回收站。")
 	}
+	if !snapshot {
+		selected, err := s.selectedImage(ctx, a)
+		if err != nil || selected {
+			return nil, a, err
+		}
+	}
 	name := assetPath(a)
 	if e = s.safe(name); e != nil {
 		return nil, a, e
 	}
-	f, e := s.Root.Open(name)
+	f, e := s.Root.OpenFile(name, os.O_RDONLY|syncReadFlags, 0)
 	return f, a, e
 }

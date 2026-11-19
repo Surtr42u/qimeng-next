@@ -66,6 +66,7 @@ type Service struct {
 	Traffic         sysmon.Traffic
 	samples         systemSamples
 	previews        previewWork
+	selectedReads   selectedImageReads
 	sourceRules     sourceRuleWorker
 	recommendations recommendationOrders
 	DB              *store.Store
@@ -168,6 +169,7 @@ func New(config Config) (*Service, error) {
 	s.researchGateway.init()
 	s.researchGateway.lens = lens
 	s.previews.init()
+	s.selectedReads.init()
 	s.samples.init()
 	ctx := context.Background()
 	libraries, err := store.List[model.Library](ctx, db.DB, "SELECT data FROM libraries ORDER BY id")
@@ -308,6 +310,7 @@ func (s *Service) Close() error {
 	}
 	s.previews.shutdown()
 	s.workers.Wait()
+	s.selectedReads.wait()
 	defer s.Root.Close()
 	defer s.owner.Close()
 	return s.DB.DB.Close()

@@ -29,13 +29,9 @@ func requireDiscardableOriginal(ctx context.Context, q store.Querier, id string)
 	return nil
 }
 
-func (s *Service) verifySelectedImage(ctx context.Context, a model.Asset, source mediaInput) error {
+func (s *Service) selectedImage(ctx context.Context, a model.Asset) (bool, error) {
 	if a.MediaType != "image" {
-		return nil
+		return false, nil
 	}
-	retained, err := selectedImageOriginal(ctx, s.DB.DB, a.ID)
-	if err != nil || !retained {
-		return err
-	}
-	return source.verify(ctx, s, a.Hash, a.Size)
+	return selectedImageOriginal(ctx, s.DB.DB, a.ID)
 }

@@ -17,9 +17,10 @@ import (
 const inheritedMediaFD = runtime.GOOS == "android" || runtime.GOOS == "linux"
 
 type mediaInput struct {
-	name string
-	file *os.File
-	size int64
+	name    string
+	file    *os.File
+	size    int64
+	cleanup func() error
 }
 type mediaReader interface {
 	io.ReadSeeker
@@ -59,18 +60,21 @@ func (m mediaInput) reader(s *Service) (mediaReader, error) {
 	return s.Root.Open(m.name)
 }
 func (m mediaInput) argument(s *Service) (string, error) {
-	if m.file != nil {
+	if m.file != nil && inheritedMediaFD {
 		return "/proc/self/fd/3", nil
 	}
 	return s.Root.AbsolutePath(m.name)
 }
 func (m mediaInput) configure(cmd *exec.Cmd) {
 	configureMediaProcess(cmd)
-	if m.file != nil {
+	if m.file != nil && inheritedMediaFD {
 		cmd.ExtraFiles = []*os.File{m.file}
 	}
 }
 func (m mediaInput) release(s *Service) error {
+	if m.cleanup != nil {
+		return m.cleanup()
+	}
 	if m.file != nil {
 		return m.file.Close()
 	}

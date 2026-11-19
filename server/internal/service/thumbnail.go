@@ -140,40 +140,66 @@ func (s *Service) probeMedia(ctx context.Context, input mediaInput, a *model.Ass
 	a.ProbeState = "ready"
 	return nil
 }
-func previewPath(id string, version int64, edge int) string {
-	return "cache/" + id + "/v3-" + strconv.FormatInt(version, 10) + "-" + strconv.Itoa(edge) + ".jpg"
+func previewPrefix(version int64, selected bool) string {
+	format := "v3-"
+	if selected {
+		// Earlier decodes could read from a changing original.
+		format = "v4-"
+	}
+	return format + strconv.FormatInt(version, 10) + "-"
+}
+func previewPath(id string, version int64, edge int, selected bool) string {
+	return "cache/" + id + "/" + previewPrefix(version, selected) + strconv.Itoa(edge) + ".jpg"
+}
+func (s *Service) openThumbnailCache(ctx context.Context, id string, version int64, edge int) (*os.File, model.Asset, string, bool, error) {
+	a, e := s.AssetDetail(ctx, id)
+	if e != nil {
+		return nil, a, "", false, e
+	}
+	if a.Trashed {
+		return nil, a, "", false, Fail(404, "not_found", "媒体位于回收站。")
+	}
+	if version > 0 && version != a.ContentVersion {
+		return nil, a, "", false, Fail(409, "content_changed", "缩略图对应的内容版本已变化，请刷新条目。")
+	}
+	if e = s.currentThumbnailSource(a); e != nil {
+		return nil, a, "", false, e
+	}
+	selected, e := s.selectedImage(ctx, a)
+	if e != nil {
+		return nil, a, "", false, e
+	}
+	cache := previewPath(a.ID, a.ContentVersion, edge, selected)
+	if e = s.safe(cache); e != nil {
+		return nil, a, "", false, e
+	}
+	if f, e := s.Root.Open(cache); e == nil {
+		return f, a, cache, selected, nil
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return nil, a, "", false, e
+	}
+	return nil, a, cache, selected, nil
 }
 func (s *Service) thumbnailSource(ctx context.Context, id string, version int64, edge int, snapshotNeeded bool) (*os.File, model.Asset, string, mediaInput, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, e := s.AssetDetail(ctx, id)
-	if e != nil {
-		return nil, a, "", mediaInput{}, e
+	cached, a, cache, selected, err := s.openThumbnailCache(ctx, id, version, edge)
+	if err != nil || cached != nil || !snapshotNeeded {
+		s.mu.Unlock()
+		return cached, a, cache, mediaInput{}, err
 	}
-	if a.Trashed {
-		return nil, a, "", mediaInput{}, Fail(404, "not_found", "媒体位于回收站。")
-	}
-	if version > 0 && version != a.ContentVersion {
-		return nil, a, "", mediaInput{}, Fail(409, "content_changed", "缩略图对应的内容版本已变化，请刷新条目。")
-	}
-	if e = s.currentThumbnailSource(a); e != nil {
-		return nil, a, "", mediaInput{}, e
-	}
-	cache := previewPath(a.ID, a.ContentVersion, edge)
-	if e = s.safe(cache); e != nil {
-		return nil, a, "", mediaInput{}, e
-	}
-	if f, e := s.Root.Open(cache); e == nil {
-		return f, a, cache, mediaInput{}, nil
-	} else if !errors.Is(e, os.ErrNotExist) {
-		return nil, a, "", mediaInput{}, e
-	}
-	if !snapshotNeeded {
-		return nil, a, cache, mediaInput{}, nil
+	if selected {
+		s.mu.Unlock()
+		file, _, err := s.snapshotSelectedImage(ctx, a.ID, a.ContentVersion, false)
+		if err != nil {
+			return nil, a, cache, mediaInput{}, err
+		}
+		input := mediaInput{name: file.name, file: file.File, size: a.Size, cleanup: file.Close}
+		return nil, a, cache, input, nil
 	}
 	snapshot := "libraries/" + a.LibraryID + "/.qimeng-internal/cache-sources/" + ID() + path.Ext(a.FileName)
-	pinned, e := s.pinMedia(assetPath(a), snapshot, a.Size)
-	return nil, a, cache, pinned, e
+	pinned, err := s.pinMedia(assetPath(a), snapshot, a.Size)
+	s.mu.Unlock()
+	return nil, a, cache, pinned, err
 }
 func (s *Service) Thumbnail(ctx context.Context, id string, versions ...int64) (*os.File, model.Asset, error) {
 	version := int64(0)
@@ -236,9 +262,6 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 		data, e = s.externalPreview(ctx, source, a, edge)
 	}
 	if e != nil {
-		return e
-	}
-	if e = s.verifySelectedImage(ctx, a, source); e != nil {
 		return e
 	}
 	if e = ctx.Err(); e != nil {
