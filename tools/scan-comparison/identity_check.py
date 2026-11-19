@@ -63,6 +63,13 @@ def exercise(binary, version):
             initial_move.write_bytes(moved)
             os.utime(initial_move, (EPOCH + 10, EPOCH + 10))
             before, _ = scan(api, version, data, library, "initial", {original.name, initial_move.name})
+            if version == "next":
+                # A separate, untimed server checks human metadata through its normal API.
+                route = "/api/v1/assets/" + before[initial_move.name]
+                asset = api.call("GET", route)
+                tagged = api.call("PUT", route + "/tags", {"expectedRevision": asset["tagsRevision"],
+                                  "tags": ["synthetic manual tag"]}, key="identity-human-tags")
+                api.call("PUT", route + "/favorite", {"favorite": True}, key="identity-human-favorite")
 
             original.unlink()
             replacement = media / "other-content.png"
@@ -78,6 +85,11 @@ def exercise(binary, version):
                 "missingOriginalStillInCatalog": after.get(original.name) == before[original.name],
             }
             if version == "next":
+                current = api.call("GET", route)
+                result["movedHumanTagAndFavoritePreserved"] = (
+                    current["favorite"] and current["tags"] == ["synthetic manual tag"]
+                    and current["tagsRevision"] == tagged["tagsRevision"]
+                    and current["contentVersion"] == asset["contentVersion"])
                 require(all(result.values()), "Next lost the distinction between content and timestamps")
                 require(outcome["missing"] == 1 and outcome["state"] == "partial", "expected one reported missing original")
             require(hashlib.sha256(destination.read_bytes()).digest() == hashlib.sha256(moved).digest(),

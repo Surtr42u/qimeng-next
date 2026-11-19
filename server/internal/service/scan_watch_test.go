@@ -51,11 +51,12 @@ func finishWatchBatch(t *testing.T, s *Service, run *scanRun, batch *watchBatch)
 		t.Fatal("watch submission", ready, err)
 	}
 	for {
-		page, err := s.Scans(ctx, run.library.ID, "", "", 1)
-		if err != nil || len(page.Items) != 1 || page.Items[0].Trigger != "watch" {
+		page, err := s.Scans(ctx, run.library.ID, "", "", 2)
+		index := slices.IndexFunc(page.Items, func(job ScanJob) bool { return job.Trigger == "watch" })
+		if err != nil || index < 0 {
 			t.Fatal("missing watch scan", page, err)
 		}
-		job := page.Items[0]
+		job := page.Items[index]
 		switch job.State {
 		case "completed":
 			return job
