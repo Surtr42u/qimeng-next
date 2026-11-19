@@ -55,6 +55,8 @@ flowchart LR
 
 `tools/android-native.lock.json`固定NDK、FFmpeg与dav1d的官方源码提交。云端分别构建arm64-v8a与x86_64，不把ARM程序伪装为x86。FFmpeg作为独立命令行进程，仅启用文件/管道协议，关闭网络、GPL与nonfree组件；dav1d提供AV1/AVIF解码。构建产物附源码归档、许可、配置和逐文件摘要。Go服务与宿主runner每次从当前仓库提交重建，不复用旧业务二进制。
 
+两个 ABI 的原生产物各自保存展示缩略图解码器的许可，`manifest.json` 的 `previewDecoderNotices` 记录相对路径与 SHA-256。内嵌 AAR 和 APK 将两种架构共用的这套文件放在 `assets/third-party/preview-decoders/`。PC/NAS 产品包随附同一份材料。[固定版本、上游许可与署名](../deploy/third-party/preview-decoders/README.md)
+
 `android`门禁用`-Pqimeng.embedded=false`编译client并检查APK不含本机程序；`android-native`核对ELF实际架构、Android解释器与16KiB段对齐；`android-embedded`验证完整APK；`android-local-ui`在明确的`qimeng_api35`云端模拟器运行真实本机实例。实际通过情况记录在状态文档。
 
 平台依据：[Android NDK跨编译说明](https://developer.android.com/ndk/guides/other_build_systems)、[Android页大小要求](https://developer.android.com/guide/practices/page-sizes)、[FFmpeg官方源码](https://github.com/FFmpeg/FFmpeg)、[VideoLAN dav1d](https://github.com/videolan/dav1d)。这些平台实现细节不进入服务端领域层。
