@@ -25,22 +25,36 @@ const (
 
 type watchBatch struct {
 	mu          sync.Mutex
-	full        bool
-	paths       map[string]bool
+	pending     scanTargets
 	first, last time.Time
 	notice      chan struct{}
 }
 
-func (b *watchBatch) add(relative string) {
+// Inventory discovers moves, additions and missing originals. Write notices
+// independently require a digest even when size and mtime still match.
+type scanTargets struct {
+	inventory bool
+	verifyAll bool
+	writes    map[string]bool
+}
+
+func (b *watchBatch) add(targets scanTargets) {
 	b.mu.Lock()
-	if relative == "" || !b.paths[relative] && len(b.paths) >= maxWatchPaths {
-		b.full = true
-		b.paths = nil
-	} else if !b.full {
-		if b.paths == nil {
-			b.paths = make(map[string]bool)
+	b.pending.inventory = b.pending.inventory || targets.inventory
+	if !b.pending.verifyAll {
+		for name := range targets.writes {
+			if !b.pending.writes[name] && len(b.pending.writes) == maxWatchPaths {
+				targets.verifyAll = true
+				break
+			}
+			if b.pending.writes == nil {
+				b.pending.writes = make(map[string]bool)
+			}
+			b.pending.writes[name] = true
 		}
-		b.paths[relative] = true
+		if targets.verifyAll {
+			b.pending = scanTargets{inventory: true, verifyAll: true}
+		}
 	}
 	now := time.Now()
 	if b.first.IsZero() {
@@ -54,22 +68,27 @@ func (b *watchBatch) add(relative string) {
 	}
 }
 
-func (b *watchBatch) take() (ready bool, paths []string) {
+func (b *watchBatch) enqueue(now time.Time, submit func(scanTargets) error) (bool, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.first.IsZero() || time.Since(b.last) < watchQuiet && time.Since(b.first) < 30*time.Second {
+	if b.first.IsZero() || now.Sub(b.last) < watchQuiet && now.Sub(b.first) < 30*time.Second {
+		b.mu.Unlock()
 		return false, nil
 	}
-	for p := range b.paths {
-		paths = append(paths, p)
-	}
+	targets := b.pending
+	b.pending = scanTargets{}
 	b.first = time.Time{}
-	b.paths = nil
-	b.full = false
-	return true, paths
+	b.mu.Unlock()
+	if err := submit(targets); err != nil {
+		// The catalog writer may have been busy while new events arrived.
+		// Merge both sets under the same path budget before retrying.
+		b.add(targets)
+		return true, err
+	}
+	return true, nil
 }
 
 func (s *Service) consumeWatchBatch(ctx context.Context, id string, b *watchBatch) {
+	submit := func(targets scanTargets) error { return s.enqueueMonitoredScan(ctx, id, "watch", targets) }
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,7 +103,7 @@ func (s *Service) consumeWatchBatch(ctx context.Context, id string, b *watchBatc
 				return
 			case <-timer.C:
 			}
-			ready, paths := b.take()
+			ready, err := b.enqueue(time.Now(), submit)
 			if !ready {
 				b.mu.Lock()
 				empty := b.first.IsZero()
@@ -94,7 +113,6 @@ func (s *Service) consumeWatchBatch(ctx context.Context, id string, b *watchBatc
 				}
 				continue
 			}
-			err := s.enqueueMonitoredScan(ctx, id, "watch", paths)
 			if err == nil {
 				break
 			}
@@ -104,7 +122,6 @@ func (s *Service) consumeWatchBatch(ctx context.Context, id string, b *watchBatc
 					return
 				}
 				if app.Code == "scan_already_queued" || app.Code == "scan_capacity" {
-					b.add("")
 					continue
 				}
 			}
@@ -116,10 +133,22 @@ func (s *Service) consumeWatchBatch(ctx context.Context, id string, b *watchBatc
 			case <-ctx.Done():
 				return
 			case <-time.After(5 * time.Second):
-				b.add("")
 			}
 		}
 	}
+}
+
+func (b *watchBatch) observe(event fsnotify.Event, relative string) (structural bool) {
+	structural = event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
+	targets := scanTargets{inventory: structural}
+	// A create can also name an atomic replacement of an indexed file.
+	if _, _, media := domain.MediaType(relative); media && (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) {
+		targets.writes = map[string]bool{relative: true}
+	}
+	if structural || len(targets.writes) > 0 {
+		b.add(targets)
+	}
+	return structural
 }
 
 func privateLibraryEntry(name string) bool {
@@ -238,6 +267,9 @@ func (t *watchTree) receive(ctx context.Context, batch *watchBatch, rebuild chan
 			if !ok {
 				return errors.New("filesystem notification stream closed")
 			}
+			if errors.Is(err, fsnotify.ErrEventOverflow) {
+				batch.add(scanTargets{inventory: true, verifyAll: true})
+			}
 			return err
 		case event, ok := <-t.watcher.Events:
 			if !ok {
@@ -257,14 +289,9 @@ func (t *watchTree) receive(ctx context.Context, batch *watchBatch, rebuild chan
 			if ignoredWatchName(relative) {
 				continue
 			}
-			structural := event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
-			if !structural {
-				if _, _, media := domain.MediaType(relative); media && event.Has(fsnotify.Write) {
-					batch.add(relative)
-				}
+			if !batch.observe(event, relative) {
 				continue
 			}
-			batch.add("")
 			_, wasDirectory := t.dirs.Load(relative)
 			if event.Has(fsnotify.Create) {
 				if info, err := t.root.Lstat(filepath.FromSlash(relative)); err == nil && info.IsDir() && !syncPathLink(info) {
@@ -315,7 +342,7 @@ func (s *Service) watchLibraryRoot(ctx context.Context, id, absolute string, bat
 		return err
 	}
 	s.monitor.setStatus(id, "watching", tree.count, "")
-	batch.add("")
+	batch.add(scanTargets{inventory: true})
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

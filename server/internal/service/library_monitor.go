@@ -95,9 +95,9 @@ func (s *Service) LibraryMonitoring(ctx context.Context, p model.Principal, id s
 	return m.status("polling"), nil
 }
 
-func (s *Service) enqueueMonitoredScan(ctx context.Context, id, trigger string, paths []string) error {
+func (s *Service) enqueueMonitoredScan(ctx context.Context, id, trigger string, targets scanTargets) error {
 	_, err := s.Run(ctx, syncOwner(), "automaticScan", "", nil, func(w *Write) (any, int, error) {
-		job, err := s.startScan(ctx, w, id, 0, trigger, paths)
+		job, err := s.startScan(ctx, w, id, 0, trigger, targets)
 		return job, 202, err
 	})
 	return err
@@ -114,7 +114,7 @@ func (s *Service) pollLibraries(ctx context.Context) error {
 		for _, lib := range items {
 			last = lib.ID
 			for {
-				err = s.enqueueMonitoredScan(ctx, lib.ID, "poll", nil)
+				err = s.enqueueMonitoredScan(ctx, lib.ID, "poll", scanTargets{inventory: true})
 				if err == nil {
 					break
 				}
@@ -167,7 +167,7 @@ func (s *Service) monitorLibrary(ctx context.Context, id string) {
 			return
 		}
 		if err != nil {
-			batch.add("")
+			batch.add(scanTargets{inventory: true})
 			m.setStatus(id, "degraded", 0, "系统文件通知暂不可用，周期扫描继续。"+publicSyncError(err))
 			select {
 			case <-ctx.Done():

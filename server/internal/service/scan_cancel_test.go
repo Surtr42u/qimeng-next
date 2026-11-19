@@ -67,7 +67,7 @@ func TestCancellationAndLibraryDisableReachScanFileReads(t *testing.T) {
 	m := workerContext(manual.ID)
 	testMutation(t, s, "cancel-one-scan", func(w *Write) (any, int, error) { v, e := s.CancelScan(ctx, w, manual.ID); return v, 200, e })
 	assertStopped(m)
-	if err = s.enqueueMonitoredScan(ctx, library.ID, "watch", nil); err != nil {
+	if err = s.enqueueMonitoredScan(ctx, library.ID, "watch", scanTargets{inventory: true}); err != nil {
 		t.Fatal(err)
 	}
 	page, err := s.Scans(ctx, library.ID, "queued", "", 10)
