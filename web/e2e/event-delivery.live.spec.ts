@@ -175,8 +175,8 @@ type PlaybackWindow = Window & { playbackGate?: PlaybackGate };
 async function installPlaybackGate(page: Page) {
   await page.addInitScript(() => {
     const send = window.fetch.bind(window);
-    window.fetch = async (...args) => {
-      const response = await send(...args);
+    window.fetch = async (input, init) => {
+      const response = await send(input, init);
       const gate = (window as PlaybackWindow).playbackGate;
       if (gate && response.ok && response.url && new URL(response.url).pathname === gate.path) {
         const body = gate.position === undefined ? undefined : await response.clone().json();
@@ -315,4 +315,69 @@ test("album reopens within the cache lifetime at Go's position and a delayed det
   await f.open();
   await expect.poll(f.position).toBeCloseTo(27_000, -1);
   expect(await f.detail()).toMatchObject({ positionMs: 27_000, positionContentVersion: f.asset.contentVersion, playCount: 3 });
+});
+
+test("initially paused video saves the progress-bar drag, keyboard seek and explicit zero without a play", async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await installPlaybackGate(page);
+  const f = await playbackFixture(page, request);
+  await f.seed(6_000);
+  const positions: number[] = [];
+  const plays: string[] = [];
+  page.on("request", req => {
+    if (eventFor(req, f.asset.id, "progress")) positions.push(req.postDataJSON().positionMs);
+    if (eventFor(req, f.asset.id, "play")) plays.push(req.postDataJSON().eventId);
+  });
+  const progressAt = (position: number) => page.waitForResponse(r =>
+    eventFor(r.request(), f.asset.id, "progress") && Math.abs(r.request().postDataJSON().positionMs - position) < 100);
+  await f.open();
+  await expect.poll(f.position).toBeCloseTo(6_000, -1);
+  await f.back();
+  const nextView = page.waitForResponse(r => eventFor(r.request(), f.asset.id, "view"));
+  await f.open();
+  expect((await nextView).status()).toBe(200);
+  await expect.poll(f.position).toBeCloseTo(6_000, -1);
+  expect(positions).toEqual([]);
+  expect(await f.detail()).toMatchObject({ positionMs: 6_000, playCount: 0 });
+
+  const dragged = progressAt(25_000);
+  await f.seek(0.625);
+  await f.back();
+  const first = await (await dragged).json();
+  expect(first).toMatchObject({ kind: "progress", contentVersion: f.asset.contentVersion });
+  expect(await f.detail()).toMatchObject({ positionMs: first.positionMs, positionContentVersion: f.asset.contentVersion, playCount: 0 });
+  await f.open();
+  await expect.poll(f.position).toBeCloseTo(first.positionMs, -1);
+  await f.video.hover();
+  await page.locator(".art-control-time").click();
+  const key = progressAt(first.positionMs - 5_000);
+  await page.keyboard.press("ArrowLeft");
+  const moved = await (await key).json();
+  expect(await f.detail()).toMatchObject({ positionMs: moved.positionMs, playCount: 0 });
+  await f.back();
+
+  const read = await holdPlaybackResponse(page, f.url);
+  await f.open();
+  await read.observed();
+  const manual = progressAt(10_000);
+  await f.seek(0.25);
+  await read.release();
+  const selected = await (await manual).json();
+  await expect.poll(f.position).toBeCloseTo(selected.positionMs, -1);
+  expect(await f.detail()).toMatchObject({ positionMs: selected.positionMs, playCount: 0 });
+  await f.back();
+  await f.open();
+  await expect.poll(f.position).toBeCloseTo(selected.positionMs, -1);
+  const reset = progressAt(0);
+  await f.seek(0);
+  await f.back();
+  const zero = await reset;
+  expect(await zero.json()).toMatchObject({ kind: "progress", contentVersion: f.asset.contentVersion, positionMs: 0 });
+  await f.open();
+  await expect.poll(f.position).toBe(0);
+  const replay = await request.post(f.url + "/events", { headers: { Origin: new URL(page.url()).origin }, data: zero.request().postDataJSON() });
+  expect(await replay.json()).toEqual(await zero.json());
+  expect(await f.detail()).toMatchObject({ positionMs: 0, positionContentVersion: f.asset.contentVersion, playCount: 0 });
+  expect(positions.filter(value => value === 0)).toHaveLength(1);
+  expect(plays).toEqual([]);
 });
