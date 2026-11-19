@@ -21,6 +21,7 @@ SOURCE = "745974081716a9d69a95002a41220e35e743d764"
 PICTURE = "android-synthetic.png"
 VIDEO = "android-synthetic.mp4"
 TAG = "安卓云端标签"
+AUTHOR = "云端示例作者 / Sample Creator"
 NAV = ["首页", "相册", "数据", "我的"]
 
 
@@ -69,6 +70,9 @@ def seed(media):
     else:
         raise RuntimeError("The legacy Go scan did not expose both synthetic assets")
     api("POST", "tags", token, {"name": TAG})
+    author = api("POST", "authors", token, {"displayName": AUTHOR})
+    for asset in assets:
+        api("PUT", f"assets/{asset['id']}/authors", token, {"authorIds": [author["id"]]})
     return {name: sha256(media / name) for name in (PICTURE, VIDEO)}
 
 
@@ -157,6 +161,44 @@ def capture_home(output, material):
     raise RuntimeError(f"{material} home did not display the real two-color fixture and four tab labels")
 
 
+def capture_route(output, name, controls):
+    geometry = {label: bounds(wait_for(label)) for label in controls}
+    capture_image().save(output / f"installed-{name}.png")
+    return geometry
+
+
+def return_to_home():
+    # These are legacy screens and dialogs reached by this run from an already logged-in home.
+    for _ in range(5):
+        nodes = tree()
+        if all(matching(nodes, label) for label in NAV):
+            tap("首页")
+            wait_for(PICTURE)
+            return
+        shell("input", "keyevent", "BACK")
+    raise RuntimeError("The reference flow did not return to the main navigation")
+
+
+def capture_video_controls(output):
+    tap(VIDEO)
+    geometry = {"poster": capture_route(output, "video-poster", ["播放视频"])}
+    tap("播放视频")
+    # Read Android's real native-control hierarchy. A running video may auto-hide its controls.
+    for _ in range(4):
+        nodes = tree()
+        speed = matching(nodes, "倍速")
+        clock = [n for n in nodes if re.fullmatch(r"\d{1,2}:\d\d", n.get("text", "")) and len(bounds(n)) == 4]
+        if speed and clock:
+            geometry["controls"] = {"speed": bounds(speed[0]), "time": [bounds(n) for n in clock]}
+            capture_image().save(output / "installed-video-controls.png")
+            return geometry
+        surfaces = [n for n in nodes if n.get("class") == "android.view.SurfaceView" and len(bounds(n)) == 4]
+        if surfaces:
+            left, top, right, bottom = bounds(surfaces[0])
+            shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
+    raise RuntimeError("The old video must expose a real speed button and playback clock")
+
+
 def boot_and_login():
     shell("wm", "size", "320x640")
     shell("wm", "density", "160")
@@ -223,6 +265,34 @@ def run(work, output, mode):
         wait_for("标签")
         shell("input", "keyevent", "BACK")
         wait_for(PICTURE)
+        manifest["routes"] = {}
+        stage = "statistics"
+        tap("数据")
+        manifest["routes"][stage] = capture_route(output, stage, ["数据统计", "总浏览次数", "总文件数"])
+        return_to_home()
+        stage = "thumbnail-cache"
+        tap("我的")
+        tap("数据管理", scroll=True)
+        tap("缩略图缓存", scroll=True)
+        manifest["routes"][stage] = {"server": capture_route(output, stage + "-server", ["缩略图缓存", "服务器缓存"])}
+        wait_for("本地缓存", scroll=True)
+        manifest["routes"][stage]["local"] = capture_route(output, stage + "-local", ["本地缓存"])
+        return_to_home()
+        stage = "author-collection"
+        tap("我的")
+        tap("作者管理", scroll=True)
+        tap(AUTHOR, scroll=True, match=lambda nodes: [n for n in nodes if n.get("text", "").startswith("云端示例作者")])
+        card = capture_route(output, stage, ["详细资料", "本地作品", "作者新作"])
+        if card["详细资料"][3] > card["本地作品"][1]:
+            raise RuntimeError("The legacy collection header did not precede its filters")
+        manifest["routes"][stage] = card
+        stage = "author-profile"
+        tap("详细资料")
+        manifest["routes"][stage] = capture_route(output, stage, ["资料与维护", "X资料"])
+        return_to_home()
+        stage = "video"
+        manifest["routes"][stage] = capture_video_controls(output)
+        return_to_home()
         stage = "classic-appearance"
         tap("我的")
         tap("外观", scroll=True)
