@@ -12,7 +12,7 @@
 | 连接已有影库，或在手机上离线使用 | [Windows 桌面](desktop/README.md)、[Android 两种安装包](android/README.md) |
 | 要做成什么、哪些行为必须保留 | [产品要求](docs/requirements.md) |
 | 模块怎样分工、谁拥有业务真相 | [架构](docs/architecture.md) |
-| 现在实现到哪里、实际验证了什么 | [当前状态](docs/status.md) |
+| 接手当前版本、取包、验收或回退 | [接手手册](docs/handover.md)、[各提交的验证结果](docs/status.md) |
 | 开发、评审、同步文档和选择云端作业 | [开发与维护](CONTRIBUTING.md)、[验证与交付](docs/verification.md) |
 | 报告安全问题或发现意外公开的信息 | [安全说明](SECURITY.md) |
 | AI 首次配置、日常工作和 MCP 宿主 | [AI 工具入口](ai/README.md)、[Pi 与 Hermes 兼容指引](docs/mcp-compatibility.md) |

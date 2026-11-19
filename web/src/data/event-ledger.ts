@@ -25,7 +25,8 @@ const eventFields = ["kind", "contentVersion", "sessionId", "seconds", "occurred
 
 function isPermanentRejection(error: unknown): error is ApiError {
   return error instanceof ApiError && (
-    (error.status === 409 && ["content_changed", "event_conflict"].includes(error.code)) ||
+    (error.status === 404 && error.code === "not_found") ||
+    (error.status === 409 && ["content_changed", "event_conflict", "asset_merged"].includes(error.code)) ||
     (error.status === 400 && ["invalid_event", "missing_progress_position"].includes(error.code))
   );
 }
@@ -150,13 +151,25 @@ export class EventLedger {
     this.running = true;
     this.controller = new AbortController();
     let received = false;
+    const trashedAssets = new Set<string>();
+    let deferredError: string | undefined;
     try {
       if (this.restoreFailed) await this.restore();
       for (const id of this.outstanding) {
         if (this.disposed) break;
         let entry = this.rows.get(id)!;
-        if (!entry.confirmed && !("rejection" in entry))
-          entry = await this.post(entry, this.controller.signal);
+        if (!entry.confirmed && !("rejection" in entry)) {
+          if (trashedAssets.has(entry.assetId)) continue;
+          try {
+            entry = await this.post(entry, this.controller.signal);
+          } catch (error) {
+            if (!(error instanceof ApiError && error.status === 409 && error.code === "asset_trashed")) throw error;
+            // Restoring this asset can make its original events valid again.
+            trashedAssets.add(entry.assetId);
+            deferredError ??= error.message;
+            continue;
+          }
+        }
         if ("rejection" in entry) {
           this.rows.set(id, entry);
           try {
@@ -175,7 +188,7 @@ export class EventLedger {
         this.publish();
       }
       this.publish({
-        error: undefined,
+        error: deferredError,
         ...(this.outstanding.size === 0 && !this.restoreFailed ? { storageError: undefined } : {}),
       });
     } catch (error) {
