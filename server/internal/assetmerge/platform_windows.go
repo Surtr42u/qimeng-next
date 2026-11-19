@@ -71,3 +71,24 @@ func lockHandoff(f *os.File) error {
 	offset := windows.Overlapped{Offset: 1 << 20}
 	return windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &offset)
 }
+
+func scratchFileIdentity(f *os.File) (string, error) {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x/%x/%x/%x/%x", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow,
+		info.CreationTime.HighDateTime, info.CreationTime.LowDateTime), nil
+}
+
+// Windows identifies files by volume, file ID and creation timestamp. Holding
+// an extra sidecar handle would keep a SQLite delete pending across its reopen.
+func pinScratchFile(*os.File) (*os.File, error) { return nil, nil }
+
+func removeScratchDirectory(a *area, name string) error {
+	target, err := longName(filepath.Join(a.name, name))
+	if err != nil {
+		return err
+	}
+	return windows.RemoveDirectory(target)
+}

@@ -47,7 +47,7 @@ type operation struct {
 	plan        facts.Plan
 	manifest    backup.Manifest
 	archiveInfo os.FileInfo
-	scratch     string
+	scratch     *catalogScratch
 	baseline    stamp
 	projected   stamp
 	files       []original
@@ -56,9 +56,12 @@ type operation struct {
 	result      Receipt
 }
 
-func Run(ctx context.Context, mode string, o Options) (Receipt, error) {
+func Run(ctx context.Context, mode string, o Options) (receipt Receipt, err error) {
 	if mode != "check" && mode != "apply" {
 		return Receipt{}, errors.New("expected check or apply")
+	}
+	if mode == "apply" && !isDigest(o.CatalogSHA256) {
+		return Receipt{}, phase("verified_catalog_fingerprint_required", errors.New("apply requires the accepted restored catalog SHA-256"))
 	}
 	if o.ReserveBytes == 0 {
 		o.ReserveBytes = 512 << 20
@@ -97,13 +100,15 @@ func Run(ctx context.Context, mode string, o Options) (Receipt, error) {
 			return Receipt{}, phase("new_offline_restore_required", err)
 		}
 	}
-	op.scratch = ".qimeng-merge-" + rand.Text()
-	if err = a.mkdir(op.scratch); err != nil {
-		return Receipt{}, phase("private_scratch", err)
+	op.scratch, err = newScratch(a)
+	if err != nil {
+		return Receipt{}, err
 	}
-	// Only disposable database copies are written here. Originals in transit
-	// after the claim stay in the separately recorded preimage directory.
-	defer a.root.RemoveAll(op.scratch)
+	defer func() {
+		if op.scratch != nil {
+			receipt, err = op.finishScratch(receipt, err)
+		}
+	}()
 	if err = op.prepare(ctx); err != nil {
 		return Receipt{}, err
 	}
@@ -114,6 +119,19 @@ func Run(ctx context.Context, mode string, o Options) (Receipt, error) {
 		return Receipt{}, err
 	}
 	return op.resume(ctx)
+}
+
+func (op *operation) clearScratch() error {
+	s := op.scratch
+	op.scratch = nil
+	return phase("private_scratch_cleanup_required", s.cleanup())
+}
+
+func (op *operation) finishScratch(receipt Receipt, err error) (Receipt, error) {
+	if cleanErr := op.clearScratch(); cleanErr != nil {
+		return Receipt{}, errors.Join(cleanErr, err)
+	}
+	return receipt, err
 }
 
 func (op *operation) inputs(ctx context.Context) error {
@@ -155,8 +173,8 @@ func (op *operation) prepare(ctx context.Context) error {
 		return phase("sealed_restored_catalog", err)
 	}
 	stageDB := op.req.Stage + "/qimeng.sqlite"
-	copyName := op.scratch + "/projected.sqlite"
-	op.baseline, err = op.copy(ctx, stageDB, copyName, op.opts.ReserveBytes)
+	copyName := op.scratch.name + "/" + projectedName
+	op.baseline, err = op.scratch.copyCatalog(ctx, stageDB, op.opts.ReserveBytes)
 	if err != nil {
 		return phase("copy_stopped_catalog", err)
 	}
@@ -165,6 +183,9 @@ func (op *operation) prepare(ctx context.Context) error {
 	}
 	// Reading only from the private copy keeps the restored WAL and catalog
 	// untouched, including when the owner asks for a check without apply.
+	if err = op.scratch.reserveSidecars(); err != nil {
+		return phase("private_catalog_sidecars", err)
+	}
 	candidate := filepath.Join(op.name, filepath.FromSlash(copyName))
 	snapshot, err := store.OpenDatabase(candidate, store.SnapshotDatabase)
 	if err != nil {
@@ -180,6 +201,9 @@ func (op *operation) prepare(ctx context.Context) error {
 	}
 	if err = op.sameSidecars(sides); err != nil {
 		return phase("catalog_changed", err)
+	}
+	if err = op.scratch.reserveSidecars(); err != nil {
+		return phase("private_catalog_sidecars", err)
 	}
 	db, err := store.Open(candidate)
 	if err != nil {
@@ -356,8 +380,12 @@ func (op *operation) apply(ctx context.Context, stageInfo os.FileInfo) error {
 	if err = op.relocate(ctx); err != nil {
 		return phase("relocate_selected_originals", err)
 	}
-	if err = op.move(op.scratch+"/projected.sqlite", stageDB, op.projected.info); err != nil {
+	if err = op.move(op.scratch.name+"/"+projectedName, stageDB, op.projected.info); err != nil {
 		return phase("install_checked_catalog", err)
+	}
+	op.scratch.catalogMoved = true
+	if err = op.clearScratch(); err != nil {
+		return err
 	}
 	op.result.State = "published"
 	inventory, err := op.readFile(ctx, pre+"/baseline-files.json", nil)

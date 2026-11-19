@@ -140,11 +140,20 @@ def run(args, base):
                     {"key": "s2", "url": "https://example.org/posts/2", "at": cold.AT, "caption": "synthetic other source"}]}]}
     write_json(plan, decision)
 
+    accepted_catalogs = {}
+
+    def restore_for_review(archive, parent):
+        stage, receipt = fresh_restore(backup, archive, parent)
+        accepted_catalogs[parent] = cold.digest(stage/"qimeng.sqlite")
+        return stage, receipt
+
     def command(mode, parent, archive=original, encoding=plan, success=True, **changes):
         flags = {"archive": archive, "sha256": cold.digest(archive), "plan": encoding, "plan-sha256": cold.digest(encoding),
                  "restore-receipt": parent/"restore.json", "stage": parent/"work", "preimage": parent/"preimage", "destination": parent/"data"}
+        if mode == "apply":
+            flags["catalog-sha256"] = accepted_catalogs[parent]
         flags.update(changes)
-        result = cold.command([merge, mode, *(val for k, v in flags.items() for val in ("--"+k, v))], success)
+        result = cold.command([merge, mode, *(val for k, v in flags.items() if v is not None for val in ("--"+k, v))], success)
         if success:
             return json.loads(result.stdout)
         assert str(parent).encode() not in result.stderr and b"second.png" not in result.stderr
@@ -152,7 +161,7 @@ def run(args, base):
     # The baseline is independently read by the ordinary service in a distinct,
     # tiny synthetic clone. The stage to be claimed has never been served.
     control = base / "baseline-control"
-    ctrl, _ = fresh_restore(backup, original, control)
+    ctrl, _ = restore_for_review(original, control)
     with serving(server, ctrl) as get:
         for asset_id in [cold.A, cold.B, cold.ident(710)]:
             asset = get("/api/v1/assets/" + asset_id)
@@ -161,8 +170,22 @@ def run(args, base):
         command("apply", control, success=False)
         assert not (control/"preimage").exists()
 
+    changed = base/"changed-history"
+    altered, _ = restore_for_review(original, changed)
+    assert command("check", changed)["restoredCatalogSHA256"] == accepted_catalogs[changed]
+    old_tree = cold.source_state(altered)
+    with closing(sqlite3.connect(altered/"qimeng.sqlite")) as catalog:
+        catalog.execute("UPDATE events SET data=json_set(data,'$.sessionId','fixture-changed-history')")
+        catalog.commit()
+        catalog.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    new_tree = cold.source_state(altered)
+    assert old_tree.keys() == new_tree.keys()
+    assert {name for name in old_tree if old_tree[name] != new_tree[name]} == {"qimeng.sqlite"}
+    command("apply", changed, success=False)
+    assert new_tree == cold.source_state(altered) and not (changed/"preimage").exists() and not (changed/"data").exists()
+
     parent = base / "operation"
-    stage, receipt = fresh_restore(backup, original, parent)
+    stage, receipt = restore_for_review(original, parent)
     state = cold.source_state(stage)
     lib = stage / "libraries" / cold.LIB
     originals = {p.name: stat_file(p) for p in lib.glob("*.png")}
@@ -175,6 +198,7 @@ def run(args, base):
     command("apply", parent, success=False, sha256="0"*64)
     command("apply", parent, success=False, **{"plan-sha256": "f"*64})
     command("apply", parent, success=False, **{"catalog-sha256": "f"*64})
+    command("apply", parent, success=False, **{"catalog-sha256": None})
     command("apply", parent, success=False, **{"reserve-bytes": str(2**62)})
     wrong = json.loads(json.dumps(decision))
     wrong["groups"][0]["sha256"] = "a"*64
@@ -222,6 +246,8 @@ def run(args, base):
     successful = command("apply", parent)
     assert not successful["alreadyApplied"] and successful["verifiedAssets"] == 4
     assert successful == command("apply", parent) and not stage.exists()
+    command("apply", parent, success=False, **{"catalog-sha256": None})
+    command("apply", parent, success=False, **{"catalog-sha256": "f"*64})
 
     pre = parent/"preimage"
     final = parent/"data"
@@ -266,7 +292,8 @@ def run(args, base):
         new_digest = native_export(get, merged)
     assert new_digest != baseline
     restored = base/"replay"
-    fresh_restore(backup, merged, restored)
+    restore_for_review(merged, restored)
+    command("apply", restored, merged, success=False, **{"catalog-sha256": accepted_catalogs[parent]})
     replay = command("apply", restored, merged)
     assert replay["alreadyApplied"] and replay["baselineSHA256"] == baseline
     assert command("apply", restored, merged) == replay
@@ -280,6 +307,7 @@ def run(args, base):
             "normalAPIContentAndHistory": True, "nativeBackupRestoreReplay": True,
             "resumedBothHandoffWindows": True,
             "refusals": ["started-service", "different-restore-ID", "wrong-archive-digest", "wrong-plan-digest",
+                         "missing-catalog-digest", "changed-history-only", "different-replay-catalog",
                          "storage-reserve", "wrong-group-digest", "occupied-file", "invalid-relative-path",
                          "existing-final", "unlisted-file", "hard-link", "changed-bytes", "changed-mtime"]}
 

@@ -54,3 +54,23 @@ func syncDir(dir *os.File) error { return dir.Sync() }
 func lockHandoff(f *os.File) error {
 	return unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 }
+
+func scratchFileIdentity(f *os.File) (string, error) { return fileIdentity(f) }
+
+func pinScratchFile(f *os.File) (*os.File, error) {
+	// Holding the inode prevents reuse after SQLite unlinks a sidecar.
+	fd, err := unix.FcntlInt(f.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "private scratch identity"), nil
+}
+
+func removeScratchDirectory(a *area, name string) error {
+	d, err := a.root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return unix.Unlinkat(int(d.Fd()), name, unix.AT_REMOVEDIR)
+}

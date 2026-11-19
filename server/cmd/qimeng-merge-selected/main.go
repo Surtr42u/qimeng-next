@@ -33,7 +33,7 @@ func run() error {
 	flags.StringVar(&o.RestoreReceipt, "restore-receipt", "", "Private UTF-8 JSON from qimeng-backup restore")
 	flags.StringVar(&o.Plan, "plan", "", "Private owner-reviewed group JSON")
 	flags.StringVar(&o.PlanSHA256, "plan-sha256", "", "SHA-256 of the exact authorized JSON file")
-	flags.StringVar(&o.CatalogSHA256, "catalog-sha256", "", "Optional independently verified SHA-256 of the stopped restored SQLite catalog")
+	flags.StringVar(&o.CatalogSHA256, "catalog-sha256", "", "Accepted SHA-256 of this stopped restored SQLite catalog (required for apply and replay)")
 	flags.StringVar(&o.Preimage, "preimage", "", "New private preimage and receipt directory next to the stage")
 	flags.StringVar(&o.Destination, "destination", "", "New final directory next to the stage")
 	flags.Int64Var(&o.ReserveBytes, "reserve-bytes", 512<<20, "Keep this many bytes free during private copies")

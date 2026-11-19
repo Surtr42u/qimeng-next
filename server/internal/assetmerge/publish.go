@@ -42,7 +42,13 @@ func (op *operation) resume(ctx context.Context) (Receipt, error) {
 	if _, err := op.readJSON(ctx, pre+"/ready.json", 128<<10, &ready); err != nil {
 		return Receipt{}, phase("incomplete_attempt_restore_again", err)
 	}
-	if ready.Claim.Request != op.req || ready.Claim.Token == "" || ready.Receipt.InstanceID != op.req.Restore.InstanceID ||
+	recorded := ready.Claim.Request
+	if recorded.CatalogHash == "" {
+		// Earlier handoffs also sealed this fingerprint in both receipts.
+		recorded.CatalogHash = ready.BaselineCatalogHash
+	}
+	if recorded != op.req || ready.BaselineCatalogHash != op.req.CatalogHash || ready.Receipt.RestoredCatalogSHA256 != op.req.CatalogHash ||
+		ready.Claim.Token == "" || ready.Receipt.InstanceID != op.req.Restore.InstanceID ||
 		ready.Receipt.PlanSHA256 != op.req.PlanHash || ready.Receipt.ArchiveSHA256 != op.req.ArchiveHash || ready.Receipt.BaselineSHA256 != op.plan.BaselineSHA256 {
 		return Receipt{}, phase("existing_attempt_has_different_authority", errors.New("mismatched existing receipt"))
 	}

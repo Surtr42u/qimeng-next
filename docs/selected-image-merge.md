@@ -6,12 +6,12 @@
 
 1. 在本机同一文件系统的私有父目录 `P` 工作。私有计划和归档保存在 `work`、`preimage`、`data` 三个子目录之外。以下各参数使用绝对路径。`P/data` 可以换成同父目录下尚不存在的其他名字。
 2. 用正式 `qimeng-backup verify --archive ARCHIVE --sha256 DIGEST` 核对原始归档，再运行 `qimeng-backup restore --archive ARCHIVE --sha256 DIGEST --destination P/work`。把这次恢复的 stdout 保存为 UTF-8 `P/restore.json`。Windows PowerShell 5 可将输出交给 `Out-File -Encoding utf8`。`P/work` 必须是本次新恢复、从未启动服务的专用工作副本。
-3. 在该副本完成原始 ID、实际相对路径、每件原件完整哈希及业务历史的基线核验。离线读取 SQLite 时用只读 immutable 连接，读取结束后关闭。保留该次基线明细。可将这时 `P/work/qimeng.sqlite` 的完整摘要作为 `--catalog-sha256` 传入，绑定连同历史和关系在内的已核数据库。对已校对的私有计划文件计算完整 SHA-256，以其原始字节的 64 位小写十六进制摘要作为 `PLAN_DIGEST`。
-4. 运行以下命令核对整库和所有决定。`check` 只在临时 SQLite 副本上试算，并逐项读取归档和工作副本。成功后运行相同参数的 `apply`。两次调用各自读取完整输入，大归档可能需要较长时间。
+3. 在该副本完成原始 ID、实际相对路径、每件原件完整哈希及业务历史的基线核验。离线读取 SQLite 时用只读 immutable 连接，读取结束后关闭。将此时 `P/work/qimeng.sqlite` 的完整 SHA-256 连同验收明细保存为 `CATALOG_DIGEST`。对已校对的私有计划文件计算完整 SHA-256，以其原始字节的 64 位小写十六进制摘要作为 `PLAN_DIGEST`。
+4. 运行以下命令核对整库和所有决定。`check` 在临时 SQLite 副本上试算，逐项读取归档和工作副本，回执的 `restoredCatalogSHA256` 可供验收时核对。`apply` 须提供本次已验收的目录库摘要，随后任何关系、历史或其他数据库内容变化均须重新验收。两次调用各自读取完整输入，大归档可能需要较长时间。
 
 ```text
 qimeng-merge-selected check --archive ARCHIVE --sha256 DIGEST --stage P/work --restore-receipt P/restore.json --plan PLAN --plan-sha256 PLAN_DIGEST --preimage P/preimage --destination P/data
-qimeng-merge-selected apply --archive ARCHIVE --sha256 DIGEST --stage P/work --restore-receipt P/restore.json --plan PLAN --plan-sha256 PLAN_DIGEST --preimage P/preimage --destination P/data
+qimeng-merge-selected apply --archive ARCHIVE --sha256 DIGEST --stage P/work --restore-receipt P/restore.json --catalog-sha256 CATALOG_DIGEST --plan PLAN --plan-sha256 PLAN_DIGEST --preimage P/preimage --destination P/data
 ```
 
 私有计划是 UTF-8 JSON。顶层 `baselineSHA256` 使用完整未合并归档摘要，`sourceId` 使用转换报告中的来源标识，`groups` 为授权组数组。每组字段如下。
@@ -30,11 +30,12 @@ qimeng-merge-selected apply --archive ARCHIVE --sha256 DIGEST --stage P/work --r
 
 `P/preimage/qimeng.sqlite` 是合组前的原生封存数据库。`catalog-fingerprint.json` 保存长度、修改时间、摘要和文件身份。`baseline-files.json` 保存完整的逐项原生清单和实测文件证据，`selected-files.json` 保存每个所选成员的原路径、新路径与独立副本名，`originals/` 中的每份副本均已回读核验。只有所选原件获得额外副本，未选媒体随整个恢复目录一次改名。归档、私有计划和预像含私人内容，须由所有者保管。
 
-`apply` 的成功 JSON 回执给出实例、归档和计划摘要，以及已核验资产数、组数、成员数和 donor 数。用原参数重试已成功的交接时，命令从 `preimage/published.json` 与目标目录的 `SELECTED_IMAGE_MERGE.json` 核对并回放原回执。恢复已合并的原生归档时，使用它自己的 `--archive`、`--sha256` 和新还原回执，再提交原计划。只有该计划的全部决定已经有一致的原生记录，才能接受新的归档摘要。
+`apply` 的成功 JSON 回执给出实例、归档、已验收目录库和计划摘要，以及已核验资产数、组数、成员数和 donor 数。用原参数重试已成功的交接时，沿用当时的 `CATALOG_DIGEST`。命令从 `preimage/published.json` 与目标目录的 `SELECTED_IMAGE_MERGE.json` 核对并回放原回执。恢复已合并的原生归档时，用该归档的 `--archive`、`--sha256`、新还原回执和这次新恢复数据库的验收摘要，再提交原计划。只有该计划的全部决定已经有一致的原生记录，才能接受新的归档摘要。
 
 | 停止位置 | 处理 |
 |---|---|
 | `check` 或 `apply` 在认领前停止 | 核对归档、恢复收据、私有计划指纹、空间和目标占用，然后在原样工作副本重新检查。 |
+| `private_scratch_cleanup_required` | 本次私有父目录下以 `.qimeng-merge-` 开头的临时目录需要人工核对，可能留有数据库副本。文件被更换、出现额外内容或系统拒绝清理时，命令停止并保留现场。 |
 | 有 `ready.json`，交接期间中断 | 保留工作目录和预像，用原参数重试。工具核对私有交接标识与最终目录状态，再回读全部原件及数据库。第三方同名目标必须由所有者自行处置。 |
 | 已有 `attempt.json`，尚无完整 `ready.json` | 工作副本仍属这次私有尝试。保留诊断和预像，先核验未合并归档，再从它恢复至新的专用工作目录。如果磁盘仅够一份工作库，所有者可先处置这次有标记的失败工作副本后重新恢复。 |
 | 需要恢复所有原身份、位置和原始历史 | 使用完整未合并 `.qnext` 和独立摘要恢复至新的数据目录，可按逐项基线再核对。 |
