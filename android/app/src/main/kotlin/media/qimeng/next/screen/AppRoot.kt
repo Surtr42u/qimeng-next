@@ -62,6 +62,7 @@ fun AppRoot(model: LibraryViewModel) {
     }
     val imageLoader = remember(session, transportRevision) {
         ImageLoader.Builder(context).components {
+            model.addThumbnailImageComponents(this)
             if (imageTarget != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient(imageTarget) }))
             if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
         }.build()
@@ -75,7 +76,7 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
                 val detailRoute = route.startsWith("asset:")
-                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage") || route.startsWith("author:") ||
+                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage", "thumbnail-cache") || route.startsWith("author:") ||
                     route.startsWith("profile:") || route.startsWith("profile-archive:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
@@ -116,6 +117,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "server" -> ServerSettingsScreen(model)
                                 route == "libraries" -> LibraryManagementScreen(model::back)
                                 route == "data-manage" -> DataManageScreen(model)
+                                route == "thumbnail-cache" -> ThumbnailCacheScreen(model::back)
                                 route == "vocabulary-manage" -> VocabularyManageScreen(model)
                                 route == "trash" -> TrashScreen(model)
                                 route == "recommendation" -> RecommendationSettings(model)

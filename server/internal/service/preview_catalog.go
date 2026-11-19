@@ -7,8 +7,6 @@ import (
 	"os"
 )
 
-const devicePreviewCandidates = previewCandidatesFrom + " AND a.media_type!='animated_image'"
-
 type ThumbnailCandidate struct {
 	AssetID        string `json:"assetId"`
 	ContentVersion int64  `json:"contentVersion"`
@@ -39,12 +37,12 @@ func (s *Service) ThumbnailCandidates(ctx context.Context, cursor string, limit 
 	defer tx.Rollback()
 	if cursor == "" {
 		var total int64
-		if err = tx.QueryRowContext(ctx, "SELECT count(*)"+devicePreviewCandidates).Scan(&total); err != nil {
+		if err = tx.QueryRowContext(ctx, "SELECT count(*)"+previewCandidatesFrom).Scan(&total); err != nil {
 			return page, err
 		}
 		page.TotalMatched = &total
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT a.id,json_extract(a.data,'$.contentVersion')"+devicePreviewCandidates+
+	rows, err := tx.QueryContext(ctx, "SELECT a.id,json_extract(a.data,'$.contentVersion')"+previewCandidatesFrom+
 		" AND a.id>? ORDER BY a.id LIMIT ?", after.ID, n+1)
 	if err != nil {
 		return page, err

@@ -329,15 +329,16 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, onClick: () -> Unit) {
     val radius = with(LocalDensity.current) { 24f.toDp() }
     // Existing AssetCard: 16:9 frame, 5dp outer spacing and a 24px corner; only search adds a caption.
     val animated = asset.mediaType == "animated_image"
-    val source = if (animated) asset.contentUrl else asset.thumbnailUrl
-    val cacheKey = "${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:" + if (animated) "animated-grid" else "thumbnail"
     Column {
         Box(Modifier.padding(5.dp).fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(radius))
             .background(MaterialTheme.colorScheme.secondaryContainer).clickable(onClick = onClick).semantics { contentDescription = asset.name }) {
-            if (source.isNotEmpty()) {
-                AsyncImage(model = ImageRequest.Builder(context).data(source)
-                    .memoryCacheKey(cacheKey).diskCacheKey(cacheKey)
-                    .diskCachePolicy(if (animated) coil3.request.CachePolicy.DISABLED else coil3.request.CachePolicy.ENABLED).build(), imageLoader = LocalMediaImages.current,
+            if (animated || asset.thumbnailUrl.isNotEmpty()) {
+                val request = if (animated) {
+                    ImageRequest.Builder(context).data(asset.contentUrl)
+                        .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:animated-grid")
+                        .diskCachePolicy(coil3.request.CachePolicy.DISABLED).build()
+                } else asset
+                AsyncImage(model = request, imageLoader = LocalMediaImages.current,
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             else Icon(Icons.Outlined.Image, "预览尚未生成", Modifier.align(Alignment.Center).size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

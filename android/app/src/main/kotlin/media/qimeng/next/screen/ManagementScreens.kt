@@ -116,6 +116,7 @@ fun DataManageScreen(model: LibraryViewModel) {
         }
         QimengSettingsGroup("备份与存储") {
             QimengSettingsRow(BackupRestoreIcon, "资料备份与归档", "一个目录管理作者TXT、备份与上传归档", { model.navigate("maintenance") })
+            QimengSettingsRow(StorageCacheIcon, "缩略图缓存", "查看生成进度，管理本机缓存空间", { model.navigate("thumbnail-cache") })
             QimengSettingsRow(Icons.Outlined.DeleteOutline, "回收站", "恢复移除的媒体", { model.navigate("trash") })
         }
     }

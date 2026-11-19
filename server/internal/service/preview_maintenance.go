@@ -157,7 +157,7 @@ func (s *Service) warmPreviewPage(ctx context.Context, page []previewIdentity) e
 
 func (s *Service) warmPreviewSize(ctx context.Context, asset previewIdentity, edge int) error {
 	info, err := s.Root.Lstat(previewPath(asset.id, asset.version, edge, asset.selected))
-	if err == nil && info.Mode().IsRegular() {
+	if err == nil && info.Mode().IsRegular() && info.Size() > 0 {
 		return nil
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

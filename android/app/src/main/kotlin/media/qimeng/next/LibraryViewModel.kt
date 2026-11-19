@@ -418,6 +418,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         if (seconds >= 1.0) graph.recordEvent(asset, "dwell", sessionId, seconds = seconds, occurredAt = startedAt)
     }
     fun mediaClient(target: Session) = repository.mediaClient(target)
+    fun addThumbnailImageComponents(builder: coil3.ComponentRegistry.Builder) = graph.thumbnails.addImageComponents(builder)
     private fun publishAsset(asset: Asset) {
         if (!sameTarget(asset.target, session.value)) return
         if (mutableAsset.value?.let { it.id == asset.id && it.revision <= asset.revision } == true) mutableAsset.value = asset

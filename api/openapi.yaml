@@ -605,7 +605,7 @@ paths:
   /thumbnails/candidates:
     get:
       operationId: listThumbnailCandidates
-      description: Current static image and video previews from enabled libraries, excluding trashed media. Continuation seeks by stable asset ID. Requires read permission.
+      description: Current derived JPEG preview candidates from enabled libraries, excluding trashed media. Continuation seeks by stable asset ID. Requires read permission.
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses:
         '200': {description: Bounded list of versioned previews eligible for device prefetch, content: {application/json: {schema: {$ref: '#/components/schemas/ThumbnailCandidatePage'}}}}

@@ -11,6 +11,7 @@ class DataGraph private constructor(context: Context) {
     internal val provider = ApiProvider(settings)
     val queue = QueueStore(context)
     val media = MediaRepository(settings, provider)
+    val thumbnails by lazy { ThumbnailCacheRepository(context, settings, provider) }
     val analytics = AnalyticsRepository(settings, provider)
     val management = ManagementRepository(settings, provider)
     val aiAccess = AIAccessRepository(settings, provider)

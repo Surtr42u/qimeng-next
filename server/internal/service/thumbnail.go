@@ -172,12 +172,24 @@ func (s *Service) openThumbnailCache(ctx context.Context, id string, version int
 	if e = s.safe(cache); e != nil {
 		return nil, a, "", false, e
 	}
-	if f, e := s.Root.Open(cache); e == nil {
-		return f, a, cache, selected, nil
-	} else if !errors.Is(e, os.ErrNotExist) {
+	info, e := s.Root.Lstat(cache)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil, a, cache, selected, nil
+	}
+	if e != nil {
 		return nil, a, "", false, e
 	}
-	return nil, a, cache, selected, nil
+	if !info.Mode().IsRegular() {
+		return nil, a, "", false, Fail(409, "thumbnail_cache_invalid", "缩略图路径不可读取。")
+	}
+	if info.Size() == 0 {
+		if e = s.Root.Remove(cache); e != nil && !errors.Is(e, os.ErrNotExist) {
+			return nil, a, "", false, e
+		}
+		return nil, a, cache, selected, nil
+	}
+	f, e := s.Root.Open(cache)
+	return f, a, cache, selected, e
 }
 func (s *Service) thumbnailSource(ctx context.Context, id string, version int64, edge int, snapshotNeeded bool) (*os.File, model.Asset, string, mediaInput, error) {
 	s.mu.Lock()
