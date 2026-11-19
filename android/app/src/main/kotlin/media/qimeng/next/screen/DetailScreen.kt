@@ -40,6 +40,7 @@ import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.Session
 import media.qimeng.next.model.sameTarget
+import media.qimeng.next.screen.video.VideoPlaybackSystemBars
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.theme.isQimengDarkTheme
@@ -82,7 +83,7 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     }
     TrackDwell(item, model)
     val visible = chromeVisible && !zoomImmersive && !playerActive
-    DetailSystemBars(if (playerActive) playbackChrome else !zoomImmersive, lightIcons = playerActive || !visible)
+    DetailSystemBars(if (playerActive) playbackChrome else !zoomImmersive, lightIcons = playerActive || !visible, videoPlayback = playerActive)
     BackHandler(item.mediaType != "video" && (!chromeVisible || zoomImmersive)) { resetImage++; chromeVisible = true }
     val position = model.detailPosition(id)
     val backdrop = if (visible) MaterialTheme.colorScheme.background else Color.Black
@@ -223,10 +224,11 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
 }
 
 @Composable
-private fun DetailSystemBars(visible: Boolean, lightIcons: Boolean) {
+private fun DetailSystemBars(visible: Boolean, lightIcons: Boolean, videoPlayback: Boolean) {
     val window = LocalActivity.current?.window ?: return
     val view = LocalView.current
     val dark = isQimengDarkTheme()
+    if (videoPlayback) VideoPlaybackSystemBars(window, view, visible)
     DisposableEffect(window) {
         onDispose { WindowCompat.getInsetsController(window, view).show(WindowInsetsCompat.Type.systemBars()) }
     }
@@ -235,7 +237,9 @@ private fun DetailSystemBars(visible: Boolean, lightIcons: Boolean) {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             isAppearanceLightStatusBars = !dark && !lightIcons
             isAppearanceLightNavigationBars = !dark && !lightIcons
-            if (visible) show(WindowInsetsCompat.Type.systemBars()) else hide(WindowInsetsCompat.Type.systemBars())
+            if (!videoPlayback) {
+                if (visible) show(WindowInsetsCompat.Type.systemBars()) else hide(WindowInsetsCompat.Type.systemBars())
+            }
         }
     }
 }

@@ -255,22 +255,23 @@ class AndroidRealServerTest {
                 }
                 assertTrue("The new player must start at the position read back from Go", requireNotNull(position) >= resumePosition)
             }
-            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithContentDescription("进入全屏").performClick()
-            compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+            clickVideoControl("进入全屏")
             compose.waitUntil(10_000) { playbackOrientation().let {
-                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE &&
+                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE &&
                     it.configuration == android.content.res.Configuration.ORIENTATION_LANDSCAPE
             } }
             captureDecoderSurface(compose.activity, suffix)
             screenshotWithMedia("real-server-video-fullscreen$suffix.png", landscape = true)
             await("video-play-event$suffix", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (before.playCount ?: 0L) }
             assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
-            compose.onNodeWithContentDescription("退出全屏").performClick()
+            clickVideoControl("退出全屏")
             try {
-                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
+                compose.waitUntil(15_000) { playbackOrientation().let {
+                    it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT &&
+                        it.configuration == android.content.res.Configuration.ORIENTATION_PORTRAIT
+                } }
             } catch (failure: ComposeTimeoutException) {
-                throw AssertionError("Leaving fullscreen should restore $originalOrientation, observed ${playbackOrientation()}", failure)
+                throw AssertionError("Leaving fullscreen should return to portrait, observed ${playbackOrientation()}", failure)
             }
             if (index == 0) {
                 compose.waitUntil(10_000) {
@@ -298,7 +299,34 @@ class AndroidRealServerTest {
                     }
                     leftDetail
                 }
+                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
             }
+        }
+    }
+
+
+    private fun clickVideoControl(description: String) {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        var control: android.graphics.Rect? = null
+        compose.waitUntil(15_000) {
+            compose.activityRule.scenario.onActivity { activity ->
+                val views = arrayListOf<android.view.View>()
+                activity.window.decorView.findViewsWithText(views, description, android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                val match = views.singleOrNull { it.isShown && it.isEnabled && it.contentDescription == description }
+                control = match?.let { view ->
+                    val location = IntArray(2)
+                    view.getLocationOnScreen(location)
+                    android.graphics.Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
+                }
+            }
+            control?.isEmpty == false
+        }
+        val bounds = requireNotNull(control)
+        val downTime = android.os.SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            val event = android.view.MotionEvent.obtain(downTime, android.os.SystemClock.uptimeMillis(), action,
+                bounds.exactCenterX(), bounds.exactCenterY(), 0)
+            try { instrument.sendPointerSync(event) } finally { event.recycle() }
         }
     }
 
