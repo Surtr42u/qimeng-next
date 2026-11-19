@@ -131,21 +131,38 @@ describe("offline event receipts", () => {
     next.dispose();
   });
   it.each([
-    [409, "event_conflict"], [400, "invalid_event"], [400, "missing_progress_position"],
+    [404, "not_found"], [409, "asset_merged"], [409, "event_conflict"], [400, "invalid_event"], [400, "missing_progress_position"],
   ] as const)("retains the immutable event rejection %i %s", async (status, code) => {
-    const a = progress("asset-a");
-    const disk = deviceStorage([a]);
+    const a = progress("asset-a"), b = progress("asset-b");
+    const disk = deviceStorage([a, b]);
     mocks.post.mockRejectedValueOnce(new ApiError(status, code, "服务端拒绝了此事件"));
     const ledger = new EventLedger("instance-a");
     await ledger.flush();
     await ledger.flush();
     expect(disk.get(a.id)?.rejection?.code).toBe(code);
+    expect(disk.has(b.id)).toBe(false);
     expect(ledger.getSnapshot().pending).toBe(0);
-    expect(mocks.post).toHaveBeenCalledTimes(1);
+    expect(mocks.post.mock.calls.map(([, { body }]) => body)).toEqual([a.body, b.body]);
+    ledger.dispose();
+  });
+  it("defers only a trashed asset and replays its original events after restoration", async () => {
+    const a = progress("asset-a"), b = progress("asset-b");
+    const secondA = { ...a, id: a.id + "-2", body: { ...a.body, eventId: a.body.eventId + "-2", positionMs: 2500 } };
+    const disk = deviceStorage([a, secondA, b]);
+    mocks.post.mockRejectedValueOnce(new ApiError(409, "asset_trashed", "媒体已移入回收站。"));
+    const ledger = new EventLedger("instance-a");
+    await ledger.flush();
+    expect(ledger.getSnapshot()).toMatchObject({ pending: 2, rejected: [], error: "媒体已移入回收站。" });
+    expect([...disk.values()]).toEqual([a, secondA]);
+    expect(mocks.post.mock.calls.map(([, { body }]) => body)).toEqual([a.body, b.body]);
+    await ledger.flush();
+    expect(ledger.getSnapshot()).toMatchObject({ pending: 0, rejected: [], error: undefined });
+    expect(mocks.post.mock.calls.map(([, { body }]) => body)).toEqual([a.body, b.body, a.body, secondA.body]);
+    expect(disk.size).toBe(0);
     ledger.dispose();
   });
   it.each([
-    [409, "asset_trashed"], [409, "unknown_conflict"], [400, "event_time_invalid"], [503, "content_changed"],
+    [404, "http_error"], [409, "unknown_conflict"], [400, "event_time_invalid"], [503, "content_changed"],
   ] as const)("retries the original event after recoverable or unknown rejection %i %s", async (status, code) => {
     const a = progress("asset-a"), b = progress("asset-b");
     const disk = deviceStorage([a, b]);
