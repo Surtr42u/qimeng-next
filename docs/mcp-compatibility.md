@@ -11,6 +11,8 @@
 - 图片以标准image内容块返回，单独要求媒体外传配置。宿主或所选模型不能接收图片时，元数据仍可用，但不假称完成视觉核实。
 - 工具annotations帮助宿主展示只读/写入性质，最终授权仍由执行器配置和Go服务端共同执行。核心流程不要求sampling、elicitation或私有卡片。
 
+标准 MCP 宿主使用 `task.resume` 续接后，可携原 `taskId` 继续聊天内的任务。需要后台办理已接收的智能批次时，在同一私有目录明确运行 `qai worker --once --retry-batch <原批次ID>`。[换宿主的操作与回读](../ai/README.md#自动领取-app-智能整理)
+
 ## Pi
 
 2026-11-17核对[Pi官方MCP说明](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md)：当前版本支持stdio。用户级mcp.json和项目级配置分开；个人凭据使用用户级配置，项目配置须被信任。示例中qai必须是已安装工具包的实际可执行文件；凭据通过宿主继承的环境传入，不写项目配置。

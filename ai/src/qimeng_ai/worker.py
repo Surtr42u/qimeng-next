@@ -41,11 +41,11 @@ class ClaimJournal:
                        WHERE worker_claims.paused='delegation_daily_limit'""",
                        (body["batchId"], "claim-" + secrets.token_urlsafe(24), encode(body)))
 
-    def due(self):
+    def due(self, retry_batch=None):
         with self.state.transaction() as db:
             now = time.time()
             active = db.execute("SELECT * FROM worker_claims WHERE paused IS NULL AND next_attempt<=? "
-                                "ORDER BY next_attempt,rowid LIMIT 16", (now,)).fetchall()
+                                "ORDER BY (batch=?) DESC,next_attempt,rowid LIMIT 16", (now, retry_batch)).fetchall()
             # Pre-claim failures have no batch revision. Revisit those old and new
             # rows only when this control ledger can pay and the write is eligible.
             pending = f"SELECT key FROM pending WHERE {self.state.pending_filter}"
@@ -80,8 +80,12 @@ class ClaimJournal:
         with self.state.transaction() as db:
             change = db.execute("UPDATE worker_claims SET paused=NULL,revision=NULL,next_attempt=0 WHERE batch=?",
                                 (batch_id,))
-            if not change.rowcount:
-                raise ToolError("WORKER_CLAIM_NOT_FOUND", "此执行器没有该批的领取记录")
+            return bool(change.rowcount)
+
+    def adopt(self, batch_id):
+        # An existing Go lease has no new task.start request to replay.
+        with self.state.transaction() as db:
+            db.execute("INSERT INTO worker_claims(batch,claim_key,body) VALUES(?, '', '{}')", (batch_id,))
 
     def forget(self, batch_id):
         with self.state.transaction() as db:
@@ -126,22 +130,43 @@ def intake_state(report):
         return state
     if any(item["state"] == "staged" for item in report["inputs"]):
         return "staged"
-    if state == "partial":
+    if state == "partial" and not any(item["state"] in {"pending", "receiving"} for item in report["inputs"]):
         return "partial"
     return "waiting"
 
 
+def retry_claim(runtime, journal, batch):
+    if journal.resume(batch):
+        return
+    grant = runtime.transport.call("getCurrentAIDelegation", {})
+    runtime.task_state(batch)
+    session = runtime.transport.call("getCurrentSession", {})
+    if (session.get("parentDelegationId") != grant["id"] or session.get("batchId") != batch
+            or not {"read", "ingest", "organize"} <= set(session["scopes"])):
+        raise ToolError("WORKER_TASK_SCOPE_DENIED", "当前任务凭据须属于本长期授权，并获准接收和整理所选批次")
+    report = runtime.transport.call("getBatch", {"id": batch})
+    selection = report["batch"]
+    outcome = intake_state(report)
+    if (selection["id"] != batch or selection["mode"] != "intelligent" or selection["manifestState"] != "sealed"
+            or selection["libraryId"] not in grant["libraryIds"] or not grant["canIngest"] or not grant["canOrganize"]
+            or outcome == "waiting"):
+        raise ToolError("batch_not_claimable", "请选择本授权下已封存且可办理或已结算的智能批次")
+    if outcome != "staged":
+        return outcome
+    journal.adopt(batch)
+
+
 def drive_claim(runtime, host, journal, row, stop, usage, status, allow_image_lookup):
     batch = row["batch"]
-    body = json.loads(row["body"])
-    try:
-        journal.state.task_credential(batch)
-    except ToolError as exc:
-        if exc.code != "TASK_NOT_BOUND":
-            raise
-        started = runtime.call("task.start", {"operationId": row["claim_key"], "body": body})
-        if started.get("taskId") != batch:
-            raise ToolError("TASK_RESPONSE_INVALID", "签发响应与原应用批次不符", uncertain=True)
+    if row["claim_key"]:
+        try:
+            journal.state.task_credential(batch)
+        except ToolError as exc:
+            if exc.code != "TASK_NOT_BOUND":
+                raise
+            started = runtime.call("task.start", {"operationId": row["claim_key"], "body": json.loads(row["body"])})
+            if started.get("taskId") != batch:
+                raise ToolError("TASK_RESPONSE_INVALID", "签发响应与原应用批次不符", uncertain=True)
     report, visible = current_report(runtime, batch)
     status.observe(report)
     if row["paused"]:
@@ -159,7 +184,7 @@ def drive_claim(runtime, host, journal, row, stop, usage, status, allow_image_lo
     before = intake_state(report)
     if before != "staged" or stop.is_set():
         return ("stopped" if stop.is_set() else before), report["batch"]["revision"]
-    outcome = work_with_host(runtime, host, journal, batch, visible, stop, allow_image_lookup and body.get("allowImageLookup", False),
+    outcome = work_with_host(runtime, host, journal, batch, visible, stop, allow_image_lookup,
                              usage, lambda: status.transition(batch, "claimed"))
     report, _ = current_report(runtime, batch)
     status.observe(report)
@@ -177,8 +202,12 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
         status = WorkerStatus(runtime, state)
         status.flush()
         runtime.transport.active_token = None
+        outcomes = []
         if retry_batch:
-            journal.resume(retry_batch)
+            settled = retry_claim(runtime, journal, retry_batch)
+            if settled:
+                outcomes.append({"batchId": retry_batch, "state": settled, "modelUsage": ModelUsage().summary()})
+            runtime.transport.active_token = None
         admission = None
         try:
             ready = runtime.transport.call("listReadyIntakeBatches", {})["items"]
@@ -192,8 +221,7 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
             allow_image_lookup = policy.get("canLookupImages") is True
         for candidate in ready:
             journal.remember(candidate, "research" in runtime.config.permissions, allow_image_lookup)
-        outcomes = []
-        for row in journal.due():
+        for row in journal.due(retry_batch):
             if stop.is_set():
                 break
             batch = row["batch"]

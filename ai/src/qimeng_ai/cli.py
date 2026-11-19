@@ -24,7 +24,7 @@ def main() -> None:
     commands.add_parser("catalog", help="查询工具目录")
     worker = commands.add_parser("worker", help="在可信本机宿主自动领取 App 提交的智能批次")
     worker.add_argument("--once", action="store_true", help="处理一轮可领取或待恢复的批次")
-    worker.add_argument("--retry-batch", help="明确恢复本执行器已领取并等待处理的单个批次")
+    worker.add_argument("--retry-batch", help="明确恢复已领取的智能批次，包括在本目录用 task.resume 接续的批次")
     call = commands.add_parser("call", help="执行一个工具；JSON 从stdin读取")
     call.add_argument("tool")
     admin = commands.add_parser("admin", help="可信端预算状态/核销/续期")
