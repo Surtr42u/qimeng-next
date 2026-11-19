@@ -320,9 +320,11 @@ func (s *Service) Timeline(ctx context.Context, assetID, cursor string, limit in
 	if e != nil {
 		return model.Page[TimelineMark]{}, e
 	}
-	if _, e = s.Asset(ctx, assetID); e != nil {
+	asset, e := s.AssetDetail(ctx, assetID)
+	if e != nil {
 		return model.Page[TimelineMark]{}, e
 	}
+	assetID = asset.ID
 	key := "timeline:" + assetID
 	o, e := pageOffset(cursor, key)
 	if e != nil {

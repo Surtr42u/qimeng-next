@@ -481,9 +481,17 @@ func (s *Service) commitScannedFile(ctx context.Context, run *scanRun, file scan
 			}
 		}
 		if len(missing) == 1 {
-			a = missing[0]
-			isNew = false
-			moved = true
+			// An equal digest does not identify which reviewed physical file
+			// moved. Only an explicit move can rebind its recorded location.
+			retained, err := selectedImageOriginal(ctx, s.DB.DB, missing[0].ID)
+			if err != nil {
+				return err
+			}
+			if !retained {
+				a = missing[0]
+				isNew = false
+				moved = true
+			}
 		} else if len(missing) > 1 || len(candidates) > 100 {
 			skipScanIssue(&j, relative, "ambiguous_move")
 			return saveScan(ctx, s.DB.DB, j)
@@ -512,10 +520,18 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 	previousName := a.FileName
 	changedBytes := isNew || a.Hash != file.hash
 	if !isNew {
-		a.Revision++
 		if changedBytes {
+			retained, err := selectedImageOriginal(ctx, tx, a.ID)
+			if err != nil {
+				return err
+			}
+			if retained {
+				skipScanIssue(j, relative, "merge_original_changed")
+				return nil
+			}
 			a.ContentVersion++
 		}
+		a.Revision++
 	}
 	a.RelativePath = relative
 	a.FileName = path.Base(relative)

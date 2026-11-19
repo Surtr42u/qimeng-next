@@ -237,6 +237,9 @@ func fileDateBounds(f AssetFilter) (*time.Time, *time.Time, error) {
 func assetPredicate(f AssetFilter) (browsePredicate, error) {
 	where := []string{"a.trashed=?"}
 	args := []any{f.Trashed}
+	if f.Trashed {
+		where = append(where, "a.id NOT IN "+selectedImageDonors)
+	}
 	if !f.IncludeDisabled && !f.Trashed {
 		where = append(where, "COALESCE(json_extract(l.data,'$.enabled'),1)=1")
 	}

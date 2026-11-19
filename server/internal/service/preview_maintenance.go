@@ -8,13 +8,15 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
 
 var previewAssetDirectory = regexp.MustCompile(`^[0-9a-f]{32}$`)
-var managedPreviewFile = regexp.MustCompile(`^v[123]-[1-9][0-9]*-(256|512|1024)\.jpg$`)
+var managedPreviewFile = regexp.MustCompile(`^v[1234]-[1-9][0-9]*-(256|512|1024)\.jpg$`)
+
+const previewVersionColumns = `json_extract(a.data,'$.contentVersion'),
+	EXISTS(SELECT 1 FROM selected_image_merge_members WHERE physical_asset_id=a.id)`
 
 func (s *Service) previewWorker() {
 	defer s.workers.Done()
@@ -52,7 +54,7 @@ func (s *Service) previewWorker() {
 // Select keyset pages of inexpensive cache identities. Reading and decoding
 // originals is deferred until a current medium preview is actually missing.
 func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
-	query := `SELECT a.id,json_extract(a.data,'$.contentVersion') FROM assets a JOIN libraries l ON l.id=a.library_id
+	query := "SELECT a.id," + previewVersionColumns + ` FROM assets a JOIN libraries l ON l.id=a.library_id
 	 WHERE a.id>? AND a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
 	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
 	if scope.library != "" {
@@ -76,13 +78,14 @@ func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
 			return err
 		}
 		type identity struct {
-			id      string
-			version int64
+			id       string
+			version  int64
+			selected bool
 		}
 		page := make([]identity, 0, 256)
 		for rows.Next() {
 			var item identity
-			if err = rows.Scan(&item.id, &item.version); err != nil {
+			if err = rows.Scan(&item.id, &item.version, &item.selected); err != nil {
 				rows.Close()
 				return err
 			}
@@ -98,7 +101,7 @@ func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
 				return err
 			}
 			last = a.id
-			cache := previewPath(a.id, a.version, 512)
+			cache := previewPath(a.id, a.version, 512, a.selected)
 			info, err := s.Root.Lstat(cache)
 			if err == nil && info.Mode().IsRegular() {
 				continue
@@ -200,11 +203,12 @@ func (s *Service) removeOldPreviews(ctx context.Context, id, dirname string, ent
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var version int64
-	err := s.DB.DB.QueryRowContext(ctx, "SELECT json_extract(data,'$.contentVersion') FROM assets WHERE id=? AND trashed=0", id).Scan(&version)
+	var selected bool
+	err := s.DB.DB.QueryRowContext(ctx, "SELECT "+previewVersionColumns+" FROM assets a WHERE a.id=? AND a.trashed=0", id).Scan(&version, &selected)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	prefix := "v3-" + strconv.FormatInt(version, 10) + "-"
+	prefix := previewPrefix(version, selected)
 	for _, entry := range entries {
 		name := entry.Name()
 		if !entry.Type().IsRegular() || !managedPreviewFile.MatchString(name) || strings.HasPrefix(name, prefix) {

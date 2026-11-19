@@ -78,8 +78,23 @@ func (s *Service) Asset(ctx context.Context, id string) (model.Asset, error) {
 	return readAssetOnDay(ctx, s.DB.DB, id, time.Now().Format(time.DateOnly))
 }
 
+// AssetDetail follows a retained original's link for display. Mutations and
+// version-bound receipts use Asset or readAssetOnDay to require the exact ID.
+func (s *Service) AssetDetail(ctx context.Context, id string) (model.Asset, error) {
+	return resolveAssetOnDay(ctx, s.DB.DB, id, time.Now().Format(time.DateOnly))
+}
+
 func readAssetOnDay(ctx context.Context, q store.Querier, id, day string) (model.Asset, error) {
-	a, e := store.Get[model.Asset](ctx, q, "SELECT "+assetJSON+" FROM assets a JOIN authors au ON au.id=a.author_id WHERE a.id=?", day, id)
+	a, e := resolveAssetOnDay(ctx, q, id, day)
+	if e == nil && a.ID != id {
+		return model.Asset{}, &Error{Status: 409, Code: "asset_merged", Message: "该原件已合并，请打开代表项目后再操作。", Details: map[string]any{"representativeId": a.ID}}
+	}
+	return a, e
+}
+
+func resolveAssetOnDay(ctx context.Context, q store.Querier, id, day string) (model.Asset, error) {
+	a, e := store.Get[model.Asset](ctx, q, "SELECT "+assetJSON+` FROM assets a JOIN authors au ON au.id=a.author_id
+		WHERE a.id=coalesce((SELECT representative_id FROM selected_image_merge_members WHERE physical_asset_id=?),?)`, day, id, id)
 	return a, Normalize(e)
 }
 

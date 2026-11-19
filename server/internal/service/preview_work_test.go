@@ -89,7 +89,7 @@ func TestThumbnailWarmupKeepsCurrentBytesAndOnlyPrunesObsoleteRepresentations(t 
 	if err = s.warmPreviews(ctx, previewScope{library: lib.ID, asset: a.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := s.Root.Stat(previewPath(a.ID, 1, 512)); err != nil || info.Size() == 0 {
+	if info, err := s.Root.Stat(previewPath(a.ID, 1, 512, false)); err != nil || info.Size() == 0 {
 		t.Fatal("expected warmed medium preview", err)
 	}
 	if _, err = s.Root.Stat(dir + "/v2-1-512.jpg"); !errors.Is(err, os.ErrNotExist) {

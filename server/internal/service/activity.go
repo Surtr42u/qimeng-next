@@ -129,7 +129,7 @@ func (s *Service) History(ctx context.Context, cursor string, limit int) (model.
 
 func (s *Service) Stats(ctx context.Context) (map[string]int64, error) {
 	result := map[string]int64{}
-	rows, e := s.DB.DB.QueryContext(ctx, `SELECT 'assets',count(*) FROM assets WHERE trashed=0 UNION ALL SELECT 'images',count(*) FROM assets WHERE trashed=0 AND media_type!='video' UNION ALL SELECT 'videos',count(*) FROM assets WHERE trashed=0 AND media_type='video' UNION ALL SELECT 'bytes',COALESCE(sum(size),0) FROM assets WHERE trashed=0 UNION ALL SELECT 'favorites',count(*) FROM assets WHERE trashed=0 AND favorite=1 UNION ALL SELECT 'authors',count(*) FROM authors WHERE id!='unknown' UNION ALL SELECT 'events',count(*) FROM events UNION ALL SELECT 'trash',count(*) FROM assets WHERE trashed=1`)
+	rows, e := s.DB.DB.QueryContext(ctx, `SELECT 'assets',count(*) FROM assets WHERE trashed=0 UNION ALL SELECT 'images',count(*) FROM assets WHERE trashed=0 AND media_type!='video' UNION ALL SELECT 'videos',count(*) FROM assets WHERE trashed=0 AND media_type='video' UNION ALL SELECT 'bytes',COALESCE(sum(size),0) FROM assets WHERE trashed=0 UNION ALL SELECT 'favorites',count(*) FROM assets WHERE trashed=0 AND favorite=1 UNION ALL SELECT 'authors',count(*) FROM authors WHERE id!='unknown' UNION ALL SELECT 'events',count(*) FROM events UNION ALL SELECT 'trash',(`+visibleTrashCount+")")
 	if e != nil {
 		return nil, e
 	}

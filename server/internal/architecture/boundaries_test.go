@@ -18,6 +18,7 @@ const internalPrefix = "qimeng.local/next/server/internal/"
 // modules, and generated transport files have their own OpenAPI source of truth.
 var dependencies = map[string][]string{
 	"analytics":        {"model"},
+	"assetmerge":       {"backup", "domain", "model", "service", "storage", "store"},
 	"authorlist":       {"model"},
 	"backup":           {},
 	"domain":           {"model"},
@@ -129,6 +130,10 @@ func TestBoundaryExamples(t *testing.T) {
 		{"store", internalPrefix + "service", false},
 		{"service", internalPrefix + "httpapi", false},
 		{"legacycold", internalPrefix + "store", true},
+		{"assetmerge", internalPrefix + "backup", true},
+		{"assetmerge", internalPrefix + "store", true},
+		{"service", internalPrefix + "assetmerge", false},
+		{"httpapi", internalPrefix + "assetmerge", false},
 		{"service", internalPrefix + "legacycold", false},
 		{"httpapi", internalPrefix + "legacycold", false},
 		{"domain", "os/exec", false},
