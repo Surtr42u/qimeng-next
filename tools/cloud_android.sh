@@ -30,6 +30,7 @@ QIMENG_DATA_DIR="$RUNNER_TEMP/qimeng-next-source" QIMENG_LISTEN='127.0.0.1:18482
   QIMENG_ADMIN_TOKEN="$source_token" QIMENG_BACKUP_TARGETS='{}' QIMENG_DEFAULT_BACKUP_TARGET='' \
   "$RUNNER_TEMP/server-artifact/build/qimeng-next" > "$RUNNER_TEMP/qimeng-next-source.log" 2>&1 &
 source_pid=$!
+author_gate_pid=''
 finish() {
   result=$?
   trap - EXIT
@@ -37,6 +38,7 @@ finish() {
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next.ui.test/files android/build/cloud-screenshots/core-ui > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Android/data/media.qimeng.next/files/screenshots android/build/cloud-screenshots/app > /dev/null 2>&1 || true
   adb -s emulator-5556 pull /sdcard/Pictures/QimengNextCloudTests android/build/cloud-screenshots/retained > /dev/null 2>&1 || true
+  if [[ -n "$author_gate_pid" ]]; then kill "$author_gate_pid" 2>/dev/null || true; fi
   kill "$service_pid" "$source_pid" 2>/dev/null || true
   wait "$service_pid" 2>/dev/null || true
   wait "$source_pid" 2>/dev/null || true
@@ -106,5 +108,30 @@ gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugA
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceToken="$source_token" \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
+
+python3 tools/cloud_android_author_gate.py &
+author_gate_pid=$!
+author_gate_ready=false
+for attempt in $(seq 1 10); do
+  if curl --fail --silent http://127.0.0.1:18483/healthz > /dev/null; then author_gate_ready=true; break; fi
+  sleep 1
+done
+if [[ "$author_gate_ready" != true ]]; then echo 'Author UI fixture gate did not become ready'; exit 1; fi
+adb -s emulator-5556 shell settings put secure show_ime_with_hard_keyboard 1
+for layout in '360 1.0' '320 1.3'; do
+  read -r author_width author_font <<< "$layout"
+  prepare_transport "author-ui-$author_width"
+  adb -s emulator-5556 reverse tcp:18481 tcp:18483
+  adb -s emulator-5556 shell wm size "${author_width}x800"
+  adb -s emulator-5556 shell settings put system font_scale "$author_font"
+  gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugAndroidTest \
+    -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AuthorPresentationTest \
+    -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
+    -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" \
+    -Pandroid.testInstrumentationRunnerArguments.qimengAuthorWidth="$author_width" \
+    -Pandroid.testInstrumentationRunnerArguments.qimengAuthorFont="$author_font" --stacktrace || checks=1
+  results="android/app/build/outputs/androidTest-results/connected"
+  if [[ -d "$results" ]]; then cp -r "$results" "android/build/cloud-screenshots/author-${author_width}dp-results"; fi
+done
 if (( checks != 0 )); then prepare_transport after-failure || true; fi
 exit "$checks"
