@@ -12,6 +12,7 @@ on:
       - 'ui/react/**'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: installed-web-${{ github.ref }}
   cancel-in-progress: true
@@ -79,10 +80,17 @@ jobs:
             echo "Ubuntu reference-font download attempt $attempt failed"
           done
           exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: web-dist
+          path: first-proposal
+          run-id: 44480244422
+          github-token: ${{ github.token }}
       - name: Compare reachable fields and actions on the first offline visit
         working-directory: next/web
         env:
           BASELINE_DIST: ${{ github.workspace }}/baseline/web/dist
+          FIRST_PROPOSAL_DIST: ${{ github.workspace }}/first-proposal
           CANDIDATE_DIST: ${{ github.workspace }}/next/web/dist
           COMPARISON_DIR: ${{ github.workspace }}/evidence
         run: node tests/route-offline-study.mjs

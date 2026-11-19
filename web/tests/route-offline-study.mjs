@@ -11,7 +11,7 @@ const records = [];
 await mkdir(out, { recursive: true });
 try {
   const inventory = await makeInventory(browser);
-  for (const [version, dist] of Object.entries({ baseline: process.env.BASELINE_DIST, candidate: process.env.CANDIDATE_DIST })) {
+  for (const [version, dist] of Object.entries({ baseline: process.env.BASELINE_DIST, firstProposal: process.env.FIRST_PROPOSAL_DIST, candidate: process.env.CANDIDATE_DIST })) {
     const server = await serve("candidate", dist, inventory);
     try {
       for (const scene of ["profile", "archives", "ai", "offline-from-home"]) {
@@ -48,7 +48,7 @@ try {
             record.summary = await page.locator(".creator-bio-preview").textContent({ timeout: 600 }).catch(() => "") === "合成资料";
             const edit = page.getByRole("button", { name: "编辑基础资料", exact: true });
             record.canEdit = await edit.isVisible() && await edit.isEnabled();
-            if (record.canEdit) { await edit.click(); draft = page.getByLabel("整理简介", { exact: true }); }
+            if (record.canEdit) { await edit.click(); draft = page.getByRole("textbox", { name: "整理简介", exact: true }); }
           } else if (scene === "archives") {
             record.authorList = await page.getByRole("link", { name: "作者列表" }).isVisible();
             record.currentAuthor = await page.getByRole("link", { name: "查看当前作者" }).isVisible();
@@ -56,7 +56,7 @@ try {
             const add = page.getByRole("button", { name: "添加 AI 接入" });
             record.canAdd = await add.isVisible() && await add.isEnabled();
             record.canFilter = await page.getByLabel("接入状态").isVisible();
-            if (record.canAdd) { await add.click(); draft = page.getByLabel("接入名称"); }
+            if (record.canAdd) { await add.click(); draft = page.getByRole("textbox", { name: "接入名称" }); }
           }
           if (draft) await draft.fill("合成离线草稿");
           record.draftOffline = draft ? await draft.inputValue() === "合成离线草稿" : false;
