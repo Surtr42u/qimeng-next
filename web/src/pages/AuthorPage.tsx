@@ -15,6 +15,7 @@ import { LegacyFacetFilter } from "../components/LegacyFacetFilter";
 import { useAssetFacets } from "../data/browse";
 import { useBrowseSelection, BrowseTail } from "./BrowsePage";
 import { AuthorAvatar, ProfileLink } from "./ProfilePresentation";
+import { ProfileDetails } from "./ProfileDetails";
 
 export function AuthorPage() {
   const { id = "" } = useParams();
@@ -245,3 +246,31 @@ export function AuthorPage() {
   );
 }
 
+export function AuthorProfilePage() {
+  const { id = "" } = useParams();
+  const author = useAuthor(id);
+  return (
+    <div className="page" id="page-author-profile">
+      <header className="manage-page-head">
+        <Link className="manage-back" to={`/authors/${encodeURIComponent(id)}`}>
+          ← 返回作者主页
+        </Link>
+        <div className="manage-heading">
+          <div>
+            <h2 data-page-heading tabIndex={-1}>
+              作者资料
+            </h2>
+            <p>{author.data?.name ?? "账号、平台与核验信息"}</p>
+          </div>
+        </div>
+      </header>
+      {author.isPending ? (
+        <Loading />
+      ) : author.data ? (
+        <ProfileDetails author={author.data} />
+      ) : (
+        <ErrorNotice error={author.error} retry={() => void author.refetch()} />
+      )}
+    </div>
+  );
+}

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Link,
   NavLink,
@@ -18,7 +18,6 @@ import { usePageRestoration, UnsavedProvider } from "../lib/navigation";
 import { setTheme } from "../lib/preferences";
 import { reportClientProblem } from "../lib/client-problems";
 import { LegacySearchBox } from "../components/LegacySearchBox";
-import { Loading } from "../components/Feedback";
 import {
   BackIcon,
   HomeIcon,
@@ -283,9 +282,7 @@ function Shell() {
             setShowBackTop(event.currentTarget.scrollTop > 400)
           }
         >
-          <Suspense fallback={<Loading />}>
-            <Outlet />
-          </Suspense>
+          <Outlet />
         </main>
       </div>
       {!detail && (

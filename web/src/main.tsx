@@ -3,7 +3,6 @@ import "@fontsource-variable/geist";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { App, RouteError } from "./app/App";
-import { onDemandPage } from "./app/onDemandPage";
 import { queryClient } from "./data/query";
 import { BrowsePage } from "./pages/BrowsePage";
 import { Loading } from "./components/Feedback";
@@ -14,9 +13,11 @@ import { ReplacePage } from "./pages/ReplacePage";
 import { AssetEditPage } from "./pages/AssetEditPage";
 import { MinePage } from "./pages/MinePage";
 import { AuthorsPage } from "./pages/AuthorsPage";
-import { AuthorPage } from "./pages/AuthorPage";
+import { AuthorPage, AuthorProfilePage } from "./pages/AuthorPage";
+import { AuthorArchivesPage } from "./pages/AuthorArchivePage";
 import { ActivityRankingPage } from "./pages/ActivityRankingPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { AIAccessPage } from "./pages/AIAccessPage";
 import "../../ui/react/tokens.css";
 import "./styles/app.css";
 import "./styles/charts.css";
@@ -26,10 +27,6 @@ import "./styles/profiles.css";
 import "./styles/legacy-base.css";
 import "./styles/legacy-ui.css";
 import "./styles/legacy-adapter.css";
-
-const AuthorProfilePage = onDemandPage(async () => (await import("./pages/ProfileDetails")).AuthorProfilePage);
-const AuthorArchivesPage = onDemandPage(async () => (await import("./pages/AuthorArchivePage")).AuthorArchivesPage);
-const AIAccessPage = onDemandPage(async () => (await import("./pages/AIAccessPage")).AIAccessPage);
 
 const router = createBrowserRouter([
   {

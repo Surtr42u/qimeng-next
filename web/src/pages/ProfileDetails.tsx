@@ -2,53 +2,21 @@ import { SubscriptionEditor } from "./CreatorSubscription";
 import { useAuthorUpdates } from "../data/author-updates";
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { Schema } from "../data/client";
-import {
-  useAuthorProfile,
-  useAuthorProfileCandidates,
-} from "../data/author-profiles";
+import { useAuthorProfile } from "../data/author-profiles";
+import { useQueryView } from "../lib/useQueryView";
 import { ErrorNotice, Loading } from "../components/Feedback";
 import {
   AuthorAvatar,
   ProfileEvidenceList,
   ProfileLink,
-  ProfileValuesView,
 } from "./ProfilePresentation";
 import { ProfileBlockEditor } from "./ProfileBlockEditor";
 import { ProfileAvatarEditor } from "./ProfileAvatarEditor";
 import { AuthorDetails } from "./AuthorDetails";
 import { AuthorOperations } from "./AuthorOperations";
 import { useAuthor } from "../data/manage";
-
-export function AuthorProfilePage() {
-  const { id = "" } = useParams();
-  const author = useAuthor(id);
-  return (
-    <div className="page" id="page-author-profile">
-      <header className="manage-page-head">
-        <Link className="manage-back" to={`/authors/${encodeURIComponent(id)}`}>
-          ← 返回作者主页
-        </Link>
-        <div className="manage-heading">
-          <div>
-            <h2 data-page-heading tabIndex={-1}>
-              作者资料
-            </h2>
-            <p>{author.data?.name ?? "账号、平台与核验信息"}</p>
-          </div>
-        </div>
-      </header>
-      {author.isPending ? (
-        <Loading />
-      ) : author.data ? (
-        <ProfileDetails author={author.data} />
-      ) : (
-        <ErrorNotice error={author.error} retry={() => void author.refetch()} />
-      )}
-    </div>
-  );
-}
 
 function ProfileGroup({
   title,
@@ -80,11 +48,11 @@ function ProfileGroup({
   );
 }
 
-function ProfileDetails({ author }: { author: Schema<"Author"> }) {
+export function ProfileDetails({ author }: { author: Schema<"Author"> }) {
   const query = useAuthorProfile(author.id);
   const feed = useAuthorUpdates(author.id);
   const identity = useAuthor(author.id);
-  const candidates = useAuthorProfileCandidates(author.id);
+  const candidates = useQueryView("profile-candidates", () => import("./PendingProfileCandidates"));
   const [editing, setEditing] = useState<
     | Schema<"AuthorProfileBlock">["block"]
     | "avatar"
@@ -105,10 +73,6 @@ function ProfileDetails({ author }: { author: Schema<"Author"> }) {
     (item) =>
       item.block === editing,
   );
-  const pending =
-    candidates.data?.pages
-      .flatMap((page) => page.items)
-      .filter((item) => item.state === "pending") ?? [];
   return (
     <section
       className="rank-card creator-profile creator-details"
@@ -273,53 +237,13 @@ function ProfileDetails({ author }: { author: Schema<"Author"> }) {
               </ProfileGroup>
             </div>
           )}
-          <ErrorNotice
-            error={candidates.error}
-            stale={pending.length > 0}
-            retry={() => void candidates.refetch()}
-          />
-          {pending.map((item) => (
-            <section
-              key={item.id}
-              className="creator-candidate"
-              aria-label="待审核资料"
-            >
-              <h3>待核对的候选资料</h3>
-              <p>核对候选资料与来源后保存。</p>
-              <ProfileValuesView
-                block={item.block}
-                values={item.values}
-                onlyPresent
-              />
-              <nav className="creator-platforms">
-                {item.evidence.map((evidence, index) => (
-                  <ProfileLink key={index} value={evidence.url}>
-                    {evidence.title || evidence.url} ↗
-                  </ProfileLink>
-                ))}
-              </nav>
-              <button
-                type="button"
-                className="pill"
-                disabled={!profile?.editable}
-                onClick={() => {
-                  setCandidate(item);
-                  setEditing(item.block);
-                }}
-              >
-                填入候选草稿，继续核对
-              </button>
-            </section>
-          ))}
-          {candidates.hasNextPage && (
-            <button
-              className="pill"
-              disabled={candidates.isFetchingNextPage}
-              onClick={() => void candidates.fetchNextPage()}
-            >
-              更多候选记录
-            </button>
-          )}
+          {candidates.data ? (
+            <candidates.data.PendingProfileCandidates
+              authorId={author.id}
+              editable={!!profile?.editable}
+              review={item => { setCandidate(item); setEditing(item.block); }}
+            />
+          ) : <ErrorNotice error={candidates.error} retry={() => void candidates.refetch()} />}
           <details className="creator-records">
             <summary>身份管理与历史归档</summary>
             <button className="pill" onClick={() => setEditing("identity")}>
