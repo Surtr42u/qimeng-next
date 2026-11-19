@@ -18,21 +18,6 @@ import (
 	"qimeng.local/next/server/internal/store"
 )
 
-func awaitProtection(t *testing.T, f *fixture, batch, id string) service.BatchProtection {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		r := f.json("GET", "/batches/"+batch+"/protections/"+id, "", nil, 200)
-		var p service.BatchProtection
-		decode(t, r, &p)
-		if p.State == "completed" || p.State == "failed" || p.State == "interrupted" {
-			return p
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("protection did not finish")
-	return service.BatchProtection{}
-}
 func TestDistinctVolumeProtectionReconcilesManifestAndNewLeaseRecordsOutcome(t *testing.T) {
 	f := setup(t)
 	target, e := os.MkdirTemp("/dev/shm", "qimeng-synthetic-proof-")

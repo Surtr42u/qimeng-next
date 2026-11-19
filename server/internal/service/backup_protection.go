@@ -43,14 +43,24 @@ type BatchProtection struct {
 	CreatedAt           time.Time        `json:"createdAt"`
 	VerifiedAt          *time.Time       `json:"verifiedAt,omitempty"`
 	Items               []ProtectedInput `json:"items"`
+
+	snapshotInputsVerified bool
+}
+
+// Track the verification performed at creation separately from the immutable
+// target receipt. Older records require checking their snapshot during cleanup.
+type storedBatchProtection struct {
+	BatchProtection
+	SnapshotInputsVerified bool `json:"snapshotInputsVerified,omitempty"`
 }
 
 func (s *Service) BatchProtection(ctx context.Context, p model.Principal, batchID, id string) (BatchProtection, error) {
 	if e := Authorize(p, "read", batchID); e != nil {
 		return BatchProtection{}, e
 	}
-	value, e := store.Get[BatchProtection](ctx, s.DB.DB, "SELECT data FROM batch_protections WHERE id=? AND batch_id=?", id, batchID)
-	return value, Normalize(e)
+	value, e := store.Get[storedBatchProtection](ctx, s.DB.DB, "SELECT data FROM batch_protections WHERE id=? AND batch_id=?", id, batchID)
+	value.BatchProtection.snapshotInputsVerified = value.SnapshotInputsVerified
+	return value.BatchProtection, Normalize(e)
 }
 func (s *Service) BatchProtections(ctx context.Context, p model.Principal, batchID, cursor string, limit int) (model.Page[BatchProtection], error) {
 	result := model.Page[BatchProtection]{Items: []BatchProtection{}}
@@ -77,7 +87,7 @@ func (s *Service) BatchProtections(ctx context.Context, p model.Principal, batch
 	return result, nil
 }
 func saveProtection(ctx context.Context, q store.Querier, p BatchProtection) error {
-	raw, e := store.Encode(p)
+	raw, e := store.Encode(storedBatchProtection{p, p.snapshotInputsVerified})
 	if e != nil {
 		return e
 	}
@@ -112,13 +122,6 @@ func (s *Service) StartBatchProtection(ctx context.Context, w *Write, batchID st
 	if batch.ManifestState != "sealed" || batch.State == "cancelled" {
 		return value, Fail(409, "manifest_required", "必须以有效封存的原始清单逐项保护，取消或旧未核实批次不能申请。")
 	}
-	inputs, e := s.batchInputs(ctx, s.DB.DB, batchID)
-	if e != nil {
-		return value, e
-	}
-	if len(inputs) != batch.ExpectedInputs {
-		return value, Fail(409, "manifest_corrupt", "原始清单数量不一致。")
-	}
 	value.ManifestFingerprint = batch.ManifestFingerprint
 	target, info, e := s.backupTarget(ctx, s.Config.DefaultBackupTarget)
 	if e != nil {
@@ -132,47 +135,22 @@ func (s *Service) StartBatchProtection(ctx context.Context, w *Write, batchID st
 	if e = s.protectionCapacity(ctx, batchID); e != nil {
 		return value, e
 	}
-	ready := 0
-	for _, input := range inputs {
-		item := ProtectedInput{InputID: input.ID, Ordinal: input.Ordinal, State: "retained", Reason: input.State, UploadID: input.UploadID}
-		if input.State == "failed" && input.ErrorCode != "" {
-			item.Reason = input.ErrorCode
-		}
-		if input.State == "ingested" {
-			upload, e := store.Get[model.Upload](ctx, s.DB.DB, "SELECT data FROM uploads WHERE id=?", input.UploadID)
-			if e != nil {
-				return value, e
-			}
-			item.AssetID = upload.AssetID
-			item.ContentVersion = upload.PublishedContentVersion
-			item.Hash = upload.Hash
-			item.Size = upload.Size
-			asset, e := store.Get[model.Asset](ctx, s.DB.DB, "SELECT data FROM assets WHERE id=?", upload.AssetID)
-			if errors.Is(e, sql.ErrNoRows) {
-				item.Reason = "input_version_unavailable"
-				value.Items = append(value.Items, item)
-				continue
-			}
-			if e != nil {
-				return value, e
-			}
-			if item.ContentVersion < 1 || asset.ContentVersion != item.ContentVersion || asset.Trashed || asset.Hash != upload.Hash || asset.Size != upload.Size {
-				item.Reason = "input_version_unavailable"
-			} else {
-				item.State = "ready"
-				item.Reason = ""
-				ready++
-			}
-		}
-		value.Items = append(value.Items, item)
-	}
-	if ready == 0 {
-		return value, Fail(409, "no_protectable_inputs", "本批暂无可核验的成功输入，所有来源应保留。")
-	}
-	checkpoint, e := s.createBackupCheckpoint(ctx, w)
+	live, ready, e := protectionVersions(ctx, s.DB.DB, batchID)
 	if e != nil {
 		return value, e
 	}
+	if ready == 0 {
+		return value, noProtectableInputs()
+	}
+	checkpoint, e := s.createBackupCheckpoint(ctx, w, func(snapshot *sql.DB) error {
+		items, err := snapshotProtectionItems(ctx, snapshot, batch, live)
+		value.Items = items
+		return err
+	})
+	if e != nil {
+		return value, e
+	}
+	value.snapshotInputsVerified = true
 	value.CheckpointID = checkpoint.ID
 	value.SnapshotHash = checkpoint.SnapshotHash
 	infoFile, e := s.Root.Stat("backups/" + checkpoint.ID + "/snapshot.sqlite")
@@ -300,6 +278,12 @@ func (s *Service) protectInputs(ctx context.Context, p BatchProtection) {
 	}
 	defer root.Close()
 	sourceSnapshot := "backups/" + p.CheckpointID + "/snapshot.sqlite"
+	if !p.snapshotInputsVerified {
+		if e = s.verifyLegacyProtectionItems(ctx, p, p.Items, nil); e != nil {
+			fail(e)
+			return
+		}
+	}
 	e = copyTargetObject(ctx, root, target.Path, "temporary/"+p.ID+"-snapshot.partial", protectionSnapshot(p), p.SnapshotHash, p.SnapshotBytes, s.Config.ReserveBytes, func() (io.ReadCloser, error) { return s.Root.Open(sourceSnapshot) })
 	if e != nil {
 		fail(e)
