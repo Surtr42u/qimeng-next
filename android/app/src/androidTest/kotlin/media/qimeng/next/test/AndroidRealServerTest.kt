@@ -305,29 +305,23 @@ class AndroidRealServerTest {
     }
 
 
+    @Test(timeout = 300_000)
+    fun videoControlsMatchTheInstalledAppFromNormalEntrances() {
+        VideoParityRoundTrip(compose, runBlocking { isolatedServerGraph() }).run()
+    }
+
     private fun clickVideoControl(description: String) {
-        val instrument = InstrumentationRegistry.getInstrumentation()
         var control: android.graphics.Rect? = null
         compose.waitUntil(15_000) {
             compose.activityRule.scenario.onActivity { activity ->
-                val views = arrayListOf<android.view.View>()
-                activity.window.decorView.findViewsWithText(views, description, android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
-                val match = views.singleOrNull { it.isShown && it.isEnabled && it.contentDescription == description }
-                control = match?.let { view ->
-                    val location = IntArray(2)
-                    view.getLocationOnScreen(location)
-                    android.graphics.Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
-                }
+                control = activity.findVideoControl(description)?.takeIf { it.isEnabled }?.screenBounds()
             }
             control?.isEmpty == false
         }
         val bounds = requireNotNull(control)
-        val downTime = android.os.SystemClock.uptimeMillis()
-        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
-            val event = android.view.MotionEvent.obtain(downTime, android.os.SystemClock.uptimeMillis(), action,
-                bounds.exactCenterX(), bounds.exactCenterY(), 0)
-            try { instrument.sendPointerSync(event) } finally { event.recycle() }
-        }
+        val down = android.os.SystemClock.uptimeMillis()
+        sendVideoTouch(down, android.view.MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY())
+        sendVideoTouch(down, android.view.MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY())
     }
 
     private data class PlaybackOrientation(val request: Int, val configuration: Int, val rotation: Int)
@@ -573,7 +567,12 @@ class AndroidRealServerTest {
 
 internal fun copyCloudVideo(uri: Uri) {
     val instrument = InstrumentationRegistry.getInstrumentation()
-    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
+    val sample = when (uri.lastPathSegment) {
+        "parity-landscape.mp4" -> "qimeng-next-test-landscape.mp4"
+        "parity-portrait.mp4" -> "qimeng-next-test-portrait.mp4"
+        else -> "qimeng-next-test.mp4"
+    }
+    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/$sample")).use { input ->
         requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
             assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
         }

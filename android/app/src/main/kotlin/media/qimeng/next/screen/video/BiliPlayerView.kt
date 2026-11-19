@@ -318,6 +318,8 @@ internal class BiliPlayerView(context: Context) : FrameLayout(context) {
     fun detachPlayer() {
         detachControls()
         playerView.player = null
+        onFullscreen = null
+        onControllerVisibilityChanged = null
     }
 
     override fun onAttachedToWindow() {
@@ -338,6 +340,7 @@ internal class BiliPlayerView(context: Context) : FrameLayout(context) {
     }
 
     private fun detachControls() {
+        if (seekStartPosition != null) finishSeek(commit = false)
         if (isLongPressing) finishLongPress(commit = false)
         playerView.player?.removeListener(playerListener)
         popup?.dismiss()
@@ -776,6 +779,7 @@ internal class BiliPlayerView(context: Context) : FrameLayout(context) {
     }
 
     override fun performClick(): Boolean {
+        if (playerView.player == null) return false
         super.performClick()
         showController(!controllerVisible)
         return true

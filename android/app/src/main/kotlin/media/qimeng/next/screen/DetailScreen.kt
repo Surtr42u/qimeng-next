@@ -57,8 +57,8 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     var chromeVisible by rememberSaveable(id) { mutableStateOf(true) }
     var zoomImmersive by rememberSaveable(id) { mutableStateOf(false) }
     var resetImage by rememberSaveable(id) { mutableIntStateOf(0) }
-    var playerActive by rememberSaveable(id) { mutableStateOf(false) }
-    var playbackChrome by rememberSaveable(id) { mutableStateOf(true) }
+    var playerActive by remember(id) { mutableStateOf(false) }
+    var playbackChrome by remember(id) { mutableStateOf(true) }
     var showAuthorSheet by rememberSaveable(id) { mutableStateOf(false) }
     var showEditor by rememberSaveable(id) { mutableStateOf(false) }
     var showTags by rememberSaveable(id) { mutableStateOf(false) }

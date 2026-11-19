@@ -60,7 +60,7 @@ AI 接入默认可读取全库。新增接入时依次选择动作、指定范�
 
 云端专用 API 35 模拟器再运行 `:core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest`。这些测试覆盖快速切换只有一个活动页面、草稿恢复、减少动效、选择语义、大字/深色导航，以及队列重建、坏记录不伪装空队列、认证同源/重定向/断开边界；合成背景截图写入测试应用 external files 目录。JVM 测试另覆盖前后台停留区段、目标实例与查询代际。不得使用本机默认模拟器或手机，也不能访问旧 8420 实例。
 
-真实链路仪器类为 `media.qimeng.next.test.AndroidRealServerTest`：只允许 runner 参数 `qimengServerUrl=http://127.0.0.1:18481/`，`qimengToken` 来自同 SHA 隔离 Go 服务的临时测试凭据。云端将短 H.264 合成视频放到设备 `/data/local/tmp/qimeng-next-test.mp4`；测试通过仅存在于测试 APK 的 ContentProvider 和真实 WorkManager 验证 PNG/视频入库、标签、收藏、推荐及播放历史，不 mock 服务。完整窗口截图存入云模拟器的合成相册，应用卸载后仍可回收。运行命令、显式设备选择及产物回收由云端工作流负责。
+真实链路仪器类为 `media.qimeng.next.test.AndroidRealServerTest`：只允许 runner 参数 `qimengServerUrl=http://127.0.0.1:18481/`，`qimengToken` 来自同 SHA 隔离 Go 服务的临时测试凭据。云端将横屏和竖屏 H.264 合成视频放到指定设备。测试通过仅存在于测试 APK 的 ContentProvider 和真实 WorkManager 验证 PNG / 视频入库、标签、收藏、推荐及播放历史。视频用例从首页、相册和作者作品进入，核对暂停拖动提交一次进度、播放完毕重播、横屏进出、后台恢复、解码表面和窗口图像。完整窗口截图存入云模拟器的合成相册，应用卸载后仍可回收。运行命令、显式设备选择及产物回收由云端工作流负责。
 
 client 仪器任务为 `:app:connectedClientDebugAndroidTest`。本机原生产物按 embedded README 云端装配后构建 `:app:assembleEmbeddedDebug`；隔离清空合成应用数据，再单独运行 `:app:connectedEmbeddedDebugAndroidTest`，限定类 `media.qimeng.next.test.EmbeddedRuntimeTest` 且显式参数 `qimengEmbedded=true`。该测试验证受包 Go 在 App UID 下启动、TLS pin 与正常 SDK 登录、同一实例的库数据经停止 / 重启仍在，并要求新启动更换临时证书。不能用这条基础测试代替全部本机媒体 / 后台 / 迁移验收。
 

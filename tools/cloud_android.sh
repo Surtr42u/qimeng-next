@@ -91,8 +91,12 @@ for attempt in $(seq 1 30); do
 done
 if [[ "$ready" != true ]]; then echo 'Isolated Android server did not become ready'; exit 1; fi
 ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test.mp4"
+ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=15' -vf hue=h=90 -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test-landscape.mp4"
+ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=180x320:rate=15' -t 12 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/qimeng-next-test-portrait.mp4"
 prepare_transport core
 adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test.mp4" /data/local/tmp/qimeng-next-test.mp4
+adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test-landscape.mp4" /data/local/tmp/qimeng-next-test-landscape.mp4
+adb -s emulator-5556 push "$RUNNER_TEMP/qimeng-next-test-portrait.mp4" /data/local/tmp/qimeng-next-test-portrait.mp4
 checks=0
 gradle --no-daemon --continue -p android -Pqimeng.embedded=false :core:ui:connectedDebugAndroidTest :core:data:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceUrl=http://127.0.0.1:18482/ \
