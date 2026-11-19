@@ -2,11 +2,64 @@ package httpapi_test
 
 import (
 	"net/url"
+	"slices"
 	"testing"
+	"time"
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
+
+func TestHeatRankingBreaksTiesByEffectiveFileDate(t *testing.T) {
+	f := setup(t)
+	var rankedIDs []string
+	for i, name := range []string{"rank-old.png", "rank-new-a.png", "rank-new-b.png", "rank-unknown.png"} {
+		source := time.Date(2024, time.March, 10-i, 0, 0, 0, 0, time.UTC)
+		u, _ := f.upload(name, uint8(170+i), map[string]any{"sourceMtime": source})
+		a := f.complete(u).Asset
+		var fileDate any
+		var contentMtime any
+		if i < 3 {
+			day := 1
+			if i > 0 {
+				day = 2
+			}
+			modified := time.Date(2024, time.March, day, 0, 0, 0, 0, time.UTC)
+			fileDate, contentMtime = modified.UnixMilli(), modified.Format(time.RFC3339Nano)
+		} else if _, err := f.s.DB.DB.Exec("UPDATE asset_records SET data=json_remove(data,'$.fileDate','$.sourceMtime') WHERE id=?", a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.s.DB.DB.Exec("UPDATE asset_records SET file_date=? WHERE id=?", fileDate, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.s.DB.DB.Exec("UPDATE asset_locations SET content_mtime=? WHERE asset_id=?", contentMtime, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		f.json("POST", "/assets/"+a.ID+"/events", "", map[string]any{"eventId": "heat-tie-" + a.ID, "kind": "view", "contentVersion": a.ContentVersion}, 200)
+		rankedIDs = append(rankedIDs, a.ID)
+	}
+	want := []string{rankedIDs[1], rankedIDs[2], rankedIDs[0], rankedIDs[3]}
+	slices.Sort(want[:2])
+	path := "/rankings?period=week&limit=2"
+	var got []string
+	for len(got) < len(want) {
+		var ranking model.Page[service.RankedAsset]
+		decode(t, f.json("GET", path, "", nil, 200), &ranking)
+		for _, item := range ranking.Items {
+			if item.Score != 1 {
+				t.Fatalf("unexpected heat for %s: %d", item.Asset.ID, item.Score)
+			}
+			got = append(got, item.Asset.ID)
+		}
+		if ranking.NextCursor == "" {
+			break
+		}
+		path = "/rankings?period=week&limit=2&cursor=" + url.QueryEscape(ranking.NextCursor)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ranking order was %v, want %v", got, want)
+	}
+}
 
 func TestActivityProjectionsRecommendationPaginationAndPreferenceConflict(t *testing.T) {
 	f := setup(t)
