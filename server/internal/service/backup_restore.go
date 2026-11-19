@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	archive "qimeng.local/next/server/internal/backup"
 	"qimeng.local/next/server/internal/domain"
@@ -91,11 +92,13 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 	seenAssets, seenUploads := map[string]bool{}, map[string]bool{}
 	output := func(file archive.File, reader io.Reader) error {
 		target := "restore.sqlite"
+		modifiedAt := file.ModifiedAt
 		if file.Kind != "snapshot" {
 			if snapshot == nil {
 				return errors.New("backup snapshot must precede media")
 			}
-			if e := validateBackupPayload(ctx, snapshot, file); e != nil {
+			var e error
+			if modifiedAt, e = validateBackupPayload(ctx, snapshot, file); e != nil {
 				return e
 			}
 			target = file.StoragePath
@@ -126,8 +129,8 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 		if e != nil {
 			return e
 		}
-		if file.ModifiedAt != nil {
-			if e = root.Chtimes(target, *file.ModifiedAt, *file.ModifiedAt); e != nil {
+		if modifiedAt != nil {
+			if e = root.Chtimes(target, *modifiedAt, *modifiedAt); e != nil {
 				return e
 			}
 		}
@@ -154,7 +157,7 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 					return e
 				}
 			}
-			uploads, e := snapshot.QueryContext(ctx, "SELECT u.id,json_extract(u.data,'$.libraryId'),l.id IS NOT NULL FROM uploads u LEFT JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId')")
+			uploads, e := snapshot.QueryContext(ctx, "SELECT u.id,json_extract(u.data,'$.libraryId'),l.id IS NOT NULL AND u.state!='ingested' FROM uploads u LEFT JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId')")
 			if e != nil {
 				return e
 			}
@@ -294,31 +297,38 @@ func (w *restoreWriter) Write(p []byte) (int, error) {
 	return n, e
 }
 
-func validateBackupPayload(ctx context.Context, db *sql.DB, file archive.File) error {
+// validateBackupPayload checks the snapshot and returns the recorded time to restore.
+func validateBackupPayload(ctx context.Context, db *sql.DB, file archive.File) (*time.Time, error) {
 	if !domain.ValidRelative(file.StoragePath) || !safeBackupID(file.ObjectID) {
-		return errors.New("invalid backup storage path")
+		return nil, errors.New("invalid backup storage path")
 	}
 	switch file.Kind {
 	case "asset":
 		a, e := store.Get[model.Asset](ctx, db, "SELECT data FROM assets WHERE id=?", file.ObjectID)
 		if e != nil {
-			return e
+			return nil, e
 		}
 		if !safeBackupID(a.LibraryID) || !domain.ValidName(a.FileName) || !domain.ValidMediaPath(a.RelativePath) || a.Hash != file.SHA256 || a.Size != file.Size || a.ContentVersion != file.ContentVersion || assetPath(a) != file.StoragePath {
-			return errors.New("asset payload does not match snapshot")
+			return nil, errors.New("asset payload does not match snapshot")
+		}
+		if a.ContentMtime != nil {
+			if file.ModifiedAt != nil && !a.ContentMtime.Equal(*file.ModifiedAt) {
+				return nil, errors.New("asset modification time does not match snapshot")
+			}
+			return a.ContentMtime, nil
 		}
 	case "upload":
 		u, e := store.Get[model.Upload](ctx, db, "SELECT data FROM uploads WHERE id=? AND state!='ingested'", file.ObjectID)
 		if e != nil {
-			return e
+			return nil, e
 		}
 		if !safeBackupID(u.LibraryID) || u.Offset < 0 || u.Offset > u.Size || u.Offset != file.Size || uploadPath(u.ID) != file.StoragePath || u.Hash != "" && u.Hash != file.SHA256 {
-			return errors.New("upload payload does not match snapshot")
+			return nil, errors.New("upload payload does not match snapshot")
 		}
 	default:
-		return errors.New("unsupported backup payload")
+		return nil, errors.New("unsupported backup payload")
 	}
-	return nil
+	return file.ModifiedAt, nil
 }
 func validateBackupCoverage(ctx context.Context, db *sql.DB, m archive.Manifest, assetCount, uploadCount int) error {
 	var assets, uploads int
@@ -390,7 +400,7 @@ func VerifyBackup(ctx context.Context, filename, expected string) (RestoreResult
 		if db == nil {
 			return errors.New("missing snapshot")
 		}
-		if e := validateBackupPayload(ctx, db, entry); e != nil {
+		if _, e := validateBackupPayload(ctx, db, entry); e != nil {
 			return e
 		}
 		if entry.Kind == "asset" {

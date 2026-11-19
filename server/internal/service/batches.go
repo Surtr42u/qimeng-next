@@ -705,10 +705,7 @@ func (s *Service) PreparePlan(ctx context.Context, w *Write, id string, in model
 // CommitPlan gives each input a separate atomic receipt and publishes one file at
 // a time. Failures remain visible without rolling back unrelated committed items.
 func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, batchID, planID, fingerprint, key string) (Result, error) {
-	if e := Authorize(principal, "organize", batchID); e != nil {
-		return Result{}, e
-	}
-	if e := Authorize(principal, "ingest", batchID); e != nil {
+	if e := authorizePlanCommit(principal, batchID); e != nil {
 		return Result{}, e
 	}
 	if len(key) < 8 || len(key) > 128 {
@@ -748,90 +745,19 @@ func (s *Service) CommitPlan(ctx context.Context, principal model.Principal, bat
 		return Result{}, e
 	}
 	for _, item := range p.Items {
-		_, e = s.Run(ctx, principal, "commitPlanItem:"+planID+":"+item.UploadID, fingerprint, []byte(fingerprint), func(w *Write) (any, int, error) {
-			b, e := s.Batch(ctx, batchID)
-			if e != nil {
-				return nil, 0, e
-			}
-			if b.State == "cancelled" {
-				return nil, 0, Fail(409, "batch_cancelled", "批次已取消，已提交项目保留。")
-			}
-			ignore := map[string]bool{}
-			ownPaths := map[string]bool{}
-			applied := int64(0)
-			for _, i := range p.Items {
-				ignore[digest([]byte("asset:" + i.UploadID))[:32]] = true
-				existing, e := s.Upload(ctx, principal, i.UploadID)
-				if e != nil {
-					return nil, 0, e
-				}
-				if existing.State == "ingested" {
-					if e = s.verifyAppliedPlanItem(ctx, p.ID, i, existing); e != nil {
-						return nil, 0, e
-					}
-					ownPaths[i.RelativePath] = true
-					applied++
-				} else if existing.State == "duplicate" {
-					applied++
-				}
-			}
-			if b.Revision != p.BatchRevision+applied {
-				return nil, 0, Conflict(b.Revision)
-			}
-			u, e := s.Upload(ctx, principal, item.UploadID)
-			if e != nil {
-				return nil, 0, e
-			}
-			if u.State == "ingested" {
-				a, e := s.Asset(ctx, u.AssetID)
-				return model.UploadResult{Upload: u, Asset: &a}, 200, e
-			}
-			if u.State == "duplicate" {
-				return model.UploadResult{Upload: u}, 200, nil
-			}
-			if u.State != "staged" {
-				return nil, 0, Fail(409, "plan_input_conflict", "输入状态已改变。")
-			}
-			if item.NamespaceFingerprint == "" {
-				// Retain the original precondition for plans issued by older Next builds.
-				scope, err := s.namespaceFingerprint(ctx, b.LibraryID, ignore)
-				if err != nil {
-					return nil, 0, err
-				}
-				if scope != p.DirectoryFingerprint {
-					return nil, 0, Fail(409, "namespace_changed", "已签发的旧计划需重新核对。")
-				}
-			} else {
-				dir := planDirectory(item.RelativePath)
-				names, err := s.directoryNames(ctx, b.LibraryID, dir)
-				if err != nil {
-					return nil, 0, err
-				}
-				for _, name := range names {
-					if name == item.FileName {
-						return nil, 0, Fail(409, "path_occupied", "当前计划的实际目标已被占用。")
-					}
-				}
-				scope, err := planItemScope(ctx, s.DB.DB, b.LibraryID, item, names, ownPaths, ignore)
-				if err != nil {
-					return nil, 0, err
-				}
-				if scope != item.NamespaceFingerprint {
-					return nil, 0, Fail(409, "namespace_changed", "该命名族的占号、集合或引用对象已变化，请重新核对。")
-				}
-			}
-			declared, ok := declaredByUpload[item.UploadID]
-			if !ok {
-				declared = append([]string{}, item.SourceIDs...)
-			}
-			r, e := s.ingestPrepared(ctx, w, u, &item, nil, declared)
-			return r, 200, e
-		})
+		declared, ok := declaredByUpload[item.UploadID]
+		if !ok {
+			declared = append([]string{}, item.SourceIDs...)
+		}
+		_, e = s.commitPlanItem(ctx, principal, p, item, declared)
 		if e != nil {
+			if errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) {
+				return Result{}, e
+			}
 			var application *Error
 			if errors.As(e, &application) {
 				switch application.Code {
-				case "namespace_changed", "revision_conflict", "plan_result_changed", "batch_cancelled", "scope_denied", "batch_scope_denied", "expired", "revoked":
+				case "namespace_changed", "revision_conflict", "plan_result_changed", "batch_cancelled", "scope_denied", "batch_scope_denied", "expired", "revoked", "lease_changed", "delegation_inactive":
 					return Result{}, e
 				}
 			}

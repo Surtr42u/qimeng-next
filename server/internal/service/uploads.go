@@ -236,6 +236,7 @@ func (s *Service) CreateUpload(ctx context.Context, w *Write, in model.UploadInp
 	}
 	u := model.Upload{UploadInput: in, ID: w.ID("upload"), State: "receiving", ExplicitTaxonomy: explicitTaxonomy, CreatedAt: time.Now().UTC()}
 	s.Root.RegisterUpload(u.ID, u.LibraryID)
+	defer s.Root.UnregisterUpload(u.ID)
 	if e = s.ensureParent(uploadPath(u.ID)); e != nil {
 		return u, e
 	}
@@ -679,6 +680,9 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 	modified := info.ModTime().UTC()
 	a.ContentMtime = &modified
 	j := fileIntent{ID: digest([]byte("publish:" + u.ID))[:32], Kind: operation, Source: uploadPath(u.ID), Target: assetPath(a), Retired: "retired/" + u.ID, UploadID: u.ID, Before: before, After: a}
+	if prepared != nil {
+		j.SourceObject = prepared.object
+	}
 	if operation == "ingest" {
 		j.DeclaredSourceIDs = &declaredSources
 	}
