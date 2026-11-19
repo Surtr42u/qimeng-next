@@ -6,31 +6,89 @@ on:
 permissions:
   contents: read
 jobs:
-  apt-behavior:
+  seed:
+    strategy:
+      fail-fast: false
+      matrix: {runner: [1, 2]}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - name: Measure the runner's native Ubuntu APT transaction
-        shell: bash
+      - &checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - &platform
+        name: Record hosted image and APT
         run: |
-          set -euo pipefail
           source /etc/os-release
           echo "image=$ImageOS/$ImageVersion ubuntu=$VERSION_ID/$VERSION_CODENAME architecture=$(dpkg --print-architecture)"
           apt-get --version | sed -n '1p'
-          ls /etc/apt/sources.list.d
-          test -s /etc/apt/sources.list.d/ubuntu.sources
-          grep -E '^(Types|URIs|Signed-By):' /etc/apt/sources.list.d/ubuntu.sources
-          archives=$(mktemp -d /var/tmp/ffmpeg-proof.XXXXXXXX)
-          chmod 755 "$archives"
-          apt=(sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=false -o "Dir::Cache::archives=$archives")
-          time "${apt[@]}" --error-on=any update
-          time "${apt[@]}" -qq -o Acquire::ForceHash=SHA256 --print-uris --no-remove --no-install-recommends --reinstall install ffmpeg > "$RUNNER_TEMP/apt-plan"
-          sed -n '1,3p' "$RUNNER_TEMP/apt-plan"
-          awk '$4 ~ /^SHA256:/ {n++; bytes+=$3} END {print "plan_packages="n, "plan_bytes="bytes; if(!n) exit 1}' "$RUNNER_TEMP/apt-plan"
-          time "${apt[@]}" -y --download-only --no-remove --no-install-recommends --reinstall install ffmpeg
-          time "${apt[@]}" -y --no-download --no-remove --no-install-recommends --reinstall install ffmpeg
-          ffmpeg -v error -nostdin -f lavfi -i testsrc2=s=32x24:r=2 -frames:v 2 -c:v ffv1 -flags:v +bitexact -fflags +bitexact "$RUNNER_TEMP/sample.avi"
+      - &setup
+        name: Install the verification workflow's media tools
+        uses: ./.github/actions/ubuntu-ffmpeg
+      - &smoke
+        name: Encode, decode, and probe the reference AVI
+        run: |
+          ffmpeg -v error -nostdin -f lavfi -i testsrc2=s=32x24:r=2 -frames:v 2 -c:v ffv1 -flags:v +bitexact -fflags +bitexact -y "$RUNNER_TEMP/sample.avi"
           result=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=codec_name,width,height,nb_read_frames -of csv=p=0 "$RUNNER_TEMP/sample.avi")
-          echo "probe=$result"
+          echo "probe=$result bytes=$(stat -c %s "$RUNNER_TEMP/sample.avi")"
           test "$result" = ffv1,32,24,2
-          sha256sum "$RUNNER_TEMP/sample.avi"
+          ffmpeg -v error -nostdin -i "$RUNNER_TEMP/sample.avi" -f framemd5 -
+          cd "$RUNNER_TEMP"
+          echo 'cbb01cd97ff0a98e25a7cdc27ae81d9bb1b2d404393e26f277c0baeb410d67bb  sample.avi' | sha256sum -c
+  warm:
+    needs: seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - *checkout
+      - *platform
+      - *setup
+      - *smoke
+      - name: Verify the already-installed path
+        uses: ./.github/actions/ubuntu-ffmpeg
+  repair:
+    needs: seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *platform
+      - name: Resolve current archives
+        id: plan
+        run: bash .github/actions/ubuntu-ffmpeg/prepare.sh plan
+      - name: Restore the real cache
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+          key: ${{ steps.plan.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Recover a missing entry and an equal-length zero-filled fixture
+        env:
+          APT_WORK: ${{ steps.plan.outputs.work }}
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          cache="$RUNNER_TEMP/ubuntu-ffmpeg-debs"
+          readarray -t names < <(awk '{print $2}' "$APT_WORK/SHA256SUMS")
+          first=${names[0]}
+          size=$(stat -c %s "$cache/$first")
+          truncate -s "$size" "$RUNNER_TEMP/blank-sample"
+          mv -- "$RUNNER_TEMP/blank-sample" "$cache/$first"
+          rm -- "$cache/${names[1]}"
+          touch "$cache/unselected-sample.deb"
+          printf 'Same length %s, %d bytes; missing %s\n' "$first" "$size" "${names[1]}"
+          bash .github/actions/ubuntu-ffmpeg/prepare.sh install | tee "$RUNNER_TEMP/recovery.log"
+          grep -F "Discarding mismatched cached archive $first" "$RUNNER_TEMP/recovery.log"
+          grep -F "reused $((${#names[@]} - 2)) verified archives." "$RUNNER_TEMP/recovery.log"
+          test ! -e "$APT_WORK/archives/unselected-sample.deb"
+      - *smoke
+      - name: Make the installed package's FFprobe unavailable on this disposable VM
+        run: |
+          test "$(command -v ffprobe)" = /usr/bin/ffprobe
+          sudo mv /usr/bin/ffprobe "$RUNNER_TEMP/previous-ffprobe"
+          ffmpeg -version >/dev/null
+          ! command -v ffprobe
+      - *setup
+      - *smoke
