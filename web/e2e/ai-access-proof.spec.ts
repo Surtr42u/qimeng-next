@@ -49,6 +49,7 @@ async function connect(page: Page) {
 
 async function layout(page: Page) {
   return page.locator('[data-scroll-root]').evaluate(main => {
+    if (!(main instanceof HTMLElement)) throw new Error('Expected the application scroll container');
     const box = main.getBoundingClientRect();
     // DOMRect uses viewport pixels. The installed shell zooms its layout, while
     // clientWidth and clientLeft still use the element's unzoomed layout units.
