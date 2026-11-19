@@ -280,6 +280,16 @@ def run(args, base):
     (pre/"published.json").rename(final/"RESTORE_INCOMPLETE")
     assert command("apply", parent) == successful
 
+    # Receipts from the earlier optional-flag release sealed the actual catalog
+    # fingerprint even when their request omitted expectedCatalogSHA256.
+    for note in (pre/"ready.json", final/"SELECTED_IMAGE_MERGE.json", pre/"published.json"):
+        record = cold.read_json(note)
+        claim = record.get("claim", record)
+        del claim["request"]["expectedCatalogSHA256"]
+        write_json(note, record)
+    assert command("apply", parent) == successful
+    command("apply", parent, success=False, **{"catalog-sha256": "f"*64})
+
     merged = base/"merged.qnext"
     with serving(server, final) as get:
         asset = get("/api/v1/assets/"+cold.A)

@@ -32,13 +32,13 @@ func newScratch(parent *area) (*catalogScratch, error) {
 	if err := parent.mkdir(name); err != nil {
 		return nil, phase("private_scratch", err)
 	}
-	root, err := parent.root.OpenRoot(name)
+	info, err := parent.inspect(name)
 	if err != nil {
 		return nil, phase("private_scratch_cleanup_required", err)
 	}
-	info, err := root.Stat(".")
+	root, err := parent.root.OpenRoot(name)
 	if err != nil {
-		return nil, phase("private_scratch_cleanup_required", errors.Join(err, root.Close()))
+		return nil, phase("private_scratch_cleanup_required", err)
 	}
 	dir := &area{filepath.Join(parent.name, name), root, info}
 	if err := dir.bound(); err != nil {

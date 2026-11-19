@@ -173,7 +173,6 @@ func (op *operation) prepare(ctx context.Context) error {
 		return phase("sealed_restored_catalog", err)
 	}
 	stageDB := op.req.Stage + "/qimeng.sqlite"
-	copyName := op.scratch.name + "/" + projectedName
 	op.baseline, err = op.scratch.copyCatalog(ctx, stageDB, op.opts.ReserveBytes)
 	if err != nil {
 		return phase("copy_stopped_catalog", err)
@@ -186,7 +185,7 @@ func (op *operation) prepare(ctx context.Context) error {
 	if err = op.scratch.reserveSidecars(); err != nil {
 		return phase("private_catalog_sidecars", err)
 	}
-	candidate := filepath.Join(op.name, filepath.FromSlash(copyName))
+	candidate := filepath.Join(op.scratch.dir.name, projectedName)
 	snapshot, err := store.OpenDatabase(candidate, store.SnapshotDatabase)
 	if err != nil {
 		return phase("restored_catalog_schema", err)
@@ -249,7 +248,10 @@ func (op *operation) prepare(ctx context.Context) error {
 	if err = db.DB.Close(); err != nil {
 		return phase("seal_projected_catalog", err)
 	}
-	op.projected, err = op.readFile(ctx, copyName, nil)
+	if err = op.scratch.known(projectedName, op.scratch.files[projectedName]); err != nil {
+		return phase("seal_projected_catalog", err)
+	}
+	op.projected, err = op.scratch.dir.readFile(ctx, projectedName, nil)
 	if err != nil {
 		return phase("seal_projected_catalog", err)
 	}
