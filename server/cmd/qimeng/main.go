@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,7 +22,12 @@ import (
 
 func main() {
 	if e := run(); e != nil {
-		slog.Error("service stopped", "reason", "configuration, storage or listener failure")
+		reason := "configuration, storage or listener failure"
+		var op *net.OpError
+		if errors.As(e, &op) && op.Op == "listen" {
+			reason = "cannot bind TCP listener, check the configured address and whether the port is in use"
+		}
+		slog.Error("service stopped", "reason", reason)
 		os.Exit(1)
 	}
 }
@@ -88,16 +94,50 @@ func run() error {
 			scanner.PollInterval = duration
 		}
 	}
-	s, e := service.New(service.Config{DataDir: os.Getenv("QIMENG_DATA_DIR"), AdminToken: os.Getenv("QIMENG_ADMIN_TOKEN"), AdminPassword: password, AIToken: os.Getenv("QIMENG_AI_TOKEN"), StorageRoots: storages, BackupTargets: backupTargets, DefaultBackupTarget: os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"), SecureCookies: os.Getenv("QIMENG_SECURE_COOKIES") == "true" || os.Getenv("QIMENG_EPHEMERAL_TLS") == "true", ResearchEnabled: researchEnabled, ResearchLensEndpoint: os.Getenv("QIMENG_RESEARCH_LENS_ENDPOINT"), ResearchSidecarToken: sidecarToken, AIConfigured: os.Getenv("QIMENG_AI_CONFIGURED") == "true", LocalSync: localSync, Scanner: &scanner})
+	discovery, e := readDiscoveryConfig(os.Getenv)
+	if e != nil {
+		return e
+	}
+	tlsSetting := os.Getenv("QIMENG_EPHEMERAL_TLS")
+	if tlsSetting != "" && tlsSetting != "true" && tlsSetting != "false" {
+		return errors.New("QIMENG_EPHEMERAL_TLS must be true or false")
+	}
+	ephemeralTLS := tlsSetting == "true"
+	if ephemeralTLS {
+		discovery.Enabled = false
+	}
+	address := os.Getenv("QIMENG_LISTEN")
+	if address == "" {
+		address = "127.0.0.1:8421"
+	}
+	// Keep the actual listener through migration so a bind failure cannot leave
+	// an older installation with a database only the new binary can open.
+	listener, e := openStartupListener(address, os.Getenv("QIMENG_STARTUP_RECEIPT"), os.Getenv("QIMENG_LAUNCH_ID"), ephemeralTLS)
+	if e != nil {
+		return e
+	}
+	defer listener.Close()
+	s, e := service.New(service.Config{
+		DataDir:              os.Getenv("QIMENG_DATA_DIR"),
+		AdminToken:           os.Getenv("QIMENG_ADMIN_TOKEN"),
+		AdminPassword:        password,
+		AIToken:              os.Getenv("QIMENG_AI_TOKEN"),
+		StorageRoots:         storages,
+		BackupTargets:        backupTargets,
+		DefaultBackupTarget:  os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"),
+		SecureCookies:        os.Getenv("QIMENG_SECURE_COOKIES") == "true" || ephemeralTLS,
+		ResearchEnabled:      researchEnabled,
+		ResearchLensEndpoint: os.Getenv("QIMENG_RESEARCH_LENS_ENDPOINT"),
+		ResearchSidecarToken: sidecarToken,
+		AIConfigured:         os.Getenv("QIMENG_AI_CONFIGURED") == "true",
+		LocalSync:            localSync,
+		Scanner:              &scanner,
+	})
 	password = ""
 	if e != nil {
 		return e
 	}
 	defer s.Close()
-	address := os.Getenv("QIMENG_LISTEN")
-	if address == "" {
-		address = "127.0.0.1:8421"
-	}
 	api := httpapi.New(s)
 	var handler http.Handler = api
 	if web := os.Getenv("QIMENG_WEB_DIR"); web != "" {
@@ -124,26 +164,20 @@ func run() error {
 		})
 	}
 	server := &http.Server{Addr: address, Handler: s.Traffic.Handler(handler), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
-	listener, e := supervisedListener(address, s.InstanceID, os.Getenv("QIMENG_STARTUP_RECEIPT"), os.Getenv("QIMENG_LAUNCH_ID"), os.Getenv("QIMENG_EPHEMERAL_TLS") == "true")
-	if e != nil {
-		return e
-	}
-	defer listener.Close()
-	discovery, e := readDiscoveryConfig(os.Getenv)
-	if e != nil {
-		return e
-	}
-	if os.Getenv("QIMENG_EPHEMERAL_TLS") == "true" {
-		discovery.Enabled = false
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	stopDiscovery, e := startDiscovery(listener.Addr(), s.InstanceID, discovery)
 	if e != nil {
 		slog.Warn("LAN discovery unavailable", "detail", "check configured interface and multicast support")
 	} else {
 		defer stopDiscovery()
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	if ctx.Err() != nil {
+		return nil
+	}
+	if e := listener.publishReceipt(s.InstanceID); e != nil {
+		return e
+	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	select {

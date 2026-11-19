@@ -27,9 +27,15 @@ type startupReceipt struct {
 
 var launchIdentity = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
+type startupListener struct {
+	net.Listener
+	receiptPath string
+	receipt     startupReceipt
+}
+
 // Optional host supervision stays in the process boundary. Domain/service
 // packages do not know whether the host is Android, a desktop launcher or NAS.
-func supervisedListener(address, instanceID, receiptPath, launchID string, ephemeralTLS bool) (net.Listener, error) {
+func openStartupListener(address, receiptPath, launchID string, ephemeralTLS bool) (*startupListener, error) {
 	if (receiptPath == "") != (launchID == "") {
 		return nil, errors.New("startup receipt and launch identity must be configured together")
 	}
@@ -43,46 +49,63 @@ func supervisedListener(address, instanceID, receiptPath, launchID string, ephem
 	if e != nil {
 		return nil, e
 	}
-	receipt := startupReceipt{LaunchID: launchID, InstanceID: instanceID, ListenAddress: listener.Addr().String()}
+	receipt := startupReceipt{LaunchID: launchID, ListenAddress: listener.Addr().String()}
 	if ephemeralTLS {
 		tcp, ok := listener.Addr().(*net.TCPAddr)
 		if !ok || !tcp.IP.IsLoopback() {
 			listener.Close()
 			return nil, errors.New("ephemeral TLS is restricted to a local supervised listener")
 		}
-		certificate, der, err := ephemeralCertificate()
+		certificate, err := ephemeralCertificate(tcp.IP)
 		if err != nil {
 			listener.Close()
 			return nil, err
 		}
-		receipt.CertificateDERBase64 = base64.StdEncoding.EncodeToString(der)
+		receipt.CertificateDERBase64 = base64.StdEncoding.EncodeToString(certificate.Certificate[0])
 		listener = tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}})
 	}
-	if receiptPath != "" {
-		if e = publishStartupReceipt(receiptPath, receipt); e != nil {
-			listener.Close()
-			return nil, e
-		}
-	}
-	return listener, nil
+	return &startupListener{Listener: listener, receiptPath: receiptPath, receipt: receipt}, nil
 }
 
-func ephemeralCertificate() (tls.Certificate, []byte, error) {
+func (l *startupListener) publishReceipt(instanceID string) error {
+	if l.receiptPath == "" {
+		return nil
+	}
+	receipt := l.receipt
+	receipt.InstanceID = instanceID
+	return publishStartupReceipt(l.receiptPath, receipt)
+}
+
+func ephemeralCertificate(listenIP net.IP) (tls.Certificate, error) {
 	key, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if e != nil {
-		return tls.Certificate{}, nil, e
+		return tls.Certificate{}, e
 	}
 	serial, e := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if e != nil {
-		return tls.Certificate{}, nil, e
+		return tls.Certificate{}, e
+	}
+	ips := []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+	if !listenIP.Equal(ips[0]) && !listenIP.Equal(ips[1]) {
+		ips = append(ips, listenIP)
 	}
 	now := time.Now()
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Qimeng supervised local service"}, NotBefore: now.Add(-5 * time.Minute), NotAfter: now.AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback}, DNSNames: []string{"localhost"}}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "Qimeng supervised local service"},
+		NotBefore:             now.Add(-5 * time.Minute),
+		NotAfter:              now.AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IPAddresses:           ips,
+		DNSNames:              []string{"localhost"},
+	}
 	der, e := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if e != nil {
-		return tls.Certificate{}, nil, e
+		return tls.Certificate{}, e
 	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, der, nil
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
 
 func publishStartupReceipt(filename string, value startupReceipt) error {

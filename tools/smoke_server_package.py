@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import platform
 import secrets
 import signal
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -17,6 +19,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = ROOT / "server/internal/store/migrations"
 
 
 def digest(path: Path) -> str:
@@ -65,6 +68,50 @@ def stop(process: subprocess.Popen) -> None:
         process.wait(timeout=10)
 
 
+def check_occupied_upgrade(app: Path, state: Path, port: int) -> dict:
+    data = state / "data"
+    data.mkdir(parents=True)
+    (state / ".qimeng-next-package").write_text("qimeng-next-package-v1\n", "ascii")
+    catalog = data / "qimeng.sqlite"
+    # The first Next build (e2bd1cf) shipped these four migrations.
+    historical = ["0001_initial.sql", "0002_analytics.sql", "0003_management.sql", "0005_author_archives.sql"]
+    ledger = []
+    instance = secrets.token_hex(16)
+    author = {"id": secrets.token_hex(16), "kind": "regular", "name": "Synthetic prior author", "revision": 3,
+              "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-02T00:00:00Z"}
+    with closing(sqlite3.connect(catalog)) as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT NOT NULL,sha256 TEXT NOT NULL)")
+        for name in historical:
+            path = MIGRATIONS / name
+            db.executescript(path.read_text("utf-8"))
+            entry = (int(name.split("_", 1)[0]), name, digest(path))
+            db.execute("INSERT INTO schema_migrations VALUES(?,?,?)", entry)
+            ledger.append(entry)
+        db.execute("INSERT INTO settings VALUES('instance_id',?)", (instance,))
+        db.execute("INSERT INTO authors(id,name,data) VALUES(?,?,?)", (author["id"], author["name"], json.dumps(author)))
+        db.commit()
+    original_hash = digest(catalog)
+
+    receipt = state / "attempt.json"
+    binary = app / ("qimeng-next.exe" if os.name == "nt" else "qimeng-next")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("QIMENG_")}
+    env.update(QIMENG_DATA_DIR=str(data), QIMENG_LISTEN=f"127.0.0.1:{port}", QIMENG_ADMIN_TOKEN=secrets.token_urlsafe(40),
+               QIMENG_STARTUP_RECEIPT=str(receipt), QIMENG_LAUNCH_ID=secrets.token_hex(16))
+    attempt = subprocess.run([str(binary)], env=env, capture_output=True, timeout=45)
+    if attempt.returncode != 1 or b"cannot bind TCP listener" not in attempt.stderr:
+        raise RuntimeError("The packaged service did not report the occupied listener.")
+    if receipt.exists() or (data / "authority.sqlite").exists() or digest(catalog) != original_hash:
+        raise RuntimeError("The failed start published a receipt or touched the historical database.")
+    with closing(sqlite3.connect(catalog.as_uri() + "?mode=ro", uri=True)) as db:
+        rows = db.execute("SELECT version,name,sha256 FROM schema_migrations ORDER BY version").fetchall()
+        record = db.execute("SELECT data FROM authors WHERE id=?", (author["id"],)).fetchone()
+        if rows != ledger or record is None or json.loads(record[0]) != author:
+            raise RuntimeError("Cannot reopen the historical ledger and author after the occupied-port failure.")
+    return {"instanceId": instance, "author": author, "schemaVersionBefore": ledger[-1][0]}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", required=True)
@@ -90,15 +137,20 @@ def main() -> None:
         secret.write_text(secrets.token_urlsafe(40), encoding="ascii")
         if os.name != "nt":
             secret.chmod(0o600)
+        state = work / "synthetic-state"
+        prior = None
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
-        if port in (8420, 8421):
-            raise RuntimeError("Refusing a default service port in CI.")
+            if port in (8420, 8421):
+                raise RuntimeError("Refusing a default service port in CI.")
+            if not args.compose:
+                probe.listen()
+                prior = check_occupied_upgrade(app, state, port)
         if args.media_tools and not args.compose:
             raise ValueError("Media-tools smoke uses the packaged NAS image.")
         mode = "compose-media" if args.media_tools else "compose" if args.compose else "native"
-        env = {**os.environ, "QIMENG_PACKAGE_STATE": str(work / "synthetic-state"),
+        env = {**os.environ, "QIMENG_PACKAGE_STATE": str(state),
                "QIMENG_PACKAGE_PASSWORD_FILE": str(secret), "QIMENG_PACKAGE_PORT": str(port),
                "QIMENG_PACKAGE_TEST_MODE": mode, "QIMENG_PACKAGE_TARGET": args.target,
                "QIMENG_PACKAGE_APP_DIR": str(app), "QIMENG_PACKAGE_TEST_DIR": str(work / "restore-check"),
@@ -130,6 +182,13 @@ def main() -> None:
                 time.sleep(0.5)
             else:
                 raise TimeoutError("The packaged service did not become ready.")
+            if prior is not None:
+                with closing(sqlite3.connect((state / "data/qimeng.sqlite").as_uri() + "?mode=ro", uri=True)) as db:
+                    version = db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+                if version != max(int(path.name.split("_", 1)[0]) for path in MIGRATIONS.glob("*.sql")):
+                    raise RuntimeError("The successful retry did not apply the current schema.")
+                prior["schemaVersionAfter"] = version
+                env["QIMENG_PACKAGE_PRIOR_RECORDS"] = json.dumps(prior)
             subprocess.run(["node", "tests/packaged-home.mjs"], cwd=ROOT / "web", env=env, check=True, timeout=180)
         finally:
             if args.compose:

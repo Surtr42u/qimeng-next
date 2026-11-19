@@ -25,6 +25,16 @@ try {
   const api = base + "/api/v1";
   const required = async result => { assert(result.ok(), "Packaged API returned " + result.status()); return result; };
   const key = text => ({ Origin: base, "Idempotency-Key": "package-smoke-" + text });
+  let upgradeProof;
+  if (mode === "native") {
+    const prior = JSON.parse(process.env.QIMENG_PACKAGE_PRIOR_RECORDS);
+    const instance = await (await required(await page.request.get(api + "/instance"))).json();
+    assert.equal(instance.id, prior.instanceId);
+    const author = await (await required(await page.request.get(api + "/authors/" + encodeURIComponent(prior.author.id)))).json();
+    for (const [field, value] of Object.entries(prior.author)) assert.equal(author[field], value);
+    upgradeProof = { schemaVersionBefore: prior.schemaVersionBefore, schemaVersionAfter: prior.schemaVersionAfter,
+      occupiedPortPreservedDatabase: true, originalInstanceAndAuthorReadAfterLogin: true };
+  }
   const inventory = await (await required(await page.request.get(api + "/libraries"))).json();
   assert.equal(inventory.totalMatched, 0);
   let checkpoint = await (await required(await page.request.post(api + "/backups", { headers: key("checkpoint") }))).json();
@@ -72,5 +82,5 @@ try {
     videoProof = { width: published.asset.width, height: published.asset.height, thumbnailBytes: thumbnail.length, researchFrames: materials.artifacts.length, verifiedOriginalSHA256: true };
   }
   await writeFile(join(evidence, target + "-" + mode + "-smoke.json"),
-    JSON.stringify({ sourceCommit: GITHUB_SHA, target, mode, architecture: process.arch, homepage: "为你推荐", registeredLibrariesAtStartup: 0, archiveVerified: true, restoredToNewDirectory: true, videoProof }, null, 2) + "\n");
+    JSON.stringify({ sourceCommit: GITHUB_SHA, target, mode, architecture: process.arch, homepage: "为你推荐", registeredLibrariesAtStartup: 0, archiveVerified: true, restoredToNewDirectory: true, upgradeProof, videoProof }, null, 2) + "\n");
 } finally { await browser.close(); }
