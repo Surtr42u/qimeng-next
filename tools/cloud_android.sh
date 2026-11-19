@@ -136,6 +136,23 @@ gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugA
 app_results="android/app/build/outputs/androidTest-results/connected"
 if [[ -d "$app_results" ]]; then cp -r "$app_results" android/build/cloud-screenshots/connected-app-results; fi
 
+capture_album_cold_open() {
+  adb -s emulator-5556 install -r android/app/build/outputs/apk/client/debug/app-client-debug.apk &&
+    adb -s emulator-5556 install -r android/app/build/outputs/apk/androidTest/client/debug/app-client-debug-androidTest.apk || return 1
+  local phase
+  for phase in saveAndLeaveSelectionOpen readGridAfterForceStop; do
+    adb -s emulator-5556 shell am force-stop media.qimeng.next || return 1
+    local report="android/build/cloud-screenshots/album-$phase.txt"
+    adb -s emulator-5556 shell am instrument -w \
+      -e class "media.qimeng.next.test.AlbumColumnsColdOpenTest#$phase" \
+      -e qimengBrowseUrl http://127.0.0.1:18485/ \
+      -e qimengToken "$QIMENG_ADMIN_TOKEN" \
+      media.qimeng.next.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$report" || return 1
+    if ! grep -Fqx 'OK (1 test)' "$report"; then return 1; fi
+  done
+}
+capture_album_cold_open || checks=1
+
 python3 tools/cloud_android_author_gate.py &
 author_gate_pid=$!
 author_gate_ready=false

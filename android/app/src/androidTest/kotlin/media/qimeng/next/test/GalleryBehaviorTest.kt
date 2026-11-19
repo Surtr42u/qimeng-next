@@ -45,8 +45,9 @@ class GalleryBehaviorTest {
         val editedElsewhere = runBlocking { graph.media.updateNote(second, "并发保留备注") }
         openBatch(3)
         compose.onNodeWithTag("batch-author-input").performTextReplacement("合成替换作者")
-        awaitText("合成替换作者")
-        compose.onNodeWithText("合成替换作者").performClick()
+        val authorChoice = hasText("合成替换作者") and hasClickAction() and !hasSetTextAction()
+        compose.waitUntil(20_000) { compose.onAllNodes(authorChoice).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(authorChoice).performClick()
         compose.onNodeWithText("替换 3 项作者").performClick()
         awaitText("成功 2 项 · 失败 1 项")
         compose.onNodeWithText(first.relativePath).assertIsDisplayed()
