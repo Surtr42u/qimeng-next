@@ -402,7 +402,7 @@ class AndroidRealServerTest {
         return graph
     }
 
-    @Test fun verifyReadOnlyAccessFromProfile() = runBlocking {
+    @Test fun verifyReadOnlyAccessFromProfile() = runBlocking<Unit> {
         val graph = isolatedServerGraph()
         val label = "云端只读接入 ${UUID.randomUUID().toString().take(8)}"
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("navigation:me").fetchSemanticsNodes().isNotEmpty() }
