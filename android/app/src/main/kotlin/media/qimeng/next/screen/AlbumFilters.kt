@@ -20,7 +20,8 @@ private val dimensions = listOf("partitions" to "分区", "works" to "作品", "
 
 @Composable
 internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls, rows: Map<String, FacetRowState>,
-                          onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit, authorKind: String? = null, loadFailed: Boolean = false) {
+                          onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit, authorKind: String? = null, loadFailed: Boolean = false,
+                          columns: Int = controls.columns.intValue, onToggleColumns: (() -> Unit)? = null) {
     if (authorKind != null) Text("本地作品 · ${total?.let { "筛选结果 $it 个文件" } ?: if (loadFailed) "读取失败" else "正在读取"}",
         Modifier.padding(horizontal = 16.dp).testTag("author-result-count"),
         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -28,8 +29,8 @@ internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls
         titleStyle = if (onBack == null) MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
             else MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
         onFilterClick = if (onBack == null) ({ controls.showFilters.value = true }) else null, filterActive = controls.panel != FilterPanelDraft(),
-        columns = controls.columns.intValue.takeIf { onBack == null },
-        onToggleColumns = if (onBack == null) ({ controls.columns.intValue = if (controls.columns.intValue >= 5) 2 else controls.columns.intValue + 1 }) else null)
+        columns = columns.takeIf { onBack == null },
+        onToggleColumns = onToggleColumns.takeIf { onBack == null })
     val shadow = if (onBack == null && authorKind == null) Modifier.softDaylightShadow(QimengShapes.pill) else Modifier
     val shown = when (authorKind) { null -> dimensions; "cos" -> dimensions.drop(2); else -> dimensions.drop(1) }
     val currentRow = controls.row.takeIf { value -> shown.any { it.first == value } } ?: shown.first().first

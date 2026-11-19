@@ -43,6 +43,69 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class ThumbnailCacheTest {
+    @Test fun nearbyThumbnailsShareCoilDiskAndCancelWithoutFetchingOtherAssets() = runBlocking {
+        val fixture = Fixture()
+        val waiting = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val server = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.getHeader("Authorization") != "Bearer $OWNER") return MockResponse().setResponseCode(401)
+                    val url = requireNotNull(request.requestUrl)
+                    if (url.queryParameter("background") != "true" || url.queryParameter("size") != "md" ||
+                        url.queryParameter("version") != "7") return MockResponse().setResponseCode(400)
+                    return when (url.encodedPath) {
+                        "/api/v1/assets/nearby/thumbnail" -> fixture.jpegResponse("viewport", 1)
+                        "/api/v1/assets/waiting/thumbnail" -> {
+                            waiting.countDown()
+                            check(release.await(10, TimeUnit.SECONDS))
+                            fixture.jpegResponse("viewport", 2)
+                        }
+                        else -> MockResponse().setResponseCode(404)
+                    }
+                }
+            }
+            start()
+        }
+        try {
+            val session = fixture.select(server, "viewport")
+            fixture.unmetered.value = true
+            val nearby = asset(session, "nearby", 7)
+            fixture.repository.prefetchNearby(listOf(
+                asset(session.copy(instanceId = "other"), "foreign", 7),
+                asset(session, "animated", 7).copy(mediaType = "animated_image"),
+                nearby,
+            ))
+            assertEquals(DataSource.DISK, fixture.coil(nearby).dataSource)
+            assertEquals(1, server.requestCount)
+
+            val oldViewport = launch {
+                fixture.repository.prefetchNearby(listOf(asset(session, "waiting", 7), asset(session, "never", 7)))
+            }
+            await { waiting.count == 0L }
+            oldViewport.cancelAndJoin()
+            release.countDown()
+            assertEquals(2, server.requestCount)
+            assertEquals(1L, fixture.repository.usage(ThumbnailPool.NAS).usage.files)
+        } finally {
+            release.countDown()
+            server.shutdown()
+            fixture.close()
+        }
+    }
+
+    @Test fun sharedAlbumColumnsAreReadFromDiskByFreshSettings() {
+        val fixture = Fixture()
+        try {
+            assertEquals(3, fixture.settings.albumColumns.value)
+            fixture.settings.saveAlbumColumns(5)
+            fixture.reopen()
+            assertEquals(5, fixture.settings.albumColumns.value)
+        } finally {
+            fixture.close()
+        }
+    }
+
     @Test fun prefetchPaginatesOnUnmeteredNetworkAndSharesVersionedDiskWithCoil() = runBlocking {
         val fixture = Fixture()
         val version = AtomicInteger(1)

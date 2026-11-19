@@ -7,6 +7,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.model.*
 import java.util.UUID
@@ -37,6 +39,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val repository = graph.media
     val session = repository.session
     val preferences = graph.settings.preferences
+    val albumColumns = graph.settings.albumColumns
+    private val albumColumnWrites = Mutex()
     val settingsError = graph.settings.error
     val queue = graph.queue.state
     val lastPublication = graph.uploads.lastPublication
@@ -157,6 +161,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
 
     fun assets(key: String): StateFlow<ListState<Asset>> = assetState(key)
+    fun saveAlbumColumns(columns: Int) {
+        viewModelScope.launch {
+            try {
+                albumColumnWrites.withLock {
+                    withContext(Dispatchers.IO) { graph.settings.saveAlbumColumns(columns) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { mutableMessage.value = explain(failure) }
+        }
+    }
+
+    suspend fun prefetchNearbyThumbnails(assets: List<Asset>) = graph.thumbnails.prefetchNearby(assets)
+
     private fun assetState(key: String): MutableStateFlow<ListState<Asset>> {
         lists[key]?.let { return it }
         val dynamic = lists.keys.filter { it.startsWith("author:") || it.startsWith("collection:") }
