@@ -1,6 +1,6 @@
 # 在电脑或 NAS 打开绮梦影库
 
-登录 GitHub，打开本仓 Actions 中的 [Cloud verification 运行列表](https://github.com/Surtr42u/qimeng-next/actions/workflows/prepare.yml)。选定一个提交，确认对应的 `Server package` 平台作业成功，再从这次运行底部的 **Artifacts** 下载服务包。服务包制品保留 14 天。链接过期时，可选另一轮实际通过的平台作业，并按那一轮的提交核对包名和证据。
+登录 GitHub，打开本仓 Actions 的 `Cloud verification`，选择 `main` 上要安装的产品提交，确认对应 `Server package` 平台作业成功，再从同一次运行底部的 **Artifacts** 下载服务包。服务包制品保留 14 天。过期后选择同一提交仍有效的主线制品，或让维护者从主线重新构建并确认新的实际 SHA。[主线运行列表](https://github.com/Surtr42u/qimeng-next/actions/workflows/prepare.yml?query=branch%3Amain) · [本轮版本与包名](https://github.com/Surtr42u/qimeng-next/blob/main/docs/handover.md)
 
 Windows x64 电脑选 `qimeng-next-package-windows-amd64`，Intel/AMD 64 位 Linux 电脑或 NAS 选 `qimeng-next-package-linux-amd64`，64 位 ARM 设备选 `qimeng-next-package-linux-arm64`。每个制品内含产品 ZIP、同名 `.sha256` 文件和平台检查结果。Windows 的 Tauri 安装包用于连接已经运行的影库。
 
@@ -48,6 +48,8 @@ ssh -N -L 18421:127.0.0.1:8421 用户@NAS
 
 在「数据管理 → 库管理」确认上文对应的服务器目录已登记。进入「数据管理 → 上传文件」，选中这个库，保留默认的「普通上传」，点击「选择文件并立即上传」并选一张测试图片。上传队列显示完成后，到「相册」打开图片核对结果。未完成时先看本页队列的提示，已建立的批次可到「任务与报告」查看逐项结果。
 
+普通上传可直接使用，无需配置 AI。服务会在后台为启用库中的图片和可解码视频补齐三个尺寸。需要验证实际后台生成时，先保留未浏览的合成输入，等待缓存出现，再打开相册。大图的支持范围及后台检查方式分别见[API 说明](https://github.com/Surtr42u/qimeng-next/blob/main/docs/api.md#展示缩略图与后台预热)与[接手手册](https://github.com/Surtr42u/qimeng-next/blob/main/docs/handover.md)。
+
 若浏览器打不开，先在服务所在电脑打开 `http://127.0.0.1:8421/healthz`。配置过端口时替换为自己的端口。返回 `{"status":"ok"}` 表示服务就绪。使用上述 NAS 隧道时可在客户端打开 `http://127.0.0.1:18421/healthz`。若服务端可达而隧道地址不可达，核对隧道连接与两端端口。若服务端也不可达，查看启动器输出，核对端口占用、数据目录归属及密码文件权限。
 
 ## 启用视频缩略图
@@ -83,7 +85,7 @@ $env:QIMENG_RESEARCH_LENS_ENDPOINT = 'http://127.0.0.1:18421'
 .\start.cmd
 ```
 
-Linux 的原生包可从服务账号专用的权限为 0600 的配置文件加载相同的两个变量，再运行 `bash start.sh`。容器中的 `127.0.0.1` 指本容器的网络命名空间。有独立容器部署需求时，须让已安装的伴随服务与 Go 服务共享网络命名空间，并向 Go 服务单独注入这两个变量。默认 NAS Compose 包未包含伴随服务。执行器在获得研究权限后，可读 `GET /research/context` 查看现有配置以及单个任务的外发授权。任务提交方法见[单帧反向查证](api.md#单帧反向查证)。
+Linux 的原生包可从服务账号专用的权限为 0600 的配置文件加载相同的两个变量，再运行 `bash start.sh`。容器中的 `127.0.0.1` 指本容器的网络命名空间。有独立容器部署需求时，须让已安装的伴随服务与 Go 服务共享网络命名空间，并向 Go 服务单独注入这两个变量。默认 NAS Compose 包未包含伴随服务。执行器在获得研究权限后，可读 `GET /research/context` 查看现有配置以及单个任务的外发授权。任务提交方法见[单帧反向查证](https://github.com/Surtr42u/qimeng-next/blob/main/docs/api.md#单帧反向查证)。
 
 ## 更新、备份和核验
 
