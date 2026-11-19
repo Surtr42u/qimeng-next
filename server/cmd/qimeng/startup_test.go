@@ -17,8 +17,15 @@ import (
 )
 
 func TestSupervisedTLSReceiptAuthenticatesSameListener(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:0", "127.0.0.2:0"} {
+		t.Run(address, func(t *testing.T) { checkSupervisedTLSReceipt(t, address) })
+	}
+}
+
+func checkSupervisedTLSReceipt(t *testing.T, address string) {
+	t.Helper()
 	filename := filepath.Join(t.TempDir(), "ready.json")
-	listener, e := openStartupListener("127.0.0.1:0", filename, "synthetic-launch-identity", true)
+	listener, e := openStartupListener(address, filename, "synthetic-launch-identity", true)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -47,6 +54,11 @@ func TestSupervisedTLSReceiptAuthenticatesSameListener(t *testing.T) {
 	certificate, e := x509.ParseCertificate(der)
 	if e != nil {
 		t.Fatal(e)
+	}
+	for _, host := range []string{"localhost", "127.0.0.1", "::1"} {
+		if e := certificate.VerifyHostname(host); e != nil {
+			t.Fatal(e)
+		}
 	}
 	pool := x509.NewCertPool()
 	pool.AddCert(certificate)

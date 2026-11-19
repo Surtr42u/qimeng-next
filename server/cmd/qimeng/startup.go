@@ -56,12 +56,12 @@ func openStartupListener(address, receiptPath, launchID string, ephemeralTLS boo
 			listener.Close()
 			return nil, errors.New("ephemeral TLS is restricted to a local supervised listener")
 		}
-		certificate, der, err := ephemeralCertificate()
+		certificate, err := ephemeralCertificate(tcp.IP)
 		if err != nil {
 			listener.Close()
 			return nil, err
 		}
-		receipt.CertificateDERBase64 = base64.StdEncoding.EncodeToString(der)
+		receipt.CertificateDERBase64 = base64.StdEncoding.EncodeToString(certificate.Certificate[0])
 		listener = tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}})
 	}
 	return &startupListener{Listener: listener, receiptPath: receiptPath, receipt: receipt}, nil
@@ -76,22 +76,36 @@ func (l *startupListener) publishReceipt(instanceID string) error {
 	return publishStartupReceipt(l.receiptPath, receipt)
 }
 
-func ephemeralCertificate() (tls.Certificate, []byte, error) {
+func ephemeralCertificate(listenIP net.IP) (tls.Certificate, error) {
 	key, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if e != nil {
-		return tls.Certificate{}, nil, e
+		return tls.Certificate{}, e
 	}
 	serial, e := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if e != nil {
-		return tls.Certificate{}, nil, e
+		return tls.Certificate{}, e
+	}
+	ips := []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+	if !listenIP.Equal(ips[0]) && !listenIP.Equal(ips[1]) {
+		ips = append(ips, listenIP)
 	}
 	now := time.Now()
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Qimeng supervised local service"}, NotBefore: now.Add(-5 * time.Minute), NotAfter: now.AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback}, DNSNames: []string{"localhost"}}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "Qimeng supervised local service"},
+		NotBefore:             now.Add(-5 * time.Minute),
+		NotAfter:              now.AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IPAddresses:           ips,
+		DNSNames:              []string{"localhost"},
+	}
 	der, e := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if e != nil {
-		return tls.Certificate{}, nil, e
+		return tls.Certificate{}, e
 	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, der, nil
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
 
 func publishStartupReceipt(filename string, value startupReceipt) error {
