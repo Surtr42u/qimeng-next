@@ -218,7 +218,6 @@ Next 扫描 PNG、JPEG 和 GIF 时，用同一受控文件句柄读至 EOF 计�
 
 标签写入用例预先填充作者、出处、角色、当前位置和内容版本，在五张表分别为新增、更新、删除安装行级触发器。两次真实 HTTP 标签修改后读取各表写入次数。另一用例禁止任何标签关联行变动，再执行词表改名和幂等重放，按原标签 ID 回读资产关系与原显示顺序。收藏和日赞用例在真实移动原件后分别核对收藏列、当日记录及 API 展示，并核对业务 JSON 中这些字段的副本数。[关系表写入与稳定词条用例](../server/internal/httpapi/asset_tags_write_test.go)
 
-<a id="change-evidence"></a>
 ### PC/NAS 发布包的首页静态传输
 
 同一台 Ubuntu 云机分别运行 `6d19173` 和 `49249ea` 的正式 Linux x64 ZIP。两个一次性库各经普通上传登记了同一张 64×48 合成 PNG。Chromium 159 使用已登录会话，按基线先、候选先交替四轮。冷开使用全新浏览器，热开已由 Service Worker 缓存公共文件。下行数是从导航开始到网络空闲，抓包所得的服务器 TCP 载荷字节，包含 HTTP 头与正文。可操作时间截至 Playwright 确认首张媒体卡可点击，随后实际打开详情并返回。以下为四轮中位数。[测量作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44489854599/job/135442415833) · [逐轮字节、耗时与浏览器报告](https://github.com/Surtr42u/qimeng-next/actions/runs/44489854599/artifacts/14511778993)
@@ -230,10 +229,11 @@ Next 扫描 PNG、JPEG 和 GIF 时，用同一受控文件句柄读至 EOF 计�
 | 受限链路冷开 | 925,978 | 434,211 | 1,429 | 1,002 |
 | 受限链路热开 | 2,691 | 2,691 | 464 | 457 |
 
-受限链路由 Linux 为上下行各设置 10 Mbit/s、单程 20 ms。受限冷开四轮基线为 1,411–1,631 ms，候选为 1,001–1,003 ms。回环冷开的两组时间范围重叠。两种链路下热开核心 JS 与 CSS 的网络传输均为零。阻断服务端口后，浏览器仍从 Service Worker 打开读过的应用壳，受保护的会话 API 显示离线，缓存内的 API 条目为零。[固定提交的网络与计量设置](https://github.com/Surtr42u/qimeng-next/blob/f1144d79250c62153600610e63790784fad47731/tools/proof_packaged_compare.py) · [浏览器步骤](https://github.com/Surtr42u/qimeng-next/blob/f1144d79250c62153600610e63790784fad47731/web/tests/proof-packaged-traffic.mjs)
+受限链路由 Linux 为上下行各设置 10 Mbit/s、单程 20 ms。受限冷开四轮基线为 1,411–1,631 ms，候选为 1,001–1,003 ms，同轮配对的耗时节省中位数为 427 ms。回环冷开的两组时间范围重叠。两种链路下热开核心 JS 与 CSS 的网络传输均为零，受限热开四对的耗时节省中位数为 −1 ms。阻断服务端口后，浏览器仍从 Service Worker 打开读过的应用壳，受保护的会话 API 显示离线，缓存内的 API 条目为零。[固定提交的网络与计量设置](https://github.com/Surtr42u/qimeng-next/blob/f1144d79250c62153600610e63790784fad47731/tools/proof_packaged_compare.py) · [浏览器步骤](https://github.com/Surtr42u/qimeng-next/blob/f1144d79250c62153600610e63790784fad47731/web/tests/proof-packaged-traffic.mjs)
 
-主 JS 的实际 HTTP 正文从 501,076 B 降为 151,017 B，CSS 从 172,341 B 降为 30,936 B。解码后 SHA-256 与 identity 一致，原有 56 个 Web 文件逐字节一致。两件压缩文件合计 181,953 B，在该云机上增加 184,320 B 的 Web 文件磁盘分配。Linux x64 ZIP 从 25,368,738 B 增至 25,576,003 B。Windows x64、Linux x64 与 Linux ARM64 正式包的压缩文件摘要相同。三平台均完成原生包登录、打开首页及恢复，合成原件的认证范围读取返回 206。[基线 HTTP 头及正文](https://github.com/Surtr42u/qimeng-next/actions/runs/44487639578/job/135434983802) · [三平台包与原生验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44489484242)
+主 JS 的实际 HTTP 正文从 501,076 B 降为 151,017 B，CSS 从 172,341 B 降为 30,936 B。解码后 SHA-256 与 identity 一致，原有 56 个 Web 文件逐字节一致。两件压缩文件合计 181,953 B，在该云机上增加 184,320 B 的 Web 文件磁盘分配。Linux x64 ZIP 从 25,368,738 B 增至 25,576,003 B。Windows x64、Linux x64 与 Linux ARM64 正式包的压缩文件摘要相同，三平台均完成原生包登录、打开首页及恢复。Linux x64 直连专项分别核对了编码选择、条件请求与单区间响应，并经认证接口取得合成原件的指定范围，状态码为 206。[基线 HTTP 头及正文](https://github.com/Surtr42u/qimeng-next/actions/runs/44487639578/job/135434983802) · [三平台包与原生验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44489484242) · [Linux HTTP 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44489854599/job/135442415833)
 
+<a id="change-evidence"></a>
 ## 按改动选择云端证据
 
 Windows 作业使用同一提交的 Go 服务和正式 stdio MCP 执行器登记一张合成图片。可用独立卷时，验收重读备份原件、SQLite 检查点和证明文件，再调用 Windows Shell 回收。新进程使用原操作键回读同一许可和回执，并检查原位置的新文件及库内原件。若 Shell 拒绝回收，验收核实原文件身份、字节和保留原因。没有可用独立卷时，验收核实备份拒绝、来源保留以及零清理许可。`windows-first-check` 中的 `windows-source-recovery.json` 记录该次运行实际经过的分支。[验收程序](../tools/cloud_windows_recovery.py)
