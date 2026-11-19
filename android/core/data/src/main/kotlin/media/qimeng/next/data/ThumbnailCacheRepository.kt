@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.util.Log
 import coil3.ComponentRegistry
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
@@ -62,6 +63,7 @@ class ThumbnailCacheRepository internal constructor(
     private val foreground = MutableStateFlow(0)
     private val clearSignal = MutableStateFlow(0L)
     private val prefetchLock = Mutex()
+    private val backgroundFetch = Mutex()
     private val flights = ThumbnailFlights()
     private var capturedConnection: Connection? = null
     @Volatile private var clearedConnection: Connection? = null
@@ -140,6 +142,29 @@ class ThumbnailCacheRepository internal constructor(
 
     private fun requireCurrent(connection: Connection) {
         if (currentConnection() != connection) throw CancellationException("缩略图所属连接已改变")
+    }
+
+    suspend fun prefetchNearby(assets: List<Asset>) = withContext(Dispatchers.IO) {
+        val connection = currentConnection() ?: return@withContext
+        val pool = connection.selection.pool
+        if (clearedConnection == connection || (pool == ThumbnailPool.NAS && !unmetered.first())) return@withContext
+        val disk = diskFor(pool)
+        val generation = disk.generation
+        for (asset in assets) {
+            requireCurrent(connection)
+            if (asset.thumbnailUrl.isBlank() || asset.mediaType == "animated_image" || !sameTarget(asset.target, connection.target)) continue
+            val request = Preview(asset.id, asset.version, connection, generation)
+            try {
+                if (prefetchOne(request, disk) == ThumbnailDiskResult.FULL) return@withContext
+            } catch (failure: ApiFailure) {
+                if (failure.isMissingThumbnail()) continue
+                Log.d("ThumbnailCache", "Nearby thumbnail prefetch stopped (HTTP ${failure.status})")
+                return@withContext
+            } catch (_: IOException) {
+                Log.d("ThumbnailCache", "Nearby thumbnail prefetch stopped after an I/O error")
+                return@withContext
+            }
+        }
     }
 
     private fun selected(pool: ThumbnailPool, current: Connection?): ThumbnailCacheSelection? {
@@ -246,7 +271,7 @@ class ThumbnailCacheRepository internal constructor(
                 val result = try {
                     prefetchOne(preview, disk)
                 } catch (failure: ApiFailure) {
-                    if (failure.status !in setOf(404, 409, 415, 422, 501) || failure.code == "instance_changed") throw failure
+                    if (!failure.isMissingThumbnail()) throw failure
                     ThumbnailDiskResult.MISSING
                 }
                 when (result) {
@@ -267,22 +292,24 @@ class ThumbnailCacheRepository internal constructor(
         val current = disk.warmState(preview.key, preview.version)
         if (current != ThumbnailDiskResult.MISSING) return current
         delay(80)
-        foreground.first { it == 0 }
-        return flights.run(preview.flightKey) {
-            requireCurrent(preview.connection)
-            if (disk.generation != preview.generation || clearedConnection == preview.connection) {
-                throw CancellationException("缩略图缓存已清空")
+        return backgroundFetch.withLock {
+            foreground.first { it == 0 }
+            flights.run(preview.flightKey) {
+                requireCurrent(preview.connection)
+                if (disk.generation != preview.generation || clearedConnection == preview.connection) {
+                    throw CancellationException("缩略图缓存已清空")
+                }
+                val existing = disk.warmState(preview.key, preview.version)
+                if (existing != ThumbnailDiskResult.MISSING) return@run existing
+                val payload = download(preview, background = true)
+                currentCoroutineContext().ensureActive()
+                requireCurrent(preview.connection)
+                val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
+                    currentConnection() == preview.connection && clearedConnection != preview.connection
+                }
+                if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
+                result
             }
-            val existing = disk.warmState(preview.key, preview.version)
-            if (existing != ThumbnailDiskResult.MISSING) return@run existing
-            val payload = download(preview, background = true)
-            currentCoroutineContext().ensureActive()
-            requireCurrent(preview.connection)
-            val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
-                currentConnection() == preview.connection && clearedConnection != preview.connection
-            }
-            if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
-            result
         }
     }
 
@@ -345,6 +372,9 @@ class ThumbnailCacheRepository internal constructor(
         local.shutdown()
     }
 }
+
+private fun ApiFailure.isMissingThumbnail(): Boolean =
+    status in setOf(404, 409, 415, 422, 501) && code != "instance_changed"
 
 private class ThumbnailFlights {
     private data class Flight(val mutex: Mutex = Mutex(), var users: Int = 0)

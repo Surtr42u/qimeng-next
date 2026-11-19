@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +31,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -226,7 +228,14 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val state by model.assets(key).collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
     val publication by model.lastPublication.collectAsStateWithLifecycle()
-    var columns by controls.columns
+    val sharedColumns = key in setOf("albums", "favorites", "history")
+    val committedColumns = if (sharedColumns) model.albumColumns.collectAsStateWithLifecycle().value else controls.columns.intValue
+    var pinchColumns by remember(key) { mutableStateOf<Int?>(null) }
+    val columns = pinchColumns ?: committedColumns
+    val currentColumns by rememberUpdatedState(committedColumns)
+    val setColumns by rememberUpdatedState<(Int) -> Unit> { count ->
+        if (sharedColumns) model.saveAlbumColumns(count) else controls.columns.intValue = count
+    }
     val grid = rememberLazyGridState()
     LaunchedEffect(scrollTab, grid) { if (scrollTab != null) TabScrollController.events.collect { if (it == scrollTab) grid.scrollToItem(0) } }
     val scope = rememberCoroutineScope()
@@ -237,7 +246,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
-    LaunchedEffect(key, query, group, publication) {
+    LaunchedEffect(key, session, query, group, publication) {
         model.browse(key, query)
         val current = query.toString() + group
         if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }
@@ -259,14 +268,15 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
             filters = { AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, values,
                 onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
-                loadFailed = state.error != null) }
+                loadFailed = state.error != null, columns = columns,
+                onToggleColumns = { setColumns(if (columns == 5) 2 else columns + 1) }) }
             if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
                 FilterChip(controls.type.value == value, { controls.type.value = value }, label = { Text(label) })
             }
             IconButton(onClick = { controls.showFilters.value = true }) { Icon(Icons.Outlined.Tune, "筛选") }
-            IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "列数") }
+            IconButton(onClick = { setColumns(if (columns == 5) 2 else columns + 1) }) { Icon(Icons.Outlined.GridView, "列数") }
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
         val retry: () -> Unit = {
@@ -287,6 +297,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }
+        if (sharedColumns && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
         PullToRefreshBox(isRefreshing = state.loading && state.loaded && state.cursor == null,
             onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
@@ -303,20 +314,36 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     else -> 24.dp
                 }),
                 modifier = Modifier.padding(top = QimengDimens.SpaceM).fillMaxSize()
+                    .then(if (sharedColumns) Modifier.testTag("gallery-grid:$key").semantics { stateDescription = "$columns 列" } else Modifier)
                     .then(if (leading == null) Modifier else Modifier.testTag("author-media-scroll")).pointerInput(key, pinchEnabled) {
                     if (!pinchEnabled) return@pointerInput
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val initialColumns = currentColumns
+                        var pendingColumns = initialColumns
                         var accumulated = 1f
-                        do {
-                            val event = awaitPointerEvent()
-                            if (event.changes.count { it.pressed } >= 2) {
-                                accumulated *= event.calculateZoom()
-                                if (accumulated > 1.22f) { columns = (columns - 1).coerceAtLeast(2); accumulated = 1f }
-                                if (accumulated < 0.82f) { columns = (columns + 1).coerceAtMost(5); accumulated = 1f }
-                                event.changes.forEach { it.consume() }
-                            }
-                        } while (event.changes.any { it.pressed })
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.changes.count { it.pressed } >= 2) {
+                                    accumulated *= event.calculateZoom()
+                                    val step = when {
+                                        accumulated > 1.22f -> -1
+                                        accumulated < 0.82f -> 1
+                                        else -> 0
+                                    }
+                                    if (step != 0) {
+                                        pendingColumns = (pendingColumns + step).coerceIn(2, 5)
+                                        pinchColumns = pendingColumns
+                                        accumulated = 1f
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                }
+                            } while (event.changes.any { it.pressed })
+                            if (pendingColumns != initialColumns) setColumns(pendingColumns)
+                        } finally {
+                            pinchColumns = null
+                        }
                     }
                 }) {
                 if (leading != null) {
