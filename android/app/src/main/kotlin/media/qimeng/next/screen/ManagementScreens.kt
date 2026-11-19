@@ -25,8 +25,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.LoadState
+import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.model.Author
+import media.qimeng.next.model.Session
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
 import media.qimeng.next.ui.component.*
@@ -72,7 +76,7 @@ fun ProfileScreen(model: LibraryViewModel) {
             QimengSettingsRow(TuneSlidersIcon, "推荐偏好", if (recommendation == null) "正在读取…" else mapOf("balanced" to "均衡", "familiar" to "熟悉内容", "explore" to "探索", "fresh" to "新鲜内容")[preset] ?: "自定义偏好", { showPreferences = true })
             QimengSettingsRow(Icons.Outlined.Key, "AI 接入", "只读与写入权限、连接凭据和撤销", { model.navigate("ai-access") })
         } }
-        item { QimengSettingsGroup("关于") { QimengSettingsRow(InfoCircleIcon, "版本信息", "客户端 0.1.0-dev", null) } }
+        item { QimengSettingsGroup("关于") { ServiceVersionRow(model) } }
         item { OutlinedButton(onClick = { confirmLogout = true }, enabled = !busy,
             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
             modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) { Text("退出登录") } }
@@ -84,6 +88,36 @@ fun ProfileScreen(model: LibraryViewModel) {
     if (showPreferences) ModalBottomSheet(onDismissRequest = { if (!busy) showPreferences = false }) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.8f)) { RecommendationSettings(model) }
     }
+}
+
+@Composable
+private fun ServiceVersionRow(model: LibraryViewModel) {
+    val session by model.session.collectAsStateWithLifecycle()
+    val revision by model.transportRevision.collectAsStateWithLifecycle()
+    key(session, revision) { ServiceVersionRow(model, session, revision) }
+}
+
+@Composable
+private fun ServiceVersionRow(model: LibraryViewModel, target: Session?, revision: Long) {
+    var request by remember { mutableIntStateOf(0) }
+    val state by produceState(LoadState<String>(loading = target != null), request) {
+        if (target == null) return@produceState
+        value = LoadState(loading = true)
+        value = try { LoadState(data = model.serverVersion(target, revision)) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: ApiFailure) { LoadState(error = failure.message) }
+        catch (_: java.io.IOException) { LoadState(error = "未连接到服务") }
+        catch (_: IllegalStateException) { LoadState(error = "连接已改变，请重新登录") }
+        catch (_: Exception) { LoadState(error = "无法读取服务版本") }
+    }
+    val subtitle = when {
+        target == null -> "未连接到服务"
+        state.loading -> "正在读取服务版本…"
+        state.error != null -> "${state.error} · 点击重试"
+        state.data != null -> "服务端 ${state.data}"
+        else -> "服务端未声明版本"
+    }
+    QimengSettingsRow(InfoCircleIcon, "版本信息", subtitle, if (state.error != null) ({ request++ }) else null)
 }
 
 /** Source: existing SettingsCards.CountCard; only the count type changes to the API's Long. */

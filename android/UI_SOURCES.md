@@ -15,10 +15,12 @@
 | `feature/detail/VideoStage.kt` 的海报和横滑，`video/{BiliPlayerView,PlayerMath}.kt`，`InstantSystemBars.kt` 与 `res/drawable/ic_player_*.xml` | Next `app/.../screen/VideoStage.kt`、`screen/video/` 和 `app/src/main/res/drawable/`。复用自绘双排播控、画质/倍速/比例/循环弹窗、手势和图标。固定横屏与排版态共用一个 Media3 播放器和表面。播放、进度与标记使用 Next 的版本化接口，手势松手才提交定位。 |
 | `feature/stats/{StatsScreen,StatsDetailScreen,StatsFormatters}.kt`、`QimengTrendLineChart.kt` 和 `QimengTrendMarker.kt` | 新统计页与 `core/ui/.../ui/chart/`。趋势和榜单由 Go 返回；Vico 以真实数据点实现点选。 |
 | `feature/manage/{LibraryManageScreen,RegisterLibraryCard}.kt`、`feature/upload/{UploadScreen,UploadPanels,UploadDestinationSection,UploadPendingSection,UploadArchiveBatchSection}.kt` 与归档文件夹设置页 | 新库管理、上传、目录树、待传清单和归档区沿用原入口与控件。原始文件名、目标身份、目录解析、扫描调度和回执走新代码。 |
+| `feature/upload/{UploadScreen,UploadPendingSection}.kt` 与 `core/ui/.../component/QimengAuthorSourceSection.kt` 的联想与来源胶囊 | 上传的作者选择、来源快捷项和单文件建议通过 `MediaFormLookups.kt` 接已连接服务。采用建议保留原扩展名。 |
 | `feature/manage/{DataManageScreen,ThumbnailCacheScreen}.kt` 的缩略图缓存入口、双卡、占用行和进度样式 | `ManagementScreens.kt` 与 `ThumbnailCacheScreen.kt` 恢复相关提示与控件，由新数据层提供各实例的磁盘统计、清空和预取状态。 |
 | `feature/manage/DeviceApplyScreen.kt` 的作者覆盖行及操作按钮 | `app/.../screen/DeviceDeliveryScreen.kt` 沿用「应用时覆盖作者资料」开关、默认关闭和保存草稿的操作。说明文字采用新 Go 预检的修订与人工保护口径。 |
 | `feature/manage/BackupScreen.kt` 的「同步浏览数据」卡 | `MaintenanceScreen.kt` 与上传页共用 `ActivityEventCard.kt`，从同一个 Next 持久队列查看本连接的状态和单条处理操作。 |
 | `feature/manage/{VocabularyEditScreen,VocabularyEditGroupsCard,VocabularyEditDialogs}.kt` | `ExtractionVocabularyScreen.kt` 恢复停用词卡、可展开的出处组及胶囊词条对话框，保存与重算使用 Next 当前连接的词表修订。 |
+| `feature/settings/SettingsScreen.kt` 的「关于」 | `ManagementScreens.kt` 的同位置版本行读取 Next `/system/status` 公布的构建版本。 |
 | `feature/author/{AuthorScreen,AuthorCollectionScreen,CreatorProfileCard,CreatorNewWorks,CreatorProfileDetails}.kt` | 新作者列表、作品集合、资料与维护、订阅区域；查询、编辑、候选、已确认账号与手动检查采用新 Go 服务。 |
 
 ## 依赖与模块边界
