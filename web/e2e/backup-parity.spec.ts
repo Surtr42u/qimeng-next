@@ -2,6 +2,71 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mockLibrary } from "./fixture";
 
+for (const width of [1440, 390]) {
+  test(`backup tabs and disclosures fit beside the sidebar at ${width}px`, async ({ page }, testInfo) => {
+    await mockLibrary(page);
+    const hash = "0123456789abcdef".repeat(4);
+    await page.route("**/api/v1/backups?**", route => route.fulfill({ json: { items: [{
+      id: "synthetic-archive", assetCount: 2, createdAt: "2026-01-01T00:00:00Z",
+      exportState: "completed", archiveHash: hash, archiveBytes: 1024,
+    }] } }));
+    await page.route("**/api/v1/author-lists?**", route => route.fulfill({ json: { items: [] } }));
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/manage/backup");
+    const tabs = page.getByRole("navigation", { name: "资料维护任务" });
+    for (const [tab, heading] of [["作者TXT", "作者 TXT 导入"], ["上传归档", "上传归档"], ["备份恢复", "备份导入 / 导出"]] as const) {
+      const button = tabs.getByRole("button", { name: tab, exact: true });
+      await button.press("Enter");
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    }
+    const panel = page.getByRole("region", { name: "备份导入 / 导出" });
+    const archives = panel.locator("summary").filter({ hasText: "服务器完整归档" });
+    const delivery = panel.locator("summary").filter({ hasText: "发送资料到另一台设备" });
+    await expect(archives).toBeVisible();
+    await panel.scrollIntoViewIfNeeded();
+    const tabBox = (await tabs.boundingBox())!;
+    const panelBox = (await panel.boundingBox())!;
+    const sidebar = (await page.locator(".sidebar").boundingBox())!;
+    for (const box of [tabBox, panelBox]) {
+      expect(box.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width - 1);
+      expect(box.x + box.width).toBeLessThanOrEqual(width + 1);
+    }
+    const gap = panelBox.y - tabBox.y - tabBox.height;
+    expect(gap).toBeGreaterThanOrEqual(0);
+    expect(gap).toBeLessThanOrEqual(16);
+    if (testInfo.project.name === "chromium") {
+      for (const theme of ["dark", "light"]) {
+        if (theme === "light") await page.getByRole("button", { name: "明暗主题" }).click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+        await page.screenshot({ path: testInfo.outputPath(`backup-${theme}-${width}.png`), animations: "disabled" });
+      }
+    }
+    await archives.press("Enter");
+    await expect(panel.getByRole("link", { name: /下载 \.qnext/ })).toHaveAttribute("href", "/api/v1/backups/synthetic-archive/archive");
+    const digest = panel.getByText(hash, { exact: true });
+    await expect(digest).toBeVisible();
+    if (width === 390) expect(await digest.evaluate(node => {
+      const range = document.createRange(); range.selectNodeContents(node); return range.getClientRects().length;
+    })).toBeGreaterThan(1);
+    await delivery.press("Space");
+    const device = panel.getByLabel("目标设备标识");
+    await expect(device).toBeVisible();
+    await delivery.focus();
+    await page.keyboard.press("Tab");
+    await expect(device).toBeFocused();
+    await expect(panel.getByRole("button", { name: "发送所选资料" })).toBeDisabled();
+    const overflow = await panel.evaluate(node => node.scrollWidth - node.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+    if (testInfo.project.name === "chromium") {
+      await page.getByRole("button", { name: "明暗主题" }).click();
+      await delivery.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath(`backup-expanded-dark-${width}.png`), animations: "disabled" });
+    }
+  });
+}
+
 test("sending selected native data retries the same request and reads the device receipt", async ({ page }) => {
   await mockLibrary(page);
   const digest = "a".repeat(64);
@@ -83,6 +148,18 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
     return (await (await dir.getFileHandle(name!)).getFile()).text();
   }, [slot, category, name]);
   await expect(page.getByText("当前备份与作者资料已更新。", { exact: true })).toBeVisible();
+  const panel = page.getByRole("region", { name: "备份导入 / 导出" });
+  const current = panel.getByRole("button", { name: "恢复当前备份" });
+  const previous = panel.getByRole("button", { name: "恢复上次备份" });
+  await expect(current).toBeEnabled();
+  await expect(previous).toBeEnabled();
+  const controls = panel.locator(".settings-actions");
+  expect(await controls.evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
+  expect((await previous.boundingBox())!.y).toBeGreaterThan((await panel.getByRole("button", { name: "更新全部归档" }).boundingBox())!.y);
+  if (testInfo.project.name === "chromium") {
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("backup-two-generations-dark-390.png"), animations: "disabled" });
+  }
   expect(await text("当前", "作者资料", "作者总表.txt")).toBe("作者总表 1");
   await page.getByRole("button", { name: "更新全部归档" }).click();
   await expect(page.getByText("当前资料已是最新一代。", { exact: true })).toBeVisible();
