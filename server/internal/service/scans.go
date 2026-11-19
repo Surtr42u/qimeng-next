@@ -550,13 +550,16 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 			return e
 		}
 	}
-	if isNew {
+	switch {
+	case isNew:
 		e = store.InsertAsset(ctx, tx, a)
-	} else {
-		e = store.SaveAsset(ctx, tx, a)
+	case library.Kind == "regular":
+		e = store.UpdateScannedFile(ctx, tx, a)
 		if e == nil && taxonomyChanged {
 			e = store.SaveAssetTaxonomy(ctx, tx, a, store.CompleteTaxonomy(a))
 		}
+	default:
+		e = store.SaveAsset(ctx, tx, a)
 	}
 	if e != nil {
 		return e
