@@ -2,16 +2,15 @@
 
 ## 本轮交接
 
-2026-11-20 核对时，主线为 `3599fcb2726cb0c8dcd9ff9ded430730df9e4a3a`。#18 已修复同名目录导致的缺件误判和 Web 事件队列阻塞，合入提交为 `8b2c415`。#21 在 `a98bb43` 同步了 18 份发布、迁移、后台预热与设备交接文档。#23 的历史视频缩略图修复按已核验的容器文件头选择处理方式，检查通过后合入 `3599fcb`。[PR #18](https://github.com/Surtr42u/qimeng-next/pull/18) · [PR #21](https://github.com/Surtr42u/qimeng-next/pull/21) · [PR #23](https://github.com/Surtr42u/qimeng-next/pull/23)
+截至 2026-11-20 03:43（北京时间），最新产品合入提交为 `4689de396cd53a57fd5709958872af7d9f24afcd`。#18 在 `8b2c415` 修复同名目录导致的缺件误判和 Web 事件队列阻塞。#21 在 `a98bb43` 同步了 18 份发布、迁移、后台预热与设备交接文档。#23 在 `3599fcb` 让历史视频缩略图按已核验的容器文件头生成。#20 在 `4689de3` 合入上传锁与路由、归档校验、包时区及热度同分排序修复，保留文件身份与回执。[PR #18](https://github.com/Surtr42u/qimeng-next/pull/18) · [PR #21](https://github.com/Surtr42u/qimeng-next/pull/21) · [PR #23](https://github.com/Surtr42u/qimeng-next/pull/23) · [PR #20](https://github.com/Surtr42u/qimeng-next/pull/20)
 
-#23 合入后的主线 Windows 包仍在构建，按该作业核对产物。[主线 Windows 包](https://github.com/Surtr42u/qimeng-next/actions/runs/44600225546)
+正式产品包跟随 `4689de3` 的主线作业。前一轮 `3599fcb` 的主线作业因新主线取代而取消。按最终选定产品 SHA 对齐 Windows 和 Android 制品。[主线发布与验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44601253846)
 
-PDF 审查的 13 项均有修复提交，其中 2 项已随 #18 入主线。其余条目按下表对应 PR 的验收与合入记录核对。表中 SHA 是本次核对时的分支 HEAD，继续工作前以远端为准。
+审查报告的 13 项均有修复提交。7 项已入主线，来自 #18 的 2 项和 #20 的 5 项。其余 6 项分别在 #19、#22 各 3 项。表中 SHA 是本次核对时的分支 HEAD，继续工作前以远端为准。
 
 | 仍在验收的范围 | 当时的 HEAD 与入口 |
 |---|---|
 | 手机与 Web 统一图标，以及 Android 缓存、统计、作者、视频、浏览和管理界面 | `20411c52bcc28d6eed8edf817d51ef239d679d00`。前一版 Kotlin 编译发现批量编辑调用了旧入口。当前提交将批量编辑和视频仪器用例接到 `updateEditableAsset`，沿用版本修订，新提交待云端验收。[正式 PR #19](https://github.com/Surtr42u/qimeng-next/pull/19) |
-| 上传恢复、归档核验、包时区和热度同分排序。上传恢复沿用原身份与提交回执。 | `88326565bbc0c1de3126ba77c13f6dd354630aa7`。[正式 PR #20](https://github.com/Surtr42u/qimeng-next/pull/20) |
 | Web 维护目录暂存与两代恢复、AI 领取后的故障接续、长文本续读。#06 的 IndexedDB 事务中止修补 `218b887` 已纳入该 PR。 | `dac0e175f4224b42fc213f44a5307c280d3c72d4`。[正式 PR #22](https://github.com/Surtr42u/qimeng-next/pull/22) · [事务中止专项复验](https://github.com/Surtr42u/qimeng-next/actions/runs/44600471485) |
 
 Android 分项 QA 使用独立提交和指定 API 35 云模拟器。本次核对时以下作业仍在运行，结论查各自的 JUnit 与云端制品。合成证据的范围是对应提交、云模拟器和样本。[作者、统计与视频（3c497cb）](https://github.com/Surtr42u/qimeng-next/actions/runs/44597671389) · [管理（6d7f050）](https://github.com/Surtr42u/qimeng-next/actions/runs/44597431852) · [浏览（519b239）](https://github.com/Surtr42u/qimeng-next/actions/runs/44599363766)
