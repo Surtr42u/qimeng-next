@@ -29,6 +29,7 @@ type Options struct {
 }
 
 type Projection func(context.Context, *sql.DB, *sql.Tx, string) error
+type CatalogPreparation func(context.Context, *sql.DB, *sql.Tx, string) (func() error, error)
 
 type Receipt struct {
 	Format           string    `json:"format"`
@@ -170,8 +171,8 @@ func writeJSON(root *os.Root, name string, data any) error {
 
 // Convert claims a new private directory. The archive's no-replace
 // publication is the commit point, after source rechecks and all receipts.
-func Convert(ctx context.Context, opt Options, catalog, activity Projection) (receipt Receipt, err error) {
-	if catalog == nil || activity == nil || opt.SourceTimezone == "" || opt.ReserveBytes < 0 {
+func Convert(ctx context.Context, opt Options, prepareCatalog CatalogPreparation, activity Projection) (receipt Receipt, err error) {
+	if prepareCatalog == nil || activity == nil || opt.SourceTimezone == "" || opt.ReserveBytes < 0 {
 		return receipt, failed("invalid_conversion_options")
 	}
 	if opt.ReserveBytes == 0 {
@@ -256,9 +257,6 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 	}
 	media := newMediaSet(&report)
 	media.progress = opt.Progress
-	if media.progress != nil {
-		media.progress("checking_originals", 0, 0)
-	}
 	room, err := available(ctx, opt.Output, opt.ReserveBytes)
 	if err != nil {
 		return receipt, err
@@ -276,7 +274,7 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 	report.Stage = "new_database"
 	snapshotName := filepath.Join(opt.Output, ".incomplete", "catalog.sqlite")
 	manifest := backup.Manifest{Format: backup.Format, Version: backup.Version, BackupID: rand.Text(), InstanceID: rand.Text(), CreatedAt: time.Now().UTC()}
-	if err = project(ctx, source, snapshotName, room, manifest, &in, media, catalog, activity); err != nil {
+	if err = project(ctx, source, snapshotName, room, manifest, &in, media, prepareCatalog, activity); err != nil {
 		return receipt, err
 	}
 	report.Stage = "archive"
@@ -365,7 +363,7 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 	return receipt, nil
 }
 
-func project(ctx context.Context, source *sql.DB, filename string, room int64, m backup.Manifest, in *inputs, media *mediaSet, catalog, activity Projection) error {
+func project(ctx context.Context, source *sql.DB, filename string, room int64, m backup.Manifest, in *inputs, media *mediaSet, prepareCatalog CatalogPreparation, activity Projection) error {
 	target, err := store.Open(filename)
 	if err != nil {
 		return err
@@ -404,7 +402,18 @@ func project(ctx context.Context, source *sql.DB, filename string, room int64, m
 	if err = readLibraries(ctx, source, tx, in.library, media.report); err != nil {
 		return err
 	}
+	media.report.Stage = "catalog_metadata"
+	if media.progress != nil {
+		media.progress("checking_catalog_metadata", 0, 0)
+	}
+	finishCatalog, err := prepareCatalog(ctx, source, tx, media.sourceID)
+	if err != nil {
+		return projectionFailure("catalog", err)
+	}
 	media.report.Stage = "originals"
+	if media.progress != nil {
+		media.progress("checking_originals", 0, 0)
+	}
 	if err = media.live(ctx, source, tx, in.library); err != nil {
 		return err
 	}
@@ -416,7 +425,7 @@ func project(ctx context.Context, source *sql.DB, filename string, room int64, m
 		return err
 	}
 	media.report.Stage = "catalog"
-	if err = catalog(ctx, source, tx, media.sourceID); err != nil {
+	if err = finishCatalog(); err != nil {
 		return projectionFailure("catalog", err)
 	}
 	media.report.Stage = "activity"

@@ -30,8 +30,20 @@ type importer struct {
 // containing the libraries, verified asset versions and native unknown author.
 // The caller owns the transaction and rolls it back on any error.
 func Import(ctx context.Context, source *sql.DB, target *sql.Tx, sourceID string) error {
+	finish, err := Prepare(ctx, source, target, sourceID)
+	if err != nil {
+		return err
+	}
+	return finish()
+}
+
+// Prepare imports independent owner metadata, including validated offline
+// profiles, in the caller's transaction before reading original media bytes.
+// Call the returned function in that same transaction after every verified
+// asset exists to bind its exact relations and account for unmatched works.
+func Prepare(ctx context.Context, source *sql.DB, target *sql.Tx, sourceID string) (func() error, error) {
 	if sourceID == "" {
-		return diagnostic("source_identity", sourceProblem("source_identity_missing"))
+		return nil, diagnostic("source_identity", sourceProblem("source_identity_missing"))
 	}
 	i := &importer{ctx: ctx, source: source, target: target, sourceID: sourceID,
 		authors: make(map[string]model.Author), settings: make(map[string]setting)}
@@ -41,14 +53,19 @@ func Import(ctx context.Context, source *sql.DB, target *sql.Tx, sourceID string
 	}{
 		{"libraries", i.loadRoots}, {"authors", i.importAuthors}, {"tags", i.importTags},
 		{"kv_settings", i.readSettings}, {"user_preferences", i.importSettings},
-		{"author_lists", i.importLists}, {"asset_relations", i.importAssets},
-		{"creator_profiles", i.importProfiles}, {"profile_revisions", i.importProfileFloors},
+		{"author_lists", i.importLists}, {"creator_profiles", i.importProfiles}, {"profile_revisions", i.importProfileFloors},
 	} {
 		if err := step.run(); err != nil {
-			return diagnostic(step.name, err)
+			return nil, diagnostic(step.name, err)
 		}
 	}
-	return nil
+	i.settings = nil // the relation phase needs author identities and protected works only
+	return func() error {
+		if err := i.importAssets(); err != nil {
+			return diagnostic("asset_relations", err)
+		}
+		return nil
+	}, nil
 }
 
 func (i *importer) each(query string, read func(*sql.Rows) error) error {

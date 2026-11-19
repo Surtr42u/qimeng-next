@@ -67,7 +67,7 @@ func run(ctx context.Context, args []string) error {
 	projectActivity := func(ctx context.Context, source *sql.DB, target *sql.Tx, sourceID string) error {
 		return activity.Import(ctx, source, target, sourceID, location)
 	}
-	receipt, err := legacycold.Convert(ctx, opt, catalog.Import, projectActivity)
+	receipt, err := legacycold.Convert(ctx, opt, catalog.Prepare, projectActivity)
 	if err != nil {
 		return fmt.Errorf("Conversion stopped (%w). See the private coverage report if the output directory was created.", err)
 	}
