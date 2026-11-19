@@ -20,6 +20,12 @@ import (
 func selectedImageFixture(t *testing.T) (*fixture, model.Asset, model.Asset, []byte) {
 	t.Helper()
 	f := setup(t)
+	rep, donor, original := selectFixtureImages(t, f)
+	return f, rep, donor, original
+}
+
+func selectFixtureImages(t *testing.T, f *fixture) (model.Asset, model.Asset, []byte) {
+	t.Helper()
 	u, original := f.upload("first.png", 53, map[string]any{"relativeDirectory": "images"})
 	rep := *f.complete(u).Asset
 	root, err := f.s.Root.LibraryPath(f.library)
@@ -63,14 +69,15 @@ func selectedImageFixture(t *testing.T) (*fixture, model.Asset, model.Asset, []b
 			t.Fatal(err)
 		}
 		if _, err = tx.Exec(`INSERT INTO selected_image_merge_members(physical_asset_id,representative_id,original_asset,original_relations)
-			VALUES(?,?,?,'{}')`, member.ID, rep.ID, record); err != nil {
+			SELECT ?,?,?,json_object('listMatches',json_group_array(json_object('listId',list_id,'authorId',author_id,'work',work)
+			ORDER BY list_id,author_id,work)) FROM author_list_matches WHERE asset_id=?`, member.ID, rep.ID, record, member.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	return f, rep, donor, original
+	return rep, donor, original
 }
 
 func checkPhysicalOriginal(t *testing.T, f *fixture, a model.Asset, original []byte) {

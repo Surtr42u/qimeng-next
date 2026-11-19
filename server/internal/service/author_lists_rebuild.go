@@ -11,6 +11,7 @@ import (
 )
 
 const maxAuthorListMatches = 1000000
+const authorListAssetRows = " FROM assets a WHERE a.id NOT IN " + selectedImageDonors
 
 type textMatch struct{ ListID, AssetID, AuthorID, Work string }
 type textRule struct{ ListID, AuthorID, Work string }
@@ -56,7 +57,7 @@ func preferredAuthorOrder(current, desired []string) []string {
 func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (AuthorListResult, error) {
 	result := AuthorListResult{Format: "blocks", PreservedSources: []string{}, Issues: []authorlist.Issue{}}
 	var count int
-	if e := q.QueryRowContext(ctx, "SELECT count(*) FROM assets").Scan(&count); e != nil {
+	if e := q.QueryRowContext(ctx, "SELECT count(*)"+authorListAssetRows).Scan(&count); e != nil {
 		return result, e
 	}
 	if count > maxAuthorListAssets {
@@ -81,7 +82,7 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 		return result, e
 	}
 	current := map[string][]string{}
-	rows, e = q.QueryContext(ctx, "SELECT asset_id,author_id FROM asset_authors ORDER BY asset_id,author_id")
+	rows, e = q.QueryContext(ctx, "SELECT asset_id,author_id FROM asset_authors WHERE asset_id NOT IN "+selectedImageDonors+" ORDER BY asset_id,author_id")
 	if e != nil {
 		return result, e
 	}
@@ -104,7 +105,7 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 	manualEmpty := map[string]bool{}
 	exists := map[string]bool{}
 	rows, e = q.QueryContext(ctx, `SELECT a.id,a.file_name,coalesce(json_extract(a.data,'$.cosDirectoryAuthorId'),''),
-		EXISTS(SELECT 1 FROM asset_human_fields f WHERE f.asset_id=a.id AND f.field='authors') FROM assets a ORDER BY a.id`)
+		EXISTS(SELECT 1 FROM asset_human_fields f WHERE f.asset_id=a.id AND f.field='authors')`+authorListAssetRows+" ORDER BY a.id")
 	if e != nil {
 		return result, e
 	}
@@ -206,7 +207,7 @@ func (s *Service) rebuildAuthorLists(ctx context.Context, q store.Querier) (Auth
 	}
 	positive := map[string][]string{}
 	removed := map[string]map[string]bool{}
-	rows, e = q.QueryContext(ctx, "SELECT asset_id,author_id,removed FROM asset_author_overrides ORDER BY asset_id,author_id")
+	rows, e = q.QueryContext(ctx, "SELECT asset_id,author_id,removed FROM asset_author_overrides WHERE asset_id NOT IN "+selectedImageDonors+" ORDER BY asset_id,author_id")
 	if e != nil {
 		return result, e
 	}

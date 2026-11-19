@@ -7,8 +7,8 @@ import (
 	"qimeng.local/next/server/internal/store"
 )
 
-// Donors occupy native trash locations so that the archive can verify and
-// restore each physical original. Only user-facing trash queries exclude them.
+// Archived originals occupy native trash locations for verification and restore.
+// The representative owns their active catalog and author-list relationships.
 const selectedImageDonors = "(SELECT physical_asset_id FROM selected_image_merge_members WHERE physical_asset_id!=representative_id)"
 const visibleTrashCount = "SELECT count(*) FROM asset_locations WHERE trashed=1 AND asset_id NOT IN " + selectedImageDonors
 
