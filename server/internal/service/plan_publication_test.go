@@ -232,7 +232,7 @@ func TestPlanPublicationHoldsIntentWhenAuthorizationOrRevisionChanges(t *testing
 			if err != nil {
 				t.Fatal("held plan stopped unrelated service recovery", err)
 			}
-			intent, err := store.Get[fileIntent](ctx, s.DB.DB, "SELECT data FROM file_intents WHERE id=?", digest([]byte("publish:"+u.ID))[:32])
+			intent, err := store.Get[fileIntent](ctx, s.DB.DB, "SELECT data FROM file_intents WHERE id=?", digest([]byte("publish:" + u.ID))[:32])
 			if err != nil || intent.State != "prepared" || intent.PrincipalID != actor.ID {
 				t.Fatal("restart discarded the held publication evidence", err)
 			}
