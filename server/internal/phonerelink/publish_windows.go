@@ -4,6 +4,7 @@ package phonerelink
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -17,9 +18,12 @@ func linked(info os.FileInfo) bool {
 
 func syncDir(string) error { return nil }
 
-func publish(from, to string) error {
+func publish(parent *os.Root, from, to string) error {
 	long := func(name string) (*uint16, error) {
-		if strings.HasPrefix(name, "\\\\") {
+		name = filepath.Join(parent.Name(), filepath.FromSlash(name))
+		if strings.HasPrefix(name, "\\\\?\\") {
+			return windows.UTF16PtrFromString(name)
+		} else if strings.HasPrefix(name, "\\\\") {
 			name = "\\\\?\\UNC\\" + strings.TrimPrefix(name, "\\\\")
 		} else {
 			name = "\\\\?\\" + name

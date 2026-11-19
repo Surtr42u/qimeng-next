@@ -125,3 +125,21 @@ jobs:
           path: package/
           if-no-files-found: error
           retention-days: 14
+      - name: Assemble the standalone Windows phone tool with its verified receipt
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir phone-package
+          cp package/qimeng-backup.exe phone-package/
+          cp package/phone-relink.md phone-package/README.md
+          cp package/phone-relink-cloud-receipt.json phone-package/
+          cp -R package/third-party phone-package/
+          cd phone-package
+          sha256sum qimeng-backup.exe README.md phone-relink-cloud-receipt.json third-party/preview-decoders/* > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: runner.os == 'Windows'
+        with:
+          name: qimeng-phone-relink-windows-amd64
+          path: phone-package/
+          if-no-files-found: error
+          retention-days: 14

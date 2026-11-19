@@ -4,6 +4,7 @@ package phonerelink
 
 import (
 	"os"
+	"path"
 
 	"golang.org/x/sys/unix"
 )
@@ -21,6 +22,16 @@ func syncDir(name string) error {
 	return dir.Sync()
 }
 
-func publish(from, to string) error {
-	return unix.Renameat2(unix.AT_FDCWD, from, unix.AT_FDCWD, to, unix.RENAME_NOREPLACE)
+func publish(parent *os.Root, from, to string) error {
+	source, err := parent.Open(path.Dir(from))
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	target, err := parent.Open(".")
+	if err != nil {
+		return err
+	}
+	defer target.Close()
+	return unix.Renameat2(int(source.Fd()), path.Base(from), int(target.Fd()), to, unix.RENAME_NOREPLACE)
 }

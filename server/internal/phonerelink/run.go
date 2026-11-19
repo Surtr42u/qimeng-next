@@ -186,8 +186,7 @@ func prepare(ctx context.Context, o Options, dir, ready string, inputs []*inputF
 	return result, errors.Join(err, out.Sync(), out.Close())
 }
 
-func Run(ctx context.Context, o Options) (Receipt, error) {
-	var result Receipt
+func Run(ctx context.Context, o Options) (result Receipt, runErr error) {
 	if err := o.validate(); err != nil {
 		return result, err
 	}
@@ -201,11 +200,36 @@ func Run(ctx context.Context, o Options) (Receipt, error) {
 		inputs = append(inputs, input)
 	}
 	parent := filepath.Dir(o.Destination)
-	dir, err := os.MkdirTemp(parent, ".qimeng-phone-relink-")
+	anchor, err := os.OpenRoot(parent)
 	if err != nil {
 		return result, err
 	}
-	defer os.RemoveAll(dir)
+	defer anchor.Close()
+	leaf := ".qimeng-phone-relink-" + service.ID()
+	if err := anchor.Mkdir(leaf, 0700); err != nil {
+		return result, err
+	}
+	dir := filepath.Join(parent, leaf)
+	owned, err := anchor.Lstat(leaf)
+	if err != nil {
+		return result, err
+	}
+	bound := func() error {
+		current, err := anchor.Lstat(leaf)
+		if err != nil || linked(current) || !os.SameFile(owned, current) {
+			return errors.Join(refusal("private_scratch_identity_changed"), err)
+		}
+		return nil
+	}
+	defer func() {
+		err := bound()
+		if err == nil {
+			err = anchor.RemoveAll(leaf)
+		}
+		if err != nil {
+			runErr = errors.Join(refusal("private_scratch_cleanup_required"), runErr, err)
+		}
+	}()
 	ready := filepath.Join(dir, "ready")
 	if err := os.Mkdir(ready, 0700); err != nil {
 		return result, err
@@ -232,10 +256,20 @@ func Run(ctx context.Context, o Options) (Receipt, error) {
 	if err := ctx.Err(); err != nil {
 		return Receipt{}, err
 	}
+	if err := plainDir(parent); err != nil {
+		return Receipt{}, err
+	}
+	named, err := os.Lstat(dir)
+	if err != nil || !os.SameFile(owned, named) {
+		return Receipt{}, errors.Join(refusal("private_scratch_identity_changed"), err)
+	}
+	if err := bound(); err != nil {
+		return Receipt{}, err
+	}
 	if err := syncDir(ready); err != nil {
 		return Receipt{}, err
 	}
-	if err := publish(ready, o.Destination); err != nil {
+	if err := publish(anchor, leaf+"/ready", filepath.Base(o.Destination)); err != nil {
 		return Receipt{}, err
 	}
 	return result, syncDir(parent)
