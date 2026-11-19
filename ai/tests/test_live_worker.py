@@ -55,11 +55,11 @@ class ChatHost(BaseHTTPRequestHandler):
                 name = "plan_prepare"
                 args = {"items": [{"input": u["input"], "family": Path(u["name"]).stem} for u in staged]}
             else:
-                if behavior == "hold_after_plan":
-                    self.server.plan_ready.set()
-                    self.server.release.wait(40)
                 name = "plan_commit"
                 args = {"plan": preview["plan"]}
+            if behavior == "hold_after_plan" and tools and "plan" in tools[-1] and "items" in tools[-1]:
+                self.server.plan_ready.set()
+                self.server.release.wait(40)
             calls = [{"id": "call_" + str(len(self.server.requests)), "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args)}}]
         reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}]}
@@ -112,33 +112,39 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
         return grant["credential"]["token"]
 
-    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=None):
+    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=None, count=1):
         body = {"libraryId": self.library["id"], "label": name, "mode": mode}
         if research_calls is not None:
             body["maxResearchCalls"] = research_calls
         batch = self.request("POST", "/batches", body, key=name + "-batch")
-        source = self.root / (name + ".png")
-        color = hashlib.sha256(name.encode()).hexdigest()[:6]
-        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
-                        "-frames:v", "1", "-threads", "1", str(source)], check=True, timeout=30)
-        raw = source.read_bytes()
-        self.source_sha = hashlib.sha256(raw).hexdigest()
-        good = {"id": name + "-input", "originalFileName": source.name, "size": len(raw), "expectedHash": self.source_sha}
-        inputs = [good]
+        media = []
+        for index in range(count):
+            stem = name if count == 1 else f"{name}-{index + 1:02}"
+            source = self.root / (stem + ".png")
+            color = hashlib.sha256(stem.encode()).hexdigest()[:6]
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
+                            "-frames:v", "1", "-threads", "1", str(source)], check=True, timeout=30)
+            raw = source.read_bytes()
+            media.append(({"id": stem + "-input", "originalFileName": source.name, "size": len(raw),
+                           "expectedHash": hashlib.sha256(raw).hexdigest()}, raw))
+        inputs = [item for item, _ in media]
+        self.source_sha = inputs[0]["expectedHash"]
+        self.assertEqual(len({item["expectedHash"] for item in inputs}), count)
         if mixed:
             inputs.append({"id": name + "-notes", "originalFileName": "notes.txt", "size": 7})
         self.request("PUT", "/batches/" + batch["id"] + "/inputs",
                      {"expectedManifestRevision": batch["manifestRevision"], "inputs": inputs}, key=name + "-seal")
-        upload = self.request("POST", "/uploads", {"batchId": batch["id"], "inputId": good["id"],
-                              "libraryId": self.library["id"], "mode": mode, "fileName": source.name,
-                              "size": len(raw), "mimeType": "image/png", "expectedHash": self.source_sha}, key=name + "-upload")
-        url = os.environ["QIMENG_TEST_BASE"] + "/api/v1/uploads/" + upload["id"] + "/content"
-        chunk = urllib.request.Request(url, method="PUT", data=raw,
-                                       headers={"Authorization": "Bearer " + os.environ["QIMENG_E2E_TOKEN"],
-                                                "Upload-Offset": "0", "Content-Type": "application/octet-stream"})
-        with urllib.request.urlopen(chunk, timeout=15) as response:
-            self.assertEqual(json.load(response)["offset"], len(raw))
-        self.request("POST", "/uploads/" + upload["id"] + "/complete", key=name + "-complete")
+        for item, raw in media:
+            upload = self.request("POST", "/uploads", {"batchId": batch["id"], "inputId": item["id"],
+                                  "libraryId": self.library["id"], "mode": mode, "fileName": item["originalFileName"],
+                                  "size": len(raw), "mimeType": "image/png", "expectedHash": item["expectedHash"]}, key=item["id"] + "-upload")
+            url = os.environ["QIMENG_TEST_BASE"] + "/api/v1/uploads/" + upload["id"] + "/content"
+            chunk = urllib.request.Request(url, method="PUT", data=raw,
+                                           headers={"Authorization": "Bearer " + os.environ["QIMENG_E2E_TOKEN"],
+                                                    "Upload-Offset": "0", "Content-Type": "application/octet-stream"})
+            with urllib.request.urlopen(chunk, timeout=15) as response:
+                self.assertEqual(json.load(response)["offset"], len(raw))
+            self.request("POST", "/uploads/" + upload["id"] + "/complete", key=item["id"] + "-complete")
         self.host.batches[name] = batch["id"]
         return batch["id"]
 
@@ -156,6 +162,99 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                 process.wait()
         self.assertEqual(process.returncode, expected, stderr)
         return json.loads(stderr if expected else stdout)
+
+    def first_page(self):
+        message = self.host.requests[-1]["messages"][1]["content"]
+        return json.loads(message[message.index("{"):])
+
+    async def stop_after_prepare(self, batch):
+        self.host.behavior[batch] = "hold_after_plan"
+        worker = self.launch()
+        try:
+            self.assertTrue(await asyncio.to_thread(self.host.plan_ready.wait, 30))
+            report = self.request("GET", "/batches/" + batch)
+            self.assertEqual([plan["state"] for plan in report["plans"]], ["prepared"])
+            return report
+        finally:
+            worker.kill()
+            await asyncio.to_thread(worker.communicate)
+            self.host.behavior.pop(batch)
+            self.host.release.set()
+
+    async def test_fifty_inputs_and_restarted_plan_follow_every_page_to_one_commit(self):
+        batch = self.submit("worker-pages", count=50)
+        selected = []
+        reviewed = []
+
+        def prepare(results):
+            pages = [self.first_page(), *results]
+            last = pages[-1]
+            if "plan" in last:
+                return "plan_read", {"plan": last["plan"]}
+            if "nextOffset" in last:
+                return "task_context", {"offset": last["nextOffset"]}
+            selected.extend([row["input"] for row in page["inputs"]] for page in pages)
+            return "plan_prepare", {"items": [{"input": row["input"], "family": Path(row["name"]).stem}
+                                              for page in pages for row in page["inputs"]]}
+
+        self.host.scripts[batch] = prepare
+        saved, = (await self.stop_after_prepare(batch))["plans"]
+
+        def publish(results):
+            if not results:
+                return "plan_read", {"plan": self.first_page()["plans"][0]["plan"]}
+            page = results[-1]
+            reviewed.append([row["input"] for row in page["items"]])
+            if "nextOffset" in page:
+                return "plan_read", {"plan": page["plan"], "offset": page["nextOffset"]}
+            return "plan_commit", {"plan": page["plan"]}
+
+        self.host.scripts[batch] = publish
+        result, = (await self.worker())["batches"]
+        self.assertEqual(result["state"], "completed")
+        for pages in (selected, reviewed):
+            self.assertGreaterEqual(len(pages), 5)
+            self.assertTrue(all(0 < len(page) <= 10 for page in pages))
+            self.assertEqual(sorted(n for page in pages for n in page), list(range(1, 51)))
+        self.assertEqual(result["modelUsage"]["toolResults"], [{"tool": "plan.read", "code": "ok"}] * len(reviewed)
+                         + [{"tool": "plan.commit", "code": "ok"}])
+        final = self.request("GET", "/batches/" + batch)
+        self.assertEqual(final["plans"], [{**saved, "state": "completed"}])
+        self.assertEqual(len({item["assetId"] for item in final["inputs"]}), 50)
+        for item in final["inputs"]:
+            asset = self.request("GET", "/assets/" + item["assetId"])
+            self.assertEqual((item["state"], asset["hash"]), ("ingested", item["expectedHash"]))
+        self.assertEqual((await self.worker())["state"], "idle")
+
+    async def test_repeated_page_and_unissued_offsets_stop_at_the_unchanged_limit(self):
+        batch = self.submit("worker-repeated-page", count=11)
+        self.host.scripts[batch] = lambda results: ("task_context", {"offset": self.first_page()["nextOffset"]})
+        repeated, = (await self.worker())["batches"]
+        self.assertEqual(repeated["state"], "NO_PROGRESS")
+        self.assertEqual([r["code"] for r in repeated["modelUsage"]["toolResults"]], ["ok"] * 3 + ["NO_PROGRESS"])
+        offsets = [1, 11, 200, -1]
+        self.host.scripts[batch] = lambda results: ("task_context", {"offset": offsets[len(results)]})
+        invalid, = (await self.worker("--retry-batch", batch))["batches"]
+        self.assertEqual(invalid["state"], "NO_PROGRESS")
+        self.assertEqual([r["code"] for r in invalid["modelUsage"]["toolResults"]], ["INVALID_INPUT"] * 3 + ["NO_PROGRESS"])
+        self.assertEqual(self.request("GET", "/batches/" + batch)["plans"], [])
+
+    async def test_cached_worker_page_requires_the_live_task_lease(self):
+        batch = self.submit("worker-page-lease", count=11)
+        other = Runtime(Config.load({**self.env, "QIMENG_AI_STATE_DIR": str(self.root / "other")}))
+        self.addCleanup(other.close)
+
+        def rotate(results):
+            other.call("task.resume", {"id": batch, "operationId": "rotate-before-next-page"})
+            self.host.behavior[batch] = "wait"
+            return "task_context", {"offset": self.first_page()["nextOffset"]}
+
+        self.host.scripts[batch] = rotate
+        result, = (await self.worker())["batches"]
+        reply = json.loads(self.host.requests[-1]["messages"][-1]["content"])
+        self.assertEqual((reply["httpStatus"], reply["code"], result["state"]), (401, "unauthorized", "unauthorized"))
+        self.assertNotIn("inputs", reply)
+        self.assertEqual(self.request("GET", "/batches/" + batch)["plans"], [])
 
     async def test_daily_control_recovers_parked_claim_without_renewing_owned_task(self):
         runtime = Runtime(Config.load({**self.env, "QIMENG_AI_MAX_CALLS": "2"}))
