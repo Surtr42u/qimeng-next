@@ -85,6 +85,7 @@ jobs:
           COMPARISON_DIR: ${{ github.workspace }}/evidence
         run: node tests/route-offline-study.mjs
       - name: Install the same Ubuntu reference font by its signed package digest
+        if: success() || failure()
         run: |
           set -euo pipefail
           pkg=$(apt-cache show fonts-noto-cjk)
@@ -102,6 +103,7 @@ jobs:
           done
           exit 1
       - name: Exercise both built entry points
+        if: success() || failure()
         working-directory: next/web
         env:
           REFERENCE_DIST: ${{ github.workspace }}/installed/web/dist

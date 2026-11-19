@@ -16,8 +16,10 @@ try {
     try {
       for (const scene of ["profile", "archives", "ai", "offline-from-home"]) {
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+        const page = await context.newPage();
+        const record = { version, scene };
+        page.setDefaultTimeout(7000);
         try {
-          const page = await context.newPage();
           await page.clock.setFixedTime(new Date(fixedTime));
           if (scene === "profile") {
             await page.goto(server.origin + author);
@@ -42,7 +44,8 @@ try {
           const failed = page.getByText("页面文件未能载入。", { exact: false });
           const heading = page.getByRole("heading", { name: scene === "profile" ? "作者资料" : scene === "archives" ? "作者资料归档" : "AI 接入", exact: true });
           await expect(heading.or(failed)).toBeVisible();
-          const record = { version, scene, heading: await heading.isVisible(), warning: await page.getByText("网络已断开。", { exact: false }).isVisible() };
+          record.heading = await heading.isVisible();
+          record.warning = await page.getByText("网络已断开。", { exact: false }).isVisible();
           let draft;
           if (scene === "profile") {
             record.summary = await page.locator(".creator-bio-preview").textContent({ timeout: 600 }).catch(() => "") === "合成资料";
@@ -64,7 +67,7 @@ try {
           await expect(heading).toBeVisible();
           record.draftAfterReconnect = draft ? await draft.inputValue() === "合成离线草稿" : false;
           if (draft) {
-            await page.goBack();
+            await page.evaluate(() => history.back());
             const guard = page.getByRole("alertdialog");
             await expect(guard.or(link)).toBeVisible();
             record.guarded = await guard.isVisible();
@@ -74,10 +77,15 @@ try {
           await expect(page).toHaveURL(server.origin + returnPath);
           await expect(page.locator("[data-page-heading]").first()).toBeVisible();
           record.returnControlVisible = await link.isVisible();
-          record.returnFocus = await link.evaluate(e => e === document.activeElement);
-          records.push(record);
+          record.returnFocus = record.returnControlVisible && await link.evaluate(e => e === document.activeElement);
+        } catch (error) {
+          record.failure = error.message.slice(0, 900);
+          record.screen = (await page.locator("main").ariaSnapshot().catch(() => "")).slice(0, 2200);
+        } finally {
           console.log(JSON.stringify(record));
-        } finally { await context.close(); }
+          records.push(record);
+          await context.close();
+        }
       }
     } finally { await server.close(); }
   }
@@ -85,3 +93,4 @@ try {
   await browser.close();
   await writeFile(join(out, "offline-comparison.json"), JSON.stringify(records, null, 2));
 }
+if (records.some(row => row.failure)) process.exitCode = 1;
