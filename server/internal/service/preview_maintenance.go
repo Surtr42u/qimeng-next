@@ -17,12 +17,16 @@ var managedPreviewFile = regexp.MustCompile(`^v[1234]-[1-9][0-9]*-(256|512|1024)
 
 const previewVersionColumns = `json_extract(a.data,'$.contentVersion'),
 	EXISTS(SELECT 1 FROM selected_image_merge_members WHERE physical_asset_id=a.id)`
+const previewCandidatesFrom = ` FROM assets a JOIN libraries l ON l.id=a.library_id
+	 WHERE a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
+	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
 
 func (s *Service) previewWorker() {
 	defer s.workers.Done()
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	fullDue := time.Now().Add(10 * time.Minute)
+	var waitingFor int64
 	for {
 		select {
 		case <-s.workCtx.Done():
@@ -32,33 +36,52 @@ func (s *Service) previewWorker() {
 			if force {
 				fullDue = now.Add(10 * time.Minute)
 			}
-			full, scopes := s.previews.pending(force)
-			if full {
-				scopes = []previewScope{{}}
-			}
-			for _, scope := range scopes {
-				err := s.warmPreviews(s.workCtx, scope)
-				if err == nil {
-					continue
-				}
-				if s.workCtx.Err() != nil {
-					return
-				}
-				var problem *Error
-				if errors.As(err, &problem) && problem.Status == 507 {
-					s.previews.changed("", "")
-					slog.Warn("thumbnail reconciliation paused at storage reserve")
-					break
-				}
-				s.previews.changed(scope.library, scope.asset)
-				slog.Warn("thumbnail reconciliation will retry")
-			}
-			if full {
-				if err := s.prunePreviewDirectories(s.workCtx); err != nil && s.workCtx.Err() == nil {
-					slog.Warn("old thumbnail cleanup deferred")
-				}
-			}
+			waitingFor = s.runPreviewCycle(s.workCtx, force, waitingFor)
 		}
+	}
+}
+
+func (s *Service) runPreviewCycle(ctx context.Context, force bool, waitingFor int64) int64 {
+	if waitingFor > 0 && s.checkPreviewSpace(waitingFor) != nil {
+		if force {
+			s.cleanupPreviews(ctx)
+		}
+		return waitingFor
+	}
+	full, scopes := s.previews.pending(force)
+	if full {
+		scopes = []previewScope{{}}
+	}
+	waitingFor = 0
+	for i, scope := range scopes {
+		err := s.warmPreviews(ctx, scope)
+		if err == nil {
+			continue
+		}
+		if ctx.Err() != nil {
+			return waitingFor
+		}
+		var space *previewSpaceError
+		if errors.As(err, &space) {
+			for _, remaining := range scopes[i:] {
+				s.previews.changed(remaining.library, remaining.asset)
+			}
+			waitingFor = space.required
+			slog.Warn("thumbnail reconciliation paused at storage reserve")
+			break
+		}
+		s.previews.changed(scope.library, scope.asset)
+		slog.Warn("thumbnail reconciliation will retry")
+	}
+	if full {
+		s.cleanupPreviews(ctx)
+	}
+	return waitingFor
+}
+
+func (s *Service) cleanupPreviews(ctx context.Context) {
+	if err := s.prunePreviewDirectories(ctx); err != nil && ctx.Err() == nil {
+		slog.Warn("old thumbnail cleanup deferred")
 	}
 }
 
@@ -69,9 +92,7 @@ type previewIdentity struct {
 }
 
 func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
-	query := "SELECT a.id," + previewVersionColumns + ` FROM assets a JOIN libraries l ON l.id=a.library_id
-	 WHERE a.id>? AND a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
-	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
+	query := "SELECT a.id," + previewVersionColumns + previewCandidatesFrom + " AND a.id>?"
 	if scope.library != "" {
 		query += " AND a.library_id=?"
 	}
@@ -156,7 +177,7 @@ func (s *Service) warmPreviewPage(ctx context.Context, page []previewIdentity) e
 
 func (s *Service) warmPreviewSize(ctx context.Context, asset previewIdentity, edge int) error {
 	info, err := s.Root.Lstat(previewPath(asset.id, asset.version, edge, asset.selected))
-	if err == nil && info.Mode().IsRegular() {
+	if err == nil && info.Mode().IsRegular() && info.Size() > 0 {
 		return nil
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

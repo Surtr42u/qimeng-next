@@ -594,8 +594,28 @@ paths:
       parameters:
         - {name: version, in: query, schema: {type: integer, format: int64, minimum: 1}, description: Reject with 409 rather than cache new bytes as an older version}
         - {name: size, in: query, schema: {type: string, enum: [sm, md, lg], default: md}, description: Preview long edge 256/512/1024; never changes original media}
+        - {name: background, in: query, schema: {type: boolean, default: false}, description: Queue missing previews behind foreground work}
       responses:
-        '200': {description: Versioned bounded JPEG preview, content: {image/jpeg: {schema: {type: string, format: binary}}}}
+        '200':
+          description: Versioned bounded JPEG preview
+          headers:
+            X-Qimeng-Instance-Id: {description: Instance owning the returned preview, schema: {type: string}}
+          content: {image/jpeg: {schema: {type: string, format: binary}}}
+        default: {$ref: '#/components/responses/Error'}
+  /thumbnails/candidates:
+    get:
+      operationId: listThumbnailCandidates
+      description: Current derived JPEG preview candidates from enabled libraries, excluding trashed media. Continuation seeks by stable asset ID. Requires read permission.
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Bounded list of versioned previews eligible for device prefetch, content: {application/json: {schema: {$ref: '#/components/schemas/ThumbnailCandidatePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /thumbnails/progress:
+    get:
+      operationId: getThumbnailProgress
+      description: Observe server-side md preview coverage across enabled libraries. Requires administrator permission.
+      responses:
+        '200': {description: Coverage of current content versions by committed server preview files, content: {application/json: {schema: {$ref: '#/components/schemas/ThumbnailProgress'}}}}
         default: {$ref: '#/components/responses/Error'}
   /assets/{id}/tags:
     parameters: [{$ref: '#/components/parameters/Id'}]
@@ -3819,6 +3839,27 @@ components:
       type: object
       required: [items, totalMatched]
       properties: {items: {type: array, items: {$ref: '#/components/schemas/Asset'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}, dateCounts: {type: array, items: {$ref: '#/components/schemas/DateCountBucket'}}, unknownDateCount: {type: integer, format: int64, minimum: 0, description: Exact count without a known file date; emitted alongside first-page dateCounts}}
+    ThumbnailCandidate:
+      type: object
+      required: [assetId, contentVersion]
+      properties:
+        assetId: {type: string}
+        contentVersion: {type: integer, format: int64, minimum: 1}
+    ThumbnailCandidatePage:
+      type: object
+      required: [instanceId, items]
+      properties:
+        instanceId: {type: string}
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/ThumbnailCandidate'}}
+        nextCursor: {type: string}
+        totalMatched: {type: integer, format: int64, minimum: 0, description: Current candidate count included on the first page only}
+    ThumbnailProgress:
+      type: object
+      required: [instanceId, totalAssets, thumbsOnDisk]
+      properties:
+        instanceId: {type: string}
+        totalAssets: {type: integer, format: int64, minimum: 0, description: Preview-eligible assets in enabled libraries}
+        thumbsOnDisk: {type: integer, format: int64, minimum: 0, description: Eligible assets with a regular nonempty md file at the current preview path}
     DateCountBucket:
       type: object
       required: [date, fileCount]

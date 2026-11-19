@@ -43,7 +43,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.PlaybackHistory
 import media.qimeng.next.model.Asset
@@ -150,9 +149,7 @@ fun VideoStage(asset: Asset, model: LibraryViewModel, modifier: Modifier = Modif
         Box(Modifier.fillMaxSize().semantics { contentDescription = "视频播放区域" }
             .pointerInput(player) { detectTapGestures(onTap = { start() }, onDoubleTap = { start() }) },
             contentAlignment = Alignment.Center) {
-            AsyncImage(model = ImageRequest.Builder(context).data(asset.thumbnailUrl)
-                .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail")
-                .diskCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail").build(),
+            if (asset.thumbnailUrl.isNotEmpty()) AsyncImage(model = asset,
                 imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         }
     } else PlayerSurface(player, fullscreen, canRotate, error, { error = null; if (staleContent) model.refreshAsset(asset.id) else player.prepare() },
