@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "openapiSha256": "3d3bb94d98a0a1ae137da955a2fe41c87d0fa05e1533cf2e3b470dfa9dbab4c8",
+  "openapiSha256": "16a8c440a59e672bee5bdf1519ad5235c4562cbcdfa0d6e1541d3d5cdbeae549",
   "generators": {
     "kotlin": "7.27.0",
     "go": "v2.8.2",
@@ -8,7 +8,7 @@
     "python": "tools/generate_sdks.py"
   },
   "files": {
-    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt": "0f003bc449d34a59a06d232a2bcc0bf3fc4257660b0d5aa997fe362894fc9397",
+    "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/api/DefaultApi.kt": "3c0ed3c71f2cc08e55ba032f84b7043c8f10f3e8f1be43efc5258319788302e1",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/auth/ApiKeyAuth.kt": "42d967a37b4d28fab15819f17313a273f9346740791c3302ef6c1ddec7c99076",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/auth/HttpBearerAuth.kt": "b9629c5d42794c2c96e7d69f6b782a56f62fc39513509f619d6cebb21ddd5292",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/infrastructure/ApiClient.kt": "d9a51509612ee3d92eaf14b40142e36a54132cec91956df0e23d20c15c1d2170",
@@ -276,8 +276,8 @@
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateAuthorMappingsInner.kt": "82601b4020ed75bbf9242e837074542cb51ac996ea5eee53739b75a8939b0e05",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2PlanCreateMediaMappingsInner.kt": "d11e83e6bdcb004d856c6d77f85eb744f12f07d6fbcd5fb985e0ca7197f13f99",
     "api/generated/kotlin/src/main/kotlin/media/qimeng/next/sdk/model/V2ProfileBlockPlan.kt": "2cd827fbaa9c3e8409d7a412c01a882ad8b16cc9ee2c48aaf391d79f3a100bdd",
-    "api/generated/python/operations.json": "401b607c8536f6b6df548ebd8c693e5b8a9719fa31e5bf37d68cfc7ccca0b252",
-    "server/internal/transport/generated/api.gen.go": "3defbb3e29e47e1395b5b5a02618c46984ee83f58ec2d5946bb2a224339fd441",
-    "web/src/api/generated/schema.d.ts": "40545a082452d96e9b06bd2b49ccea7890cfd7d8b26662437177aa2e055c4bcc"
+    "api/generated/python/operations.json": "4567cdde4273ee75a68994fe63354dc43c1bb67affeb6702c0a586c91f91a4d2",
+    "server/internal/transport/generated/api.gen.go": "5295ed7daf7f31bf5ffa66267a44e183ca01602ed7da1c7692536670510b1e18",
+    "web/src/api/generated/schema.d.ts": "3af2fdc8520b537dcb41dda5fbb3bdd9202edef0db0f966a32e40eac35f46afe"
   }
 }
