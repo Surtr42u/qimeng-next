@@ -89,7 +89,7 @@ describe("durable upload behavior", () => {
         batchPlanId: 'old-plan', request: { ...original.request, batchId: batch.id, fileName: name, inputId: `input-${index}` } };
     });
     const inputs = entries.map(entry => ({ id: entry.id, nameState: 'known' as const, originalFileName: entry.name, size: entry.size }));
-    const plan: UploadBatchPreparation = { id: 'old-plan', scope: entries[0]!.scope, input: { ...target, mode: 'intelligent', label: 'old selection' },
+    const plan: UploadBatchPreparation = { id: 'old-plan', scope: entries[0]!.scope, input: { ...target, mode: 'intelligent', label: 'old selection', maxResearchCalls: 8 },
       inputs, batchId: batch.id, manifestKey: 'original-key', sealed: true, fingerprint: sealed(3).manifestFingerprint };
     mocks.readAll.mockImplementation((store: string) => Promise.resolve(store === 'uploads' ? entries : [plan]));
     mocks.get.mockResolvedValue({ batch: sealed(3), inputs: inputs.map((input, index) => ({ ...input,
