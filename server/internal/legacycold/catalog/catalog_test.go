@@ -164,17 +164,22 @@ func TestColdCatalogSettingsAndExcludedHostState(t *testing.T) {
 }
 
 func TestColdCatalogRejectsUnknownSettingAndPrivateBusinessText(t *testing.T) {
-	for _, tc := range []struct{ key, val string }{
-		{"unsupported", "never-export-this"},
-		{"author_source_vocabulary", `["/synthetic-mount/owner-subfolder"]`},
-		{"author_source_vocabulary", `["https://example.org/a?access_token=never-export-this"]`},
+	for _, tc := range []struct{ key, val, code string }{
+		{"unsupported", "never-export-this", "unrecognized_setting"},
+		{"author_source_vocabulary", `["/synthetic-mount/owner-subfolder"]`, "nonportable_business_value"},
+		{"author_source_vocabulary", `["https://example.org/a?access_token=never-export-this"]`, "nonportable_business_value"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			f := newFixture(t)
 			f.author("test", "Synthetic", "regular", 0)
 			f.setting(tc.key, tc.val)
-			if err := f.run(); err == nil || strings.Contains(err.Error(), tc.val) {
+			err := f.run()
+			var report interface{ ColdDiagnostic() (string, string) }
+			if !errors.As(err, &report) || strings.Contains(err.Error(), tc.val) || strings.Contains(err.Error(), "never-export-this") {
 				t.Fatalf("expected a redacted refusal, got %v", err)
+			}
+			if stage, code := report.ColdDiagnostic(); stage != "kv_settings" || code != tc.code {
+				t.Fatalf("unexpected diagnostic %s/%s", stage, code)
 			}
 			f.expect("0", "SELECT count(*) FROM migration_relation_origins")
 			f.expect("0", "SELECT count(*) FROM authors WHERE id='test'")

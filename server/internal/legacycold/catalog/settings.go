@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"qimeng.local/next/server/internal/analytics"
@@ -21,7 +20,7 @@ type setting struct {
 
 func decode(raw json.RawMessage, target any) error {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, target) != nil {
-		return errors.New("cold catalog: invalid business setting")
+		return sourceProblem("setting_shape_invalid")
 	}
 	return nil
 }
@@ -49,9 +48,9 @@ func (i *importer) readSettings() error {
 			case "client_logs", "library_revision", "enrichment_engine_version":
 				return i.origin("excluded-setting", []string{key}, map[string]string{"key": key, "reason": "previous_host_state"})
 			case "author_mirror":
-				return errors.New("cold catalog: unreadable author mirror preference")
+				return sourceProblem("mirror_shape_invalid")
 			default:
-				return errors.New("cold catalog: unrecognized v26 setting; value withheld")
+				return sourceProblem("unrecognized_setting")
 			}
 		}
 		if key == "legacy_import_batch" {
@@ -69,7 +68,7 @@ func (i *importer) readSettings() error {
 			if err := decode(raw, &mirror); err != nil ||
 				(mirror.Mode != "" && mirror.Mode != "fragment" && mirror.Mode != "master") ||
 				(mirror.FragmentFilename != "" && !domain.ValidName(mirror.FragmentFilename)) {
-				return errors.New("cold catalog: invalid author mirror preference")
+				return sourceProblem("mirror_preference_invalid")
 			}
 			if err := i.portableText(mirror.FragmentFilename); err != nil {
 				return err
@@ -108,7 +107,7 @@ func (i *importer) importSettings() error {
 		// v26 fills missing and null dimensions with these same documented defaults.
 		weights := analytics.DefaultWeights
 		if err := decode(v.Raw, &weights); err != nil || !weights.Valid() {
-			return errors.New("cold catalog: invalid recommendation weights")
+			return sourceProblem("recommendation_weights_invalid")
 		}
 		if err := i.saveSetting("recommendation_preferences", service.RecommendationPreferences{Revision: 1, Weights: weights}); err != nil {
 			return err
@@ -119,7 +118,7 @@ func (i *importer) importSettings() error {
 		if err := decode(v.Raw, &cfg); err != nil || cfg.Scan == nil || cfg.Scan.Workers == nil || cfg.Scan.ThumbEdge == nil ||
 			cfg.Upload == nil || cfg.Upload.AutoAccept == nil || *cfg.Scan.Workers < 0 || *cfg.Scan.Workers > 32 ||
 			*cfg.Scan.ThumbEdge < 200 || *cfg.Scan.ThumbEdge > 1600 {
-			return errors.New("cold catalog: invalid scan or upload settings")
+			return sourceProblem("operational_setting_invalid")
 		}
 		native := service.Settings{Revision: 1, Scan: service.ScanSettings{Workers: *cfg.Scan.Workers, ThumbEdge: *cfg.Scan.ThumbEdge},
 			Upload: service.UploadSettings{AutoAccept: *cfg.Upload.AutoAccept}}
@@ -188,7 +187,7 @@ func (i *importer) importRules() error {
 	}
 	normalized, err := sourcerules.Normalize(layer)
 	if err != nil {
-		return errors.New("cold catalog: source dictionary exceeds native rule contract")
+		return sourceProblem("dictionary_contract_invalid")
 	}
 	raw, err := store.Encode(normalized)
 	if err != nil {

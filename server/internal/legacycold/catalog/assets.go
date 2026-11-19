@@ -3,7 +3,6 @@ package catalog
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 
@@ -65,7 +64,7 @@ func (i *importer) importAssets() error {
 			return err
 		}
 		if a.AuthorID != "unknown" {
-			return errors.New("cold catalog: target already has asset author decisions")
+			return sourceProblem("target_asset_already_assigned")
 		}
 		authorRefs, err := i.preserveLinks(assetID, "asset-author", authors)
 		if err != nil {
@@ -149,7 +148,7 @@ func (i *importer) assetAuthors(a *model.Asset, refs []link, libraryKind string,
 	for _, ref := range refs {
 		author, ok := i.authors[ref.Key]
 		if !ok {
-			return errors.New("cold catalog: missing source author identity")
+			return sourceProblem("author_reference_missing")
 		}
 		manual = manual || ref.Origin == "client"
 		if author.Placeholder {
@@ -160,7 +159,7 @@ func (i *importer) assetAuthors(a *model.Asset, refs []link, libraryKind string,
 		}
 	}
 	if len(ids) > 20 {
-		return errors.New("cold catalog: source author set exceeds native relation budget")
+		return sourceProblem("author_set_too_large")
 	}
 	directoryID, err := i.cosPlacement(a, active, libraryKind, work)
 	if err != nil {
@@ -241,7 +240,7 @@ func (i *importer) bindAssetRules(a *model.Asset, active map[string]link) error 
 		home := ""
 		for _, entry := range i.protected[protectedKey{id, a.FileName}] {
 			if home != "" && home != entry.list {
-				return errors.New("cold catalog: one protected work has multiple owning lists")
+				return sourceProblem("protected_work_owner_conflict")
 			}
 			home = entry.list
 			entry.matched = true
@@ -319,7 +318,7 @@ func (i *importer) assetTaxonomy(a *model.Asset, src sql.NullString, refs []link
 	if src.String != "" {
 		for _, name := range strings.Split(src.String, "+") {
 			if name == "" {
-				return errors.New("cold catalog: ambiguous empty component in source name")
+				return sourceProblem("source_components_ambiguous")
 			}
 			id, err := i.term("", name, nil, a.UpdatedAt)
 			if err != nil {

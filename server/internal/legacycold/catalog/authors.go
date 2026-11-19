@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"database/sql"
-	"errors"
 	"strings"
 
 	"qimeng.local/next/server/internal/authorlist"
@@ -30,7 +29,7 @@ func (i *importer) importAuthors() error {
 			return err
 		}
 		if id == "" || strings.TrimSpace(name) == "" || (kind != "cos" && kind != "regular") || (followed != 0 && followed != 1) {
-			return errors.New("cold catalog: invalid source author")
+			return sourceProblem("author_row_invalid")
 		}
 		for _, v := range []string{id, name, origin} {
 			if err := i.portableText(v); err != nil {
@@ -60,7 +59,7 @@ func (i *importer) importAuthors() error {
 				return err
 			}
 			if !a.Placeholder {
-				return errors.New("cold catalog: missing native placeholder")
+				return sourceProblem("native_placeholder_missing")
 			}
 			a.Following = followed == 1
 			if err := i.exec("UPDATE authors SET following=?,data=json_set(data,'$.following',json(?)) WHERE id='unknown'",
@@ -86,7 +85,7 @@ func (i *importer) importTags() error {
 			return err
 		}
 		if id == "" || strings.TrimSpace(name) == "" {
-			return errors.New("cold catalog: invalid source tag")
+			return sourceProblem("tag_row_invalid")
 		}
 		for _, v := range []string{id, name} {
 			if err := i.portableText(v); err != nil {

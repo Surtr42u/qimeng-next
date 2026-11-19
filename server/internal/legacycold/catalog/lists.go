@@ -3,7 +3,6 @@ package catalog
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"path"
 	"regexp"
 	"slices"
@@ -49,7 +48,7 @@ type coldDocument struct {
 func v26Document(input string) (coldDocument, error) {
 	var result coldDocument
 	if len(input) > authorlist.MaxTextBytes {
-		return result, errors.New("cold catalog: author list exceeds native text budget")
+		return result, sourceProblem("text_budget_exceeded")
 	}
 	lines := strings.Split(strings.TrimPrefix(input, "\ufeff"), "\n")
 	numbered := false
@@ -127,7 +126,7 @@ func (i *importer) importLists() error {
 	homes := map[string]bool{}
 	for position, f := range fragments {
 		if !domain.ValidName(f.Filename) {
-			return errors.New("cold catalog: invalid TXT fragment filename")
+			return sourceProblem("fragment_filename_invalid")
 		}
 		observed := f.ImportedAt
 		if observed == "" {

@@ -3,7 +3,6 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"net/url"
 	"regexp"
 	"strings"
@@ -12,7 +11,7 @@ import (
 	"qimeng.local/next/server/internal/service"
 )
 
-var errPrivate = errors.New("cold catalog: business record contains a host path or credential")
+const errPrivate = sourceProblem("nonportable_business_value")
 var publicLinks = regexp.MustCompile("(?i)https?://[^\\s<>\"'\u0060]+")
 var privateText = regexp.MustCompile(`(?i)(?:[a-z]:[/\\]|\\\\[^\\]+\\|file://|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:bearer|basic)\s+[a-z0-9+/_=.-]{8,}|\b(?:access[_-]?token|api[_-]?key|password|secret)[ \t]*[:=]\s*\S)`)
 
@@ -28,7 +27,7 @@ func sensitiveKey(key string) bool {
 // local mount or an authorization parameter. Diagnostics omit the input.
 func (i *importer) portableText(text string) error {
 	if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
-		return errors.New("cold catalog: invalid UTF-8 business text")
+		return sourceProblem("business_text_invalid")
 	}
 	// Check links before removing them from the filesystem-path check. Public
 	// URL paths can legitimately begin with the same directory as a mount.
@@ -88,13 +87,13 @@ func (i *importer) nonURLText(text string) error {
 // The actual archive stores the original json.RawMessage.
 func (i *importer) portableJSON(raw json.RawMessage, profile bool) error {
 	if !json.Valid(raw) || !utf8.Valid(raw) {
-		return errors.New("cold catalog: invalid business JSON")
+		return sourceProblem("business_json_invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return errors.New("cold catalog: invalid business JSON")
+		return sourceProblem("business_json_invalid")
 	}
 	var visit func(any, bool) error
 	visit = func(v any, top bool) error {

@@ -3,7 +3,6 @@ package catalog
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/mail"
 	"strconv"
 	"time"
@@ -38,7 +37,7 @@ func (i *importer) importProfiles() error {
 		}
 		a, exists := i.authors[id]
 		if !exists || len(raw) == 0 {
-			return errors.New("cold catalog: orphaned or oversized source author profile")
+			return sourceProblem("profile_owner_or_size_invalid")
 		}
 		if err := i.portableJSON(raw, true); err != nil {
 			return err
@@ -52,7 +51,7 @@ func (i *importer) importProfiles() error {
 			return err
 		}
 		if p.AuthorID != id || p.Revision < 0 || (p.Status == "verified" && (p.Homepage == "" || len(p.Evidence) == 0)) {
-			return errors.New("cold catalog: inconsistent source author profile")
+			return sourceProblem("profile_identity_or_status_invalid")
 		}
 		at, err := stamp(updated)
 		if err != nil {
@@ -61,7 +60,7 @@ func (i *importer) importProfiles() error {
 		var avatar []byte
 		if img := fields["avatarData"]; img != nil {
 			if json.Unmarshal(img, &avatar) != nil {
-				return errors.New("cold catalog: invalid offline avatar encoding")
+				return sourceProblem("avatar_encoding_invalid")
 			}
 			delete(fields, "avatarData")
 		}
@@ -157,7 +156,7 @@ func (i *importer) importProfileFloors() error {
 		}
 		floor, err := strconv.ParseInt(value, 10, 64)
 		if id == "" || err != nil || floor < 0 {
-			return errors.New("cold catalog: invalid author profile revision floor")
+			return sourceProblem("profile_floor_invalid")
 		}
 		at, err := stamp(updated)
 		if err != nil {

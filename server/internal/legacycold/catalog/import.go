@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
@@ -32,14 +31,21 @@ type importer struct {
 // The caller owns the transaction and rolls it back on any error.
 func Import(ctx context.Context, source *sql.DB, target *sql.Tx, sourceID string) error {
 	if sourceID == "" {
-		return errors.New("cold catalog: missing source identity")
+		return diagnostic("source_identity", sourceProblem("source_identity_missing"))
 	}
 	i := &importer{ctx: ctx, source: source, target: target, sourceID: sourceID,
 		authors: make(map[string]model.Author), settings: make(map[string]setting)}
-	for _, step := range []func() error{i.loadRoots, i.importAuthors, i.importTags, i.readSettings, i.importSettings,
-		i.importLists, i.importAssets, i.importProfiles, i.importProfileFloors} {
-		if err := step(); err != nil {
-			return err
+	for _, step := range []struct {
+		name string
+		run  func() error
+	}{
+		{"libraries", i.loadRoots}, {"authors", i.importAuthors}, {"tags", i.importTags},
+		{"kv_settings", i.readSettings}, {"user_preferences", i.importSettings},
+		{"author_lists", i.importLists}, {"asset_relations", i.importAssets},
+		{"creator_profiles", i.importProfiles}, {"profile_revisions", i.importProfileFloors},
+	} {
+		if err := step.run(); err != nil {
+			return diagnostic(step.name, err)
 		}
 	}
 	return nil
@@ -96,7 +102,7 @@ func (i *importer) loadRoots() error {
 func stamp(value string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
-		return time.Time{}, errors.New("cold catalog: invalid source timestamp")
+		return time.Time{}, sourceProblem("source_timestamp_invalid")
 	}
 	return t.UTC(), nil
 }
