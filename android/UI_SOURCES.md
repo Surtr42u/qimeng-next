@@ -12,6 +12,7 @@
 | `app/navigation/{QimengNavHost,ClassicBottomBar}.kt`、`core/ui/glass/{FloatingTabDock,QimengBackdrop,BackdropGlassPanel}.kt`、`feature/settings/AppearanceScreen.kt` | Next 的 AppRoot 按原材质选择两套底栏，通过原采样库渲染。外观页恢复三个主题及四个材质。路由瞬切，首页点按芯片瞬时对齐，双击主标签回顶。 |
 | `feature/login/LoginScreen.kt`、`feature/settings/ServerSettingsScreen.kt`、`SettingsScreen` 与 `SettingsCards.CountCard` | 新登录/服务器/我的页面沿用双卡、候选行、密码、计数和分组。NSD、连接恢复、权限和充电任务经新独立模块接入。 |
 | `feature/detail/{DetailChromeBars,DetailChromeIcons,DetailSections}.kt`、原详情资源及 `feature/search/SearchScreen.kt` | 同名详情组件、`detail_strings.xml` 与新搜索页；图像、视频、点赞与查询接新 Asset 和 SDK。图片缩放与详情操作使用现有舞台。 |
+| `74597408` 的 `feature/search/SearchScreen.kt` 及 `app/navigation/QimengNavHost.kt` 的 `onOpenTagSearch` | `app/.../screen/SearchScreen.kt` 恢复结果返回清词和点输入框保留查询的两条路径。统计标签的初始词、历史记录和详情返回由 Next 的查询与导航状态接入。 |
 | `feature/detail/VideoStage.kt` 的海报和横滑，`video/{BiliPlayerView,PlayerMath}.kt`，`InstantSystemBars.kt` 与 `res/drawable/ic_player_*.xml` | Next `app/.../screen/VideoStage.kt`、`screen/video/` 和 `app/src/main/res/drawable/`。复用自绘双排播控、画质/倍速/比例/循环弹窗、手势和图标。固定横屏与排版态共用一个 Media3 播放器和表面。播放、进度与标记使用 Next 的版本化接口，手势松手才提交定位。 |
 | `feature/stats/{StatsScreen,StatsDetailScreen,StatsFormatters}.kt`、`QimengTrendLineChart.kt` 和 `QimengTrendMarker.kt` | 新统计页与 `core/ui/.../ui/chart/`。趋势和榜单由 Go 返回；Vico 以真实数据点实现点选。 |
 | `feature/manage/{LibraryManageScreen,RegisterLibraryCard}.kt`、`feature/upload/{UploadScreen,UploadPanels,UploadDestinationSection,UploadPendingSection,UploadArchiveBatchSection}.kt` 与归档文件夹设置页 | 新库管理、上传、目录树、待传清单和归档区沿用原入口与控件。原始文件名、目标身份、目录解析、扫描调度和回执走新代码。 |

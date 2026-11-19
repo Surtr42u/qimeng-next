@@ -138,6 +138,7 @@ class StatisticsAndHomeTest {
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("常看标签"))
         compose.onNodeWithText("合成标签").assertIsDisplayed()
         captureLightPage("stats-interests.png", "常看作者与标签 · 全部")
+        assertTagSearch(model, graph)
         compose.onNodeWithContentDescription("返回").performClick()
 
         openStatisticsCard("浏览回顾")
@@ -158,6 +159,65 @@ class StatisticsAndHomeTest {
         compose.waitUntil(10_000) {
             captureCloudScreenshot("stats-return-to-dark-home.png") { screen -> screen.getPixel(4, 32) == Color.rgb(20, 20, 20) }
         }
+        assertManualSearch(model)
+    }
+
+    private fun assertTagSearch(model: LibraryViewModel, graph: DataGraph) {
+        compose.onNodeWithText("合成标签").performClick()
+        val input = compose.onNodeWithTag("search-input")
+        val tagged = awaitSearchResults(model, "合成标签").single()
+        input.assertTextEquals("合成标签")
+        compose.onNodeWithContentDescription(tagged.name).assertIsDisplayed()
+        assertTrue(captureCloudScreenshot("search-from-statistics-tag.png"))
+        compose.waitUntil(10_000) { graph.settings.searchHistory.value.firstOrNull() == "合成标签" }
+        compose.onNodeWithContentDescription("返回").performClick()
+        awaitText("常看作者与标签 · 全部")
+
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("常看标签"))
+        compose.onNodeWithText("合成标签").performClick()
+        awaitSearchResults(model, "合成标签")
+        input.performTouchInput { click() }.assertTextEquals("合成标签")
+        compose.onNodeWithTag("media-browser:search").assertDoesNotExist()
+        input.performTextReplacement("sample_regular_01")
+        compose.onNode(hasText("搜索") and hasClickAction()).performClick()
+        assertEquals("sample_regular_01.png", awaitSearchResults(model, "sample_regular_01").single().name)
+        compose.onNodeWithContentDescription("返回").performClick()
+        awaitText("推荐搜索")
+        compose.waitUntil(10_000) {
+            graph.settings.searchHistory.value.take(2) == listOf("sample_regular_01", "合成标签")
+        }
+        compose.onNodeWithContentDescription("返回").performClick()
+        awaitText("常看作者与标签 · 全部")
+    }
+
+    private fun assertManualSearch(model: LibraryViewModel) {
+        compose.onNode(hasText("搜索") and hasClickAction()).performClick()
+        awaitText("推荐搜索")
+        val input = compose.onNodeWithTag("search-input")
+        input.performClick().performTextReplacement("合成标签")
+        compose.onNode(hasText("搜索") and hasClickAction()).performClick()
+        val result = awaitSearchResults(model, "合成标签").single()
+        compose.onNodeWithContentDescription(result.name).performClick()
+        compose.waitUntil(20_000) { model.asset.value?.id == result.id && model.route.value == "asset:${result.id}" }
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        input.assertTextEquals("合成标签")
+        compose.onNodeWithContentDescription(result.name).assertIsDisplayed()
+        input.performTouchInput { click() }.assertTextEquals("合成标签")
+        compose.onNodeWithTag("media-browser:search").assertDoesNotExist()
+        assertTrue(captureCloudScreenshot("search-edit-with-word.png"))
+        compose.onNode(hasText("搜索") and hasClickAction()).performClick()
+        awaitSearchResults(model, "合成标签")
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        awaitText("推荐搜索")
+        compose.onNodeWithText("搜索文件、出处、角色、COS作者…").assertIsDisplayed()
+        compose.onNodeWithTag("media-browser:search").assertDoesNotExist()
+        assertTrue(captureCloudScreenshot("search-back-cleared.png"))
+    }
+
+    private fun awaitSearchResults(model: LibraryViewModel, query: String): List<Asset> {
+        val state = compose.runOnIdle { model.assets("search") }
+        compose.waitUntil(20_000) { state.value.loaded && state.value.loadedQuery?.text == query }
+        return state.value.items
     }
 
     private fun openStatisticsCard(label: String) {

@@ -192,7 +192,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return FacetResult(page.items.map { FacetChoice(it.key, it.kind.value, it.id, it.name, it.count) }, page.nextCursor, page.totalMatched, page.totalOptions)
     }
 
-    suspend fun searchSuggestions(query: String, recommend: Boolean = false): List<SearchWord> = provider.api(target())
+    suspend fun searchSuggestions(query: String, recommend: Boolean = false, target: Session = target()): List<SearchWord> = provider.api(target)
         .getSearchSuggestions(q = query, recommend = recommend, limit = 10).bodyOrThrow().items.map { SearchWord(it.id, it.type.value, it.name) }
 
     suspend fun asset(id: String, target: Session = target()): Asset {

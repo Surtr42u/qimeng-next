@@ -173,6 +173,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             if (state.value.loading) state.value = state.value.copy(loading = false, loaded = false)
         }
     }
+    fun clearSearchResults() {
+        cancelBrowse("search")
+        assetState("search").value = ListState()
+    }
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
@@ -216,6 +220,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val stack = saved.get<ArrayList<String>>("backStack").orEmpty()
         saved["route"] = stack.lastOrNull() ?: "main"
         saved["backStack"] = ArrayList(stack.dropLast(1))
+    }
+    fun openTagSearch(tag: String) {
+        val target = session.value ?: return
+        if (bindObjectTarget(target)) navigate("tag:$tag")
     }
 
     fun refreshConnection() = action(blocking = false) {
@@ -291,7 +299,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     private fun discardForeignObjectRoutes(target: Session?) {
         if (target != null && ownsObjectRoutes(target)) return
-        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("task:")
+        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("task:") || value.startsWith("tag:")
         val stack = saved.get<ArrayList<String>>("backStack").orEmpty()
         val retained = stack.filterNot(::objectRoute)
         if (objectRoute(route.value)) {

@@ -64,7 +64,7 @@ fun ActivityRankingScreen(model: LibraryViewModel, kind: String, range: String) 
 private fun rankingTitle(kind: String) = when (kind) { "authors" -> "常看作者"; "tags" -> "常看标签"; else -> "最常浏览的媒体" }
 private fun openRank(model: LibraryViewModel, kind: String, entry: ActivityRank) = when (kind) {
     "authors" -> model.openAuthor(entry.id)
-    "tags" -> model.navigate("tag:${entry.name}")
+    "tags" -> model.openTagSearch(entry.name)
     else -> entry.assetId?.let { model.openAsset(it) }
 }
 
