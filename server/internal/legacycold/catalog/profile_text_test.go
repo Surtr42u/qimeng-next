@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,6 +45,8 @@ func TestColdCatalogRedactsOnlyDocumentedBiographyQueryFields(t *testing.T) {
 	marker := rand.Text()
 	for _, input := range []string{
 		`{"homepageUrl":"https://artist.example/?token=%s"}`,
+		`{"homepageUrl":"https://artist.example)"}`,
+		`{"candidate":{"evidenceUrls":["https://artist.example)"]}}`,
 		`{"avatarUrl":"https://artist.example/?token=%s"}`,
 		`{"remark":"https://artist.example/?token=%s"}`,
 		`{"xProfile":{"url":"https://artist.example/?token=%s"}}`,
@@ -53,6 +54,7 @@ func TestColdCatalogRedactsOnlyDocumentedBiographyQueryFields(t *testing.T) {
 		`{"other":{"biography":"https://artist.example/?token=%s"}}`,
 		`{"candidate":[{"biography":"https://artist.example/?token=%s"}]}`,
 		`{"biography":"direct access_token=%s"}`,
+		`{"biography":"access_token=https://artist.example/credential"}`,
 		`{"biography":"https://u@artist.example/a?token=%s"}`,
 		`{"other":"https://artist.example/?token=%s","other":"safe"}`,
 	} {
@@ -70,6 +72,57 @@ func TestColdCatalogRedactsOnlyDocumentedBiographyQueryFields(t *testing.T) {
 	if _, _, err := i.inspectJSON(unsafe, false); !errors.Is(err, errPrivate) {
 		t.Fatal("setting acquired an author-profile editing exception")
 	}
+}
+
+func TestColdCatalogPublicMarkdownInRemarksAndTXT(t *testing.T) {
+	f := newFixture(t)
+	f.author("writer", "Writer", "regular", 1)
+	const note = "联系 [官网](https://artist.example) 和 [作品](https://gallery.example/post/(series))。"
+	const source = "1  Writer\n来源  [官网](https://artist.example)\n作品\nexample.png"
+	parent := map[string]any{"authorId": "writer", "revision": 1, "status": "verified", "remark": note,
+		"homepageUrl": "https://artist.example/gallery/(series)", "evidenceUrls": []string{"https://artist.example"}}
+	raw, err := json.Marshal(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.setting("creator_profile:writer", string(raw))
+	raw, err = json.Marshal([]fragment{{Filename: "public.txt", Content: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.setting("imported_txt_sources", string(raw))
+	if err := f.run(); err != nil {
+		t.Fatal(err)
+	}
+	f.expect(note, "SELECT json_extract(data,'$.values.remark') FROM author_profile_blocks WHERE author_id='writer' AND block='basic'")
+	f.expect(source, "SELECT content FROM author_txt_fragments WHERE name='public.txt'")
+	f.expect("0", "SELECT count(*) FROM migration_relation_origins WHERE kind='cold26/profile-text-disposition'")
+}
+
+// Inspect the original database and any write-ahead/rollback pages before
+// checkpoint or VACUUM can remove stale bytes. Then inspect the actual main
+// file after checkpoint, including free pages, without compacting the DB.
+func (f *fixture) ensureAbsentFromNativeFiles(marker string) {
+	f.t.Helper()
+	file := f.scalar("SELECT file FROM pragma_database_list WHERE name='main'")
+	read := func(path string, optional bool) {
+		f.t.Helper()
+		data, err := os.ReadFile(path)
+		if optional && errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte(marker)) {
+			f.t.Fatal("discarded query value is present in the actual native database or journal")
+		}
+	}
+	read(file, false)
+	read(file+"-wal", true)
+	read(file+"-journal", true)
+	f.native("PRAGMA wal_checkpoint(TRUNCATE)")
+	read(file, false)
 }
 
 func TestColdCatalogRedactedBiographyAbsentFromNativeDBAndArchive(t *testing.T) {
@@ -97,18 +150,14 @@ func TestColdCatalogRedactedBiographyAbsentFromNativeDBAndArchive(t *testing.T) 
 	if err := f.run(); err != nil {
 		t.Fatal(err)
 	}
+	f.ensureAbsentFromNativeFiles(marker)
 	after, snapshot, archivePath := f.restoreCatalog()
+	after.ensureAbsentFromNativeFiles(marker)
 	encoded, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	isolated := filepath.Join(t.TempDir(), "restored-checkpoint.db")
-	after.native("VACUUM INTO ?", isolated)
-	restored, err := os.ReadFile(isolated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, data := range [][]byte{snapshot, encoded, restored} {
+	for _, data := range [][]byte{snapshot, encoded} {
 		if bytes.Contains(data, []byte(marker)) {
 			t.Fatal("discarded parameter value entered a portable payload")
 		}

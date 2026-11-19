@@ -25,6 +25,23 @@ func biographyPointer(path []string) string {
 	return ""
 }
 
+// Old v26 defines these as whole URLs. A path segment, trailing parenthesis
+// or query here belongs to the URL; prose punctuation rules do not apply.
+func structuredProfileURL(path []string) bool {
+	switch len(path) {
+	case 1:
+		return path[0] == "avatarUrl" || path[0] == "homepageUrl" || path[0] == "feedUrl"
+	case 2:
+		return path[0] == "xProfile" && path[1] == "url" ||
+			path[0] == "candidate" && (path[1] == "avatarUrl" || path[1] == "homepageUrl") ||
+			path[0] == "evidenceUrls" && path[1] == ""
+	case 3:
+		return path[0] == "updates" && path[1] == "" && path[2] == "url" ||
+			path[0] == "candidate" && path[1] == "evidenceUrls" && path[2] == ""
+	}
+	return false
+}
+
 type textDisposition struct {
 	Field             string `json:"field"`
 	Action            string `json:"action"`
@@ -87,6 +104,10 @@ func (d *jsonInspection) visit(path []string) error {
 	case string:
 		if d.profile && len(path) == 1 && path[0] == "avatarData" {
 			return nil // decoded and validated as an image before any commit
+		}
+		if v != "" && d.profile && structuredProfileURL(path) {
+			_, _, err := d.catalog.publicReference(v, false, 0)
+			return err
 		}
 		pointer := ""
 		if d.profile {

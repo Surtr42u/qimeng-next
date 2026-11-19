@@ -41,13 +41,12 @@ func (i *importer) inspectText(text string, removeQuery bool) (string, int, erro
 	var out strings.Builder
 	end, removed := 0, 0
 	for _, span := range publicLinks.FindAllStringIndex(text, -1) {
-		if err := i.nonURLText(text[end:span[0]]); err != nil {
+		// A URL used as the VALUE of a plain credential assignment remains
+		// private regardless of the URL's own host and query.
+		if err := i.nonURLContent(text[end:span[0]], true); err != nil {
 			return "", 0, err
 		}
-		token := text[span[0]:span[1]]
-		if removeQuery {
-			token = trimProsePunctuation(token)
-		}
+		token := trimProsePunctuation(text[span[0]:span[1]])
 		safe, count, err := i.publicReference(token, removeQuery, 0)
 		if err != nil {
 			return "", 0, err
@@ -120,7 +119,7 @@ func publicHost(host string) bool {
 
 func (i *importer) publicReference(raw string, removeQuery bool, depth int) (string, int, error) {
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.User != nil ||
+	if err != nil || strings.ContainsFunc(raw, unicode.IsSpace) || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.User != nil || strings.HasSuffix(u.Host, ":") ||
 		!publicHost(u.Hostname()) || depth > 4 {
 		return "", 0, errPrivate
 	}
@@ -198,15 +197,26 @@ func (i *importer) urlComponent(s string) error {
 	return i.nonURLText(s)
 }
 
+func checkAssignments(text string, followedByValue bool) error {
+	lastValue := len(strings.TrimRightFunc(text, unicode.IsSpace))
+	for _, pair := range assignment.FindAllStringSubmatchIndex(text, -1) {
+		if (followedByValue || pair[1] < lastValue) && sensitiveKey(text[pair[2]:pair[3]]) {
+			return errPrivate
+		}
+	}
+	return nil
+}
+
 func (i *importer) nonURLText(text string) error {
+	return i.nonURLContent(text, false)
+}
+
+func (i *importer) nonURLContent(text string, followedByValue bool) error {
 	if privateText.MatchString(text) || homePath.MatchString(text) {
 		return errPrivate
 	}
-	lastValue := len(strings.TrimRightFunc(text, unicode.IsSpace))
-	for _, pair := range assignment.FindAllStringSubmatchIndex(text, -1) {
-		if pair[1] < lastValue && sensitiveKey(text[pair[2]:pair[3]]) {
-			return errPrivate
-		}
+	if err := checkAssignments(text, followedByValue); err != nil {
+		return err
 	}
 	if escapedOctet.MatchString(text) {
 		// Outside a parsed public URL, percent-encoding cannot confer on a
@@ -215,7 +225,7 @@ func (i *importer) nonURLText(text string) error {
 		if err != nil || escapedOctet.MatchString(decoded) || !utf8.ValidString(decoded) {
 			return errPrivate
 		}
-		return i.nonURLText(decoded)
+		return i.nonURLContent(decoded, followedByValue)
 	}
 	normalized := strings.ToLower(strings.ReplaceAll(text, "\\", "/"))
 	for _, root := range i.roots {
