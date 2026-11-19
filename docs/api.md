@@ -84,7 +84,9 @@ COS 分区由实际关联的 COS 作者决定，不按库类型猜测。COS 库�
 
 固定标签路由 `tag` 始终与可选 `tags/tagMode` 组合相 AND。文件管理使用 `libraryId+directory`：显式空字符串是库根，缺省代表不过滤；默认只含直接子文件，`recursive=true` 才包括后代目录。普通浏览、历史和搜索隐藏停用库，管理浏览可明确 `includeDisabled=true`；统计库存、原件和按 ID 读取详情保持，停用不等于删除记录。
 
-默认排序为文件日期；收藏排序使用真实 `favoritedAt`，重复收藏不会刷新时间，取消后再次收藏才重新计时。`dateCounts=true` 仅首屏返回 `{date,fileCount}` 精确文件日期分桶，包含完整筛选集，并同时返回 `unknownDateCount`。`tzOffsetMinutes` 使用客户端相对 UTC 的东向分钟数（东八区 480、西五区 −300），缺省 0；它也决定日历时间筛选边界。来源未知的文件日期不虚构日期桶，仍计入总匹配数；未知数量不受页大小影响，也不要求界面新增分组标题。翻页不重新计算日期桶。
+默认排序为文件日期。收藏排序使用真实 `favoritedAt`，重复收藏不会刷新时间，取消后再次收藏才重新计时。`dateCounts=true` 仅首屏返回完整筛选集的 `{date,fileCount}` 精确分桶及 `unknownDateCount`。默认日期轴为 `fileDate`，收藏子集可用 `dateCountsBy=favoritedAt` 按收藏发生日期分桶。旧收藏只有状态或 `favoriteUpdatedAt` 时计入未知日期，仍保留在总匹配数中。日期轴不影响游标、筛选和排序，翻页不重复计算日期桶。
+
+`tzOffsetMinutes` 使用客户端相对 UTC 的东向分钟数（东八区 480、西五区 −300），缺省 0。它决定日期分桶及文件日期筛选的日历边界。浏览历史仍按各资产的最近浏览日期分桶。
 
 媒体、详情及历史附带资产使用统一 `Asset.fileDate`。它优先取当前已核验原件的 `contentMtime`，仅在缺失时回退到接收线索 `sourceMtime`，不取入库时间。原件外部变化被扫描核验后，旧接收时间不压过当前文件时间；客户端不用再拼优先级。0015 只重建该查询投影，不改原件、原输入线索或统计事件。
 

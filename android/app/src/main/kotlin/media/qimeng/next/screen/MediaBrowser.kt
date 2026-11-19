@@ -232,7 +232,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val scope = rememberCoroutineScope()
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
         sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId,
-        history = true.takeIf { source == "history" }))
+        history = true.takeIf { source == "history" })).let {
+        if (favorite == true) it.copy(sort = "favorited", order = "desc") else it
+    }
     val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
     LaunchedEffect(key, query, group, publication) {
@@ -276,7 +278,12 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         }
         if (leading == null) state.error?.let { ErrorNotice(it, retry) }
         val entries = if (state.loadedQuery == query) state.items else emptyList()
-        val sectionMode = when { source == "history" -> "history"; authorKind != null || favorite == true || caption -> "partitions"; else -> group }
+        val sectionMode = when {
+            source == "history" -> "history"
+            favorite == true -> "favorite"
+            authorKind != null || caption -> "partitions"
+            else -> group
+        }
         val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }

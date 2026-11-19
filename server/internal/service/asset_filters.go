@@ -118,6 +118,15 @@ func normalizeAssetFilter(in AssetFilter) (AssetFilter, error) {
 	if in.Sort == "favorited" && (in.Favorite == nil || !*in.Favorite) {
 		return in, Fail(400, "favorite_sort_requires_subset", "收藏时间排序须限定收藏子集。")
 	}
+	switch in.DateCountsBy {
+	case "", "fileDate":
+	case "favoritedAt":
+		if in.Favorite == nil || !*in.Favorite {
+			return in, Fail(400, "favorite_dates_require_subset", "收藏日期分组须限定收藏子集。")
+		}
+	default:
+		return in, Fail(400, "invalid_date_counts_by", "不支持该日期分组方式。")
+	}
 	for _, rangeValue := range []struct {
 		name      string
 		low, high **int64
@@ -461,7 +470,12 @@ func (s *Service) Assets(ctx context.Context, filter AssetFilter) (model.Page[mo
 		buckets := []model.DateCountBucket{}
 		unknown := int64(0)
 		args := append([]any{f.TZOffsetMinutes * 60}, predicate.Args...)
-		rows, e := tx.QueryContext(ctx, browseCTE+" SELECT strftime('%Y-%m-%d',a.file_date/1000.0+?,'unixepoch') day,count(*)"+browseFrom+"WHERE "+predicate.Where+" GROUP BY day ORDER BY day DESC", args...)
+		epoch := "a.file_date/1000.0"
+		if f.DateCountsBy == "favoritedAt" {
+			// SQLite can round a fraction near midnight into the next second.
+			epoch = "unixepoch(substr(a.favorited_at,1,19)||'Z')"
+		}
+		rows, e := tx.QueryContext(ctx, browseCTE+" SELECT date("+epoch+"+?,'unixepoch') day,count(*)"+browseFrom+"WHERE "+predicate.Where+" GROUP BY day ORDER BY day DESC", args...)
 		if e != nil {
 			return page, e
 		}

@@ -171,7 +171,9 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             playRange = DefaultApi.PlayRangeListAssets.entries.first { it.value == query.playRange },
             sizeRange = DefaultApi.SizeRangeListAssets.entries.first { it.value == query.sizeRange },
             timeRange = DefaultApi.TimeRangeListAssets.entries.first { it.value == query.timeRange }, fromYear = query.fromYear, toYear = query.toYear,
-            dateCounts = cursor == null, tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
+            dateCounts = cursor == null, dateCountsBy = if (cursor == null && query.sort == "favorited")
+                DefaultApi.DateCountsByListAssets.entries.first { it.value == "favoritedAt" } else null,
+            tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
         return Page(page.items.map { it.toModel(target) }, page.nextCursor, page.totalMatched,
             page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) }, page.unknownDateCount)
     }
@@ -390,7 +392,8 @@ private fun ApiAsset.toModel(target: Session): Asset {
         collectionId = collectionId, page = page,
         contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt,
         fileDate = fileDate, workGroups = workFacets.orEmpty().map { AssetGroup(it.key, it.name) },
-        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount, cosWorkName = cosWorkName, sourceName = source)
+        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount, cosWorkName = cosWorkName, sourceName = source,
+        favoritedAt = favoritedAt)
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,
