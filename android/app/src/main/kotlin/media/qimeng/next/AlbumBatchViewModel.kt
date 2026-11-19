@@ -159,8 +159,8 @@ internal class AlbumBatchViewModel(application: Application) : AndroidViewModel(
                 if (!sameTarget(current, repository.session.value)) return@launch
                 val result = try {
                     val updated = when (operation) {
-                        is AlbumBatchChange.ReplaceAuthor -> repository.updateAuthors(
-                            asset, listOf(operation.author.id), emptyList(), asset.revision, asset.authorsRevision,
+                        is AlbumBatchChange.ReplaceAuthor -> repository.updateEditableAsset(
+                            asset, ids = listOf(operation.author.id), names = emptyList(), sources = null,
                         )
                         is AlbumBatchChange.AppendAcquisition -> repository.updateAcquisitionSources(
                             asset, (asset.acquisitionSources + operation.sources).distinct(),

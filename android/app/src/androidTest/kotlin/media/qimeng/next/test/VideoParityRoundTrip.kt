@@ -210,7 +210,7 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
         val horizontal = uploadSample(library.id, "parity-landscape.mp4")
         val vertical = uploadSample(library.id, "parity-portrait.mp4")
         for (sample in listOf(horizontal, vertical)) {
-            graph.media.updateAuthors(sample, listOf(author.id), emptyList(), sample.revision, sample.authorsRevision)
+            graph.media.updateEditableAsset(sample, ids = listOf(author.id), names = emptyList(), sources = null)
         }
         Triple(horizontal, vertical, author.id)
     }
