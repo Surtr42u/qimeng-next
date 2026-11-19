@@ -31,3 +31,5 @@
 以 `8f4321a` 为起点的系统审查分两轮进行。四个只读审查分别检查数据与恢复、三端客户端、AI 与 MCP、测试与性能。另一组代理实施修复和回归用例，云端验收代理核对实际运行，主代理负责排序、归并与复核。主代理和每位子代理均从各自当轮的运行记录确认了 GPT-6.2 Astra、max 推理。性能对照使用独立数据库及合成原件。[同机扫描记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44452369764) · [协议来源锁的生成作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44454623724/job/135326529499)
 
 从主线 `21b4b6d` 接续的迭代以四个只读方向定位复扫写入、恢复后作者身份与备份凭证、播放器续播和 worker 长清单。实施代理按这些行为分别提交，验收代理从云端真实作业核对。各次派工及续工均核实为 GPT-6.2 Astra、max 推理。两个扫描对照分别测量耗时与非计时数据库写入。[两场三版对照](verification.md#普通库少量变动复扫) · [50 项清单与换宿主接续](https://github.com/Surtr42u/qimeng-next/actions/runs/44471246374/job/135381725569) · [快速返页与暂停定位](https://github.com/Surtr42u/qimeng-next/actions/runs/44471416242/job/135382443911)
+
+原生包升级与云端 FFmpeg 安装由独立实施代理处理，验收代理核对了三种正式 ZIP 和五个使用该安装步骤的作业。主代理在合入时核对了受测文件树。复扫的时钟探针和 Web 次页加载方案在各自的证据分支运行。主代理、只读审查、实施与验收代理均从自己的当轮记录核实 GPT-6.2 Astra、max 推理。[原生包升级](https://github.com/Surtr42u/qimeng-next/pull/9) · [五项云端作业](https://github.com/Surtr42u/qimeng-next/pull/10) · [扫描专项](https://github.com/Surtr42u/qimeng-next/actions/runs/44484716169/job/135425198607)
