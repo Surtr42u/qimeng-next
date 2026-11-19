@@ -1,0 +1,25 @@
+name: Prepare Ubuntu FFmpeg
+description: Install media tools using the runner's signed Ubuntu package indexes.
+runs:
+  using: composite
+  steps:
+    - id: plan
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/prepare.sh" plan
+    - id: cache
+      if: steps.plan.outputs.key != ''
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+        key: ${{ steps.plan.outputs.key }}
+    - if: steps.plan.outputs.key != ''
+      shell: bash
+      env:
+        APT_WORK: ${{ steps.plan.outputs.work }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: bash "$GITHUB_ACTION_PATH/prepare.sh" install
+    - if: steps.plan.outputs.key != '' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+        key: ${{ steps.plan.outputs.key }}

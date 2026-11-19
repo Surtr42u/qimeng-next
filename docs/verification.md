@@ -18,6 +18,12 @@ Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming
 
 需要更新 JavaScript／Rust 依赖时，在 Actions 手动运行并勾选 `refresh_locks`。协议变更可直接取同一提交的 `generated-contracts-and-locks` 更新来源锁；若锁有差异，独立的功能测试仍能给出诊断。带新锁的提交须通过完整检查才可交付。
 
+### Ubuntu 验证作业的媒体工具
+
+`server`、`live`、`mcp-compat`、`android-ui` 和 `android-local-ui` 共用[宿主 FFmpeg 安装步骤](../.github/actions/ubuntu-ffmpeg/action.yml)。运行器可执行 FFmpeg 和 FFprobe 时直接继续。需要安装时，APT 刷新运行器的 Ubuntu 签名索引，在空归档目录解析 `ffmpeg` 和必需依赖。缓存键包含 Ubuntu 版本、原生架构和本次全部归档名与 SHA-256 的摘要。每个归档名由 APT 按包名、版本和架构生成。[APT 归档身份与既有文件判定](https://github.com/Debian/apt/blob/2.7.14/apt-pkg/acquire-item.cc#L3274-L3325)
+
+缓存只保存这次解析到的 `.deb`。每次安装都将候选归档复制到新的临时目录，对照本次签名索引逐件计算 SHA-256。缺件或摘要有异的归档交回 Ubuntu 下载，校验整批后由 APT 离线安装。首次并发的作业可以各自取包，安装成功后按同一键保存，后续作业可复用先保存的副本。缓存命中仍需更新索引和执行系统安装。[实现](../.github/actions/ubuntu-ffmpeg/prepare.sh) · [GitHub 缓存作用域与匹配规则](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+
 <a id="engineering-gates"></a>
 ## 代码与架构检查
 
