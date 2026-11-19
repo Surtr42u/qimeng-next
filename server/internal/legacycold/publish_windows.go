@@ -3,10 +3,22 @@
 package legacycold
 
 import (
+	"os"
 	"path/filepath"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 )
+
+func unsafeFileInfo(info os.FileInfo) bool {
+	attr, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	return info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || ok && attr.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+func unsafeEntry(entry os.DirEntry) bool {
+	info, err := entry.Info()
+	return err != nil || unsafeFileInfo(info)
+}
 
 // The Windows converter also writes archives to removable volumes without
 // hard links. MoveFileEx on the same volume with no REPLACE flag publishes a

@@ -109,11 +109,7 @@ func (in *inputs) prepare(ctx context.Context, opt Options) error {
 		}
 		in.library[id] = r
 	}
-	parent := filepath.Dir(opt.Output)
-	if _, err := realDirectory(parent); err != nil {
-		return err
-	}
-	return noOutputInside(parent, in.owned)
+	return nil
 }
 
 func available(ctx context.Context, dir string, reserve int64) (int64, error) {
@@ -186,14 +182,31 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 	if err = in.prepare(ctx, opt); err != nil {
 		return receipt, err
 	}
-	if err = os.Mkdir(opt.Output, 0700); err != nil {
-		return receipt, failed("new_output_directory_required")
-	}
-	out, err := openDirectory(opt.Output)
+	parent, err := openDirectory(filepath.Dir(opt.Output))
 	if err != nil {
 		return receipt, err
 	}
-	defer out.root.Close()
+	defer parent.root.Close()
+	if err = noOutputInside(parent.name, in.owned); err != nil {
+		return receipt, err
+	}
+	leaf := filepath.Base(opt.Output)
+	if err = parent.root.Mkdir(leaf, 0700); err != nil {
+		return receipt, failed("new_output_directory_required")
+	}
+	claimed, err := parent.root.OpenRoot(leaf)
+	if err != nil {
+		return receipt, failed("output_directory_unavailable")
+	}
+	defer claimed.Close()
+	info, err := claimed.Stat(".")
+	if err != nil {
+		return receipt, failed("output_directory_unavailable")
+	}
+	out := &readRoot{opt.Output, claimed, info}
+	if err = out.check(); err != nil {
+		return receipt, err
+	}
 	report := Report{Format: "qimeng-legacy-cold-coverage/v1", State: "incomplete", Stage: "input",
 		SourceTimezone: opt.SourceTimezone, RootSelection: in.rootSelection,
 		NonMediaHandling: "Separate private retention required for non-media files and old scanner exclusions."}
@@ -249,6 +262,16 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 	room, err := available(ctx, opt.Output, opt.ReserveBytes)
 	if err != nil {
 		return receipt, err
+	}
+	var liveCount, liveBytes int64
+	if err = source.QueryRowContext(ctx, "SELECT count(*),coalesce(sum(size_bytes),0) FROM assets").Scan(&liveCount, &liveBytes); err != nil {
+		return receipt, failed("invalid_source_size_total")
+	}
+	if liveCount > backup.MaxFiles {
+		return receipt, failed("native_archive_limit")
+	}
+	if liveBytes > room {
+		return receipt, failed("insufficient_space_for_complete_archive")
 	}
 	report.Stage = "new_database"
 	snapshotName := filepath.Join(opt.Output, ".incomplete", "catalog.sqlite")
@@ -437,6 +460,12 @@ func writeArchive(ctx context.Context, opt Options, scratch *readRoot, snapshot 
 	room, err := available(ctx, opt.Output, opt.ReserveBytes)
 	// Each tar entry adds one 512-byte header and at most 511 bytes of padding.
 	overhead := int64(len(raw)) + (int64(len(media.files))+3)*1024
+	// A size beyond the USTAR octal field also needs a small PAX size record.
+	for _, f := range manifest.Files {
+		if f.Size >= 1<<33 {
+			overhead += 1024
+		}
+	}
 	if err != nil || room-overhead-snapshot.info.Size() < media.report.OriginalBytes {
 		return "", failed("insufficient_space_for_complete_archive")
 	}

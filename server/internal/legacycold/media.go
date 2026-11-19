@@ -235,7 +235,7 @@ func walk(ctx context.Context, root *readRoot, dir string, skip func(os.DirEntry
 				continue
 			}
 			name := path.Join(dir, item.Name())
-			if item.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			if unsafeEntry(item) {
 				return locate(failed("source_link_or_special_file"), "source_files", 0, name)
 			}
 			if item.IsDir() {

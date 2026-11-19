@@ -69,7 +69,7 @@ func absolute(name string) (string, error) {
 
 func realDirectory(name string) (os.FileInfo, error) {
 	info, err := os.Lstat(name)
-	if err != nil || !info.IsDir() || info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+	if err != nil || !info.IsDir() || unsafeFileInfo(info) {
 		return nil, failed("directory_missing_or_linked")
 	}
 	parent := filepath.Dir(name)
@@ -150,9 +150,12 @@ func (r *readRoot) openFile(rel string) (*os.File, error) {
 		prefix += part
 		info, err := r.root.Lstat(filepath.FromSlash(prefix))
 		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, failed("source_path_unavailable")
+			}
 			return nil, failed("source_file_missing")
 		}
-		if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || prefix != rel && !info.IsDir() || prefix == rel && !info.Mode().IsRegular() {
+		if unsafeFileInfo(info) || prefix != rel && !info.IsDir() || prefix == rel && !info.Mode().IsRegular() {
 			return nil, failed("source_link_or_special_file")
 		}
 		expected = info
