@@ -3,6 +3,7 @@ package facts
 import (
 	"database/sql"
 	"errors"
+	"path"
 	"time"
 )
 
@@ -16,7 +17,10 @@ func (p projection) activity() error {
 		return err
 	}
 	rep := p.group.RepresentativeID
-	if err := p.exec("UPDATE events SET asset_id=?1,data=json_set(data,'$.assetId',?1) WHERE asset_id IN "+groupIDs+" AND asset_id!=?1", rep); err != nil {
+	// Native history cards display the event filename. Its old spelling was
+	// supplied by the cold member and remains addressable through the origin.
+	if err := p.exec("UPDATE events SET asset_id=?1,data=json_set(data,'$.assetId',?1,'$.fileName',?2) WHERE asset_id IN "+groupIDs,
+		rep, path.Base(p.group.RelativePath)); err != nil {
 		return err
 	}
 	var unknownMark bool
@@ -72,14 +76,16 @@ func (p projection) rebuildEvents() error {
 		coalesce(json_extract(o.original,'$.session_id'),''),json_extract(o.original,'$.day'),json_extract(o.original,'$.seconds'),
 		(o.event_id IS NOT NULL AND json_extract(o.original,'$.asset_id') IS e.asset_id
 		AND json_extract(e.data,'$.eventId') IS e.event_id AND json_extract(e.data,'$.assetId') IS e.asset_id
+		AND json_extract(e.data,'$.fileName') IS json_extract(m.original_asset,'$.fileName')
 		AND json_extract(e.data,'$.contentVersion') IS 0
 		AND json_extract(e.data,'$.kind') IS CASE json_extract(o.original,'$.kind') WHEN 'open' THEN 'view' ELSE json_extract(o.original,'$.kind') END
 		AND coalesce(json_extract(e.data,'$.sessionId'),'') IS json_extract(o.original,'$.session_id')
 		AND json_extract(e.data,'$.seconds') IS json_extract(o.original,'$.seconds')
 		AND qimeng_time_key(json_extract(e.data,'$.createdAt')) IS e.created_at
 		AND qimeng_time_key(json_extract(e.data,'$.occurredAt')) IS e.created_at)
-		FROM events e LEFT JOIN migration_event_origins o ON o.event_id=e.event_id AND o.source_id=?2
-		WHERE e.asset_id IN `+groupIDs+` ORDER BY e.created_at,e.event_id`, p.group.RepresentativeID, p.source)
+		FROM selected_image_merge_members m JOIN events e ON e.asset_id=m.physical_asset_id
+		LEFT JOIN migration_event_origins o ON o.event_id=e.event_id AND o.source_id=?2
+		WHERE m.representative_id=?1 ORDER BY e.created_at,e.event_id`, p.group.RepresentativeID, p.source)
 	if err != nil {
 		return err
 	}

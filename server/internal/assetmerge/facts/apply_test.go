@@ -39,7 +39,7 @@ func TestSelectedImagesKeepPhysicalEvidenceAndOneVisibleHistory(t *testing.T) {
 	}
 	history, err := s.History(t.Context(), "", 10)
 	if err != nil || len(history.Items) != 2 || history.Items[0].AssetID != "left" || history.Items[0].EventID != "visit-right" ||
-		history.Items[0].Asset == nil || history.Items[0].Asset.FileName != "Reviewed.png" {
+		history.Items[0].FileName != "Reviewed.png" || history.Items[0].Asset == nil || history.Items[0].Asset.FileName != "Reviewed.png" {
 		t.Fatalf("normal history: %+v, %v", history, err)
 	}
 	ranks, err := s.Rankings(t.Context(), "all", "", "", 10, "image")
@@ -68,6 +68,8 @@ func TestSelectedImagesKeepPhysicalEvidenceAndOneVisibleHistory(t *testing.T) {
 	value(t, db, "2025-02-02T01:02:03+09:00", "SELECT occurred_at FROM selected_image_merge_sources WHERE source_key='post-a'")
 	value(t, db, 6, "SELECT count(*) FROM migration_event_origins")
 	value(t, db, "right", "SELECT json_extract(original,'$.asset_id') FROM migration_event_origins WHERE event_id='visit-right'")
+	value(t, db, "right.png", `SELECT json_extract(m.original_asset,'$.fileName') FROM migration_event_origins o
+		JOIN selected_image_merge_members m ON m.physical_asset_id=json_extract(o.original,'$.asset_id') WHERE o.event_id='visit-right'`)
 	value(t, db, "2025-03-09T06:01:02.123456789Z", "SELECT created_at FROM events WHERE event_id='visit-left'")
 	value(t, db, 5, "SELECT count(*) FROM events WHERE asset_id='left' AND json_extract(data,'$.assetId')='left' AND json_extract(data,'$.contentVersion')=0")
 	value(t, db, "visit-left", "SELECT event_id FROM event_sessions WHERE asset_id='left' AND session_id='shared' AND kind='view' AND day='2025-03-09'")
