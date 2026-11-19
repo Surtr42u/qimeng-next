@@ -3,8 +3,9 @@ package service
 import "context"
 
 // The digest covers the entire original. Native image probes seek within
-// that same object, including JPEG orientation. External tools retain their
-// platform-specific path handling. No descriptor is kept in the write batch.
+// that same object, including JPEG orientation. Video probes read the
+// container header there too. Linux and Android pass that descriptor to the
+// probe tool. No descriptor is kept in the write batch.
 func (s *Service) inspectScanOriginal(ctx context.Context, run *scanRun, file *scannedFile, skipHash string) string {
 	if err := s.safe(file.full); err != nil {
 		return "read_failed"
@@ -44,7 +45,7 @@ func (s *Service) inspectScanOriginal(ctx context.Context, run *scanRun, file *s
 		return ""
 	}
 	input := mediaInput{name: file.full}
-	if builtinImage(file.probe.MimeType) {
+	if builtinImage(file.probe.MimeType) || file.kind == "video" {
 		input.file, input.size = original, file.size
 	}
 	if err = s.probeMedia(ctx, input, &file.probe); err != nil {
