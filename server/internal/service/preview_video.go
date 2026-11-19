@@ -121,12 +121,15 @@ func (s *Service) externalPreview(ctx context.Context, source mediaInput, a mode
 	if ffmpeg == "" {
 		return nil, Fail(501, "media_tool_unavailable", "此格式需要配置 FFmpeg。")
 	}
-	demuxer := mediaDemuxer(a.MimeType)
+	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	demuxer, err := s.inputDemuxer(deadline, source, a.MimeType)
+	if err != nil {
+		return nil, err
+	}
 	if demuxer == "" {
 		return nil, Fail(415, "media_unsupported", "此格式没有可用的预览通道。")
 	}
-	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	if a.MediaType != "video" {
 		data, err := s.extractPreview(deadline, ffmpeg, source, demuxer, "0:v:0", 0, edge)
 		if err != nil {

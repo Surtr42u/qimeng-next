@@ -308,12 +308,15 @@ func (s *Service) researchFrame(ctx context.Context, source mediaInput, mime str
 	if e != nil {
 		return nil, e
 	}
-	demuxer := mediaDemuxer(mime)
+	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	demuxer, e := s.inputDemuxer(deadline, source, mime)
+	if e != nil {
+		return nil, e
+	}
 	if demuxer == "" {
 		return nil, Fail(415, "media_unsupported", "此格式没有受限研究通道。")
 	}
-	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	cmd := exec.CommandContext(deadline, ffmpeg, "-nostdin", "-v", "error", "-threads", "2", "-max_alloc", "67108864", "-protocol_whitelist", "file,pipe", "-f", demuxer, "-ss", strconv.FormatFloat(position, 'f', 6, 64), "-i", absolute, "-frames:v", "1", "-vf", "scale=640:640:force_original_aspect_ratio=decrease", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1")
 	source.configure(cmd)
 	output := &boundedOutput{limit: 2 << 20}
