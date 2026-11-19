@@ -115,7 +115,8 @@ export function adapter(side, inventory) {
     if (!legacy && path === "/ai/delegations") return response({ items: [] });
     if (!legacy && path.startsWith(`/authors/${authorId}/`)) {
       const blocks = ["x", "basic", "accounts"].map(block => ({ authorId, block, revision: 1,
-        values: block === "basic" ? { summary: "合成资料" } : {}, evidence: [], source: "human", updatedAt: fixedTime }));
+        values: block === "basic" ? { summary: "合成资料" } : block === "x" ? { biographyOriginal: "合成作者原文" } : {},
+        evidence: [], source: "human", updatedAt: fixedTime }));
       const archive = { id: "sample-archive", authorId, authorName, reason: "merge", createdAt: fixedTime,
         blockCount: blocks.length, candidateCount: 0, conflicts: [] };
       if (path.endsWith("/profile")) return response({ authorId, editable: true, blocks });

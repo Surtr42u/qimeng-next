@@ -79,6 +79,13 @@ jobs:
             echo "Ubuntu reference-font download attempt $attempt failed"
           done
           exit 1
+      - name: Compare reachable fields and actions on the first offline visit
+        working-directory: next/web
+        env:
+          BASELINE_DIST: ${{ github.workspace }}/baseline/web/dist
+          CANDIDATE_DIST: ${{ github.workspace }}/next/web/dist
+          COMPARISON_DIR: ${{ github.workspace }}/evidence
+        run: node tests/route-offline-study.mjs
       - name: Exercise both built entry points
         working-directory: next/web
         env:
