@@ -20,6 +20,7 @@ import media.qimeng.next.MediaFormLookupsViewModel
 import media.qimeng.next.libraryError
 import media.qimeng.next.model.Author
 import media.qimeng.next.model.Session
+import media.qimeng.next.model.acquisitionTerms
 import media.qimeng.next.model.validFileStem
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.component.QimengCapsuleTextField
@@ -99,10 +100,8 @@ internal fun AcquisitionChoiceRow(options: List<String>, selected: List<String>,
     }
 }
 
-internal fun acquisitionLines(text: String): List<String> = text.lineSequence().map(String::trim).filter(String::isNotEmpty).distinct().toList()
-
 internal fun toggleAcquisition(text: String, source: String): String {
-    val selected = acquisitionLines(text)
+    val selected = acquisitionTerms(text)
     return (if (source in selected) selected - source else selected + source).joinToString("\n")
 }
 

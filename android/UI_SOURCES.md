@@ -13,6 +13,7 @@
 | `feature/login/LoginScreen.kt`、`feature/settings/ServerSettingsScreen.kt`、`SettingsScreen` 与 `SettingsCards.CountCard` | 新登录/服务器/我的页面沿用双卡、候选行、密码、计数和分组。NSD、连接恢复、权限和充电任务经新独立模块接入。 |
 | `feature/detail/{DetailChromeBars,DetailChromeIcons,DetailSections}.kt`、原详情资源及 `feature/search/SearchScreen.kt` | 同名详情组件、`detail_strings.xml` 与新搜索页；图像、视频、点赞与查询接新 Asset 和 SDK。图片缩放与详情操作使用现有舞台。 |
 | `feature/detail/VideoStage.kt` 的海报和横滑，`video/{BiliPlayerView,PlayerMath}.kt`，`InstantSystemBars.kt` 与 `res/drawable/ic_player_*.xml` | Next `app/.../screen/VideoStage.kt`、`screen/video/` 和 `app/src/main/res/drawable/`。复用自绘双排播控、画质/倍速/比例/循环弹窗、手势和图标。固定横屏与排版态共用一个 Media3 播放器和表面。播放、进度与标记使用 Next 的版本化接口，手势松手才提交定位。 |
+| `feature/detail/AssetEditScreen.kt` 的独立路由、文件名区、逐作者编辑与离场确认 | `AssetEditScreen.kt` 经原详情作者面板打开，命名建议与原扩展名复用普通上传展示组件。Next 的独立条件写入逐项返回结果。 |
 | `feature/stats/{StatsScreen,StatsDetailScreen,StatsFormatters}.kt`、`QimengTrendLineChart.kt` 和 `QimengTrendMarker.kt` | 新统计页与 `core/ui/.../ui/chart/`。趋势和榜单由 Go 返回；Vico 以真实数据点实现点选。 |
 | `feature/manage/{LibraryManageScreen,RegisterLibraryCard}.kt`、`feature/upload/{UploadScreen,UploadPanels,UploadDestinationSection,UploadPendingSection,UploadArchiveBatchSection}.kt` 与归档文件夹设置页 | 新库管理、上传、目录树、待传清单和归档区沿用原入口与控件。原始文件名、目标身份、目录解析、扫描调度和回执走新代码。 |
 | `feature/upload/{UploadScreen,UploadPendingSection}.kt` 与 `core/ui/.../component/QimengAuthorSourceSection.kt` 的联想与来源胶囊 | 上传的作者选择、来源快捷项和单文件建议通过 `MediaFormLookups.kt` 接已连接服务。采用建议保留原扩展名。 |

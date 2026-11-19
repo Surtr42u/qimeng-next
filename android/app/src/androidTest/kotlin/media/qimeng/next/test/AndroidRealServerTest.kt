@@ -25,6 +25,7 @@ import media.qimeng.next.model.UploadMode
 import media.qimeng.next.model.OriginalInput
 import media.qimeng.next.model.Transfer
 import media.qimeng.next.model.TransferBatch
+import media.qimeng.next.model.UploadOptions
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -560,6 +561,92 @@ class AndroidRealServerTest {
         compose.waitUntil(20_000) { compose.onAllNodesWithText("服务端 $version").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("服务端 $version").assertIsDisplayed()
         screenshot("real-server-about-version.png")
+    }
+
+    @Test(timeout = 240_000)
+    fun savesIndependentAssetEditorAndPreservesDraftAfterAuthorConflict() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        val suffix = UUID.randomUUID().toString().take(8)
+        val family = "编辑建议-$suffix"
+        val library = runBlocking { graph.media.createLibrary("独立媒体编辑 $suffix", false) }
+        val first = runBlocking { graph.media.createNamedAuthor(target, listOf("编辑作者甲$suffix"), UUID.randomUUID().toString()) }
+        val second = runBlocking { graph.media.createNamedAuthor(target, listOf("编辑作者乙$suffix"), UUID.randomUUID().toString()) }
+        fun seed(name: String, authors: List<String>): media.qimeng.next.model.Asset {
+            val key = UUID.randomUUID().toString()
+            val (uri, _) = writeMetadataImage(name)
+            val id = runBlocking {
+                val input = graph.uploads.receive(listOf(uri), intakeGroup = key).single()
+                graph.uploads.renameDraft(input, name)
+                graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, UploadOptions(authorIds = authors), target, listOf(input), batchKey = key)
+                input
+            }
+            await("edit-seed", graph) { graph.queue.state.value!!.transfers.any { it.id == id && it.state == TransferState.SUCCEEDED } }
+            val transfer = graph.queue.state.value!!.transfers.single { it.id == id }
+            return runBlocking { graph.media.asset(requireNotNull(transfer.assetId), target) }
+        }
+        seed("$family 01.png", emptyList())
+        val before = seed("独立编辑原名-$suffix.png", listOf(first.id, second.id))
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.openAsset(before.id, target = target) }
+        fun openEditor() {
+            compose.waitUntil(20_000) { model.asset.value?.id == before.id && model.assetAuthors.value.size == 2 }
+            compose.onNodeWithContentDescription("作者").performClick()
+            compose.onNode(hasText("编辑作者与来源") and hasClickAction()).performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("asset-editor-name").fetchSemanticsNodes().isNotEmpty() }
+        }
+        openEditor()
+        editVisibleField("asset-editor-name", family)
+        val suggested = "$family 02.png"
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(suggested).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(suggested).performClick()
+        compose.onNodeWithTag("asset-editor-name").assertTextEquals("$family 02")
+        compose.onNodeWithText("锁定").assertIsDisplayed()
+        screenshot("real-server-independent-media-editor.png")
+        val list = compose.onNodeWithTag("asset-editor-list")
+        fun authorSource(authorId: String, value: String) {
+            val tag = "asset-editor-author-source:$authorId"
+            list.performScrollToNode(hasTestTag(tag))
+            editVisibleField(tag, value)
+        }
+        authorSource(first.id, "甲手工来源")
+        authorSource(second.id, "乙待保存来源")
+        runBlocking { graph.media.saveAuthorSources(target, second, listOf("乙外部更新")) }
+        val save = hasText("保存") and hasClickAction() and isEnabled()
+        list.performScrollToNode(save)
+        compose.onNode(save).performClick()
+        await("edit-partial-confirmed", graph) {
+            graph.media.asset(before.id, target).name == suggested &&
+                graph.media.author(first.id, target).acquisitionSources == listOf("甲手工来源")
+        }
+        list.performScrollToIndex(0)
+        val conflict = "服务端已修改，请重新读取。待保存的输入仍保留。"
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(conflict, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("已保存：文件名、${first.name}的来源").assertExists()
+        val secondTag = "asset-editor-author-source:${second.id}"
+        list.performScrollToNode(hasTestTag(secondTag))
+        compose.onNodeWithTag(secondTag).assertTextContains("乙待保存来源")
+        assertEquals(listOf("乙外部更新"), runBlocking { graph.media.author(second.id, target).acquisitionSources })
+
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithText("有未保存的修改").assertIsDisplayed()
+        compose.onNodeWithText("继续编辑").performClick()
+        compose.onNodeWithTag(secondTag).assertTextContains("乙待保存来源")
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithText("放弃修改离开").performClick()
+
+        openEditor()
+        authorSource(second.id, "乙确认来源")
+        list.performScrollToNode(save)
+        compose.onNode(save).performClick()
+        compose.waitUntil(20_000) { model.route.value == "asset:${before.id}" }
+        val result = runBlocking { graph.media.asset(before.id, target) }
+        assertEquals(suggested, result.name)
+        assertEquals(before.version, result.version)
+        assertEquals(before.originalName, result.originalName)
+        assertEquals(listOf(first.id, second.id), result.authorIds)
+        assertEquals(listOf("甲手工来源"), runBlocking { graph.media.author(first.id, target).acquisitionSources })
+        assertEquals(listOf("乙确认来源"), runBlocking { graph.media.author(second.id, target).acquisitionSources })
     }
 
     private fun editVisibleField(tag: String, text: String) {

@@ -231,9 +231,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision, note = note))
             .bodyOrThrow().toModel(target)
     }
-    suspend fun updateAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long): Asset {
-        val input = AssetUpdate(expectedRevision = revision, authorIds = ids, newAuthorNames = names, expectedAuthorsRevision = authorsRevision)
-        val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf("asset-authors", asset.target.instanceId, asset.id, input)).toByteArray()).toString()
+    suspend fun updateEditableAsset(asset: Asset, ids: List<String>?, names: List<String>, sources: List<String>?): Asset {
+        val input = AssetUpdate(expectedRevision = asset.revision, authorIds = ids, newAuthorNames = names.takeIf { it.isNotEmpty() },
+            expectedAuthorsRevision = asset.authorsRevision.takeIf { ids != null }, acquisitionSources = sources)
+        val key = operationKey("android-asset-edit", asset.target.instanceId, asset.id, com.google.gson.Gson().toJson(input))
         return provider.api(asset.target).updateAsset(id = asset.id, idempotencyKey = key, assetUpdate = input).bodyOrThrow().toModel(asset.target)
     }
     suspend fun updateRelations(asset: Asset, sources: List<String>, characters: List<String>): Asset {
@@ -333,7 +334,8 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun rename(asset: Asset, relativePath: String): Asset {
         val target = asset.target
-        return provider.api(target).moveAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
+        val key = operationKey("android-rename", target.instanceId, asset.id, asset.revision.toString(), relativePath)
+        return provider.api(target).moveAsset(id = asset.id, idempotencyKey = key,
             moveRequest = MoveRequest(expectedRevision = asset.revision, relativePath = relativePath)).bodyOrThrow().toModel(target)
     }
 

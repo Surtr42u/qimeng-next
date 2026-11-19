@@ -53,7 +53,7 @@ internal fun ExtractionVocabularyScreen(
     var prompt by remember(target) { mutableStateOf<ExtractionPrompt?>(null) }
     var reload by remember(target) { mutableStateOf(false) }
     var discard by remember(target) { mutableStateOf(false) }
-    val requestBack = {
+    val requestBack: () -> Unit = {
         if (!saving) {
             if (state?.dirty == true) discard = true else back()
         }
