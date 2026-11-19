@@ -157,12 +157,11 @@ func run() error {
 				http.Error(w, "invalid path", 400)
 				return
 			}
-			info, e := os.Stat(filepath.Join(web, local))
-			if errors.Is(e, os.ErrNotExist) {
-				http.ServeFile(w, r, filepath.Join(web, "index.html"))
+			if entry, ok := packaged[r.URL.Path]; ok && entry.serve(w, r, web) {
 				return
 			}
-			if e == nil && packaged.serve(w, r, web, info) {
+			if _, e := os.Stat(filepath.Join(web, local)); errors.Is(e, os.ErrNotExist) {
+				http.ServeFile(w, r, filepath.Join(web, "index.html"))
 				return
 			}
 			files.ServeHTTP(w, r)

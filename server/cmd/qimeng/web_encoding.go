@@ -12,8 +12,11 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/html"
 )
 
 type webEncoding struct {
@@ -31,21 +34,50 @@ func loadWebEncodings(web string) webEncodings {
 		return nil
 	}
 	defer root.Close()
-	names, _ := fs.Glob(root.FS(), "assets/index-????????.*.gz")
+	index, err := root.Open("index.html")
+	if err != nil {
+		return nil
+	}
+	defer index.Close()
 	entries := make(webEncodings)
-	for _, name := range names {
-		original := strings.TrimSuffix(name, ".gz")
-		if !fingerprintedEntry.MatchString("/" + original) {
+	tokens := html.NewTokenizer(index)
+	for {
+		kind := tokens.Next()
+		if kind == html.ErrorToken {
+			break
+		}
+		if kind != html.StartTagToken && kind != html.SelfClosingTagToken {
 			continue
 		}
-		entry, err := verifyWebEncoding(root, original)
-		if err != nil {
+		url := webEntryURL(tokens.Token())
+		if !fingerprintedEntry.MatchString(url) {
+			continue
+		}
+		entry, err := verifyWebEncoding(root, strings.TrimPrefix(url, "/"))
+		if err == nil {
+			entries[url] = entry
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			slog.Warn("ignoring an invalid precompressed Web entry")
-			continue
 		}
-		entries["/"+original] = entry
 	}
 	return entries
+}
+
+func webEntryURL(tag html.Token) string {
+	var url, kind string
+	for _, attr := range tag.Attr {
+		switch {
+		case tag.Data == "script" && attr.Key == "src", tag.Data == "link" && attr.Key == "href":
+			url = attr.Val
+		case tag.Data == "script" && attr.Key == "type", tag.Data == "link" && attr.Key == "rel":
+			kind = attr.Val
+		}
+	}
+	if tag.Data == "script" && kind == "module" && strings.HasSuffix(url, ".js") ||
+		tag.Data == "link" && slices.Contains(strings.Fields(kind), "stylesheet") && strings.HasSuffix(url, ".css") {
+		return url
+	}
+	return ""
 }
 
 // Verify each installed pair once. A reader of an unchanged package pays no
@@ -96,54 +128,63 @@ func verifyWebEncoding(root *os.Root, name string) (webEncoding, error) {
 	return entry, nil
 }
 
-func sameWebFile(a, b fs.FileInfo) bool {
-	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+func openWebVersion(web, name string, expected fs.FileInfo) *os.File {
+	file, err := os.OpenInRoot(web, name)
+	if err != nil {
+		return nil
+	}
+	info, err := file.Stat()
+	if err != nil || !os.SameFile(expected, info) || expected.Size() != info.Size() || !expected.ModTime().Equal(info.ModTime()) {
+		file.Close()
+		return nil
+	}
+	return file
 }
 
-func (entries webEncodings) serve(w http.ResponseWriter, r *http.Request, web string, info fs.FileInfo) bool {
-	if !fingerprintedEntry.MatchString(r.URL.Path) || !info.Mode().IsRegular() {
+func (entry webEncoding) serve(w http.ResponseWriter, r *http.Request, web string) bool {
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	original := openWebVersion(web, name, entry.original)
+	if original == nil {
 		return false
 	}
+	defer original.Close()
 	w.Header().Add("Vary", "Accept-Encoding")
 	gzipQ, identityQ := webEncodingWeights(r.Header.Values("Accept-Encoding"))
-	entry, ok := entries[r.URL.Path]
-	if ok && sameWebFile(entry.original, info) {
-		if gzipQ > 0 && gzipQ >= identityQ && (r.Header.Get("Range") == "" || identityQ == 0) {
-			if entry.serveGzip(w, r, web) {
-				return true
+	if gzipQ > 0 && gzipQ >= identityQ {
+		if compressed := openWebVersion(web, name+".gz", entry.compressed); compressed != nil {
+			defer compressed.Close()
+			if strings.Contains(r.Header.Get("Range"), ",") {
+				// A multipart envelope would need per-part encoding metadata.
+				r = r.Clone(r.Context())
+				r.Header.Del("Range")
 			}
-		}
-		if identityQ != 0 {
-			w.Header().Set("ETag", entry.identityETag)
+			w.Header().Set("ETag", entry.gzipETag)
+			http.ServeContent(gzipWebResponse{w}, r, name, entry.compressed.ModTime(), compressed)
+			return true
 		}
 	}
 	if identityQ == 0 {
 		http.Error(w, "no acceptable encoding", http.StatusNotAcceptable)
-		return true
+	} else {
+		w.Header().Set("ETag", entry.identityETag)
+		http.ServeContent(w, r, name, entry.original.ModTime(), original)
 	}
-	return false
+	return true
 }
 
-func (entry webEncoding) serveGzip(w http.ResponseWriter, r *http.Request, web string) bool {
-	file, err := os.OpenInRoot(web, strings.TrimPrefix(r.URL.Path, "/")+".gz")
-	if err != nil {
-		return false
+// ServeContent computes lengths and validates preconditions for the bytes in
+// the file. Only a response carrying those bytes has a gzip content encoding.
+type gzipWebResponse struct{ http.ResponseWriter }
+
+func (w gzipWebResponse) WriteHeader(status int) {
+	if status == http.StatusOK || status == http.StatusPartialContent {
+		w.Header().Set("Content-Encoding", "gzip")
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !sameWebFile(entry.compressed, info) {
-		return false
-	}
-	if r.Header.Get("Range") != "" {
-		// Identity is forbidden. The client can decode a whole gzip stream.
-		r = r.Clone(r.Context())
-		r.Header.Del("Range")
-	}
-	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	w.Header().Set("ETag", entry.gzipETag)
-	http.ServeContent(w, r, entry.original.Name(), info.ModTime(), file)
-	return true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w gzipWebResponse) ReadFrom(r io.Reader) (int64, error) {
+	return io.Copy(w.ResponseWriter, r)
 }
 
 var qualityWeight = regexp.MustCompile(`(?i)^q=(0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$`)
