@@ -15,18 +15,18 @@ import (
 // preserve exact relationship identities, ordering and explicit selections,
 // including source terms which were only inferred from a character.
 const originalRelations = `json_object(
-	'authors',(SELECT json_group_array(json_object('id',author_id,'ordinal',ordinal) ORDER BY ordinal,author_id) FROM asset_authors WHERE asset_id=?1),
-	'tags',(SELECT json_group_array(json_object('id',tag_id,'ordinal',ordinal) ORDER BY ordinal,tag_id) FROM asset_tags WHERE asset_id=?1),
-	'explicitSources',(SELECT json_group_array(source_id ORDER BY ordinal,source_id) FROM asset_sources WHERE asset_id=?1),
-	'sourceRows',(SELECT json_group_array(json_object('id',source_id,'ordinal',ordinal) ORDER BY ordinal,source_id) FROM asset_sources WHERE asset_id=?1),
-	'characters',(SELECT json_group_array(json_object('id',character_id,'ordinal',ordinal) ORDER BY ordinal,character_id) FROM asset_characters WHERE asset_id=?1),
-	'taxonomy',(SELECT json_object('sourceText',source_text,'characterText',json(character_text),'derived',derived,'candidates',json(candidates))
-		FROM asset_taxonomy_state WHERE asset_id=?1),
-	'authorOverrides',(SELECT json_group_array(json_object('authorId',author_id,'removed',removed,'listId',list_id) ORDER BY author_id)
-		FROM asset_author_overrides WHERE asset_id=?1),
-	'listMatches',(SELECT json_group_array(json_object('listId',list_id,'authorId',author_id,'work',work) ORDER BY list_id,author_id,work)
-		FROM author_list_matches WHERE asset_id=?1),
-	'humanFields',(SELECT json_group_array(field ORDER BY field) FROM asset_human_fields WHERE asset_id=?1))`
+	'authors',json((SELECT json_group_array(json_object('id',author_id,'ordinal',ordinal) ORDER BY ordinal,author_id) FROM asset_authors WHERE asset_id=?1)),
+	'tags',json((SELECT json_group_array(json_object('id',tag_id,'ordinal',ordinal) ORDER BY ordinal,tag_id) FROM asset_tags WHERE asset_id=?1)),
+	'explicitSources',json((SELECT json_group_array(source_id ORDER BY ordinal,source_id) FROM asset_sources WHERE asset_id=?1)),
+	'sourceRows',json((SELECT json_group_array(json_object('id',source_id,'ordinal',ordinal) ORDER BY ordinal,source_id) FROM asset_sources WHERE asset_id=?1)),
+	'characters',json((SELECT json_group_array(json_object('id',character_id,'ordinal',ordinal) ORDER BY ordinal,character_id) FROM asset_characters WHERE asset_id=?1)),
+	'taxonomy',json((SELECT json_object('sourceText',source_text,'characterText',json(character_text),'derived',derived,'candidates',json(candidates))
+		FROM asset_taxonomy_state WHERE asset_id=?1)),
+	'authorOverrides',json((SELECT json_group_array(json_object('authorId',author_id,'removed',removed,'listId',list_id) ORDER BY author_id)
+		FROM asset_author_overrides WHERE asset_id=?1)),
+	'listMatches',json((SELECT json_group_array(json_object('listId',list_id,'authorId',author_id,'work',work) ORDER BY list_id,author_id,work)
+		FROM author_list_matches WHERE asset_id=?1)),
+	'humanFields',json((SELECT json_group_array(field ORDER BY field) FROM asset_human_fields WHERE asset_id=?1)))`
 
 type originalMember struct {
 	plan      Member
