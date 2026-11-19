@@ -4,9 +4,15 @@
 
 系统审查修复已在 `21b4b6d` 合入主线。该提交通过了 22 项云端作业，包括备份中断后逐项核对旧快照、普通上传停库后重启、执行器跨日认领和 Windows 切服失败时保留原窗口。[合入记录与逐项发现](https://github.com/Surtr42u/qimeng-next/pull/7) · [主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44468473213)
 
+`77e260a` 已合入复扫写入、恢复后的作者身份与备份凭证、同标签页视频续播，以及智能批次翻页和换宿主接续的修复。Windows 专项从实际打开的目录确认恢复副本与来源隔离，并经正式媒体接口读回原件。三个原生服务包自 `befa334` 起在取得监听端口后才升级数据库。端口占用时的旧库及释放端口后的升级均已用历史结构的合成样本验证。[恢复与跨端验收](https://github.com/Surtr42u/qimeng-next/pull/8) · [Windows 目录与原件回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44480574562/job/135411516322) · [三平台升级](https://github.com/Surtr42u/qimeng-next/pull/9)
+
+在 `6d19173`，五个 Ubuntu 云端作业按当前签名索引核验 FFmpeg 软件包。PR 验收中有四台复用全部 87 个缓存包，合入后的主线有三台复用。各台分别刷新索引并实际安装。主线 22 项云端作业全部通过。[同机计时与缓存损坏恢复](https://github.com/Surtr42u/qimeng-next/pull/10) · [合入后的主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44483277173)
+
 ## 系统审查后的客户端验收
 
 Web 的 `9c2a5f7` 与安装版 `74597408` 使用相同的字体、媒体、主题和视口比较。桌面与窄屏的首页、相册、详情六组均通过，锚点偏差均在 1 CSS 像素内，退出详情后两端回到原相册及原滚动位置。[六组测量与截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44455888042/job/135330670726)
+
+作者资料、归档和 AI 接入沿用现有加载方式。断网前已读过作者主页时，首次打开详细资料仍可查看和编辑简介。保留这些操作及离线 AI 草稿的分包试案仅减少 3,794 字节首页 TCP 下行，首页可用时间中位数同为 1,233 毫秒，首次打开归档记录则从 87 增至 168 毫秒。[同机计时、四种离线操作及安装版画面对照](https://github.com/Surtr42u/qimeng-next/actions/runs/44485507746/job/135427849678)
 
 在 `41f63f5`，同一标签页返回相册再立即打开视频，会恢复 Go 保存的续播位置。延迟到达的详情响应保留用户当前的播放位置。初始暂停时拖动、键盘调整或明确回到零均可保存，整段操作的播放次数保持零。[正常导航与独立回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44471416242/job/135382443911)
 
