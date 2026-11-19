@@ -50,3 +50,7 @@ func fileIdentity(f *os.File) (string, error) {
 }
 
 func syncDir(dir *os.File) error { return dir.Sync() }
+
+func lockHandoff(f *os.File) error {
+	return unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+}

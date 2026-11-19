@@ -64,3 +64,10 @@ func renameExclusive(a *area, from, to string) error {
 
 // Windows does not support directory fsync. Files are flushed before handoff.
 func syncDir(*os.File) error { return nil }
+
+func lockHandoff(f *os.File) error {
+	// Lock beyond the receipt bytes so its ordinary readers can still inspect
+	// the status. Closing the pinned file releases this process's byte range.
+	offset := windows.Overlapped{Offset: 1 << 20}
+	return windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &offset)
+}

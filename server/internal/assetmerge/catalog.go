@@ -55,6 +55,12 @@ func (c *catalog) add(router *storage.Root, stage string, f backup.File) error {
 
 func readCatalog(ctx context.Context, db *sql.DB, stage string) (catalog, error) {
 	c := catalog{map[string]payload{}, map[string]bool{}}
+	// Storage roots use their resolved spelling. A Windows temp directory can
+	// arrive through a legitimate 8.3 alias even after all links were rejected.
+	stage, err := filepath.EvalSymlinks(stage)
+	if err != nil {
+		return c, err
+	}
 	router, err := storage.Open(stage, nil)
 	if err != nil {
 		return c, err

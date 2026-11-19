@@ -160,6 +160,9 @@ func (op *operation) prepare(ctx context.Context) error {
 	if err != nil {
 		return phase("copy_stopped_catalog", err)
 	}
+	if op.req.CatalogHash != "" && op.baseline.Hash != op.req.CatalogHash {
+		return phase("verified_catalog_fingerprint", errors.New("restored catalog differs from the independently verified copy"))
+	}
 	// Reading only from the private copy keeps the restored WAL and catalog
 	// untouched, including when the owner asks for a check without apply.
 	candidate := filepath.Join(op.name, filepath.FromSlash(copyName))
@@ -226,7 +229,8 @@ func (op *operation) prepare(ctx context.Context) error {
 	if err != nil {
 		return phase("seal_projected_catalog", err)
 	}
-	op.result = Receipt{"checked", id, op.req.ArchiveHash, op.plan.BaselineSHA256, op.req.PlanHash, op.req.Restore.AssetCount, result}
+	op.result = Receipt{State: "checked", InstanceID: id, ArchiveSHA256: op.req.ArchiveHash, BaselineSHA256: op.plan.BaselineSHA256,
+		PlanSHA256: op.req.PlanHash, VerifiedAssets: op.req.Restore.AssetCount, RestoredCatalogSHA256: op.baseline.Hash, Result: result}
 	return nil
 }
 
@@ -364,7 +368,8 @@ func (op *operation) apply(ctx context.Context, stageInfo os.FileInfo) error {
 	if err != nil {
 		return phase("seal_working_copy", err)
 	}
-	note := publication{c, op.result, op.projected.Hash, op.projected.Object, inventory.Hash, selection.Hash}
+	note := publication{Claim: c, Receipt: op.result, CatalogHash: op.projected.Hash, CatalogObject: op.projected.Object,
+		BaselineCatalogHash: op.baseline.Hash, BaselineCatalogObject: op.baseline.Object, InventoryHash: inventory.Hash, SelectionHash: selection.Hash}
 	if err = op.writeJSON(stage+"/"+publishedNote, note); err != nil {
 		return phase("seal_working_copy", err)
 	}

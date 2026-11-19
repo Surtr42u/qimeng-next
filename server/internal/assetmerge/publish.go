@@ -6,8 +6,6 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
-
-	"qimeng.local/next/server/internal/store"
 )
 
 type inventory struct {
@@ -16,12 +14,14 @@ type inventory struct {
 }
 
 type publication struct {
-	Claim         claim   `json:"claim"`
-	Receipt       Receipt `json:"receipt"`
-	CatalogHash   string  `json:"catalogSHA256"`
-	CatalogObject string  `json:"catalogFileIdentity"`
-	InventoryHash string  `json:"inventorySHA256"`
-	SelectionHash string  `json:"selectionSHA256"`
+	Claim                 claim   `json:"claim"`
+	Receipt               Receipt `json:"receipt"`
+	CatalogHash           string  `json:"catalogSHA256"`
+	CatalogObject         string  `json:"catalogFileIdentity"`
+	BaselineCatalogHash   string  `json:"baselineCatalogSHA256"`
+	BaselineCatalogObject string  `json:"baselineCatalogFileIdentity"`
+	InventoryHash         string  `json:"inventorySHA256"`
+	SelectionHash         string  `json:"selectionSHA256"`
 }
 
 func (op *operation) readJSON(ctx context.Context, name string, limit int64, to any) (string, error) {
@@ -55,15 +55,12 @@ func (op *operation) resume(ctx context.Context) (Receipt, error) {
 	}
 	// This lock lives outside the directory being renamed. A second process
 	// cannot finish the same handoff during the Windows close-and-rename window.
-	if _, err := op.inspect(pre + "/handoff.sqlite"); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return Receipt{}, phase("publication_lock", err)
-	}
-	owner, err := store.OpenDatabase(filepath.Join(op.name, pre, "handoff.sqlite"), store.OwnershipDatabase)
+	owner, _, err := op.openRegular(pre + "/ready.json")
 	if err != nil {
 		return Receipt{}, phase("publication_lock", err)
 	}
 	defer owner.Close()
-	if _, err = owner.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS authority(id INTEGER); BEGIN EXCLUSIVE"); err != nil {
+	if err = lockHandoff(owner); err != nil {
 		return Receipt{}, phase("publication_lock", err)
 	}
 	completed, err = op.exists(pre + "/published.json")
@@ -157,6 +154,10 @@ func (op *operation) verifyReady(ctx context.Context, dir string, ready publicat
 		return errors.New("prepared catalog changed after projection")
 	}
 	pre := op.req.Preimage
+	beforeDB, err := op.readFile(ctx, pre+"/qimeng.sqlite", nil)
+	if err != nil || beforeDB.Hash != ready.BaselineCatalogHash || beforeDB.Object != ready.BaselineCatalogObject {
+		return errors.New("sealed baseline database changed")
+	}
 	var inv inventory
 	hash, err := op.readJSON(ctx, pre+"/baseline-files.json", 512<<20, &inv)
 	if err != nil || hash != ready.InventoryHash {
@@ -169,6 +170,10 @@ func (op *operation) verifyReady(ctx context.Context, dir string, ready publicat
 	}
 	destinations := map[string]string{}
 	for _, m := range moves {
+		saved, err := op.readFile(ctx, pre+"/"+m.Copy, nil)
+		if err != nil || saved.Hash != m.Stamp.Hash || saved.Size != m.Stamp.Size || !saved.Time.Equal(m.Stamp.Time) || saved.Object == m.Stamp.Object {
+			return errors.New("independent selected preimage changed")
+		}
 		destinations[m.AssetID] = m.After
 	}
 	expected := map[string]bool{"qimeng.sqlite": true, "authority.sqlite": true, "RESTORE_INCOMPLETE": true, publishedNote: true}

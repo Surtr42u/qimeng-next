@@ -6,7 +6,7 @@
 
 1. 在本机同一文件系统的私有父目录 `P` 工作。私有计划和归档保存在 `work`、`preimage`、`data` 三个子目录之外。以下各参数使用绝对路径。`P/data` 可以换成同父目录下尚不存在的其他名字。
 2. 用正式 `qimeng-backup verify --archive ARCHIVE --sha256 DIGEST` 核对原始归档，再运行 `qimeng-backup restore --archive ARCHIVE --sha256 DIGEST --destination P/work`。把这次恢复的 stdout 保存为 UTF-8 `P/restore.json`。Windows PowerShell 5 可将输出交给 `Out-File -Encoding utf8`。`P/work` 必须是本次新恢复、从未启动服务的专用工作副本。
-3. 在该副本完成原始 ID、实际相对路径、每件原件完整哈希及业务历史的基线核验。离线读取 SQLite 时用只读 immutable 连接，读取结束后关闭。保留该次基线明细。对已校对的私有计划文件计算完整 SHA-256，以其原始字节的 64 位小写十六进制摘要作为 `PLAN_DIGEST`。
+3. 在该副本完成原始 ID、实际相对路径、每件原件完整哈希及业务历史的基线核验。离线读取 SQLite 时用只读 immutable 连接，读取结束后关闭。保留该次基线明细。可将这时 `P/work/qimeng.sqlite` 的完整摘要作为 `--catalog-sha256` 传入，绑定连同历史和关系在内的已核数据库。对已校对的私有计划文件计算完整 SHA-256，以其原始字节的 64 位小写十六进制摘要作为 `PLAN_DIGEST`。
 4. 运行以下命令核对整库和所有决定。`check` 只在临时 SQLite 副本上试算，并逐项读取归档和工作副本。成功后运行相同参数的 `apply`。两次调用各自读取完整输入，大归档可能需要较长时间。
 
 ```text
@@ -40,4 +40,3 @@ qimeng-merge-selected apply --archive ARCHIVE --sha256 DIGEST --stage P/work --r
 | 需要恢复所有原身份、位置和原始历史 | 使用完整未合并 `.qnext` 和独立摘要恢复至新的数据目录，可按逐项基线再核对。 |
 
 工具与同提交的恢复程序由双平台合成工作流打包，下载后核对 `SHA256SUMS`。[Windows 与 Linux 工作流](../.github/workflows/selected-image-merge.yml)
-

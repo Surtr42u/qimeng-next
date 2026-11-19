@@ -174,6 +174,7 @@ def run(args, base):
     receipt.write_bytes(saved_receipt)
     command("apply", parent, success=False, sha256="0"*64)
     command("apply", parent, success=False, **{"plan-sha256": "f"*64})
+    command("apply", parent, success=False, **{"catalog-sha256": "f"*64})
     command("apply", parent, success=False, **{"reserve-bytes": str(2**62)})
     wrong = json.loads(json.dumps(decision))
     wrong["groups"][0]["sha256"] = "a"*64
@@ -216,6 +217,7 @@ def run(args, base):
     assert not (parent/"preimage").exists() and cold.source_state(stage) == state
     checked = command("check", parent)
     assert checked["state"] == "checked" and checked["members"] == 2 and checked["donors"] == 1
+    assert checked["restoredCatalogSHA256"] == cold.digest(stage/"qimeng.sqlite")
     assert cold.source_state(stage) == state and not (parent/"preimage").exists()
     successful = command("apply", parent)
     assert not successful["alreadyApplied"] and successful["verifiedAssets"] == 4
@@ -234,6 +236,7 @@ def run(args, base):
     assert cold.digest(final/"libraries"/cold.LIB/".qimeng-internal"/"trash"/cold.T/recycled.name) == cold.digest(recycled)
     assert cold.digest(pre/"qimeng.sqlite") == cold.read_json(pre/"catalog-fingerprint.json")["sha256"]
     assert rows(final/"qimeng.sqlite", "SELECT count(*) FROM selected_image_merge_sources") == [(2,)]
+    assert rows(final/"qimeng.sqlite", "SELECT asset_id,count(*) FROM events GROUP BY asset_id") == [(cold.A, 2)]
     assert rows(final/"qimeng.sqlite", "SELECT asset_id FROM migration_media_aliases WHERE source_id=? AND source_asset_id=?", (source_id, cold.B)) == [(cold.A,)]
 
     # Recreate the two durable interrupted-handoff layouts using only these
@@ -258,7 +261,8 @@ def run(args, base):
         assert get(asset["contentUrl"], raw=True) == previous
         visible = get("/api/v1/assets?libraryId="+cold.LIB)["items"]
         assert {v["id"] for v in visible} == {cold.A, cold.ident(710)}
-        assert len(get("/api/v1/history")["items"]) >= 2
+        history = get("/api/v1/history")["items"]
+        assert len(history) == 1 and history[0]["assetId"] == cold.A and history[0]["fileName"] == "second.png"
         new_digest = native_export(get, merged)
     assert new_digest != baseline
     restored = base/"replay"
@@ -288,4 +292,3 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="qimeng-selection-synthetic-") as tmp:
         result = run(arguments, Path(tmp))
     write_json(arguments.receipt, result)
-

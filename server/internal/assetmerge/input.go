@@ -20,6 +20,7 @@ import (
 
 type Options struct {
 	Archive, SHA256, Stage, RestoreReceipt, Plan, PlanSHA256, Preimage, Destination string
+	CatalogSHA256                                                                   string
 	ReserveBytes                                                                    int64
 }
 
@@ -29,16 +30,18 @@ type request struct {
 	Preimage    string                `json:"preimage"`
 	ArchiveHash string                `json:"archiveSHA256"`
 	PlanHash    string                `json:"planSHA256"`
+	CatalogHash string                `json:"expectedCatalogSHA256,omitempty"`
 	Restore     service.RestoreResult `json:"restore"`
 }
 
 type Receipt struct {
-	State          string `json:"state"`
-	InstanceID     string `json:"instanceId"`
-	ArchiveSHA256  string `json:"archiveSHA256"`
-	BaselineSHA256 string `json:"baselineSHA256"`
-	PlanSHA256     string `json:"planSHA256"`
-	VerifiedAssets int    `json:"verifiedAssets"`
+	State                 string `json:"state"`
+	InstanceID            string `json:"instanceId"`
+	ArchiveSHA256         string `json:"archiveSHA256"`
+	BaselineSHA256        string `json:"baselineSHA256"`
+	PlanSHA256            string `json:"planSHA256"`
+	VerifiedAssets        int    `json:"verifiedAssets"`
+	RestoredCatalogSHA256 string `json:"restoredCatalogSHA256"`
 	facts.Result
 }
 
@@ -48,8 +51,8 @@ func isDigest(s string) bool {
 }
 
 func splitPaths(o Options) (string, request, error) {
-	r := request{Stage: filepath.Base(o.Stage), Destination: filepath.Base(o.Destination), Preimage: filepath.Base(o.Preimage), ArchiveHash: o.SHA256, PlanHash: o.PlanSHA256}
-	if !isDigest(r.ArchiveHash) || !isDigest(r.PlanHash) || o.ReserveBytes < 0 {
+	r := request{Stage: filepath.Base(o.Stage), Destination: filepath.Base(o.Destination), Preimage: filepath.Base(o.Preimage), ArchiveHash: o.SHA256, PlanHash: o.PlanSHA256, CatalogHash: o.CatalogSHA256}
+	if !isDigest(r.ArchiveHash) || !isDigest(r.PlanHash) || (r.CatalogHash != "" && !isDigest(r.CatalogHash)) || o.ReserveBytes < 0 {
 		return "", r, errors.New("expected lowercase SHA-256 fingerprints and nonnegative reserve")
 	}
 	parent := filepath.Dir(o.Stage)
