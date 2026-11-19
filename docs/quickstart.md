@@ -4,6 +4,8 @@
 
 Windows x64 电脑选 `qimeng-next-package-windows-amd64`，Intel/AMD 64 位 Linux 电脑或 NAS 选 `qimeng-next-package-linux-amd64`，64 位 ARM 设备选 `qimeng-next-package-linux-arm64`。每个制品内含产品 ZIP、同名 `.sha256` 文件和平台检查结果。Windows 的 Tauri 安装包用于连接已经运行的影库。
 
+产品 ZIP 的 `third-party/preview-decoders/README.md` 列出展示缩略图解码器的版本、来源和随附许可。包内 `SHA256SUMS` 包含这些文件的摘要。
+
 ## Windows
 
 1. 将下载的制品解压到一个单独的文件夹，在这个文件夹打开 PowerShell。

@@ -18,6 +18,8 @@ import time
 import urllib.request
 import zipfile
 
+import preview_notices
+
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "server/internal/store/migrations"
 
@@ -32,6 +34,7 @@ def unpack(archive: Path, temporary: Path, target: str) -> Path:
     if digest(archive) != expected:
         raise ValueError("ZIP checksum mismatch")
     with zipfile.ZipFile(archive) as source:
+        preview_notices.verify(zipfile.Path(source) / archive.stem)
         source.extractall(temporary)
     app = temporary / archive.stem
     source = json.loads((app / "SOURCE.json").read_text("utf-8"))

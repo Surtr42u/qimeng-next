@@ -98,6 +98,7 @@ jobs:
       - name: Build Linux runtime for independent client checks
         working-directory: server
         run: |
+          python ../tools/preview_notices.py ../build
           go build -trimpath -o ../build/qimeng-next ./cmd/qimeng
           go build -trimpath -o ../build/qimeng-backup ./cmd/qimeng-backup
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -324,7 +325,8 @@ jobs:
         run: |
           sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;28.2.13676358'
           python tools/stage_android_native.py "$RUNNER_TEMP/android-native"
-          gradle --no-daemon -p android :app:assembleEmbeddedDebug :app:testEmbeddedDebugUnitTest :embedded:testDebugUnitTest :app:lintEmbeddedDebug --stacktrace
+          gradle --no-daemon -p android :embedded:assembleDebug :app:assembleEmbeddedDebug :app:testEmbeddedDebugUnitTest :embedded:testDebugUnitTest :app:lintEmbeddedDebug --stacktrace
+          python tools/check_android_apk.py embedded android/embedded/build/outputs/aar/embedded-debug.aar
           python tools/check_android_apk.py embedded android/app/build/outputs/apk/embedded/debug/app-embedded-debug.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -334,6 +336,7 @@ jobs:
           path: |
             android/**/build/reports/
             android/app/build/outputs/apk/embedded/debug/*.apk
+            android/embedded/build/outputs/aar/embedded-debug.aar
   live:
     if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'web'
     needs: [generate, server-runtime, web]
@@ -455,6 +458,8 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: server
         run: |
+          python ../tools/preview_notices.py ../build
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to stage decoder notices' }
           go build -trimpath -o ../build/qimeng-next.exe ./cmd/qimeng
           if ($LASTEXITCODE -ne 0) { throw 'Windows Go build failed' }
           go build -trimpath -o ../build/qimeng-backup.exe ./cmd/qimeng-backup
@@ -507,6 +512,7 @@ jobs:
           path: |
             build/qimeng-next.exe
             build/qimeng-backup.exe
+            build/third-party/preview-decoders/
             build/windows-source-recovery.json
             desktop/package-lock.json
             desktop/src-tauri/Cargo.lock

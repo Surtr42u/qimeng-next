@@ -14,6 +14,8 @@ import stat
 import subprocess
 import zipfile
 
+import preview_notices
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -79,6 +81,7 @@ def main() -> None:
         (staging / launcher).write_bytes((text.replace("\r\n", "\n").replace("\n", "\r\n") if windows else text.replace("\r\n", "\n")).encode("utf-8-sig" if launcher == "start.ps1" else "utf-8"))
     shutil.copyfile(ROOT / "docs/quickstart.md", staging / "快速开始.md")
     shutil.copyfile(ROOT / "api/sdk.lock", staging / "sdk.lock")
+    preview_notices.copy_to(staging)
     metadata = {"sourceCommit": sha, "target": args.target, "server": "qimeng-next" + suffix,
                 "restoreUtility": "qimeng-backup" + suffix, "webEntry": "web/index.html",
                 "openapiSha256": digest(ROOT / "api/openapi.yaml"), "sdkLockSha256": digest(staging / "sdk.lock")}
