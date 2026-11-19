@@ -1,7 +1,10 @@
 package media.qimeng.next.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -11,6 +14,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -22,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -30,14 +35,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import media.qimeng.next.AlbumBatchViewModel
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.AssetQuery
@@ -228,6 +236,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val state by model.assets(key).collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
     val publication by model.lastPublication.collectAsStateWithLifecycle()
+    val batch = if (key == "albums") viewModel<AlbumBatchViewModel>() else null
+    val selection = batch?.selection?.collectAsStateWithLifecycle()?.value
+    val selecting = selection?.selecting == true
     val sharedColumns = key in setOf("albums", "favorites", "history")
     val committedColumns = if (sharedColumns) model.albumColumns.collectAsStateWithLifecycle().value else controls.columns.intValue
     var pinchColumns by remember(key) { mutableStateOf<Int?>(null) }
@@ -247,6 +258,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
     LaunchedEffect(key, session, query, group, publication) {
+        batch?.bindQuery(query)
         model.browse(key, query)
         val current = query.toString() + group
         if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }
@@ -258,6 +270,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     LaunchedEffect(nearEnd, state.cursor, query) {
         if (nearEnd && state.error == null) model.browse(key, query, next = true)
     }
+    val entries = if (state.loadedQuery == query) state.items else emptyList()
+    if (batch != null && selection != null) {
+        BackHandler(enabled = selecting && !selection.sheetOpen, onBack = batch::exit)
+        if (selection.sheetOpen) AlbumBatchSheet(batch, selection, model::refreshAfterAlbumBatch)
+    }
     Column(Modifier.fillMaxSize()) {
         var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
         var filters: (@Composable () -> Unit)? = null
@@ -268,8 +285,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
             filters = { AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, values,
                 onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
-                loadFailed = state.error != null, columns = columns,
+                loadFailed = state.error != null, columns = columns, showTitle = !selecting,
                 onToggleColumns = { setColumns(if (columns == 5) 2 else columns + 1) }) }
+            if (batch != null && selection != null && selecting) AlbumSelectionBar(batch, selection, entries)
             if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
@@ -287,7 +305,6 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             } else model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true)
         }
         if (leading == null) state.error?.let { ErrorNotice(it, retry) }
-        val entries = if (state.loadedQuery == query) state.items else emptyList()
         val sectionMode = when {
             source == "history" -> "history"
             favorite == true -> "favorite"
@@ -309,7 +326,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (key == "home:2") "暂无数据" else "没有符合条件的媒体") }
             LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
                 contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = when {
-                    bottomDock -> TabDockDefaults.bottomClearance()
+                    bottomDock && !selecting -> TabDockDefaults.bottomClearance()
                     leading != null -> QimengDimens.ListBottomContentPadding
                     else -> 24.dp
                 }),
@@ -379,7 +396,12 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                         Text(label, Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     } }
-                    items(section.items, key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
+                    items(section.items, key = Asset::id) { asset ->
+                        val selected = if (selecting) selection?.selected?.containsKey(asset.id) else null
+                        MediaTile(asset, caption, selected, onLongClick = if (batch != null && !selecting) ({ batch.select(asset) }) else null) {
+                            if (selecting) batch?.select(asset) else model.openAsset(asset.id, key, asset.target)
+                        }
+                    }
                 }
                 if (key in setOf("home:0", "home:1") && state.loadedQuery == query && entries.isNotEmpty() && state.cursor == null && state.error == null)
                     item(key = "footer:end", span = { GridItemSpan(maxLineSpan) }) {
@@ -388,18 +410,30 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     }
             }
         }
+        if (batch != null && selection != null && selecting && selection.selected.isNotEmpty()) {
+            Button(onClick = batch::openSheet, modifier = Modifier.fillMaxWidth().padding(
+                start = 16.dp, end = 16.dp, bottom = TabDockDefaults.bottomClearance(), top = 4.dp,
+            )) { Text("批量设置作者与来源 (${selection.selected.size})") }
+        }
     }
 }
 
 @Composable
-private fun MediaTile(asset: Asset, shortTitle: Boolean, onClick: () -> Unit) {
+private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
     val context = LocalContext.current
     val radius = with(LocalDensity.current) { 24f.toDp() }
     // Existing AssetCard: 16:9 frame, 5dp outer spacing and a 24px corner; only search adds a caption.
     val animated = asset.mediaType == "animated_image"
+    val shape = RoundedCornerShape(radius)
+    val click = if (onLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "选择媒体")
+        else Modifier.clickable(onClick = onClick)
     Column {
-        Box(Modifier.padding(5.dp).fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(radius))
-            .background(MaterialTheme.colorScheme.secondaryContainer).clickable(onClick = onClick).semantics { contentDescription = asset.name }) {
+        Box(Modifier.padding(5.dp).fillMaxWidth().aspectRatio(16f / 9f).clip(shape)
+            .then(if (isSelected == true) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+            .background(MaterialTheme.colorScheme.secondaryContainer).then(click).semantics {
+                contentDescription = asset.name
+                if (isSelected != null) selected = isSelected
+            }) {
             if (animated || asset.thumbnailUrl.isNotEmpty()) {
                 val request = if (animated) {
                     ImageRequest.Builder(context).data(asset.contentUrl)
@@ -410,11 +444,23 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, onClick: () -> Unit) {
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             else Icon(Icons.Outlined.Image, "预览尚未生成", Modifier.align(Alignment.Center).size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (isSelected == true) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)))
             if (asset.mediaType == "video") detailDuration(asset.durationMs)?.let { badge ->
                 Text(badge,
                     Modifier.align(Alignment.BottomEnd).padding(8.dp), color = androidx.compose.ui.graphics.Color.White,
                     style = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, shadow = androidx.compose.ui.graphics.Shadow(
                         androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f), androidx.compose.ui.geometry.Offset(0f, 1f), 4f)))
+            }
+            if (isSelected != null) {
+                val marker = Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp)
+                if (isSelected) {
+                    Box(marker.background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(CheckMarkIcon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                } else {
+                    Box(marker.background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                        .border(1.5.dp, Color.White.copy(alpha = 0.85f), CircleShape))
+                }
             }
         }
         if (shortTitle) Text(asset.name.substringBeforeLast('.', asset.name), Modifier.fillMaxWidth().padding(horizontal = 5.dp), maxLines = 1,

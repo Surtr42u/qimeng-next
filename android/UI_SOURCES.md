@@ -10,6 +10,7 @@
 | `core/ui/.../icon/Qimeng{Icons,ManageIcons,DetailIcons}.kt` | 新 `ui/icon/` 保留图形路径和来源注释。 |
 | `HomeScreen.HomeTopRow`、`AllScreen`、`FavoriteScreen`、`HistoryScreen`、`QimengMediaGrid.AssetCard`、`FloatingTabDock.TabDockDefaults` | `MediaBrowser.kt`、`AlbumFilters.kt`、`GallerySections.kt` 。封面为 16:9、5dp 外距、24px 圆角。网格顶距位于视口外，左右边距为 8dp。首页顶行使用原 BackdropGlassPanel 与 BackdropGlassIconButton。 |
 | `74597408` 的 `AllScreen.kt`、`FavoriteScreen.kt`、`HistoryScreen.kt` 双指切列及 `core/data/.../ClientPrefsRepositories.kt` 的 `albumColumns` | 三页继续共用 2–5 列偏好，由 Next 的 `SecureSettings` 保存。网格临近视窗只将已经加载的资产交给 Next 的 `ThumbnailCacheRepository`。 |
+| `74597408` 的 `feature/all/AllScreen.kt` 选中工具条与批量抽屉、`core/ui/.../QimengMediaGrid.kt` 的选中图层 | `MediaBrowser.kt` 与 `AlbumBatchEditor.kt` 恢复长按、全选已加载项、清空和批量操作。旧版替换常规作者；新版保留 Go 管理的目录 COS 关联，并可逐项追加媒体的获取来源。 |
 | `app/navigation/{QimengNavHost,ClassicBottomBar}.kt`、`core/ui/glass/{FloatingTabDock,QimengBackdrop,BackdropGlassPanel}.kt`、`feature/settings/AppearanceScreen.kt` | Next 的 AppRoot 按原材质选择两套底栏，通过原采样库渲染。外观页恢复三个主题及四个材质。路由瞬切，首页点按芯片瞬时对齐，双击主标签回顶。 |
 | `feature/login/LoginScreen.kt`、`feature/settings/ServerSettingsScreen.kt`、`SettingsScreen` 与 `SettingsCards.CountCard` | 新登录/服务器/我的页面沿用双卡、候选行、密码、计数和分组。NSD、连接恢复、权限和充电任务经新独立模块接入。 |
 | `feature/detail/{DetailChromeBars,DetailChromeIcons,DetailSections}.kt`、原详情资源及 `feature/search/SearchScreen.kt` | 同名详情组件、`detail_strings.xml` 与新搜索页；图像、视频、点赞与查询接新 Asset 和 SDK。图片缩放与详情操作使用现有舞台。 |
