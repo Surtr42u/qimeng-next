@@ -12,6 +12,7 @@ import (
 )
 
 const errPrivate = sourceProblem("nonportable_business_value")
+
 var publicLinks = regexp.MustCompile("(?i)https?://[^\\s<>\"'\u0060]+")
 var privateText = regexp.MustCompile(`(?i)(?:[a-z]:[/\\]|\\\\[^\\]+\\|file://|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:bearer|basic)\s+[a-z0-9+/_=.-]{8,}|\b(?:access[_-]?token|api[_-]?key|password|secret)[ \t]*[:=]\s*\S)`)
 
