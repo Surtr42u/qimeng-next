@@ -1,6 +1,9 @@
 // Only cache public application files. Authenticated API and media never enter this cache.
-const CACHE = 'qimeng-shell-v1';
-const SHELL = ['/', '/icon.svg', '/theme.js', '/manifest.webmanifest'];
+const CACHE = 'qimeng-shell-v2';
+const SHELL = [
+  '/', '/theme.js', '/manifest.webmanifest', '/favicon.ico', '/apple-touch-icon.png',
+  '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png',
+];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
 self.addEventListener('activate', event => event.waitUntil(
   caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('qimeng-shell-') && key !== CACHE).map(key => caches.delete(key))))
