@@ -154,7 +154,7 @@ class AuthorPresentationTest {
             val bitmap = Bitmap.createBitmap(96, 64, Bitmap.Config.ARGB_8888)
             try {
                 Canvas(bitmap).apply {
-                    drawColor(Color.rgb(38, 63 + index * 8, 184))
+                    drawColor(Color.rgb(if (width == 320) 83 else 38, 63 + index * 8, 184))
                     drawCircle(46f, 32f, index + 10f, Paint().apply { color = Color.rgb(249, 180, 89) })
                 }
                 requireNotNull(resolver.openOutputStream(uri)).use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
@@ -167,7 +167,8 @@ class AuthorPresentationTest {
         withTimeout(120_000) {
             while (true) {
                 val transfers = graph.queue.state.value?.transfers.orEmpty().filter { it.batchKey == batch }
-                check(transfers.none { it.state == TransferState.FAILED }) { "Synthetic author media failed to publish" }
+                val rejected = transfers.firstOrNull { it.state == TransferState.FAILED }
+                check(rejected == null) { "Synthetic author media failed to publish: ${rejected?.message}" }
                 if (transfers.size == assetCount && transfers.all { it.state == TransferState.SUCCEEDED }) break
                 delay(500)
             }
@@ -220,7 +221,11 @@ class AuthorPresentationTest {
     private fun assertFullBiography() {
         val result = mutableListOf<TextLayoutResult>()
         compose.onNodeWithText(chinese).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(result) }
-        assertFalse("Five-line Chinese biography must not be ellipsized", result.single().hasVisualOverflow)
+        val text = result.single()
+        assertTrue("All five biography lines must participate in layout", text.lineCount >= chinese.lines().size)
+        assertFalse("The biography must not be ellipsized", (0 until text.lineCount).any(text::isLineEllipsized))
+        assertEquals("The last displayed line includes the end of the biography", chinese.length,
+            text.getLineEnd(text.lineCount - 1, visibleEnd = true))
         compose.onNodeWithText("中文").assertIsSelected()
         compose.onNodeWithText("原文").performClick()
         compose.onNodeWithText(original).assertIsDisplayed()
