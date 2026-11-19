@@ -18,13 +18,14 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 	"qimeng.local/next/server/internal/backup"
 	"qimeng.local/next/server/internal/model"
-	"qimeng.local/next/server/internal/storage"
 	"qimeng.local/next/server/internal/store"
 )
 
 type Options struct {
 	SourceDB, Roots, TrashRoot, Output, SourceTimezone string
-	ReserveBytes                                        int64
+
+	ReserveBytes int64
+	Progress     func(stage string, files int, bytes int64)
 }
 
 type Projection func(context.Context, *sql.DB, *sql.Tx, string) error
@@ -42,10 +43,11 @@ type Receipt struct {
 }
 
 type inputs struct {
-	owned   []*readRoot
-	dbDir   *readRoot
-	trash   *readRoot
-	library map[string]*readRoot
+	owned         []*readRoot
+	dbDir         *readRoot
+	trash         *readRoot
+	library       map[string]*readRoot
+	rootSelection string
 }
 
 func (in *inputs) open(name string) (*readRoot, error) {
@@ -62,6 +64,14 @@ func (in *inputs) close() {
 	}
 }
 
+func selectionDigest(mapping map[string]string) string {
+	// encoding/json sorts the string keys. The paths themselves never leave
+	// the operator's private mapping or enter the portable database.
+	data, _ := json.Marshal(mapping)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func (in *inputs) prepare(ctx context.Context, opt Options) error {
 	for _, name := range []string{opt.SourceDB, opt.Roots, opt.TrashRoot, opt.Output} {
 		if _, err := absolute(name); err != nil {
@@ -72,6 +82,7 @@ func (in *inputs) prepare(ctx context.Context, opt Options) error {
 	if err != nil {
 		return err
 	}
+	in.rootSelection = selectionDigest(mapping)
 	in.dbDir, err = in.open(filepath.Dir(opt.SourceDB))
 	if err != nil {
 		return err
@@ -184,7 +195,8 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 	}
 	defer out.root.Close()
 	report := Report{Format: "qimeng-legacy-cold-coverage/v1", State: "incomplete", Stage: "input",
-		SourceTimezone: opt.SourceTimezone, NonMediaHandling: "Separate private retention required for non-media files and old scanner exclusions."}
+		SourceTimezone: opt.SourceTimezone, RootSelection: in.rootSelection,
+		NonMediaHandling: "Separate private retention required for non-media files and old scanner exclusions."}
 	var published []string
 	committed := false
 	defer func() {
@@ -230,6 +242,10 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 		return receipt, err
 	}
 	media := newMediaSet(&report)
+	media.progress = opt.Progress
+	if media.progress != nil {
+		media.progress("checking_originals", 0, 0)
+	}
 	room, err := available(ctx, opt.Output, opt.ReserveBytes)
 	if err != nil {
 		return receipt, err
@@ -260,6 +276,10 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 		return receipt, err
 	}
 	report.Stage = "final_source_check"
+	roots, err := readMapping(ctx, opt.Roots)
+	if err != nil || selectionDigest(roots) != in.rootSelection {
+		return receipt, failed("root_selection_changed")
+	}
 	if err = media.checkLibraryFiles(ctx, in.library, false); err != nil {
 		return receipt, err
 	}
@@ -308,7 +328,12 @@ func Convert(ctx context.Context, opt Options, catalog, activity Projection) (re
 		if err = ctx.Err(); err != nil {
 			return receipt, err
 		}
-		if err = storage.PublishTemp(out.root, ".incomplete/"+name, name); err != nil {
+		if err = publishSidecarOrArchive(out, name); err != nil {
+			staged, e1 := scratch.root.Stat(name)
+			exposed, e2 := out.root.Stat(name)
+			if e1 == nil && e2 == nil && os.SameFile(staged, exposed) {
+				published = append(published, name)
+			}
 			return receipt, failed("private_output_publication_failed")
 		}
 		published = append(published, name)
@@ -422,6 +447,7 @@ func writeArchive(ctx context.Context, opt Options, scratch *readRoot, snapshot 
 	hash := sha256.New()
 	w := &reservedWriter{ctx: ctx, dir: opt.Output, reserve: opt.ReserveBytes, w: io.MultiWriter(out, hash)}
 	var active string
+	var archivedBytes int64
 	open := func(f backup.File) (io.ReadCloser, error) {
 		active = f.ObjectID
 		if f.Kind == "snapshot" {
@@ -430,7 +456,12 @@ func writeArchive(ctx context.Context, opt Options, scratch *readRoot, snapshot 
 		return media.files[media.ids[f.ObjectID]].ref.open()
 	}
 	err = backup.Write(ctx, w, manifest, open, func(i int) error {
-		return media.files[i-1].ref.check()
+		entry := media.files[i-1]
+		archivedBytes += entry.file.Size
+		if media.progress != nil {
+			media.progress("archiving_originals", i, archivedBytes)
+		}
+		return entry.ref.check()
 	})
 	if err == nil {
 		err = out.Sync()

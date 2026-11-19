@@ -2,7 +2,9 @@ package legacycold
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,18 +32,20 @@ type original struct {
 }
 
 type mediaSet struct {
-	files    []original
-	ids      map[string]int
-	names    map[string]bool
-	onDisk   map[string]bool
-	trash    map[string]fileRef
-	report   *Report
-	sourceID string
+	files      []original
+	ids        map[string]int
+	names      map[string]bool
+	onDisk     map[string]bool
+	trash      map[string]fileRef
+	trashMetas map[string]string
+	report     *Report
+	sourceID   string
+	progress   func(stage string, files int, bytes int64)
 }
 
 func newMediaSet(report *Report) *mediaSet {
 	return &mediaSet{ids: map[string]int{}, names: map[string]bool{}, onDisk: map[string]bool{},
-		trash: map[string]fileRef{}, report: report, sourceID: report.SourceID}
+		trash: map[string]fileRef{}, trashMetas: map[string]string{}, report: report, sourceID: report.SourceID}
 }
 
 func readLibraries(ctx context.Context, source *sql.DB, target *sql.Tx, roots map[string]*readRoot, report *Report) error {
@@ -140,6 +144,9 @@ func (s *mediaSet) add(ctx context.Context, tx *sql.Tx, a model.Asset, ref fileR
 	s.ids[a.ID], s.names[fold] = len(s.files), true
 	s.files = append(s.files, original{entry, ref})
 	s.report.OriginalBytes += a.Size
+	if s.progress != nil {
+		s.progress("checking_originals", len(s.files), s.report.OriginalBytes)
+	}
 	if a.Trashed {
 		s.report.TrashedAssets++
 	} else {
@@ -297,6 +304,12 @@ func (s *mediaSet) trashFiles(ctx context.Context, tx *sql.Tx, root *readRoot, l
 			if !ok || ref.check() != nil {
 				return fault("trash_inventory_changed")
 			}
+			if expected, meta := s.trashMetas[rel]; meta {
+				_, hash, err := sealFile(ctx, root, rel)
+				if err != nil || hash != expected {
+					return fault("trash_metadata_changed")
+				}
+			}
 			found++
 			return nil
 		}
@@ -319,7 +332,8 @@ func (s *mediaSet) trashFiles(ctx context.Context, tx *sql.Tx, root *readRoot, l
 		if err != nil || info.Size() > 64<<10 {
 			return fault("invalid_trash_metadata_size")
 		}
-		dec := json.NewDecoder(io.LimitReader(f, 64<<10))
+		metaHash := sha256.New()
+		dec := json.NewDecoder(io.TeeReader(io.LimitReader(f, 64<<10), metaHash))
 		dec.DisallowUnknownFields()
 		var m trashMeta
 		stamp, err := strconv.ParseInt(parts[0], 10, 64)
@@ -347,6 +361,7 @@ func (s *mediaSet) trashFiles(ctx context.Context, tx *sql.Tx, root *readRoot, l
 			return fault("trash_origin_insert_failed")
 		}
 		s.trash[rel], s.trash[payload] = fileRef{root, rel, info}, ref
+		s.trashMetas[rel] = hex.EncodeToString(metaHash.Sum(nil))
 		return nil
 	})
 	if err == nil && checkOnly && found != len(s.trash) {

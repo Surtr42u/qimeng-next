@@ -26,6 +26,7 @@ type Report struct {
 	State            string        `json:"state"`
 	Stage            string        `json:"stage"`
 	SourceID         string        `json:"sourceId,omitempty"`
+	RootSelection    string        `json:"rootSelectionSHA256,omitempty"`
 	SourceTimezone   string        `json:"sourceTimezone"`
 	Tables           []TableCount  `json:"tables"`
 	Origins          []OriginCount `json:"relationOrigins,omitempty"`
