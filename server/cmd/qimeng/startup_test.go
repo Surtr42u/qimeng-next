@@ -5,22 +5,30 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestSupervisedTLSReceiptAuthenticatesSameListener(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "ready.json")
-	listener, e := supervisedListener("127.0.0.1:0", "synthetic-instance", filename, "synthetic-launch-identity", true)
+	listener, e := openStartupListener("127.0.0.1:0", filename, "synthetic-launch-identity", true)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer listener.Close()
+	if _, e := os.Stat(filename); !errors.Is(e, os.ErrNotExist) {
+		t.Fatal("binding published a receipt before service initialization")
+	}
+	if e := listener.publishReceipt("synthetic-instance"); e != nil {
+		t.Fatal(e)
+	}
 	var receipt startupReceipt
 	raw, e := os.ReadFile(filename)
 	if e != nil {
@@ -74,7 +82,7 @@ func TestOccupiedListenerCannotOverwriteStartupReceipt(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer occupied.Close()
-	listener, e := supervisedListener(occupied.Addr().String(), "different-instance", filename, "synthetic-launch-other", true)
+	listener, e := openStartupListener(occupied.Addr().String(), filename, "synthetic-launch-other", true)
 	if e == nil {
 		listener.Close()
 		t.Fatal("occupied listener was accepted")
@@ -83,8 +91,54 @@ func TestOccupiedListenerCannotOverwriteStartupReceipt(t *testing.T) {
 	if e != nil || string(after) != string(original) {
 		t.Fatal("failed launch overwrote old receipt")
 	}
-	if listener, e = supervisedListener("0.0.0.0:0", "instance", filename, "synthetic-public-launch", true); e == nil {
+	if listener, e = openStartupListener("0.0.0.0:0", filename, "synthetic-public-launch", true); e == nil {
 		listener.Close()
 		t.Fatal("ephemeral private trust exposed on public interfaces")
+	}
+}
+
+func TestFailedRunKeepsPriorReceiptAndReleasesPort(t *testing.T) {
+	dir := t.TempDir()
+	receipt := filepath.Join(dir, "ready.json")
+	if e := os.WriteFile(receipt, []byte("previous receipt"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("QIMENG_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("QIMENG_STARTUP_RECEIPT", receipt)
+	t.Setenv("QIMENG_LAUNCH_ID", "synthetic-launch-identity")
+	for _, tc := range []struct{ name, discovery, tlsSetting, token, want string }{
+		{"invalid discovery flag", "invalid", "false", strings.Repeat("x", 32), "QIMENG_DISCOVERY"},
+		{"invalid TLS flag", "false", "invalid", strings.Repeat("x", 32), "QIMENG_EPHEMERAL_TLS"},
+		{"service initialization fails", "false", "false", "", "QIMENG_ADMIN_TOKEN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			port, e := net.Listen("tcp", "127.0.0.1:0")
+			if e != nil {
+				t.Fatal(e)
+			}
+			address := port.Addr().String()
+			if e := port.Close(); e != nil {
+				t.Fatal(e)
+			}
+			t.Setenv("QIMENG_LISTEN", address)
+			t.Setenv("QIMENG_DISCOVERY", tc.discovery)
+			t.Setenv("QIMENG_EPHEMERAL_TLS", tc.tlsSetting)
+			t.Setenv("QIMENG_ADMIN_TOKEN", tc.token)
+			if e := run(); e == nil || !strings.Contains(e.Error(), tc.want) {
+				t.Fatalf("expected %s configuration error, got %v", tc.want, e)
+			}
+			after, e := os.ReadFile(receipt)
+			if e != nil || string(after) != "previous receipt" {
+				t.Fatal("failed startup replaced the prior receipt")
+			}
+			if _, e := os.Stat(filepath.Join(dir, "data")); !errors.Is(e, os.ErrNotExist) {
+				t.Fatal("failed startup opened the data directory")
+			}
+			again, e := net.Listen("tcp", address)
+			if e != nil {
+				t.Fatal("failed startup retained the port", e)
+			}
+			again.Close()
+		})
 	}
 }

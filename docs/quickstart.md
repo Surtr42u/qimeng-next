@@ -94,9 +94,9 @@ Linux 的原生包可从服务账号专用的权限为 0600 的配置文件加�
 
 `verify` 成功返回 `state` 为 `verified`，`restore` 成功返回 `restored` 及新的实例 ID。恢复目录是独立服务的 `QIMENG_DATA_DIR`，含恢复的业务库和媒体，旧会话和 AI 授权已撤销。需试运行恢复结果时，按服务端配置给该实例设置新凭据与独立监听端口。[服务端配置](https://github.com/Surtr42u/qimeng-next/blob/main/server/README.md#运行配置)
 
-升级原 Next 实例时，先停进程，把新软件解压到另一目录，用原来的专用状态目录启动，再登录核对媒体库和代表性原件。原项目资料另走迁移流程。首次启动器会拒绝接管未标记的非空目录。[迁移与回退](https://github.com/Surtr42u/qimeng-next/blob/main/docs/migration.md)
+升级原 Next 实例时，先停进程，把新软件解压到另一目录，用原来的专用状态目录启动，再登录核对媒体库和代表性原件。如果所选服务端口已被占用，新程序会在打开业务库前退出，原数据库仍是升级前的版本。可释放端口或用 `QIMENG_PACKAGE_PORT` 选择空闲端口，再用同一状态目录启动。原项目资料另走迁移流程。首次启动器会拒绝接管未标记的非空目录。[迁移与回退](https://github.com/Surtr42u/qimeng-next/blob/main/docs/migration.md)
 
-- `SOURCE.json` 记录完整提交 SHA 与 OpenAPI/SDK 摘要，`SHA256SUMS` 列出各文件的校验值。对应平台的 `*-smoke.json` 与 `*-home.png` 记录云端原生平台实际打开该包、密码登录、空库首页和离线恢复结果。仅以成功作业给出的 artifact 确认对应平台。
+- `SOURCE.json` 记录完整提交 SHA 与 OpenAPI/SDK 摘要，`SHA256SUMS` 列出各文件的校验值。对应平台的 `*-smoke.json` 与 `*-home.png` 记录云端实际打开该包、密码登录、空媒体库首页和离线恢复结果。原生启动的 `upgradeProof` 还记录端口冲突后历史库的保留情况、重试前后的数据库版本，以及密码登录后读回的原实例和作者。仅以成功作业给出的 artifact 确认对应平台。
 - 基础浏览和原件下载随包提供。原生基础包与 `nas` 模式可使用浏览器支持的原件格式；系统工具安装或 `nas-media` 模式为服务提供视频探测、缩略图和研究帧。
 - 自定义端口用 `QIMENG_PACKAGE_PORT`，持久目录用 `QIMENG_PACKAGE_STATE`。已有受限密码文件可通过 `QIMENG_PACKAGE_PASSWORD_FILE` 提供。默认账号凭据、端口与目录独立于旧应用。
 

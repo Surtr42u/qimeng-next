@@ -27,9 +27,15 @@ type startupReceipt struct {
 
 var launchIdentity = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
+type startupListener struct {
+	net.Listener
+	receiptPath string
+	receipt     startupReceipt
+}
+
 // Optional host supervision stays in the process boundary. Domain/service
 // packages do not know whether the host is Android, a desktop launcher or NAS.
-func supervisedListener(address, instanceID, receiptPath, launchID string, ephemeralTLS bool) (net.Listener, error) {
+func openStartupListener(address, receiptPath, launchID string, ephemeralTLS bool) (*startupListener, error) {
 	if (receiptPath == "") != (launchID == "") {
 		return nil, errors.New("startup receipt and launch identity must be configured together")
 	}
@@ -43,7 +49,7 @@ func supervisedListener(address, instanceID, receiptPath, launchID string, ephem
 	if e != nil {
 		return nil, e
 	}
-	receipt := startupReceipt{LaunchID: launchID, InstanceID: instanceID, ListenAddress: listener.Addr().String()}
+	receipt := startupReceipt{LaunchID: launchID, ListenAddress: listener.Addr().String()}
 	if ephemeralTLS {
 		tcp, ok := listener.Addr().(*net.TCPAddr)
 		if !ok || !tcp.IP.IsLoopback() {
@@ -58,13 +64,16 @@ func supervisedListener(address, instanceID, receiptPath, launchID string, ephem
 		receipt.CertificateDERBase64 = base64.StdEncoding.EncodeToString(der)
 		listener = tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}})
 	}
-	if receiptPath != "" {
-		if e = publishStartupReceipt(receiptPath, receipt); e != nil {
-			listener.Close()
-			return nil, e
-		}
+	return &startupListener{Listener: listener, receiptPath: receiptPath, receipt: receipt}, nil
+}
+
+func (l *startupListener) publishReceipt(instanceID string) error {
+	if l.receiptPath == "" {
+		return nil
 	}
-	return listener, nil
+	receipt := l.receipt
+	receipt.InstanceID = instanceID
+	return publishStartupReceipt(l.receiptPath, receipt)
 }
 
 func ephemeralCertificate() (tls.Certificate, []byte, error) {
