@@ -96,7 +96,7 @@ data class SearchWord(val id: String, val type: String, val name: String)
 data class Author(val id: String, val name: String, val kind: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long,
     val fileCount: Long? = null, val viewCount: Long? = null, val acquisitionSources: List<String> = emptyList()) : java.io.Serializable
 data class TaskItem(val id: String, val fileName: String, val state: String, val message: String, val assetId: String?)
-data class TaskReport(val id: String, val revision: Long, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>)
+data class TaskReport(val id: String, val revision: Long, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>, val target: Session)
 data class AuthorTaskReport(val id: String, val authorId: String, val state: String, val allowedFields: List<String>,
     val candidateBlocks: List<String>, val allowClear: Boolean, val maxUpdates: Int, val usedUpdates: Int, val createdAt: String, val expiresAt: String)
 data class HistoryEntry(val id: String, val assetId: String, val name: String, val kind: String, val positionMs: Long, val createdAt: String,

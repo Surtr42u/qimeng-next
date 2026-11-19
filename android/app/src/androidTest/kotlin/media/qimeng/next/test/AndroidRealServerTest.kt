@@ -314,6 +314,70 @@ class AndroidRealServerTest {
     }
 
     @Test(timeout = 240_000)
+    fun queueReportAndMediaLinksReturnToTheirOriginalGoInstance() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val args = InstrumentationRegistry.getArguments()
+        val a = requireNotNull(graph.settings.session.value)
+        val b = requireNotNull(args.getString("qimengSourceUrl"))
+        require(a.baseUrl == "http://127.0.0.1:18481/" && b == "http://127.0.0.1:18482/")
+        val key = UUID.randomUUID().toString()
+        val image = Uri.parse("content://media.qimeng.next.test.fixture/mixed-good.png")
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val bitmap = Bitmap.createBitmap(32, 17, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.rgb(key.hashCode() and 255, 120, 183))
+        requireNotNull(resolver.openOutputStream(image, "wt")).use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        bitmap.recycle()
+        val id = runBlocking {
+            val library = graph.media.createLibrary("队列归属 $key", false)
+            val inputs = graph.uploads.receive(listOf(image), intakeGroup = key)
+            graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, target = a, inputIds = inputs, batchKey = key)
+            inputs.single()
+        }
+        await("queue-link-fixture", graph) { graph.queue.state.value!!.transfers.single { it.id == id }.state == TransferState.SUCCEEDED }
+        val transfer = graph.queue.state.value!!.transfers.single { it.id == id }
+        val batchId = requireNotNull(transfer.batchId)
+        val assetId = requireNotNull(transfer.assetId)
+        lateinit var model: media.qimeng.next.LibraryViewModel
+        compose.activityRule.scenario.onActivity {
+            model = androidx.lifecycle.ViewModelProvider(it)[media.qimeng.next.LibraryViewModel::class.java]
+            model.navigate("upload")
+        }
+        val row = hasTestTag("transfer:$id")
+        val report = hasText("报告") and hasAnyAncestor(row)
+        val media = hasText("查看媒体") and hasAnyAncestor(row)
+        fun showButtons() { compose.onNodeWithTag("upload-list").performScrollToNode(report) }
+        showButtons()
+        compose.onNode(report).assertIsEnabled().performClick()
+        compose.waitUntil(20_000) { model.report.value?.id == batchId && !model.busy.value }
+        try {
+            runBlocking { graph.media.login(b, requireNotNull(args.getString("qimengSourceToken"))) }
+            compose.waitUntil(20_000) { model.session.value?.baseUrl == b && model.route.value == "upload" && model.report.value == null }
+            showButtons()
+            compose.onNode(report).assertIsNotEnabled()
+            compose.onNode(media).assertIsNotEnabled()
+            compose.activityRule.scenario.onActivity {
+                model.openReport(batchId, transfer.target)
+                model.openAsset(assetId, target = transfer.target)
+                model.refreshReport(batchId)
+                model.refreshAsset(assetId)
+            }
+            compose.waitForIdle()
+            assertEquals("upload", model.route.value)
+            assertEquals(transfer, graph.queue.state.value!!.transfers.single { it.id == id })
+        } finally {
+            runBlocking { graph.media.login(a.baseUrl, requireNotNull(args.getString("qimengToken"))) }
+        }
+        compose.waitUntil(20_000) { model.session.value?.instanceId == a.instanceId && !model.busy.value }
+        showButtons()
+        compose.onNode(report).assertIsEnabled().performClick()
+        compose.waitUntil(20_000) { model.report.value?.let { it.id == batchId && it.target.instanceId == a.instanceId } == true }
+        compose.activityRule.scenario.onActivity { model.back() }
+        showButtons()
+        compose.onNode(media).assertIsEnabled().performClick()
+        compose.waitUntil(20_000) { model.asset.value?.let { it.id == assetId && it.target.instanceId == a.instanceId } == true }
+    }
+
+    @Test(timeout = 240_000)
     fun readOnlyArchivePreservesOriginalAfterIndependentBackup() = runBlocking {
         archiveRoundTrip(isolatedServerGraph())
     }

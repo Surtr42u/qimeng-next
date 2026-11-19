@@ -38,6 +38,8 @@ import coil3.request.ImageRequest
 import coil3.size.Size
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
+import media.qimeng.next.model.Session
+import media.qimeng.next.model.sameTarget
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.theme.isQimengDarkTheme
@@ -46,7 +48,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailScreen(model: LibraryViewModel, id: String) {
+fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     val asset by model.asset.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val assetAuthors by model.assetAuthors.collectAsStateWithLifecycle()
@@ -66,14 +68,14 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     var showAuthors by rememberSaveable(id) { mutableStateOf(false) }
     var showRelations by rememberSaveable(id) { mutableStateOf(false) }
     var showAcquisition by rememberSaveable(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { if (asset?.id != id) model.openAsset(id) }
-    val item = asset?.takeIf { it.id == id }
+    LaunchedEffect(id) { if (asset?.id != id) model.refreshAsset(id) }
+    val item = asset?.takeIf { it.id == id && sameTarget(it.target, target) }
     if (item == null) {
         Box(Modifier.fillMaxSize()) {
             DetailTopChrome(true, -1, 0, model::back, {})
             Column(Modifier.align(Alignment.Center).padding(16.dp)) {
                 message?.let { ErrorNotice(it) }
-                TextButton(onClick = { model.openAsset(id) }, enabled = !busy) { Text("正在读取详情 · 点击重试") }
+                TextButton(onClick = { model.refreshAsset(id) }, enabled = !busy) { Text("正在读取详情 · 点击重试") }
             }
         }
         return
@@ -86,7 +88,7 @@ fun DetailScreen(model: LibraryViewModel, id: String) {
     val backdrop = if (visible) MaterialTheme.colorScheme.background else Color.Black
     Box(Modifier.fillMaxSize().background(backdrop)) {
         if (item.mediaType == "video") VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
-        else ImageStage(item, model::adjacentAsset, { model.openAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
+        else ImageStage(item, model::adjacentAsset, { model.refreshAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
         DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))
         DetailBottomChrome(visible, item, busy, busy, { model.setTodayLike(item, !item.liked) },
             { model.setFavorite(item, !item.favorite) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))

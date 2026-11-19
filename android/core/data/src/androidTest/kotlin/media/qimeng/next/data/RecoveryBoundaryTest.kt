@@ -4,11 +4,15 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import media.qimeng.next.model.*
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.*
@@ -17,6 +21,7 @@ import java.io.File
 import java.io.IOException
 import java.util.UUID
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class RecoveryBoundaryTest {
@@ -30,14 +35,8 @@ class RecoveryBoundaryTest {
             val provider = ApiProvider(settings)
             val media = MediaRepository(settings, provider)
             fun reply(json: String) = server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(json))
-            fun asset(id: String) = """{"id":"$id","libraryId":"library","fileName":"$id.png","originalFileName":"$id.png",
-                "relativePath":"$id.png","mediaType":"image","mimeType":"image/png","size":100,"hash":"fixture","revision":1,
-                "tagsRevision":1,"contentVersion":1,"authorId":"","authorIds":[],"authorsRevision":1,"authorStatus":"unknown",
-                "tags":[],"favorite":false,"liked":false,"likeCount":0,"note":"","createdAt":"2025-01-01T00:00:00Z",
-                "updatedAt":"2025-01-01T00:00:00Z","contentUrl":"media/$id","probeState":"ready","trashed":false,
-                "positionMs":0,"positionContentVersion":1}"""
-            val first = asset("z")
-            val second = asset("a")
+            val first = syntheticAsset("z")
+            val second = syntheticAsset("a")
             reply("""{"items":[$first,$second],"snapshotId":"stable","nextCursor":"opaque-recommendation"}""")
             val recommendations = media.assets(AssetQuery(source = "recommendations", seed = 91))
             assertEquals(listOf("z", "a"), recommendations.items.map { it.id })
@@ -222,6 +221,72 @@ class RecoveryBoundaryTest {
             assertNull(server.takeRequest(150, TimeUnit.MILLISECONDS)?.getHeader("Authorization"))
         } finally { server.shutdown() }
     }
+
+    @Test fun transferReportAndMediaNeverReachTheOtherServerWhenTheConnectionChanges() = runBlocking {
+        val origin = MockWebServer()
+        val other = MockWebServer()
+        val arrived = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        val batchId = "origin-batch"
+        val assetId = "origin-asset"
+        origin.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                arrived.countDown()
+                if (!release.await(10, TimeUnit.SECONDS)) return MockResponse().setResponseCode(503)
+                val json = when (request.path) {
+                    "/api/v1/assets/$assetId" -> syntheticAsset(assetId)
+                    "/api/v1/batches/$batchId" -> """{"batch":{"id":"$batchId","libraryId":"library","mode":"ordinary","label":"origin",
+                        "revision":2,"state":"completed","manifestRevision":2,"manifestState":"sealed","expectedInputs":0,
+                        "manifestFingerprint":"fixture","backupState":"not_covered","cleanupState":"retained","researchCalls":0,
+                        "createdAt":"2025-01-01T00:00:00Z","updatedAt":"2025-01-01T00:00:00Z"},"inputs":[],"items":[],"plans":[]}"""
+                    else -> return MockResponse().setResponseCode(404)
+                }
+                return MockResponse().setHeader("Content-Type", "application/json").setBody(json)
+            }
+        }
+        other.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = MockResponse().setResponseCode(404)
+        }
+        origin.start()
+        other.start()
+        try {
+            val settings = SecureSettings(isolatedContext())
+            val media = MediaRepository(settings, ApiProvider(settings))
+            val a = Session(origin.url("/").toString(), "origin", "A")
+            val b = Session(other.url("/").toString(), "other", "B")
+            val task = Transfer("selected", a, "library", "good.png", "image/png", 100L, "snapshot", UploadMode.ORDINARY, null,
+                "local-batch", "Selection", state = TransferState.SUCCEEDED, assetId = assetId, batchId = batchId)
+            suspend fun report() = media.report(requireNotNull(task.batchId), task.target)
+            suspend fun asset() = media.asset(requireNotNull(task.assetId), task.target)
+            settings.saveSession(a, "synthetic-a")
+            val pendingReport = async(Dispatchers.IO) { runCatching { report() }.exceptionOrNull() }
+            val pendingAsset = async(Dispatchers.IO) { runCatching { asset() }.exceptionOrNull() }
+            assertTrue(arrived.await(8, TimeUnit.SECONDS))
+            settings.saveSession(b, "synthetic-b")
+            release.countDown()
+            assertTrue(pendingReport.await() is IllegalStateException)
+            assertTrue(pendingAsset.await() is IllegalStateException)
+            assertTrue(runCatching { report() }.exceptionOrNull() is ApiFailure)
+            assertTrue(runCatching { asset() }.exceptionOrNull() is ApiFailure)
+            assertEquals(0, other.requestCount)
+            settings.saveSession(a, "synthetic-a-again")
+            assertEquals(batchId, report().id)
+            assertEquals(assetId, asset().id)
+            assertEquals(4, origin.requestCount)
+            assertEquals(0, other.requestCount)
+        } finally {
+            release.countDown()
+            origin.shutdown()
+            other.shutdown()
+        }
+    }
+
+    private fun syntheticAsset(id: String) = """{"id":"$id","libraryId":"library","fileName":"$id.png","originalFileName":"$id.png",
+        "relativePath":"$id.png","mediaType":"image","mimeType":"image/png","size":100,"hash":"fixture","revision":1,
+        "tagsRevision":1,"contentVersion":1,"authorId":"","authorIds":[],"authorsRevision":1,"authorStatus":"unknown",
+        "tags":[],"favorite":false,"liked":false,"likeCount":0,"note":"","createdAt":"2025-01-01T00:00:00Z",
+        "updatedAt":"2025-01-01T00:00:00Z","contentUrl":"media/$id","probeState":"ready","trashed":false,
+        "positionMs":0,"positionContentVersion":1}"""
 
     private fun isolatedContext(): Context {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
