@@ -1,6 +1,5 @@
 package media.qimeng.next.ui
 
-import android.graphics.Bitmap
 import android.graphics.Color as PixelColor
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -8,6 +7,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
@@ -28,7 +28,7 @@ class TrendChartBehaviorTest {
             QimengTheme {
                 CompositionLocalProvider(LocalReducedMotion provides true) {
                     Surface {
-                        QimengTrendLineChart(listOf(QimengTrendSeries(listOf(3, 9, 5), "图片"), QimengTrendSeries(listOf(6, 2, 8), "视频")),
+                        QimengTrendLineChart(listOf(QimengTrendSeries(listOf(9, 3, 6), "图片"), QimengTrendSeries(listOf(7, 5, 10), "视频")),
                             listOf(Color(0xFF4FC3F7), Color(0xFFFF8A65)), listOf("1-1", "1-2", "1-3"),
                             Modifier.fillMaxWidth().height(240.dp).testTag("trend"))
                     }
@@ -37,35 +37,30 @@ class TrendChartBehaviorTest {
         }
         compose.waitForIdle()
         val chart = compose.onNodeWithTag("trend")
-        val bounds = chart.fetchSemanticsNode().boundsInWindow
-        fun chartPixels(screen: Bitmap): IntArray {
-            // Exclude the system clock, status icons and date labels.
-            val x = (bounds.left + bounds.width * 0.15f).toInt()
-            val y = (bounds.top + bounds.height * 0.08f).toInt()
-            val width = (bounds.width * 0.7f).toInt()
-            val height = (bounds.height * 0.8f).toInt()
-            return IntArray(width * height).also { screen.getPixels(it, 0, width, x, y, width, height) }
+        fun chartPixels(): IntArray {
+            // PixelCopy uses the chart's actual window coordinates, including the insets.
+            val bitmap = chart.captureToImage().asAndroidBitmap()
+            return IntArray(bitmap.width * bitmap.height).also {
+                bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            }
         }
         var before = intArrayOf()
         compose.waitUntil(15_000) {
-            captureCloudScreenshot("stats-trend-unselected.png") { screen ->
-                before = chartPixels(screen)
-                bothLinesVisible(before)
-            }
+            before = chartPixels()
+            bothLinesVisible(before)
         }
+        captureCloudScreenshot("stats-trend-unselected.png")
         chart.performTouchInput { click(center) }
         compose.waitUntil(10_000) { chart.fetchSemanticsNode().config[SemanticsProperties.StateDescription] != "未选择数据点" }
         chart.assert(SemanticsMatcher("both series values are announced") {
-            val text = it.config[SemanticsProperties.StateDescription]
-            text.contains("图片") && text.contains("视频") && text.contains("次")
+            it.config[SemanticsProperties.StateDescription] == "1-2 · 图片 3次 · 视频 5次"
         })
         compose.waitUntil(10_000) {
-            captureCloudScreenshot("stats-trend-synthetic.png") { screen ->
-                val after = chartPixels(screen)
-                // Opening the marker changes the chart interior as well as the accessibility text.
-                before.indices.count { index -> before[index] != after[index] } >= 80
-            }
+            val after = chartPixels()
+            // Opening the marker changes the chart interior as well as the accessibility text.
+            before.indices.count { index -> before[index] != after[index] } >= 80
         }
+        captureCloudScreenshot("stats-trend-synthetic.png")
         chart.performTouchInput { click(center) }
         compose.waitUntil(10_000) { chart.fetchSemanticsNode().config[SemanticsProperties.StateDescription] == "未选择数据点" }
     }

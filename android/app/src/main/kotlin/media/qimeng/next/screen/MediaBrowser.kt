@@ -90,7 +90,7 @@ fun HomeScreen(model: LibraryViewModel) {
                     OutlinedButton(onClick = model::refreshConnection) { Text("重试") }
                 }
             } else {
-                MediaBrowser(model, "home:$page", kind = if (page == 1) "cos" else null, bottomDock = true,
+                MediaBrowser(model, "home:$page", kind = if (page == 1) "cos" else "regular", bottomDock = true,
                     source = if (page == 2) "rankings" else "recommendations", seed = seeds.getOrElse(page) { 1L }, period = period,
                     onRefresh = if (page != 2) ({ seeds = seeds.mapIndexed { index, value -> if (index == page) kotlin.random.Random.nextLong(1, Long.MAX_VALUE) else value } }) else null,
                     controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == mode })

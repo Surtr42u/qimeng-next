@@ -1,6 +1,7 @@
 package media.qimeng.next.screen
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -42,7 +43,7 @@ fun ActivityRankingScreen(model: LibraryViewModel, kind: String, range: String) 
     var metric by rememberSaveable(kind, range) { mutableStateOf("views") }
     val state by model.ranking.collectAsStateWithLifecycle()
     LaunchedEffect(kind, range, metric) { model.loadRanking(kind, range, metric) }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text(rankingTitle(kind), style = MaterialTheme.typography.titleLarge) }
         if (kind == "assets") item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(metric == "views", { metric = "views" }, label = { Text("浏览次数") })
@@ -51,7 +52,7 @@ fun ActivityRankingScreen(model: LibraryViewModel, kind: String, range: String) 
         if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.error?.let { item { ErrorNotice(it) { model.loadRanking(kind, range, metric) } } }
         if (state.loaded && state.items.isEmpty()) item { Text("这个窗口暂无记录") }
-        items(state.items, key = { it.id }) { entry -> ContentCard(Modifier.fillMaxWidth().clickable { openRank(model, kind, entry) }) {
+        items(state.items, key = { it.id }) { entry -> StatsCard(onClick = { openRank(model, kind, entry) }) {
             Text(entry.name, style = MaterialTheme.typography.titleMedium)
             Text(if (metric == "seconds") formatSeconds(entry.value) else "${entry.value} 次浏览")
             Text("${entry.assets} 件媒体 · 播放 ${entry.plays} 次 · 停留 ${formatSeconds(entry.seconds)}", style = MaterialTheme.typography.bodySmall)
@@ -72,23 +73,23 @@ fun ReviewScreen(model: LibraryViewModel, initialRange: String) {
     var range by rememberSaveable { mutableStateOf(initialRange) }
     val state by model.review.collectAsStateWithLifecycle()
     LaunchedEffect(range) { model.loadReview(range) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         RangeSelector(range) { range = it }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         state.error?.let { ErrorNotice(it) { model.loadReview(range) } }
-        state.data?.let { report ->
-            ContentCard(Modifier.padding(horizontal = 16.dp)) {
+        state.data?.takeIf { it.range == range }?.let { report ->
+            StatsCard {
                 Text("浏览时长", style = MaterialTheme.typography.titleMedium)
                 Text(formatSeconds(report.totalSeconds), style = MaterialTheme.typography.displaySmall)
                 HourChart(report.hours)
                 Text("首次浏览 ${report.firstViews} · 再次浏览 ${report.returnViews}")
                 Text("${report.distinctAssets} 件媒体 · 活跃 ${report.activeDays} 天")
             }
-            if (!report.comparisonAvailable) ContentCard(Modifier.padding(horizontal = 16.dp)) { Text("没有可比较的上一时段") }
+            if (!report.comparisonAvailable) StatsCard { Text("没有可比较的上一时段") }
             listOf(true to "更多关注", false to "较少关注").forEach { (positive, label) ->
                 val changes = report.changes.filter { if (positive) it.changePoints > 0 else it.changePoints < 0 }
                 if (changes.isNotEmpty()) {
-                    Text(label, Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium)
+                    Text(label, Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.titleMedium)
                     changes.forEach { InterestCard(it) }
                 }
             }
@@ -115,7 +116,14 @@ private fun HourChart(hours: List<ReviewHour>) {
             }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { listOf("图片", "动图", "视频").forEachIndexed { i, text -> Text("● $text", color = colors[i], style = MaterialTheme.typography.labelSmall) } }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        listOf("图片", "动图", "视频").forEachIndexed { index, label ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(Modifier.size(8.dp).background(colors[index]))
+                Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
     Slider(selected.toFloat(), { selected = it.roundToInt() }, valueRange = 0f..hours.lastIndex.toFloat(), steps = (hours.size - 2).coerceAtLeast(0),
         modifier = Modifier.semantics { contentDescription = "选择小时" })
     val hour = hours[selected.coerceIn(hours.indices)]
@@ -125,7 +133,7 @@ private fun HourChart(hours: List<ReviewHour>) {
 @Composable
 private fun InterestCard(change: InterestChange) {
     var expanded by rememberSaveable(change.kind, change.id) { mutableStateOf(false) }
-    ContentCard(Modifier.padding(horizontal = 16.dp)) {
+    StatsCard {
         Text(change.name, style = MaterialTheme.typography.titleMedium)
         Text("${if (change.kind == "author") "作者" else "标签"} · 在浏览中的份额${if (change.changePoints > 0) "增加" else "减少"} %.1f 个百分点".format(abs(change.changePoints)))
         TextButton(onClick = { expanded = !expanded }, modifier = Modifier.semantics { stateDescription = if (expanded) "已展开" else "已收起" }) { Text(if (expanded) "收起" else "详情") }

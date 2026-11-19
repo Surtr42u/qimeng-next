@@ -20,7 +20,6 @@ import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.chart.QimengTrendLineChart
 import media.qimeng.next.ui.chart.QimengTrendSeries
 import media.qimeng.next.ui.component.QimengSegmentedControl
-import media.qimeng.next.ui.theme.isQimengDarkTheme
 import media.qimeng.next.ui.theme.softDaylightBackground
 import media.qimeng.next.ui.theme.softDaylightShadow
 
@@ -31,6 +30,7 @@ fun StatisticsScreen(model: LibraryViewModel) {
     val state by model.analytics.collectAsStateWithLifecycle()
     LaunchedEffect(range) { model.loadAnalytics(range) }
     val report = state.data?.takeIf { it.overview.range == range }
+    val loading = state.error == null && report == null
     val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(scroll) { media.qimeng.next.ui.TabScrollController.events.collect { if (it == 2) scroll.scrollToItem(0) } }
     LazyColumn(Modifier.fillMaxSize().softDaylightBackground().padding(horizontal = 16.dp), state = scroll,
@@ -39,14 +39,14 @@ fun StatisticsScreen(model: LibraryViewModel) {
         item { Text("数据统计", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)) }
         item { RangeSelector(range) { range = it } }
         state.error?.let { item { ErrorNotice(it) { model.loadAnalytics(range) } } }
-        item { OverviewCards(report, state.loading) }
+        item { OverviewCards(report, loading) }
         item {
             StatsCard(onClick = { model.navigate("stats-detail:trends:$range") }) {
                 StatsCardHeading("浏览趋势", "分类型趋势 ›")
                 when {
-                    state.loading -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
-                    report?.trends.isNullOrEmpty() -> Text("暂无趋势数据", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    else -> QimengTrendLineChart(listOf(QimengTrendSeries(report!!.trends.map { it.views })), listOf(MaterialTheme.colorScheme.primary),
+                    loading -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
+                    report?.trends?.isEmpty() == true -> Text("暂无趋势数据", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    report != null -> QimengTrendLineChart(listOf(QimengTrendSeries(report.trends.map { it.views })), listOf(MaterialTheme.colorScheme.primary),
                         report.trends.map { it.label }, Modifier.fillMaxWidth().height(200.dp))
                 }
             }
@@ -67,9 +67,9 @@ fun StatisticsScreen(model: LibraryViewModel) {
             StatsCard(onClick = { model.navigate("stats-detail:interests:$range") }) {
                 StatsCardHeading("常看作者与标签", "查看全部 ›")
                 when {
-                    state.loading -> CompactStatText("加载中…")
-                    report?.interests.isNullOrEmpty() -> CompactStatText("暂无数据")
-                    else -> report!!.interests.forEach { entry ->
+                    loading -> CompactStatText("加载中…")
+                    report?.interests?.isEmpty() == true -> CompactStatText("暂无数据")
+                    report != null -> report.interests.forEach { entry ->
                         Row(Modifier.fillMaxWidth().clickable {
                             if (entry.kind == "author") model.openAuthor(entry.id) else model.navigate("tag:${entry.name}")
                         }, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -104,7 +104,8 @@ private fun OverviewCards(report: AnalyticsReport?, loading: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         values.chunked(3).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             row.forEach { (title, value) ->
-                Surface(Modifier.weight(1f).softDaylightShadow(RoundedCornerShape(20.dp)), color = statsCardColor(), shape = RoundedCornerShape(20.dp)) {
+                Surface(Modifier.weight(1f).softDaylightShadow(RoundedCornerShape(20.dp)),
+                    color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(value, style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
                         Text(title, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -118,7 +119,7 @@ private fun OverviewCards(report: AnalyticsReport?, loading: Boolean) {
 @Composable
 internal fun StatsCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, padding: PaddingValues = PaddingValues(12.dp), content: @Composable ColumnScope.() -> Unit) {
     Surface(modifier.fillMaxWidth().softDaylightShadow(RoundedCornerShape(20.dp)).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(20.dp), color = statsCardColor()) {
+        shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }
@@ -130,7 +131,6 @@ internal fun StatsCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = n
     }
 }
 @Composable private fun CompactStatText(text: String) { Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-@Composable internal fun statsCardColor() = if (isQimengDarkTheme()) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceContainerLow
 private fun statsBytes(bytes: Long): String = when {
     bytes >= 1_073_741_824L -> String.format(java.util.Locale.US, "%.1fGB", bytes.toDouble() / 1_073_741_824L)
     bytes >= 1_048_576L -> String.format(java.util.Locale.US, "%.1fMB", bytes.toDouble() / 1_048_576L)
