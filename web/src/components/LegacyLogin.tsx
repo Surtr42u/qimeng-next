@@ -1,4 +1,5 @@
 import { KeyRound, ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
 import { ErrorNotice } from "./Feedback";
 
 export function LegacyLogin({
@@ -6,12 +7,14 @@ export function LegacyLogin({
   setPassword,
   busy,
   error,
+  connectionNotice,
   submit,
 }: {
   password: string;
   setPassword: (value: string) => void;
   busy: boolean;
   error: unknown;
+  connectionNotice?: ReactNode;
   submit: () => void;
 }) {
   return (
@@ -52,6 +55,7 @@ export function LegacyLogin({
           {busy ? "登录中…" : "登录"}
         </button>
       </form>
+      {connectionNotice}
     </div>
   );
 }
