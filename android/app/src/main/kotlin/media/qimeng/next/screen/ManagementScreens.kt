@@ -25,10 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.CancellationException
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.LoadState
-import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.model.Author
 import media.qimeng.next.model.Session
 import media.qimeng.next.model.ThemeChoice
@@ -103,12 +101,7 @@ private fun ServiceVersionRow(model: LibraryViewModel, target: Session?, revisio
     val state by produceState(LoadState<String>(loading = target != null), request) {
         if (target == null) return@produceState
         value = LoadState(loading = true)
-        value = try { LoadState(data = model.serverVersion(target, revision)) }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: ApiFailure) { LoadState(error = failure.message) }
-        catch (_: java.io.IOException) { LoadState(error = "未连接到服务") }
-        catch (_: IllegalStateException) { LoadState(error = "连接已改变，请重新登录") }
-        catch (_: Exception) { LoadState(error = "无法读取服务版本") }
+        value = model.readServerVersion(target, revision)
     }
     val subtitle = when {
         target == null -> "未连接到服务"

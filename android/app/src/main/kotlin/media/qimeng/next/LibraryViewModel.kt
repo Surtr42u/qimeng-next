@@ -251,11 +251,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         graph.uploads.schedule()
         session.value?.let { graph.archives.resume(it) }
     }
-    suspend fun serverVersion(target: Session, transport: Long): String? {
+    suspend fun readServerVersion(target: Session, transport: Long): LoadState<String> = try {
         val version = repository.serverVersion(target)
         check(sameTarget(target, session.value) && transport == transportRevision.value) { "连接已改变" }
-        return version
-    }
+        LoadState(data = version)
+    } catch (cancelled: CancellationException) { throw cancelled }
+    catch (failure: ApiFailure) { LoadState(error = failure.message) }
+    catch (_: java.io.IOException) { LoadState(error = "未连接到服务") }
+    catch (_: IllegalStateException) { LoadState(error = "连接已改变，请重新登录") }
+    catch (_: Exception) { LoadState(error = "无法读取服务版本") }
     fun loadLibraries(next: Boolean = false) = loadPage(libraryState, next) { cursor ->
         val page = repository.libraryPage(cursor)
         if (cursor != null) {
