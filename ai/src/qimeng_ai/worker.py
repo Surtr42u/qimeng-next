@@ -17,6 +17,9 @@ from .worker_host import ModelUsage, WorkerHost, work_with_host
 from .worker_status import WorkerStatus, pause_reason
 
 
+TRANSIENT_GATEWAY_STATUSES = {502, 503, 504}
+
+
 class ClaimJournal:
     # Only transport intents survive here. Task status, plans and receipts are read from Go.
     def __init__(self, state):
@@ -227,21 +230,26 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
             batch = row["batch"]
             usage = ModelUsage()
             revision = None
+            gateway_unavailable = False
             try:
                 outcome, revision = drive_claim(runtime, host, journal, row, stop, usage, status, allow_image_lookup)
             except ToolError as exc:
                 outcome = exc.code
+                gateway_unavailable = exc.status in TRANSIENT_GATEWAY_STATUSES
             if outcome == "unchanged":
                 journal.defer(batch, poll_seconds)
                 continue
             if outcome in {"completed", "partial", "cancelled", "batch_not_claimable", "task_already_claimed"}:
                 journal.forget(batch)
-            elif outcome in {"waiting_receipt", "WORKER_QUERY_PENDING", "NETWORK_ERROR", "WORKER_HOST_UNAVAILABLE", "stopped"}:
+            elif gateway_unavailable or outcome in {
+                    "waiting_receipt", "WORKER_QUERY_PENDING", "NETWORK_ERROR", "WORKER_HOST_UNAVAILABLE", "stopped"}:
+                # Keep the claim and any pending write intact so the next poll uses the original keys.
                 journal.defer(batch, poll_seconds)
             else:
                 journal.park(batch, outcome, revision, poll_seconds)
             if outcome not in {"completed", "partial", "cancelled", "stopped", "batch_not_claimable", "task_already_claimed"}:
-                status.transition(batch, "paused", pause_reason(outcome))
+                reason = "operation_uncertain" if gateway_unavailable else pause_reason(outcome)
+                status.transition(batch, "paused", reason)
             outcomes.append({"batchId": batch, "state": outcome, "modelUsage": usage.summary()})
             if outcome == "WORKER_HOST_UNAVAILABLE":
                 break
@@ -274,7 +282,8 @@ def run_worker(runtime, *, once=False, retry_batch=None, env=None):
                 report = worker_pass(runtime, host, stop, setting == "true", timeout, retry_batch)
                 retry_batch = None
             except ToolError as exc:
-                if once or exc.code not in {"NETWORK_ERROR", "WORKER_ALREADY_RUNNING"} and exc.status not in {502, 503, 504}:
+                retryable = exc.code in {"NETWORK_ERROR", "WORKER_ALREADY_RUNNING"} or exc.status in TRANSIENT_GATEWAY_STATUSES
+                if once or not retryable:
                     raise
                 report = {"state": exc.code, "batches": []}
             if once:
