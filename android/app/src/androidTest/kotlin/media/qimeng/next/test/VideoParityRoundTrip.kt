@@ -166,13 +166,22 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
         startPlayback()
         val vertical = awaitPlayback { it.playing && it.width == 180 && it.height == 320 }
         assertEquals(Configuration.ORIENTATION_PORTRAIT, vertical.orientation)
+        // Decoding can start during the poster chrome's 250 ms exit. Its Author button occupies
+        // the same coordinates as fullscreen; wait for it to leave before testing the native control.
+        compose.waitUntil(8_000) {
+            compose.onAllNodesWithContentDescription("作者", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
         val disabledFullscreen = requireNotNull(controlBounds("进入全屏", enabled = false))
         click(disabledFullscreen)
-        assertEquals(vertical.orientationRequest, sample()?.orientationRequest)
+        compose.waitForIdle()
+        compose.onNodeWithText("进入作者主页", useUnmergedTree = true).assertDoesNotExist()
+        assertTrue("Tapping disabled fullscreen must keep the player window focused", onActivity { it.hasWindowFocus() })
+        val afterDisabledTap = requireNotNull(sample())
+        assertEquals(vertical.orientationRequest, afterDisabledTap.orientationRequest)
+        assertEquals(Configuration.ORIENTATION_PORTRAIT, afterDisabledTap.orientation)
         assertTrue(captureDecoderSurface(compose.activity, "-installed-vertical"))
         captureFrame("installed-video-author-vertical.png", landscape = false)
-        tap("暂停")
-        val stoppedVertical = awaitPlayback { !it.requestedPlay }
+        val (_, stoppedVertical) = observePause(vertical.player) { tap("暂停") }
         holdSpeed()
         awaitPlayback { it.speed == 1f && !it.requestedPlay }
         holdSpeed("⬇ 拖动到此处锁定倍速")
