@@ -1,6 +1,7 @@
 """默认结果总额有界；完整业务计划保留服务端 ID，不从展示摘要执行。"""
 from __future__ import annotations
 
+from itertools import islice
 import re
 
 from .errors import ToolError
@@ -42,7 +43,7 @@ def present(value, state: State, limit: int, token: str):
     return summary
 
 
-def page(state: State, reference: str, pointer: str = "", offset: int = 0, limit: int = 20) -> dict:
+def page(state: State, reference: str, pointer: str = "", offset: int = 0, limit: int = 20, *, max_bytes: int) -> dict:
     if offset < 0 or not 1 <= limit <= 100 or (pointer and not pointer.startswith("/")):
         raise ToolError("INVALID_INPUT", "续读指针/偏移/条数无效")
     value = state.read(reference)
@@ -53,24 +54,37 @@ def page(state: State, reference: str, pointer: str = "", offset: int = 0, limit
     except (KeyError, IndexError, TypeError, ValueError):
         raise ToolError("POINTER_INVALID", "JSON Pointer 未命中结果字段") from None
     if isinstance(value, dict):
-        values = [{"key": key, "value": item} for key, item in value.items()]
+        total = len(value)
+        fields = islice(value.items(), min(offset, total), min(offset + limit, total))
+        items = [{"key": key, "value": item} for key, item in fields]
     elif isinstance(value, list):
-        values = value
+        total = len(value)
+        items = value[offset:offset + limit]
     elif isinstance(value, str):
-        # 字符串按字符续读，仍以UTF-8字节限制每页。
-        values = list(value)
-        limit = min(4096, max(limit, 1024))
+        total = len(value)
+        items = value[offset:offset + 1024]
     else:
-        values = [value]
-    output = []
-    for item in values[offset:offset + limit]:
-        candidate = output + [item]
-        if len(encode(candidate).encode()) > 11000:
-            if not output:
-                raise ToolError("FIELD_TOO_LARGE", "单项过大，请使用更深的 JSON Pointer 读取子字段")
-            break
-        output = candidate
-    next_offset = offset + len(output)
-    return {"resultRef": reference, "pointer": pointer,
-            "items": "".join(output) if isinstance(value, str) else output,
-            "totalItems": len(values), "nextOffset": next_offset if next_offset < len(values) else None}
+        total = 1
+        items = [value][offset:offset + limit]
+
+    def response(count):
+        end = offset + count
+        return {"resultRef": reference, "pointer": pointer, "items": items[:count],
+                "totalItems": total, "nextOffset": end if end < total else None}
+
+    low, high = 0, len(items)
+    # The last page can use a shorter null nextOffset. Check it before searching other prefixes.
+    full = response(high)
+    if len(encode(full).encode()) <= max_bytes:
+        return full
+    if len(encode(response(0)).encode()) > max_bytes:
+        raise ToolError("OUTPUT_BUDGET_TOO_SMALL", "输出预算不足以承载此续读指针")
+    while low + 1 < high:
+        count = (low + high) // 2
+        if len(encode(response(count)).encode()) <= max_bytes:
+            low = count
+        else:
+            high = count
+    if not low:
+        raise ToolError("FIELD_TOO_LARGE", "单项超出当前输出预算，请使用更深的 JSON Pointer 或由可信端调整预算")
+    return response(low)
