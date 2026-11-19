@@ -31,6 +31,9 @@ def make_picture(path, width, height, progressive=False, orientation=1):
         exif[274] = orientation
         picture.save(path, quality=90, subsampling=0 if progressive else 2, progressive=progressive, exif=exif)
     picture.close()
+    # The following open reads only the file we just encoded in this test
+    # directory. Its dimensions are an explicit input to the generator.
+    Image.MAX_IMAGE_PIXELS = width * height
     with Image.open(path) as check:
         assert check.size == (width, height)
         check.verify()
