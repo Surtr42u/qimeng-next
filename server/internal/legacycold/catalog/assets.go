@@ -260,10 +260,26 @@ func (i *importer) cosPlacement(a *model.Asset, active map[string]link, kind str
 	id := ""
 	if kind == "cos" && len(parts) >= 2 {
 		expected := "cos_" + authorlist.IdentityKey(parts[0])
+		nameMatch := ""
+		matches := 0
 		for target, ref := range active {
 			author := i.authors[ref.Key]
-			if author.Kind == "cos" && ref.Key == expected && author.Name == parts[0] {
-				id = target
+			if author.Kind == "cos" && author.Name == parts[0] {
+				if ref.Key == expected {
+					id = target
+				}
+				nameMatch = target
+				matches++
+			}
+		}
+		if id == "" && matches == 1 {
+			// A single already-linked COS identity explicitly owns this directory
+			// name even if its historical ID was opaque.
+			id = nameMatch
+		}
+		if id == "" && len(active) > 0 {
+			if err := i.origin("unbound-cos-directory", []string{a.ID}, map[string]string{"assetId": a.ID, "directory": parts[0]}); err != nil {
+				return "", err
 			}
 		}
 	}

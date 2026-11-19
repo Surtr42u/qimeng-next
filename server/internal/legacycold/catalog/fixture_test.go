@@ -34,10 +34,10 @@ CREATE TABLE kv_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEX
 `
 
 type fixture struct {
-	t       *testing.T
-	path    string
-	source  *sql.DB
-	target  *store.Store
+	t      *testing.T
+	path   string
+	source *sql.DB
+	target *store.Store
 }
 
 func newFixture(t *testing.T) *fixture {

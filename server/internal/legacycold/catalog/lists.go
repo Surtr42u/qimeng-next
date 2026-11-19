@@ -38,17 +38,70 @@ type protectedWork struct {
 
 // A v26 numbered header may use a single space. Existing work lines, their
 // spacing, and the archived original bytes must never be rewritten.
-var shortHeader = regexp.MustCompile(`^([0-9]+)[\t ](\S.*)$`)
+var numberedHeader = regexp.MustCompile(`^([0-9]+)\s+(.+)$`)
+var aliasSeparator = regexp.MustCompile(`\s{2,}`)
 
-func v26Document(input string) (authorlist.Document, error) {
+type coldDocument struct {
+	authorlist.Document
+	keys []string
+}
+
+func v26Document(input string) (coldDocument, error) {
+	var result coldDocument
+	if len(input) > authorlist.MaxTextBytes {
+		return result, errors.New("cold catalog: author list exceeds native text budget")
+	}
 	lines := strings.Split(strings.TrimPrefix(input, "\ufeff"), "\n")
+	numbered := false
 	for n, line := range lines {
-		parts := shortHeader.FindStringSubmatch(strings.TrimSpace(line))
-		if parts != nil && authorlist.CompileWork(parts[2]).Extension == "" {
-			lines[n] = parts[1] + "  " + parts[2]
+		parts := numberedHeader.FindStringSubmatch(strings.TrimSpace(line))
+		if parts == nil {
+			continue
+		}
+		aliases := aliasSeparator.Split(strings.TrimSpace(parts[2]), -1)
+		allFiles := true
+		for j, name := range aliases {
+			allFiles = allFiles && authorlist.CompileWork(name).Extension != ""
+			if at := strings.IndexAny(name, "([（【"); at >= 0 {
+				aliases[j] = strings.TrimSpace(name[:at])
+			}
+		}
+		if !allFiles {
+			numbered = true
+			lines[n] = parts[1] + "  " + strings.Join(aliases, "  ")
 		}
 	}
-	return authorlist.Parse(strings.Join(lines, "\n"))
+	if numbered {
+		doc, err := authorlist.Parse(strings.Join(lines, "\n"))
+		result.Document = doc
+		for _, block := range doc.Blocks {
+			result.keys = append(result.keys, authorlist.IdentityKey(block.Names[0]))
+		}
+		return result, err
+	}
+	// In v26's simple format each whole line was one person's identity. A
+	// line such as "A / B" must never bind to another person called just "A".
+	result.Format = "names"
+	seen := map[string]bool{}
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || seen[line] || numberedHeader.MatchString(line) || authorlist.CompileWork(line).Extension != "" ||
+			strings.Trim(line, "0123456789") == "" || line == "作品" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if fields[0] == "来源" || fields[0] == "出处" {
+			continue
+		}
+		seen[line] = true
+		names, err := authorlist.Names(line)
+		if err != nil {
+			return result, err
+		}
+		result.keys = append(result.keys, authorlist.IdentityKey(line))
+		result.Blocks = append(result.Blocks, authorlist.Block{Names: names, Works: []string{}, Sources: []string{}, Order: len(result.Blocks)})
+	}
+	return result, nil
 }
 
 func (i *importer) importLists() error {
@@ -101,8 +154,9 @@ func (i *importer) importLists() error {
 
 		listID := stableID(i.sourceID, "list", f.Filename)
 		members := make([]service.ColdListMember, 0, len(doc.Blocks))
+		owners := protectedOwners(protections[f.Filename])
 		for blockIndex, block := range doc.Blocks {
-			oldID, resolvable := i.blockAuthor(block, protections[f.Filename])
+			oldID, resolvable := i.blockAuthor(doc.keys[blockIndex], owners)
 			if !resolvable {
 				if err := i.origin("unresolved-list-member", []string{index, strconv.Itoa(blockIndex)},
 					map[string]any{"file": f.Filename, "block": blockIndex, "reason": "identity_unresolved"}); err != nil {
@@ -112,20 +166,25 @@ func (i *importer) importLists() error {
 			}
 			a := i.authors[oldID]
 			members = append(members, service.ColdListMember{AuthorID: a.ID, Declaration: block})
-			if doc.Format != "blocks" || homes[a.ID] {
-				continue
-			}
 			// v26 reads the FIRST numbered declaration, including an explicitly
 			// empty source section. It kept no separate "edited" flag. Preserve
 			// that exact result as an override; unioning subsequent fragments
 			// could undo a user's replacement/clear.
-			homes[a.ID] = true
-			a.AcquisitionSources = append([]string{}, block.Sources...)
+			first := doc.Format == "blocks" && !homes[a.ID]
+			if first {
+				homes[a.ID] = true
+				a.AcquisitionSources = append([]string{}, block.Sources...)
+			}
 			aliases := append([]string{}, a.Aliases...)
-			for _, alias := range block.Names {
-				if !slices.Contains(aliases, alias) {
-					aliases = append(aliases, alias)
+			if doc.Format == "blocks" {
+				for _, alias := range block.Names {
+					if !slices.Contains(aliases, alias) {
+						aliases = append(aliases, alias)
+					}
 				}
+			}
+			if !first && len(aliases) == len(a.Aliases) {
+				continue
 			}
 			a.Aliases = aliases
 			raw, err := store.Encode(a)
@@ -136,14 +195,22 @@ func (i *importer) importLists() error {
 				return err
 			}
 			i.authors[oldID] = a
-			if err := i.exec("INSERT INTO author_source_overrides(author_id) VALUES(?)", a.ID); err != nil {
-				return err
+			if first {
+				if err := i.exec("INSERT INTO author_source_overrides(author_id) VALUES(?)", a.ID); err != nil {
+					return err
+				}
 			}
 		}
 		// Plain lists have membership/order but no work rules. The raw input
 		// preserves their line layout for byte-identical recovery.
 		if len(members) > 0 {
 			if err := service.InsertColdAuthorList(i.ctx, i.target, listID, f.Filename, hash, at, members); err != nil {
+				return err
+			}
+		}
+		if len(doc.Issues) > 0 || len(doc.Blocks) == 0 {
+			if err := i.origin("list-parser-observation", []string{index},
+				map[string]any{"file": f.Filename, "issues": doc.Issues, "blocks": len(doc.Blocks)}); err != nil {
 				return err
 			}
 		}
@@ -177,28 +244,41 @@ func (i *importer) importLists() error {
 	return nil
 }
 
-func (i *importer) blockAuthor(block authorlist.Block, entries []protectedEntry) (string, bool) {
-	key := authorlist.IdentityKey(block.Names[0])
-	id := ""
-	// The v26 first-alias key is the declared author ID, not a request to
-	// merge equal display names. An explicit registration can bind an opaque
-	// historical ID. Conflicting evidence stays in the original fragment.
-	if a, ok := i.authors[key]; ok && (a.Kind == "regular" || a.Placeholder) {
-		id = key
-	}
+func protectedOwners(entries []protectedEntry) map[string]string {
+	owners := map[string]string{}
 	for _, e := range entries {
 		names := e.Names
 		if len(names) == 0 {
 			names, _ = authorlist.Names(e.DisplayName)
 		}
-		if len(names) == 0 || authorlist.IdentityKey(names[0]) != key {
+		if len(names) == 0 {
 			continue
 		}
-		a, exists := i.authors[e.AuthorID]
-		if !exists || (a.Kind != "regular" && !a.Placeholder) || (id != "" && id != e.AuthorID) {
+		key := authorlist.IdentityKey(names[0])
+		if previous, exists := owners[key]; exists && previous != e.AuthorID {
+			owners[key] = ""
+		} else {
+			owners[key] = e.AuthorID
+		}
+	}
+	return owners
+}
+
+func (i *importer) blockAuthor(sourceKey string, owners map[string]string) (string, bool) {
+	key := sourceKey
+	// The v26 first-alias key is the declared author ID, not a request to
+	// merge equal display names. An explicit registration can bind an opaque
+	// historical ID. Conflicting evidence stays in the original fragment.
+	declared, exists := i.authors[key]
+	if !exists || (declared.Kind != "regular" && !declared.Placeholder) {
+		key = ""
+	}
+	if registered, present := owners[sourceKey]; present {
+		a, exists := i.authors[registered]
+		if !exists || (a.Kind != "regular" && !a.Placeholder) || (key != "" && key != registered) {
 			return "", false
 		}
-		id = e.AuthorID
+		return registered, true
 	}
-	return id, id != ""
+	return key, key != ""
 }

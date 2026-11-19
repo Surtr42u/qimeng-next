@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/analytics"
+	"qimeng.local/next/server/internal/domain"
 	"qimeng.local/next/server/internal/service"
 	"qimeng.local/next/server/internal/sourcerules"
 	"qimeng.local/next/server/internal/store"
@@ -31,7 +32,9 @@ func (i *importer) readSettings() error {
 	return i.each(`SELECT key,updated_at,CASE WHEN key IN (
 		'recommend_prefs','client_config','backup_schedule','custom_sources','custom_source_groups',
 		'custom_stop_words','author_source_vocabulary','imported_txt_sources','imported_txt_upload_entries','legacy_import_batch'
-		) THEN value END FROM kv_settings
+		) THEN value WHEN key='author_mirror' AND json_valid(value) THEN json_object(
+		'mode',json_extract(value,'$.mode'),'fragmentFilename',json_extract(value,'$.fragmentFilename'),
+		'previouslyConfigured',coalesce(length(json_extract(value,'$.path')),0)>0) END FROM kv_settings
 		WHERE substr(key,1,16)!='creator_profile:' AND substr(key,1,25)!='creator_profile_revision:' ORDER BY key`, func(rows *sql.Rows) error {
 		var key, at string
 		var raw []byte
@@ -43,8 +46,10 @@ func (i *importer) readSettings() error {
 		}
 		if raw == nil {
 			switch key {
-			case "client_logs", "author_mirror", "library_revision", "enrichment_engine_version":
+			case "client_logs", "library_revision", "enrichment_engine_version":
 				return i.origin("excluded-setting", []string{key}, map[string]string{"key": key, "reason": "previous_host_state"})
+			case "author_mirror":
+				return errors.New("cold catalog: unreadable author mirror preference")
 			default:
 				return errors.New("cold catalog: unrecognized v26 setting; value withheld")
 			}
@@ -54,6 +59,29 @@ func (i *importer) readSettings() error {
 				return err
 			}
 			return i.origin("archived-setting", []string{key}, map[string]string{"key": key, "updatedAt": at, "value": string(raw)})
+		}
+		if key == "author_mirror" {
+			// The SQL projection deliberately excluded the previous filesystem target.
+			var mirror struct {
+				Mode string
+				FragmentFilename string
+			}
+			if err := decode(raw, &mirror); err != nil ||
+				(mirror.Mode != "" && mirror.Mode != "fragment" && mirror.Mode != "master") ||
+				(mirror.FragmentFilename != "" && !domain.ValidName(mirror.FragmentFilename)) {
+				return errors.New("cold catalog: invalid author mirror preference")
+			}
+			if err := i.portableText(mirror.FragmentFilename); err != nil {
+				return err
+			}
+			mode := mirror.Mode
+			if mode == "" {
+				mode = "fragment" // documented default for v26 mirror records
+			}
+			if err := i.exec("INSERT INTO author_list_mirror(id,revision,path,mode,list_id,version,state) VALUES(1,1,'',?,'',1,'disabled')", mode); err != nil {
+				return err
+			}
+			return i.origin("archived-setting", []string{key}, map[string]any{"key": key, "updatedAt": at, "value": json.RawMessage(raw)})
 		}
 		if err := i.portableJSON(raw, false); err != nil {
 			return err

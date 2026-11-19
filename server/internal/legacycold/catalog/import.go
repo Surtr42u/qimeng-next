@@ -17,13 +17,13 @@ import (
 )
 
 type importer struct {
-	ctx      context.Context
-	source   *sql.DB
-	target   *sql.Tx
-	sourceID string
-	roots    []string
-	authors  map[string]model.Author
-	settings map[string]setting
+	ctx       context.Context
+	source    *sql.DB
+	target    *sql.Tx
+	sourceID  string
+	roots     []string
+	authors   map[string]model.Author
+	settings  map[string]setting
 	protected map[protectedKey][]*protectedWork
 }
 

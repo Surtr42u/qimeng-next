@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"qimeng.local/next/server/internal/service"
 )
 
 var errPrivate = errors.New("cold catalog: business record contains a host path or credential")
@@ -36,16 +38,21 @@ func (i *importer) portableText(text string) error {
 			return err
 		}
 		link, err := url.Parse(text[span[0]:span[1]])
-		if err != nil || link.Hostname() == "" || link.User != nil {
+		if err != nil || link.User != nil || !service.ColdPublicHostname(link.Hostname()) {
 			return errPrivate
 		}
 		params, err := url.ParseQuery(link.RawQuery)
 		if err != nil {
 			return errPrivate
 		}
-		for key := range params {
+		for key, values := range params {
 			if sensitiveKey(key) {
 				return errPrivate
+			}
+			for _, value := range values {
+				if err := i.nonURLText(value); err != nil {
+					return err
+				}
 			}
 		}
 		if privateText.MatchString(link.Fragment) || privateText.MatchString(link.Path) {
@@ -62,8 +69,16 @@ func (i *importer) nonURLText(text string) error {
 	}
 	normalized := strings.ToLower(strings.ReplaceAll(text, "\\", "/"))
 	for _, root := range i.roots {
-		if strings.Contains(normalized, root+"/") || strings.TrimSpace(normalized) == root {
-			return errPrivate
+		rest := normalized
+		for {
+			_, after, found := strings.Cut(rest, root)
+			if !found {
+				break
+			}
+			if after == "" || strings.ContainsAny(after[:1], "/ \t\r\n,;)'\"]}") {
+				return errPrivate
+			}
+			rest = after
 		}
 	}
 	return nil

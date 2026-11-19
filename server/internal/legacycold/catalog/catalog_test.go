@@ -111,6 +111,23 @@ func TestColdCatalogOwnerProtectionOnNormalTextReimport(t *testing.T) {
 	f.expect("1", "SELECT count(*) FROM author_list_rules WHERE work='illustration.png'")
 }
 
+func TestColdCatalogTextUsesV26WholeLineAndExplicitOwnerEvidence(t *testing.T) {
+	f := newFixture(t)
+	f.author("aa", "AA", "regular", 0)
+	f.author("aa__bb", "AA / BB", "regular", 0)
+	f.author("historical-other", "AA", "regular", 0)
+	f.setting("imported_txt_sources", `[{"filename":"plain.txt","content":"AA / BB\nignored.png\n1\n"},
+		{"filename":"inconsistent.txt","content":"1 AA\n作品\nw.png"}]`)
+	f.setting("imported_txt_upload_entries", `{"inconsistent.txt":[{"authorId":"historical-other","names":["AA"],"works":["w.png"]}]}`)
+	if err := f.run(); err != nil {
+		t.Fatal(err)
+	}
+	f.expect("aa__bb", "SELECT m.author_id FROM author_list_members m JOIN author_lists l ON l.id=m.list_id WHERE l.name='plain.txt'")
+	f.expect("0", "SELECT count(*) FROM author_list_rules WHERE work='w.png'")
+	f.expect("1", "SELECT count(*) FROM migration_relation_origins WHERE kind='cold26/unresolved-list-member'")
+	f.expect("2", "SELECT count(*) FROM author_txt_fragments WHERE source_id=?", sampleSource)
+}
+
 func TestColdCatalogSettingsAndExcludedHostState(t *testing.T) {
 	f := newFixture(t)
 	f.setting("client_config", `{"scan":{"workers":3,"thumbEdge":640},"upload":{"autoAccept":false,"maxBytesMb":0}}`)
@@ -118,7 +135,8 @@ func TestColdCatalogSettingsAndExcludedHostState(t *testing.T) {
 	f.setting("backup_schedule", `{"enabled":true,"intervalHours":20,"retention":7}`)
 	f.setting("author_source_vocabulary", `["gallery feed","catalog"]`)
 	f.setting("legacy_import_batch", "historic")
-	for _, key := range []string{"author_mirror", "enrichment_engine_version", "client_logs", "library_revision"} {
+	f.setting("author_mirror", `{"mode":"fragment","fragmentFilename":"chosen.txt","path":"/synthetic-mount/excluded-host-marker"}`)
+	for _, key := range []string{"enrichment_engine_version", "client_logs", "library_revision"} {
 		f.setting(key, "excluded-host-marker")
 	}
 	if err := f.run(); err != nil {
@@ -138,7 +156,9 @@ func TestColdCatalogSettingsAndExcludedHostState(t *testing.T) {
 		t.Fatalf("vocab=%+v err=%v", vocab, err)
 	}
 	f.expect("0", "SELECT count(*) FROM migration_relation_origins WHERE instr(original,'excluded-host-marker')>0")
-	f.expect("4", "SELECT count(*) FROM migration_relation_origins WHERE kind='cold26/excluded-setting'")
+	f.expect("3", "SELECT count(*) FROM migration_relation_origins WHERE kind='cold26/excluded-setting'")
+	f.expect("fragment", "SELECT mode FROM author_list_mirror WHERE state='disabled' AND path=''")
+	f.expect("chosen.txt", "SELECT json_extract(original,'$.value.fragmentFilename') FROM migration_relation_origins WHERE json_extract(original,'$.key')='author_mirror'")
 	f.expect("historic", "SELECT json_extract(original,'$.value') FROM migration_relation_origins WHERE kind='cold26/archived-setting' AND json_extract(original,'$.key')='legacy_import_batch'")
 	f.expect("7", "SELECT json_extract(original,'$.value.retention') FROM migration_relation_origins WHERE kind='cold26/archived-setting' AND json_extract(original,'$.key')='backup_schedule'")
 }

@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"database/sql"
+	"net"
+	"net/url"
+	"strings"
 	"time"
 
 	"qimeng.local/next/server/internal/model"
@@ -12,6 +15,17 @@ import (
 // grammar and profile validation with the offline cold-database importer.
 func InsertColdAuthor(ctx context.Context, tx *sql.Tx, author model.Author) error {
 	return saveNewRegularAuthor(ctx, tx, author)
+}
+
+// Allow the original scheme, port and fragment of a public TXT citation.
+// Reuse the avatar policy's host/IP checks without issuing a DNS query.
+func ColdPublicHostname(host string) bool {
+	if !strings.ContainsAny(host, ".:") {
+		return false
+	}
+	probe := url.URL{Scheme: "https", Host: net.JoinHostPort(host, "443")}
+	_, err := validateAvatarURL(probe.String())
+	return err == nil
 }
 
 type ColdListMember = authorListBlock
