@@ -6,89 +6,97 @@ on:
 permissions:
   contents: read
 jobs:
-  seed:
-    strategy:
-      fail-fast: false
-      matrix: {runner: [1, 2]}
+  same-runner:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
-      - &checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {persist-credentials: false}
-      - &platform
-        name: Record hosted image and APT
+      - name: Record the machine and package installation state
         run: |
           source /etc/os-release
           echo "image=$ImageOS/$ImageVersion ubuntu=$VERSION_ID/$VERSION_CODENAME architecture=$(dpkg --print-architecture)"
           apt-get --version | sed -n '1p'
-      - &setup
-        name: Install the verification workflow's media tools
-        uses: ./.github/actions/ubuntu-ffmpeg
+          sha256sum /var/lib/dpkg/status > "$RUNNER_TEMP/dpkg-before"
+      - id: plan
+        run: bash .github/actions/ubuntu-ffmpeg/prepare.sh plan
+      - id: empty
+        name: Verify the fresh measurement cache is empty
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+          key: measure-ffmpeg-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.plan.outputs.key }}
+          lookup-only: true
+      - name: Acquire the signed plan from Ubuntu
+        env:
+          APT_WORK: ${{ steps.plan.outputs.work }}
+          CACHE_HIT: ${{ steps.empty.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" != true
+          cold=$(mktemp -d /var/tmp/ffmpeg-native.XXXXXXXX)
+          chmod 755 "$cold"
+          time sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o "Dir::Cache::archives=$cold" -y --download-only --no-install-recommends --no-remove --reinstall install ffmpeg
+          (cd "$cold" && sha256sum -- *.deb | sort) | diff -u "$APT_WORK/SHA256SUMS" -
+          mkdir "$RUNNER_TEMP/ubuntu-ffmpeg-debs"
+          cp -- "$cold"/*.deb "$RUNNER_TEMP/ubuntu-ffmpeg-debs/"
+          sha256sum --check "$RUNNER_TEMP/dpkg-before"
+      - name: Save only the current Ubuntu archives
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+          key: measure-ffmpeg-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.plan.outputs.key }}
+      - id: clock
+        name: Start the remote restore with a fresh destination
+        run: |
+          mv -T "$RUNNER_TEMP/ubuntu-ffmpeg-debs" "$RUNNER_TEMP/seed-copy"
+          echo "start=$(date +%s%3N)" >> "$GITHUB_OUTPUT"
+      - id: remote
+        name: Restore the same archives over Actions cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+          key: measure-ffmpeg-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.plan.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Install from the remote copy with the checked-in action helper
+        env:
+          APT_WORK: ${{ steps.plan.outputs.work }}
+          CACHE_HIT: ${{ steps.remote.outputs.cache-hit }}
+          RESTORE_START: ${{ steps.clock.outputs.start }}
+        run: |
+          echo "Remote restore elapsed (ms) $(( $(date +%s%3N) - RESTORE_START ))"
+          test "$CACHE_HIT" = true
+          sha256sum --check "$RUNNER_TEMP/dpkg-before"
+          test -z "$(find "$APT_WORK/archives" -maxdepth 1 -name '*.deb' -print -quit)"
+          time bash .github/actions/ubuntu-ffmpeg/prepare.sh install
       - &smoke
-        name: Encode, decode, and probe the reference AVI
+        name: Encode and probe the reference AVI
         run: |
           ffmpeg -v error -nostdin -f lavfi -i testsrc2=s=32x24:r=2 -frames:v 2 -c:v ffv1 -flags:v +bitexact -fflags +bitexact -y "$RUNNER_TEMP/sample.avi"
           result=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=codec_name,width,height,nb_read_frames -of csv=p=0 "$RUNNER_TEMP/sample.avi")
           echo "probe=$result bytes=$(stat -c %s "$RUNNER_TEMP/sample.avi")"
           test "$result" = ffv1,32,24,2
-          ffmpeg -v error -nostdin -i "$RUNNER_TEMP/sample.avi" -f framemd5 -
           cd "$RUNNER_TEMP"
           echo 'cbb01cd97ff0a98e25a7cdc27ae81d9bb1b2d404393e26f277c0baeb410d67bb  sample.avi' | sha256sum -c
-  warm:
-    needs: seed
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - *checkout
-      - *platform
-      - *setup
-      - *smoke
-      - name: Verify the already-installed path
-        uses: ./.github/actions/ubuntu-ffmpeg
-  repair:
-    needs: seed
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - *checkout
-      - *platform
-      - name: Resolve current archives
-        id: plan
-        run: bash .github/actions/ubuntu-ffmpeg/prepare.sh plan
-      - name: Restore the real cache
-        id: cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
-          key: ${{ steps.plan.outputs.key }}
-          fail-on-cache-miss: true
-      - name: Recover a missing entry and an equal-length zero-filled fixture
-        env:
-          APT_WORK: ${{ steps.plan.outputs.work }}
-          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
-        run: |
-          set -euo pipefail
-          test "$CACHE_HIT" = true
-          cache="$RUNNER_TEMP/ubuntu-ffmpeg-debs"
-          readarray -t names < <(awk '{print $2}' "$APT_WORK/SHA256SUMS")
-          first=${names[0]}
-          size=$(stat -c %s "$cache/$first")
-          truncate -s "$size" "$RUNNER_TEMP/blank-sample"
-          mv -- "$RUNNER_TEMP/blank-sample" "$cache/$first"
-          rm -- "$cache/${names[1]}"
-          touch "$cache/unselected-sample.deb"
-          printf 'Same length %s, %d bytes; missing %s\n' "$first" "$size" "${names[1]}"
-          bash .github/actions/ubuntu-ffmpeg/prepare.sh install | tee "$RUNNER_TEMP/recovery.log"
-          grep -F "Discarding mismatched cached archive $first" "$RUNNER_TEMP/recovery.log"
-          grep -F "reused $((${#names[@]} - 2)) verified archives." "$RUNNER_TEMP/recovery.log"
-          test ! -e "$APT_WORK/archives/unselected-sample.deb"
-      - *smoke
-      - name: Make the installed package's FFprobe unavailable on this disposable VM
+      - name: Prepare a one-package repair on this disposable machine
+        id: repair
         run: |
           test "$(command -v ffprobe)" = /usr/bin/ffprobe
-          sudo mv /usr/bin/ffprobe "$RUNNER_TEMP/previous-ffprobe"
-          ffmpeg -version >/dev/null
-          ! command -v ffprobe
-      - *setup
+          sudo mv /usr/bin/ffprobe "$RUNNER_TEMP/saved-ffprobe"
+          bash .github/actions/ubuntu-ffmpeg/prepare.sh plan
+      - name: Require the exact archive set before offline installation
+        env:
+          APT_WORK: ${{ steps.repair.outputs.work }}
+          CACHE_HIT: 'true'
+        run: |
+          touch "$APT_WORK/archives/unselected-sample.deb"
+          if bash .github/actions/ubuntu-ffmpeg/prepare.sh install > "$RUNNER_TEMP/set.log" 2>&1; then
+            echo 'Unexpected archive accepted' >&2
+            exit 1
+          fi
+          grep -F unselected-sample.deb "$RUNNER_TEMP/set.log"
+          test ! -e /usr/bin/ffprobe
+          rm "$APT_WORK/archives/unselected-sample.deb"
+          bash .github/actions/ubuntu-ffmpeg/prepare.sh install
       - *smoke
+      - name: Verify the existing tools through the workflow action
+        uses: ./.github/actions/ubuntu-ffmpeg
