@@ -18,14 +18,19 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import media.qimeng.next.model.TabBarMaterial
 import media.qimeng.next.ui.glass.*
+import media.qimeng.next.ui.icon.StatsIcon
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Rule
 import org.junit.Test
@@ -65,7 +70,7 @@ class NavigationBehaviorTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) { Fixture(dark = true) }
         }
-        listOf("首页", "相册", "我的").forEach { compose.onNodeWithText(it).assertIsDisplayed().assertHasClickAction() }
+        listOf("首页", "相册", "数据", "我的").forEach { compose.onNodeWithText(it).assertIsDisplayed().assertHasClickAction() }
         screenshot("navigation-dark-large-type.png")
     }
 
@@ -78,9 +83,20 @@ class NavigationBehaviorTest {
 
     @Test fun allOriginalMaterialsPreserveOneSelectedDestination() {
         val material = mutableStateOf(TabBarMaterial.LIQUID)
-        compose.setContent { Fixture(material = material.value) }
+        lateinit var inputMode: InputModeManager
+        compose.setContent {
+            inputMode = LocalInputModeManager.current
+            Fixture(material = material.value)
+        }
+        compose.runOnIdle { inputMode.requestInputMode(InputMode.Keyboard) }
         for (option in TabBarMaterial.entries) {
             compose.runOnIdle { material.value = option }
+            for ((index, key) in listOf("home", "albums", "stats", "me").withIndex()) {
+                val tab = compose.onNodeWithTag("navigation:$key")
+                tab.performSemanticsAction(SemanticsActions.RequestFocus)
+                tab.assertIsFocused().performClick().assertIsSelected()
+                compose.onNodeWithTag("content:$index").assertIsDisplayed()
+            }
             compose.onNodeWithTag("navigation:albums").performClick()
             compose.onNodeWithTag("navigation:albums").assertIsSelected()
             compose.onAllNodesWithTag("navigation:albums").assertCountEquals(1)
@@ -117,7 +133,7 @@ private fun Fixture(reduced: Boolean = false, dark: Boolean = false, material: T
                 }
             }
             LibraryNavigationBar(listOf(GlassNavItem("首页", Icons.Outlined.Home, "home"), GlassNavItem("相册", Icons.Outlined.PhotoLibrary, "albums"),
-                GlassNavItem("我的", Icons.Outlined.Person, "me")), selected, material, backdrop, { selected = it }, Modifier.align(Alignment.BottomCenter))
+                GlassNavItem("数据", StatsIcon, "stats"), GlassNavItem("我的", Icons.Outlined.Person, "me")), selected, material, backdrop, { selected = it }, Modifier.align(Alignment.BottomCenter))
         }
         }
     }
