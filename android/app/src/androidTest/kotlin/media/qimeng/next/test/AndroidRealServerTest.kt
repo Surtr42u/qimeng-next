@@ -255,22 +255,23 @@ class AndroidRealServerTest {
                 }
                 assertTrue("The new player must start at the position read back from Go", requireNotNull(position) >= resumePosition)
             }
-            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithContentDescription("进入全屏").performClick()
-            compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+            clickVideoControl("进入全屏")
             compose.waitUntil(10_000) { playbackOrientation().let {
-                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE &&
+                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE &&
                     it.configuration == android.content.res.Configuration.ORIENTATION_LANDSCAPE
             } }
             captureDecoderSurface(compose.activity, suffix)
             screenshotWithMedia("real-server-video-fullscreen$suffix.png", landscape = true)
             await("video-play-event$suffix", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (before.playCount ?: 0L) }
             assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
-            compose.onNodeWithContentDescription("退出全屏").performClick()
+            clickVideoControl("退出全屏")
             try {
-                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
+                compose.waitUntil(15_000) { playbackOrientation().let {
+                    it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT &&
+                        it.configuration == android.content.res.Configuration.ORIENTATION_PORTRAIT
+                } }
             } catch (failure: ComposeTimeoutException) {
-                throw AssertionError("Leaving fullscreen should restore $originalOrientation, observed ${playbackOrientation()}", failure)
+                throw AssertionError("Leaving fullscreen should return to portrait, observed ${playbackOrientation()}", failure)
             }
             if (index == 0) {
                 compose.waitUntil(10_000) {
@@ -298,8 +299,29 @@ class AndroidRealServerTest {
                     }
                     leftDetail
                 }
+                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
             }
         }
+    }
+
+
+    @Test(timeout = 300_000)
+    fun videoControlsMatchTheInstalledAppFromNormalEntrances() {
+        VideoParityRoundTrip(compose, runBlocking { isolatedServerGraph() }).run()
+    }
+
+    private fun clickVideoControl(description: String) {
+        var control: android.graphics.Rect? = null
+        compose.waitUntil(15_000) {
+            compose.activityRule.scenario.onActivity { activity ->
+                control = activity.findVideoControl(description)?.takeIf { it.isEnabled }?.screenBounds()
+            }
+            control?.isEmpty == false
+        }
+        val bounds = requireNotNull(control)
+        val down = android.os.SystemClock.uptimeMillis()
+        sendVideoTouch(down, android.view.MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY())
+        sendVideoTouch(down, android.view.MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY())
     }
 
     private data class PlaybackOrientation(val request: Int, val configuration: Int, val rotation: Int)
@@ -545,7 +567,12 @@ class AndroidRealServerTest {
 
 internal fun copyCloudVideo(uri: Uri) {
     val instrument = InstrumentationRegistry.getInstrumentation()
-    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
+    val sample = when (uri.lastPathSegment) {
+        "parity-landscape.mp4" -> "qimeng-next-test-landscape.mp4"
+        "parity-portrait.mp4" -> "qimeng-next-test-portrait.mp4"
+        else -> "qimeng-next-test.mp4"
+    }
+    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/$sample")).use { input ->
         requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
             assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
         }
