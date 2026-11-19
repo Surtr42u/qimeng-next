@@ -183,6 +183,9 @@ func (s *Service) CreateUpload(ctx context.Context, w *Write, in model.UploadInp
 		if a.LibraryID != in.LibraryID || a.Trashed || a.ContentVersion != in.ExpectedContentVersion {
 			return model.Upload{}, Fail(409, "replacement_conflict", "替换对象或内容版本已变化。")
 		}
+		if e = requireDiscardableOriginal(ctx, s.DB.DB, a.ID); e != nil {
+			return model.Upload{}, e
+		}
 	}
 	if in.Mode == "intelligent" && in.BatchID == "" {
 		return model.Upload{}, Fail(400, "batch_required", "智能整理须先创建接收批次。")

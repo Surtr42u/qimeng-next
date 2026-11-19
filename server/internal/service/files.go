@@ -201,6 +201,11 @@ func (s *Service) prepareFile(ctx context.Context, w *Write, j fileIntent) (file
 	if w.tx != nil {
 		return j, errors.New("file intent must precede transaction")
 	}
+	if j.Kind == "purge" || j.Kind == "replace" {
+		if e := requireDiscardableOriginal(ctx, s.DB.DB, j.After.ID); e != nil {
+			return j, e
+		}
+	}
 	old, e := s.existingFileIntent(ctx, w, j)
 	if e == nil {
 		return old, nil
@@ -798,7 +803,7 @@ func (s *Service) availablePath(ctx context.Context, library, relative string) (
 func (s *Service) Content(ctx context.Context, id string, versions ...int64) (*os.File, model.Asset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, e := s.Asset(ctx, id)
+	a, e := s.AssetDetail(ctx, id)
 	if e != nil {
 		return nil, a, e
 	}

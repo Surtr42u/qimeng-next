@@ -379,7 +379,7 @@ func (a *API) ListAssets(w http.ResponseWriter, r *http.Request, params generate
 }
 
 func (a *API) GetAsset(w http.ResponseWriter, r *http.Request, id generated.Id) {
-	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Asset(r.Context(), id) })
+	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.AssetDetail(r.Context(), id) })
 }
 
 func (a *API) UpdateAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.UpdateAssetParams) {

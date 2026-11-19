@@ -74,7 +74,7 @@ func (s *Service) SystemStatus(ctx context.Context, p model.Principal) (SystemSt
 	}
 	state := SystemStatus{InstanceID: s.InstanceID, Version: samples.version, GoVersion: runtime.Version(), StartedAt: samples.started.UTC(),
 		UptimeSeconds: int64(now.Sub(samples.started) / time.Second), Mounts: mounts.Items, NextMountCursor: mounts.NextCursor}
-	if err = s.DB.DB.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM assets WHERE trashed=1),(SELECT count(*) FROM client_diagnostics)").Scan(&state.TrashCount, &state.ClientErrorCount); err != nil {
+	if err = s.DB.DB.QueryRowContext(ctx, "SELECT ("+visibleTrashCount+"),(SELECT count(*) FROM client_diagnostics)").Scan(&state.TrashCount, &state.ClientErrorCount); err != nil {
 		return state, err
 	}
 	state.Host = samples.host.Host(ctx)

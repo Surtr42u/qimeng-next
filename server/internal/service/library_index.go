@@ -70,6 +70,7 @@ func (s *Service) DeleteLibrary(ctx context.Context, w *Write, id string, revisi
 		return Conflict(lib.Revision)
 	}
 	checks := []struct{ query, code, message string }{
+		{"SELECT EXISTS(SELECT 1 FROM selected_image_merge_groups g JOIN asset_locations l ON l.asset_id=g.representative_id WHERE l.library_id=?)", "library_merge_originals", "此库保留着已校对合并的原件与来源，无法注销。"},
 		{"SELECT EXISTS(SELECT 1 FROM assets WHERE library_id=? AND trashed=1)", "library_has_trash", "此库有可恢复的回收站项目，请先恢复或明确处置。"},
 		{"SELECT EXISTS(SELECT 1 FROM scans WHERE library_id=? AND state IN ('queued','running'))", "library_scan_active", "库扫描正在执行，请等待完成或取消。"},
 		{"SELECT EXISTS(SELECT 1 FROM uploads WHERE json_extract(data,'$.libraryId')=? AND state IN ('receiving','staged'))", "library_upload_active", "此库有未完成上传，请先完成或取消。"},

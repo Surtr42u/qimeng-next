@@ -146,7 +146,7 @@ func previewPath(id string, version int64, edge int) string {
 func (s *Service) thumbnailSource(ctx context.Context, id string, version int64, edge int, snapshotNeeded bool) (*os.File, model.Asset, string, mediaInput, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, e := s.Asset(ctx, id)
+	a, e := s.AssetDetail(ctx, id)
 	if e != nil {
 		return nil, a, "", mediaInput{}, e
 	}
@@ -210,7 +210,7 @@ func (s *Service) thumbnailFor(ctx context.Context, id string, version int64, ed
 	if err != nil || cached != nil {
 		return cached, a, err
 	}
-	err = s.previews.join(ctx, s, key, background, func(work context.Context) error { return s.generatePreview(work, id, a.ContentVersion, edge) })
+	err = s.previews.join(ctx, s, key, background, func(work context.Context) error { return s.generatePreview(work, a.ID, a.ContentVersion, edge) })
 	if err != nil {
 		return nil, a, err
 	}

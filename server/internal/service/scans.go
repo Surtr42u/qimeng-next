@@ -512,10 +512,18 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 	previousName := a.FileName
 	changedBytes := isNew || a.Hash != file.hash
 	if !isNew {
-		a.Revision++
 		if changedBytes {
+			retained, err := selectedImageOriginal(ctx, tx, a.ID)
+			if err != nil {
+				return err
+			}
+			if retained {
+				skipScanIssue(j, relative, "merge_original_changed")
+				return nil
+			}
 			a.ContentVersion++
 		}
+		a.Revision++
 	}
 	a.RelativePath = relative
 	a.FileName = path.Base(relative)
