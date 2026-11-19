@@ -89,7 +89,13 @@ func (s *Service) checkUploadPublication(ctx context.Context, p model.Principal,
 	if err = s.checkUploadLibrary(ctx, upload.LibraryID); err != nil {
 		return err
 	}
-	return s.checkPath(ctx, j.After.LibraryID, j.After.RelativePath, j.After.ID)
+	if err = s.checkPath(ctx, j.After.LibraryID, j.After.RelativePath, j.After.ID); err != nil {
+		return err
+	}
+	if upload.Mode == "intelligent" {
+		return s.checkPlannedPublication(ctx, principal, upload, j)
+	}
+	return nil
 }
 
 func (s *Service) checkUploadLibrary(ctx context.Context, id string) error {
@@ -127,7 +133,7 @@ func (s *Service) validateUploadInstallation(ctx context.Context, j *fileIntent,
 	return s.validatePublicationBase(ctx, s.DB.DB, *j)
 }
 
-// Startup has no authenticated requester. Resume an ordinary ingest only while
+// Startup has no authenticated requester. Resume an ingest only while
 // the recorded credential and its lease can still authorize that staged input.
 // Policy holds preserve the installed object, staging file and reservation.
 func (s *Service) installRecoveringFile(ctx context.Context, j *fileIntent) (bool, error) {
@@ -137,9 +143,6 @@ func (s *Service) installRecoveringFile(ctx context.Context, j *fileIntent) (boo
 	u, err := store.Get[model.Upload](ctx, s.DB.DB, "SELECT data FROM uploads WHERE id=?", j.UploadID)
 	if err != nil {
 		return false, err
-	}
-	if u.Mode != "ordinary" {
-		return true, s.applyFile(ctx, j)
 	}
 	p := model.Principal{ID: j.PrincipalID, Generation: j.PrincipalGeneration}
 	if p.ID == "owner" {
@@ -169,6 +172,10 @@ func (s *Service) installRecoveringFile(ctx context.Context, j *fileIntent) (boo
 			return false, s.retainCancelledPublication(ctx, j, u)
 		case "library_disabled", "uploads_paused", "revoked", "expired", "lease_changed", "delegation_inactive", "scope_denied", "batch_scope_denied":
 			return false, nil
+		case "namespace_changed", "revision_conflict", "plan_result_changed", "plan_identity_changed", "plan_input_conflict", "plan_content_changed", "research_conflict", "research_author_unverified", "human_field_protected", "path_occupied":
+			if u.Mode == "intelligent" {
+				return false, nil
+			}
 		}
 	}
 	return err == nil, err
@@ -197,7 +204,7 @@ func (s *Service) verifiedUploadTarget(ctx context.Context, j fileIntent) (strin
 	if j.CopyPublication {
 		expected = j.CopyObject
 	}
-	if expected == "" || expected != digest([]byte(object)) || !info.Mode().IsRegular() || info.Size() != j.After.Size {
+	if expected == "" || expected != digest([]byte(object)) || !info.Mode().IsRegular() || info.Size() != j.After.Size || j.After.ContentMtime != nil && !info.ModTime().Equal(*j.After.ContentMtime) {
 		return "", Fail(409, "publication_target_changed", "发布落点与已保留的原件不符。")
 	}
 	start, err := syncFileStamp(file, info)
