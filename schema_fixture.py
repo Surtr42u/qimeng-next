@@ -31,6 +31,11 @@ def create_native_schema(db):
     files = sorted(MIGRATIONS.glob("*.sql"))
     if not files or files[-1].name != "0045_selected_image_merges.sql":
         raise RuntimeError("pinned migrations missing")
+    # Migration 0014 prepares UPDATEs against the empty assets/events tables.
+    def unexpected_timestamp(_value):
+        raise AssertionError("empty migration fixture unexpectedly contains a timestamp")
+
+    db.create_function("qimeng_time_key", 1, unexpected_timestamp, deterministic=True)
     db.execute("PRAGMA foreign_keys=ON")
     db.execute(LEDGER_SQL)
     for path in files:
