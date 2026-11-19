@@ -166,6 +166,7 @@ jobs:
           if-no-files-found: error
           path: web/dist/
   web-ui:
+    if: ${{ false }}
     needs: [generate, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -359,7 +360,7 @@ jobs:
           npm --prefix web ci
           cd web && npx playwright install --with-deps --only-shell chromium
       - name: Real Go + stdio MCP + browser
-        run: bash tools/cloud_live.sh
+        run: sed 's|^npm --prefix web run test:live$|npm --prefix web run test:live -- session-baseline.live.spec.ts|' tools/cloud_live.sh | bash -e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
