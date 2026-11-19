@@ -38,6 +38,8 @@ Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming
 | [正式 server 作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44479945704/job/135410065699)，复用 87 件 | 20261111.127.1 | 9.529 / 1.005 | 2.719 | 0.321 / 0 B | 13.392 |
 | [首选源不可用且缓存缺损](https://github.com/Surtr42u/qimeng-next/actions/runs/44479902999/job/135409335611)，复用 85 件 | 20261116.133.1 | 10.984 失败 + 40.896 成功 / 0.315 | 约 0.7 | 8.928 / 6.882 MB | 18.384 |
 
+合入后，`6d19173` 的五个使用方中，三台从 Actions 各取回约 62.8 MB 缓存，APT 归档下载为 0 B。两台向 Ubuntu 冷取同一批包，`mcp-compat` 耗时 13.534 秒，`server` 以 61.9 kB/s 下载了 16 分 55.725 秒。后者刷新索引 10.376 秒、解析 1.017 秒、安装 13.225 秒。五台均另从 Ubuntu 刷新约 9.66 MB 的签名索引。首次取包耗时仍取决于镜像传输速率。[主线完整验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44483277173) · [两次冷下载中的慢样本](https://github.com/Surtr42u/qimeng-next/actions/runs/44483277173/job/135420995166)
+
 缺损用例把一个 2,646,422 字节的归档换成等长零文件，移开另一个归档，并放入一个未选中的空文件。APT 从官方来源补回前两件。FFmpeg 和 FFprobe `6.1.1-3ubuntu5` 生成并读回 32×24、2 帧的 FFV1 AVI（6,760 字节）。原生安装、暖复用和缺损修复所得文件的 SHA-256 均为 `cbb01cd97ff0a98e25a7cdc27ae81d9bb1b2d404393e26f277c0baeb410d67bb`。同机移开已安装的 FFprobe 后，APT 只选择 1 个 1,878,920 字节的包。向待安装归档另加空文件时校验在安装前停止，移开后离线重装成功，再次运行走已可用分支。[缺件与等长错误内容](https://github.com/Surtr42u/qimeng-next/actions/runs/44479902999/job/135409335611) · [单包修复与读回](https://github.com/Surtr42u/qimeng-next/actions/runs/44479902999/job/135409335917)
 
 <a id="engineering-gates"></a>

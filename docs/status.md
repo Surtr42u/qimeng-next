@@ -6,7 +6,7 @@
 
 `77e260a` 已合入复扫写入、恢复后的作者身份与备份凭证、同标签页视频续播，以及智能批次翻页和换宿主接续的修复。Windows 专项从实际打开的目录确认恢复副本与来源隔离，并经正式媒体接口读回原件。三个原生服务包自 `befa334` 起在取得监听端口后才升级数据库。端口占用时的旧库及释放端口后的升级均已用历史结构的合成样本验证。[恢复与跨端验收](https://github.com/Surtr42u/qimeng-next/pull/8) · [Windows 目录与原件回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44480574562/job/135411516322) · [三平台升级](https://github.com/Surtr42u/qimeng-next/pull/9)
 
-在 `6d19173`，五个 Ubuntu 云端作业按当前签名索引核验并复用 FFmpeg 软件包。完整 PR 验收中，一台从 Ubuntu 取得 87 个包，另四台从 Actions 缓存取回同一批包。各台均另外刷新了签名索引并实际安装。[同机计时、缓存损坏恢复与五项正式作业](https://github.com/Surtr42u/qimeng-next/pull/10)
+在 `6d19173`，五个 Ubuntu 云端作业按当前签名索引核验 FFmpeg 软件包。PR 验收中有四台复用全部 87 个缓存包，合入后的主线有三台复用。各台分别刷新索引并实际安装。主线 22 项云端作业全部通过。[同机计时与缓存损坏恢复](https://github.com/Surtr42u/qimeng-next/pull/10) · [合入后的主线验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44483277173)
 
 ## 系统审查后的客户端验收
 
