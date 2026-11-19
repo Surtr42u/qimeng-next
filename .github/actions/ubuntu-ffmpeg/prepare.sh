@@ -55,9 +55,10 @@ if [[ -d $cache && ! -L $cache ]]; then
     fi
   done < "$checksums"
 fi
-echo "Actions cache hit=${CACHE_HIT:-false}; reused $reused verified archives."
+echo "Actions cache hit=${CACHE_HIT:-false}, reused $reused verified archives."
 time "${apt[@]}" -y --download-only "${install[@]}"
-(cd "$archives" && sha256sum --check --quiet "$checksums")
+# An APT plan change during acquisition must not introduce another archive into the installation.
+(cd "$archives" && sha256sum -- *.deb | sort) | diff -u "$checksums" -
 
 if [[ $CACHE_HIT != true ]]; then
   # A failed restore can leave an incomplete directory. Save only this transaction's archives.
@@ -65,9 +66,7 @@ if [[ $CACHE_HIT != true ]]; then
     mv -T -- "$cache" "$(mktemp -d "$RUNNER_TEMP/ffmpeg-restore.XXXXXXXX")/previous"
   fi
   mkdir "$cache"
-  while read -r digest name; do
-    cp -- "$archives/$name" "$cache/$name"
-  done < "$checksums"
+  cp -- "$archives"/*.deb "$cache/"
 fi
 time "${apt[@]}" -y --no-download "${install[@]}"
 ffmpeg -version | sed -n '1p'
