@@ -235,7 +235,7 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
                 outcome, revision = drive_claim(runtime, host, journal, row, stop, usage, status, allow_image_lookup)
             except ToolError as exc:
                 outcome = exc.code
-                gateway_unavailable = exc.status in TRANSIENT_GATEWAY_STATUSES
+                gateway_unavailable = outcome != "WORKER_HOST_UNAVAILABLE" and exc.status in TRANSIENT_GATEWAY_STATUSES
             if outcome == "unchanged":
                 journal.defer(batch, poll_seconds)
                 continue
