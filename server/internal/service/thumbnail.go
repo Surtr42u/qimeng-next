@@ -256,7 +256,7 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 	defer source.release(s)
 	var data []byte
 	if builtinImage(a.MimeType) {
-		data, e = s.scaledStill(ctx, source, a.MimeType, edge, displayStill)
+		data, e = s.scaledStill(ctx, source, a.MimeType, image.Pt(a.Width, a.Height), edge, displayStill)
 	} else {
 		data, e = s.externalPreview(ctx, source, a, edge)
 	}

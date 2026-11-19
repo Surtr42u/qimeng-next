@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"io"
 
@@ -14,7 +15,12 @@ const (
 	largeStillPixels = 256_000_000
 	largeStillSide   = 32_768
 	largeStillBytes  = 256 << 20
+	largeStillHeader = 2 << 20
 )
+
+func largeHeaderLimit() error {
+	return Fail(422, "thumbnail_resource_limit", "缩略图需要的图片头超过 2 MiB。")
+}
 
 func decodeLargeStill(ctx context.Context, r io.Reader, size int64, format string, config image.Config, width, height int) (image.Image, error) {
 	if size < 1 || size > largeStillBytes || config.Width > largeStillSide || config.Height > largeStillSide ||
@@ -25,10 +31,14 @@ func decodeLargeStill(ctx context.Context, r io.Reader, size int64, format strin
 	// descriptor survives renames, but another writer could still edit its inode.
 	input := io.LimitReader(r, size)
 	var header bytes.Buffer
-	probe := io.TeeReader(io.LimitReader(input, 2<<20), &header)
+	metadata := &io.LimitedReader{R: input, N: largeStillHeader}
+	probe := io.TeeReader(metadata, &header)
 	if format == "png" {
 		info, err := pngscaled.DecodeConfig(probe)
 		if err != nil {
+			if metadata.N == 0 && (errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)) {
+				return nil, largeHeaderLimit()
+			}
 			return nil, err
 		}
 		if info.Width != config.Width || info.Height != config.Height {
@@ -44,6 +54,9 @@ func decodeLargeStill(ctx context.Context, r io.Reader, size int64, format strin
 	}
 	info, err := jpegscaled.DecodeConfig(probe)
 	if err != nil {
+		if metadata.N == 0 && (errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)) {
+			return nil, largeHeaderLimit()
+		}
 		return nil, err
 	}
 	if info.Width != config.Width || info.Height != config.Height {

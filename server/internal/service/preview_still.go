@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"image"
 	"image/jpeg"
 	"io"
@@ -149,21 +150,65 @@ func previewDimensions(width, height, edge int) (int, int) {
 	return max(1, int(int64(width)*int64(edge)/int64(height))), edge
 }
 
-func (s *Service) scaledStill(ctx context.Context, source mediaInput, mime string, edge int, policy stillPreviewPolicy) ([]byte, error) {
+func fullStillFits(width, height int) bool {
+	return width > 0 && height > 0 && int64(width) <= 40_000_000/int64(height)
+}
+
+// Each metadata reader starts at byte zero. The physical input advances only
+// when a reader needs bytes beyond the prefix already seen by the others.
+type stillHeader struct {
+	input io.Reader
+	bytes bytes.Buffer
+}
+
+func (h *stillHeader) probe() io.Reader {
+	more := io.LimitReader(h.input, int64(largeStillHeader-h.bytes.Len()))
+	return io.MultiReader(bytes.NewReader(h.bytes.Bytes()), io.TeeReader(more, &h.bytes))
+}
+
+func (h *stillHeader) replay() io.Reader {
+	return io.MultiReader(bytes.NewReader(h.bytes.Bytes()), h.input)
+}
+
+func (s *Service) scaledStill(ctx context.Context, source mediaInput, mime string, catalog image.Point, edge int, policy stillPreviewPolicy) ([]byte, error) {
 	f, err := source.reader(s)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	return renderStill(ctx, f, source.size, mime, catalog, edge, policy)
+}
+
+func renderStill(ctx context.Context, f io.ReadSeeker, size int64, mime string, catalog image.Point, edge int, policy stillPreviewPolicy) ([]byte, error) {
+	knownSmall := fullStillFits(catalog.X, catalog.Y)
+	if policy.allowLarge && !knownSmall && catalog.X > 0 && catalog.Y > 0 && size > largeStillBytes {
+		return nil, Fail(422, "thumbnail_resource_limit", "原图超过大图缩略图的输入预算。")
+	}
 	reader := scanReader{ctx: ctx, source: f}
+	header := stillHeader{input: reader}
 	orientation := 1
 	if mime == "image/jpeg" {
-		orientation = jpegOrientation(reader)
-		if _, err = f.Seek(0, io.SeekStart); err != nil {
-			return nil, err
+		orientation = jpegOrientation(header.probe())
+	}
+	cfg, format, err := image.DecodeConfig(header.probe())
+	input := header.replay()
+	if err != nil && header.bytes.Len() == largeStillHeader && (errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)) {
+		if policy.allowLarge && !knownSmall {
+			return nil, largeHeaderLimit()
+		}
+		// A small cataloged original (or an existing research subject) can
+		// legitimately have extensive metadata. Preserve its standard path.
+		cfg, format, err = image.DecodeConfig(input)
+		if err == nil {
+			if !fullStillFits(cfg.Width, cfg.Height) {
+				return nil, largeHeaderLimit()
+			}
+			if _, err = f.Seek(0, io.SeekStart); err != nil {
+				return nil, err
+			}
+			input = reader
 		}
 	}
-	cfg, format, err := image.DecodeConfig(reader)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -173,18 +218,15 @@ func (s *Service) scaledStill(ctx context.Context, source mediaInput, mime strin
 	if cfg.Height < 1 || cfg.Width < 1 {
 		return nil, Fail(422, "thumbnail_resource_limit", "图片超过解码预算，原件可正常读取。")
 	}
-	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
 	width, height := previewDimensions(cfg.Width, cfg.Height, edge)
 	var src image.Image
-	if int64(cfg.Width) > 40_000_000/int64(cfg.Height) {
+	if !fullStillFits(cfg.Width, cfg.Height) {
 		if !policy.allowLarge || mime != "image/"+format || (format != "jpeg" && format != "png") {
 			return nil, Fail(422, "thumbnail_resource_limit", "图片超过解码预算，原件可正常读取。")
 		}
-		src, err = decodeLargeStill(ctx, reader, source.size, format, cfg, width, height)
+		src, err = decodeLargeStill(ctx, input, size, format, cfg, width, height)
 	} else {
-		src, _, err = image.Decode(reader)
+		src, _, err = image.Decode(input)
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
