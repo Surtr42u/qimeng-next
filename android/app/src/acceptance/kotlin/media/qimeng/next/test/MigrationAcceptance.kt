@@ -67,6 +67,8 @@ class MigrationAcceptance : Instrumentation() {
         result.putBoolean("previouslyEnabled", wasEnabled)
 
         if (command == "quiesce") {
+            val scans = runtime.scans.state.value
+            verify("scanQueueIdle", scans.error == null && scans.requests.none { it.state == "queued" || it.state == "waiting" })
             // The first stop owns the original preference even if the caller retries after a disconnect.
             if (!state.contains("restoreEnabled")) check(state.edit().putBoolean("restoreEnabled", wasEnabled).commit())
             runtime.stop()
@@ -75,11 +77,13 @@ class MigrationAcceptance : Instrumentation() {
             val expected = readSelection(app)
             verify("expectedInstance", expected.getString("instanceId") == selected.instanceId)
             val samples = expected.getJSONArray("originals")
-            verify("selectedSamples", samples.length() in 1..3)
+            verify("selectedSamples", samples.length() in 1..3 &&
+                (0 until samples.length()).map { samples.getJSONObject(it).getString("id") }.distinct().size == samples.length())
             val db = File(app.filesDir, "embedded-v1/control/qimeng.sqlite")
             verify("existingDatabase", Files.isRegularFile(db.toPath(), LinkOption.NOFOLLOW_LINKS) && db.length() > 0)
             runtime.files.refreshAccess()
             verify("sharedStorageGranted", runtime.files.access.value.granted)
+            if (!state.contains("restoreEnabled")) check(state.edit().putBoolean("restoreEnabled", wasEnabled).commit())
             try {
                 result.putBoolean("runtimeReady", false)
                 val handoff = runtime.start()
@@ -91,6 +95,7 @@ class MigrationAcceptance : Instrumentation() {
                     settings.certificateFor(selected) == handoff.certificateDerBase64)
                 val media = app.graph.media
                 media.capabilities()
+                result.putBoolean("serverInstanceVerified", true)
                 val before = media.statistics()
                 val counts = mapOf("assets" to before.assets, "authors" to before.authors, "events" to before.events,
                     "images" to before.images, "videos" to before.videos, "favorites" to before.favorites,

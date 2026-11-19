@@ -52,6 +52,8 @@ SAF 批选先保存待传快照，允许改名后提交；系统分享可用已�
 
 ## 云端构建
 
+已安装 embedded debug 的后台迁移核验有独立同签名伴包。所有者可停妥宿主，再从原 App 进程验证已选原件、作者和标签并恢复原启停状态。目标版本、调用方式和私有清单格式见[后台迁移验收](../tools/mobile-migration/README.md)。
+
 应用构建作业以 Temurin 21 运行 Gradle 9.7.0，使用 Android SDK 37 和 Build Tools 37.0.0。Android 模块的 Java 源与目标兼容级别为 17，纯 JVM 模块使用 17 工具链。应用 targetSdk 与云端仪器模拟器均为 35。[构建配置](app/build.gradle.kts) · [云端工作流](../.github/workflows/prepare.yml)
 
 `generate` 先提供同提交的 Kotlin SDK。纯客户端作业 `android` 关闭 embedded，运行 `verifyClientArchitecture`、客户端与核心模块单测和 `:app:lintClientDebug`。架构任务组装并读取实际客户端 APK。内嵌版在 `android-native` 提供两个架构的原生程序后由 `android-embedded` 构建和检查。[模块门禁与命令](architecture/README.md)

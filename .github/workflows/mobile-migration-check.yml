@@ -37,9 +37,13 @@ jobs:
           sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
           gradle -p android -Pqimeng.migrationTest=acceptance :app:assembleEmbeddedDebugAndroidTest
           mkdir -p "$RUNNER_TEMP/companion"
-          cp android/app/build/outputs/apk/androidTest/embedded/debug/*.apk "$RUNNER_TEMP/companion/migration-acceptance.apk"
-          apkanalyzer manifest print "$RUNNER_TEMP/companion/migration-acceptance.apk" | python tools/mobile-migration/check_manifest.py
-          sha256sum "$RUNNER_TEMP/companion/migration-acceptance.apk"
+          keytool -genkeypair -alias cloud -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=Disposable cloud fixture' -keystore "$RUNNER_TEMP/cloud-signing.p12" -storepass android -keypass android
+          companion="$RUNNER_TEMP/companion/migration-acceptance.apk"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign --ks "$RUNNER_TEMP/cloud-signing.p12" --ks-pass pass:android --out "$companion" android/app/build/outputs/apk/androidTest/embedded/debug/*.apk
+          apkanalyzer manifest print "$companion" | python tools/mobile-migration/check_manifest.py
+          apkanalyzer dex code --class media.qimeng.next.test.MigrationAcceptance --method 'onStart()V' "$companion" > "$RUNNER_TEMP/acceptance-method"
+          test -s "$RUNNER_TEMP/acceptance-method"
+          sha256sum "$companion"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: migration-acceptance-apk
@@ -50,10 +54,11 @@ jobs:
       - name: Build cloud-only setup and prepare the isolated emulator
         run: |
           gradle -p android -Pqimeng.migrationTest=cloudFixture :app:assembleEmbeddedDebugAndroidTest
-          cp android/app/build/outputs/apk/androidTest/embedded/debug/*.apk "$RUNNER_TEMP/cloud-fixture.apk"
+          signer="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          "$signer" sign --ks "$RUNNER_TEMP/cloud-signing.p12" --ks-pass pass:android --out "$RUNNER_TEMP/cloud-fixture.apk" android/app/build/outputs/apk/androidTest/embedded/debug/*.apk
           app=$(find "$RUNNER_TEMP/installed" -name app-embedded-debug.apk -type f)
           test -f "$app"
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --out "$RUNNER_TEMP/cloud-host.apk" "$app"
+          "$signer" sign --ks "$RUNNER_TEMP/cloud-signing.p12" --ks-pass pass:android --out "$RUNNER_TEMP/cloud-host.apk" "$app"
           bash tools/prepare_android_runner.sh
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules

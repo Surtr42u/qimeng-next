@@ -36,8 +36,9 @@ android {
     }
 }
 androidComponents.onVariants { variant ->
-    if (migrationTest == null) variant.deviceTests.values.forEach { test ->
-        test.sources.kotlin?.addStaticSourceDirectory(rootProject.file("test-support").absolutePath)
+    variant.deviceTests.values.forEach { test ->
+        val sources = if (migrationTest == null) rootProject.file("test-support") else project.file("src/$migrationTest/kotlin")
+        test.sources.kotlin?.addStaticSourceDirectory(sources.absolutePath)
     }
 }
 dependencies {
