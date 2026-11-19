@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 
 from .errors import ToolError
+from .output import public
 from .state import encode
 
 
@@ -50,11 +51,18 @@ class WorkerIntake:
         self.excluded = []
         self.plan_exclusions = {}
         self.groups = set()
+        self.input_snapshot = None
         self.update(full_result(runtime, report))
 
     def update(self, report):
         if report["batch"]["id"] != self.batch_id or report["batch"]["manifestState"] != "sealed":
             raise ToolError("TASK_RESPONSE_INVALID", "读取的清单不属于当前已封存任务")
+        batch = report["batch"]
+        snapshot = {"manifestFingerprint": batch["manifestFingerprint"], "revision": batch["revision"]}
+        if snapshot != self.input_snapshot:
+            self.input_snapshot = snapshot
+            self.input_offsets = {0}
+            self.shown_inputs.clear()
         self.report = report
         self.research = (self.runtime.transport.call("getResearchProviderContext", {})
                          if self.can_research and report["batch"]["state"] not in {"completed", "cancelled"} else None)
@@ -65,7 +73,8 @@ class WorkerIntake:
             self.remember(plan)
 
     def refresh(self):
-        self.update(self.runtime.transport.call("getBatch", {"id": self.batch_id}))
+        report = self.runtime.transport.call("getBatch", {"id": self.batch_id})
+        self.update(public(report, self.runtime.config.token))
 
     def remember(self, plan):
         for key, previous in self.plans.items():
@@ -78,43 +87,72 @@ class WorkerIntake:
         self.plans[key] = plan
         return key
 
-    def page(self, rows, offset):
-        if type(offset) is not int or not 0 <= offset <= len(rows):
-            raise ToolError("INVALID_INPUT", "请使用上页返回的 offset")
-        end = min(offset + PAGE, len(rows))
+    def page(self, rows, offset, offsets, project):
         chunk = []
-        for row in rows[offset:end]:
+        for item in rows[offset:offset + PAGE]:
+            row = project(item)
             if chunk and len(encode(chunk + [row]).encode()) > self.runtime.config.output_bytes // 2:
                 break
             chunk.append(row)
-        return chunk, offset + len(chunk) if offset + len(chunk) < len(rows) else None
+        end = offset + len(chunk)
+        offsets.add(end)
+        return chunk, end if end < len(rows) else None
+
+    def read_page(self, offset, plan_key=None):
+        if plan_key is None:
+            identity = self.input_snapshot
+            offsets, total = self.input_offsets, len(self.by_number)
+        else:
+            plan = self.plans[plan_key]
+            identity = {"planId": plan["id"], "fingerprint": plan["fingerprint"]}
+            offsets, total = self.views.get(plan_key, ()), len(plan.get("items", ()))
+        # Only a boundary actually issued by this snapshot can earn a distinct request.
+        valid = type(offset) is int and (offset == 0 or 0 < offset < total and offset in offsets)
+
+        def read():
+            if not valid:
+                raise ToolError("INVALID_INPUT", "请从第一页开始，使用本清单或本计划已返回的 nextOffset")
+            if plan_key is None:
+                if offset == 0:
+                    self.refresh()
+                return self.summary(offset)
+            if offset == 0:
+                original = self.runtime.transport.call("getPlan", {"id": self.batch_id, "planId": identity["planId"]})
+                if original["id"] != identity["planId"]:
+                    raise ToolError("PLAN_SCOPE_DENIED", "服务返回的计划与所选计划不符")
+                return self.preview(public(original, self.runtime.config.token))
+            return self.plan_page(plan_key, offset)
+
+        return self.runtime.read_worker_page(self.batch_id, {**identity, "offset": offset if valid else None}, read)
+
+    def input_row(self, row):
+        number = row["ordinal"] + 1
+        item = self.uploads.get(row.get("uploadId"), {})
+        upload = item.get("upload", {})
+        entry = {"input": number, "name": row.get("originalFileName") or upload.get("fileName"),
+                 "state": row["state"]}
+        if row["state"] == "staged":
+            entry["canPrepare"] = item.get("researchOutcome") != "conflict" and not upload.get("replaceAssetId")
+            # These are the sender's actual selections. Omitting edit fields
+            # in the intent lets Go preserve them.
+            for key in ("mimeType", "family", "authorIds", "characterIds", "sourceIds", "collectionId", "relativeDirectory", "note"):
+                if upload.get(key):
+                    entry[key] = upload[key]
+            if len(encode(entry).encode()) > self.runtime.config.output_bytes // 2:
+                reference = self.runtime.state.save(entry)
+                self.details.add(reference)
+                entry = {"input": number, "name": (entry["name"] or "")[:160], "state": row["state"],
+                         "canPrepare": entry["canPrepare"], "resultRef": reference}
+            if item.get("researchOutcome"):
+                entry["researchOutcome"] = item["researchOutcome"]
+        if row.get("errorCode"):
+            entry["reason"] = row["errorCode"]
+        return entry
 
     def summary(self, offset=0):
         batch = self.report["batch"]
-        rows = []
-        for number, row in self.by_number.items():
-            item = self.uploads.get(row.get("uploadId"), {})
-            upload = item.get("upload", {})
-            entry = {"input": number, "name": row.get("originalFileName") or upload.get("fileName"),
-                     "state": row["state"]}
-            if row["state"] == "staged":
-                entry["canPrepare"] = item.get("researchOutcome") != "conflict" and not upload.get("replaceAssetId")
-                # These are the sender's actual selections. Omitting edit fields
-                # in the intent lets Go preserve them.
-                for key in ("mimeType", "family", "authorIds", "characterIds", "sourceIds", "collectionId", "relativeDirectory", "note"):
-                    if upload.get(key):
-                        entry[key] = upload[key]
-                if len(encode(entry).encode()) > self.runtime.config.output_bytes // 2:
-                    reference = self.runtime.state.save(entry)
-                    self.details.add(reference)
-                    entry = {"input": number, "name": (entry["name"] or "")[:160], "state": row["state"],
-                             "canPrepare": entry["canPrepare"], "resultRef": reference}
-                if item.get("researchOutcome"):
-                    entry["researchOutcome"] = item["researchOutcome"]
-            if row.get("errorCode"):
-                entry["reason"] = row["errorCode"]
-            rows.append(entry)
-        visible, next_offset = self.page(rows, offset)
+        rows = self.report["inputs"]
+        visible, next_offset = self.page(rows, offset, self.input_offsets, self.input_row)
         self.page_inputs = [row["input"] for row in visible]
         self.shown_inputs.update(row["input"] for row in visible)
         result = {"request": batch["label"], "state": batch["state"], "inputs": visible,
@@ -125,26 +163,27 @@ class WorkerIntake:
             result["nextOffset"] = next_offset
         return result
 
-    def preview(self, plan, offset=0, excluded=None):
-        if plan["batchId"] != self.batch_id:
-            raise ToolError("PLAN_SCOPE_DENIED", "预览不属于当前任务")
+    def preview(self, plan, excluded=None):
+        if plan["batchId"] != self.batch_id or any(item["uploadId"] not in self.by_upload for item in plan["items"]):
+            raise ToolError("PLAN_SCOPE_DENIED", "预览不属于本批封存清单")
         key = self.remember(plan)
         if excluded:
             self.plan_exclusions[key] = excluded
-        rows = []
-        for item in plan["items"]:
-            number = self.by_upload.get(item["uploadId"])
-            if number is None:
-                raise ToolError("PLAN_SCOPE_DENIED", "计划包含当前封存清单以外的输入")
-            row = {"input": number, "target": item["relativePath"], "authorIds": item["authorIds"]}
-            for field in ("collectionId", "sourceIds", "characterIds", "page"):
-                if item.get(field):
-                    row[field] = item[field]
-            rows.append(row)
-        visible, next_offset = self.page(rows, offset)
-        viewed = self.views.setdefault(key, set())
-        viewed.update(range(offset, offset + len(visible)))
-        result = {"plan": key, "state": plan["state"], "items": visible, "totalItems": len(rows), "previewComplete": len(viewed) == len(rows)}
+        return self.plan_page(key, 0)
+
+    def plan_row(self, item):
+        row = {"input": self.by_upload[item["uploadId"]], "target": item["relativePath"], "authorIds": item["authorIds"]}
+        for field in ("collectionId", "sourceIds", "characterIds", "page"):
+            if item.get(field):
+                row[field] = item[field]
+        return row
+
+    def plan_page(self, key, offset):
+        plan = self.plans[key]
+        rows = plan["items"]
+        viewed = self.views.setdefault(key, {0})
+        visible, next_offset = self.page(rows, offset, viewed, self.plan_row)
+        result = {"plan": key, "state": plan["state"], "items": visible, "totalItems": len(rows), "previewComplete": len(rows) in viewed}
         if key in self.plan_exclusions:
             result["notPlanned"] = self.plan_exclusions[key]
         if next_offset is not None:
@@ -153,7 +192,7 @@ class WorkerIntake:
 
     def reviewed(self):
         return {key for key, plan in self.plans.items() if key not in self.stale and "items" in plan and
-                len(self.views.get(key, ())) == len(plan["items"])}
+                len(plan["items"]) in self.views.get(key, ())}
 
     def reject_plan(self, plan_id):
         self.stale.update(key for key, plan in self.plans.items() if plan["id"] == plan_id)

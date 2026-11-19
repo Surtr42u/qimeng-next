@@ -69,3 +69,32 @@ func TestScanSignaturesRejectInvalidStoredMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestScanKnownUnchangedProgressFlushesAtCountAndTimeLimits(t *testing.T) {
+	ctx := context.Background()
+	s, run, _ := preparedScanFixture(t)
+	// Keep the elapsed-time condition inactive while crossing the count boundary.
+	run.lastFlush = time.Now().Add(time.Hour)
+	for range 127 {
+		if err := s.skipScannedEntry(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want int) {
+		t.Helper()
+		job, err := s.Scan(ctx, run.id)
+		if err != nil || job.Processed != want || job.Skipped != want {
+			t.Fatal("durable skip counts", want, job, err)
+		}
+	}
+	check(0)
+	if err := s.skipScannedEntry(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	check(128)
+	run.lastFlush = time.Now().Add(-time.Second)
+	if err := s.skipScannedEntry(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	check(129)
+}

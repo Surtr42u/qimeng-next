@@ -96,6 +96,11 @@ export function VideoPlayer({
     art.video.textTracks.addEventListener("addtrack", tracksChanged);
     art.video.textTracks.addEventListener("removetrack", tracksChanged);
     art.on("video:play", () => { interacted = true; callbacks.current.onPlay(); });
+    // ArtPlayer's progress control and keyboard shortcuts use its seek setter.
+    // Restoring a Go position above uses the native video and never emits this control event.
+    art.on("seek", () => {
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) interacted = true;
+    });
     art.on("video:timeupdate", () => {
       callbacks.current.onPosition?.(Math.round(art.currentTime * 1000));
       if (!art.video.paused && Date.now() - lastSentAt >= 10000) { lastSentAt = Date.now(); report(); }

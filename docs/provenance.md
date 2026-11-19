@@ -29,3 +29,5 @@
 随后按原讨论逐项核对 22 条产品要求和 36 个场景，补上 App 提交后的自动认领、可执行的下一步和跨端停等原因。三位 GPT-6.2 Astra / max 子代理负责 Go 的授权与并发、执行器的认领与中断恢复、标准 MCP 及真实模型验证。Qwen3-4B 在隔离云机上接收中文短任务并自行选择工具，验收端独立回读 Go 的实际结果。[受限任务与真实模型](https://github.com/Surtr42u/qimeng-next/pull/4) · [App 智能批次与恢复](https://github.com/Surtr42u/qimeng-next/pull/5)
 
 以 `8f4321a` 为起点的系统审查分两轮进行。四个只读审查分别检查数据与恢复、三端客户端、AI 与 MCP、测试与性能。另一组代理实施修复和回归用例，云端验收代理核对实际运行，主代理负责排序、归并与复核。主代理和每位子代理均从各自当轮的运行记录确认了 GPT-6.2 Astra、max 推理。性能对照使用独立数据库及合成原件。[同机扫描记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44452369764) · [协议来源锁的生成作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44454623724/job/135326529499)
+
+从主线 `21b4b6d` 接续的迭代以四个只读方向定位复扫写入、恢复后作者身份与备份凭证、播放器续播和 worker 长清单。实施代理按这些行为分别提交，验收代理从云端真实作业核对。各次派工及续工均核实为 GPT-6.2 Astra、max 推理。两个扫描对照分别测量耗时与非计时数据库写入。[两场三版对照](verification.md#普通库少量变动复扫) · [50 项清单与换宿主接续](https://github.com/Surtr42u/qimeng-next/actions/runs/44471246374/job/135381725569) · [快速返页与暂停定位](https://github.com/Surtr42u/qimeng-next/actions/runs/44471416242/job/135382443911)

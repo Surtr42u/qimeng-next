@@ -165,7 +165,22 @@ func (s *Service) inspectNativeItem(ctx context.Context, q store.Querier, plan N
 		r.State, r.Code = "conflict", "source_revision_conflict"
 		return r, nil
 	}
-	r.TargetObjectID = binding.targetID
+	boundTargetID := binding.targetID
+	if item.Kind == "authorProfileBlock" {
+		// The local author binding outlives the receiver's instance ID. Each
+		// block retains its own revision and payload hash.
+		var targets int
+		err = q.QueryRowContext(ctx, `SELECT coalesce(min(target_id),''), count(DISTINCT target_id) FROM native_delivery_bindings
+			WHERE source_instance=? AND kind=? AND object_id=?`, plan.SourceInstanceID, item.Kind, item.SourceObjectID).Scan(&boundTargetID, &targets)
+		if err != nil {
+			return r, err
+		}
+		if targets > 1 {
+			r.State, r.Code = "conflict", "identity_conflict"
+			return r, nil
+		}
+	}
+	r.TargetObjectID = boundTargetID
 	if r.TargetObjectID == "" {
 		r.TargetObjectID = nativeID("native-object", plan.TargetInstanceID, plan.SourceInstanceID, item.Kind, item.SourceObjectID)
 	}
@@ -195,13 +210,7 @@ func (s *Service) inspectNativeItem(ctx context.Context, q store.Querier, plan N
 		var author model.Author
 		author, err = store.Get[model.Author](ctx, q, "SELECT data FROM authors WHERE id=?", r.TargetObjectID)
 		if err == nil {
-			var ours bool
-			err = q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM native_delivery_bindings WHERE source_instance=? AND kind=? AND object_id=? AND target_id=?)",
-				plan.SourceInstanceID, item.Kind, item.SourceObjectID, r.TargetObjectID).Scan(&ours)
-			if err != nil {
-				return r, err
-			}
-			if !ours || author.Placeholder || author.Kind != item.Profile.AuthorKind {
+			if boundTargetID == "" || author.Placeholder || author.Kind != item.Profile.AuthorKind {
 				r.State, r.Code = "conflict", "identity_conflict"
 				return r, nil
 			}
@@ -234,9 +243,17 @@ func (s *Service) inspectNativeItem(ctx context.Context, q store.Querier, plan N
 			} else {
 				err = q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM authors WHERE name=? AND (json_extract(data,'$.kind')='cos' OR id='unknown'))", item.Label).Scan(&collision)
 			}
+			if err != nil {
+				return r, err
+			}
 			if collision {
 				r.State, r.Code = "conflict", "identity_conflict"
-				return r, err
+				return r, nil
+			}
+			if boundTargetID != "" {
+				r.TargetRevision = &revision
+				r.State, r.Code = "preserved", "human_protected"
+				return r, nil
 			}
 		}
 	}

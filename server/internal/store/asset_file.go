@@ -2,10 +2,26 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"qimeng.local/next/server/internal/model"
 )
+
+// UpdateScannedFile saves the observed original for an existing regular-library
+// asset. The scan supplies its current mtime, which also drives file-date sorting.
+func UpdateScannedFile(ctx context.Context, tx *sql.Tx, a model.Asset) error {
+	modified := a.ContentMtime.UTC()
+	updated := a.UpdatedAt.UTC()
+	_, err := tx.ExecContext(ctx, `UPDATE asset_records SET revision=?1,updated_at=?2,file_date=?3,
+		data=json_patch(data,json_object('revision',?1,'updatedAt',?4,'fileDate',?5,'contentUrl',?6,'thumbnailUrl',nullif(?7,'')))
+		WHERE id=?8`, a.Revision, updated.Format("2006-01-02T15:04:05.000000000Z"), modified.UnixMilli(),
+		updated.Format(time.RFC3339Nano), modified.Format(time.RFC3339Nano), a.ContentURL, a.ThumbnailURL, a.ID)
+	if err != nil {
+		return err
+	}
+	return saveAssetFile(ctx, tx, a, false)
+}
 
 // saveAssetFile runs in the transaction which owns the stable asset record.
 // Reusing a version with different facts reaches the immutable-table trigger.

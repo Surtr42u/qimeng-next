@@ -3,8 +3,10 @@ package httpapi_test
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -49,7 +51,51 @@ func nativeVideoUpload(t *testing.T, f *fixture, name string, body []byte, previ
 	return upload
 }
 
-func nativeCheckpointCopy(t *testing.T, f *fixture, stage string) *fixture {
+func directoryErrorCause(err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
+}
+
+func nativeDirectoryInfo(t *testing.T, role, name string, open func(string) (*os.File, error)) os.FileInfo {
+	t.Helper()
+	dir, err := open(name)
+	if err != nil {
+		t.Fatalf("open %s directory: %v", role, directoryErrorCause(err))
+	}
+	defer dir.Close()
+	// Stat the open directory so Windows supplies its volume and file ID from the handle.
+	info, err := dir.Stat()
+	if err != nil {
+		t.Fatalf("stat %s directory: %v", role, directoryErrorCause(err))
+	}
+	if !info.IsDir() {
+		t.Fatalf("%s is not a directory", role)
+	}
+	return info
+}
+
+func assertNativeLibraryDirectory(t *testing.T, f *fixture, expected string) os.FileInfo {
+	t.Helper()
+	bound, err := f.s.Root.LibraryPath(f.library)
+	if err != nil {
+		t.Fatalf("resolve registered library path: %v", directoryErrorCause(err))
+	}
+	registered := nativeDirectoryInfo(t, "registered library", "libraries/"+f.library, f.s.Root.Open)
+	reported := nativeDirectoryInfo(t, "resolved library", bound, os.Open)
+	wanted := nativeDirectoryInfo(t, "expected library", expected, os.Open)
+	registeredMatches := os.SameFile(registered, wanted)
+	reportedMatches := os.SameFile(reported, wanted)
+	if !registeredMatches || !reportedMatches {
+		t.Fatalf("library directory identity mismatch (registered matches expected=%t, resolved path matches expected=%t)", registeredMatches, reportedMatches)
+	}
+	t.Logf("verified library directory identity (matching path spelling=%t)", filepath.Clean(bound) == filepath.Clean(expected))
+	return registered
+}
+
+func nativeCheckpointCopy(t *testing.T, f *fixture, stage string, assetCount int) *fixture {
 	t.Helper()
 	var b service.Backup
 	decode(t, f.json("POST", "/backups", "native-checkpoint-"+stage, struct{}{}, 201), &b)
@@ -63,7 +109,7 @@ func nativeCheckpointCopy(t *testing.T, f *fixture, stage string) *fixture {
 		ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext"), Destination: destination,
 		ExpectedSHA256: b.ArchiveHash, ReserveBytes: 1,
 	})
-	if err != nil || result.AssetCount != 2 || result.InstanceID == f.s.InstanceID || result.ArchiveHash != b.ArchiveHash {
+	if err != nil || result.AssetCount != assetCount || result.InstanceID == f.s.InstanceID || result.ArchiveHash != b.ArchiveHash {
 		t.Fatal("isolated restore", result, err)
 	}
 	restored, err := service.New(service.Config{DataDir: destination, AdminToken: testSecret, ReserveBytes: 1})
@@ -71,11 +117,21 @@ func nativeCheckpointCopy(t *testing.T, f *fixture, stage string) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { restored.Close() })
-	bound, err := restored.Root.LibraryPath(f.library)
-	if err != nil || filepath.Clean(bound) != filepath.Join(destination, "libraries", f.library) {
-		t.Fatal("restored location did not bind to the new isolated storage root", err)
+	restoredFixture := &fixture{t: t, s: restored, h: httpapi.New(restored), library: f.library}
+	var library model.Library
+	decode(t, restoredFixture.json("GET", "/libraries/"+f.library, "", nil, 200), &library)
+	if restored.InstanceID != result.InstanceID {
+		t.Fatal("reopening the restored database changed the instance ID")
 	}
-	return &fixture{t: t, s: restored, h: httpapi.New(restored), library: f.library}
+	if library.ID != f.library || library.StorageID != "data" {
+		t.Fatalf("unexpected restored library registration (same library ID=%t, local data storage=%t)", library.ID == f.library, library.StorageID == "data")
+	}
+	bound := assertNativeLibraryDirectory(t, restoredFixture, filepath.Join(destination, "libraries", f.library))
+	source := nativeDirectoryInfo(t, "source library", "libraries/"+f.library, f.s.Root.Open)
+	if os.SameFile(source, bound) {
+		t.Fatal("restored library is still bound to the source directory")
+	}
+	return restoredFixture
 }
 
 func assertNativeOriginal(t *testing.T, f *fixture, id string, version int64, original []byte) {
@@ -102,10 +158,7 @@ func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 	decode(t, f.json("POST", "/libraries", "register-native-source", map[string]string{"name": "Native source", "kind": "regular",
 		"storageId": "source-volume", "rootRelativePath": "originals"}, 201), &library)
 	f.library = library.ID
-	bound, err := s.Root.LibraryPath(library.ID)
-	if err != nil || filepath.Clean(bound) != filepath.Join(external, "originals") {
-		t.Fatal("source location did not bind to the synthetic external root", err)
-	}
+	assertNativeLibraryDirectory(t, f, filepath.Join(external, "originals"))
 	controlUpload, controlBytes := f.upload("control.png", 148, nil)
 	control := f.complete(controlUpload).Asset
 	a := *f.complete(nativeVideoUpload(t, f, "camera.mp4", low, nil)).Asset
@@ -126,7 +179,7 @@ func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 	if a.ID != before || a.ContentVersion != 1 || a.RelativePath != moved || a.Hash != fmt.Sprintf("%x", sha256.Sum256(low)) {
 		t.Fatal("rename changed the content or identity", a.ID, a.ContentVersion, a.RelativePath)
 	}
-	firstCopy := nativeCheckpointCopy(t, f, "before")
+	firstCopy := nativeCheckpointCopy(t, f, "before", 2)
 	assertNativeOriginal(t, firstCopy, a.ID, 1, low)
 	assertNativeOriginal(t, firstCopy, control.ID, 1, controlBytes)
 	var first model.Asset
@@ -141,7 +194,7 @@ func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 		latest.Width != 1280 || latest.Height != 720 || latest.DurationMs < 1300 || latest.ProbeState != "ready" {
 		t.Fatal("high-resolution replacement/replay did not publish exactly v2")
 	}
-	secondCopy := nativeCheckpointCopy(t, f, "after")
+	secondCopy := nativeCheckpointCopy(t, f, "after", 2)
 	for _, instance := range []*fixture{f, secondCopy} {
 		var current model.Asset
 		decode(t, instance.json("GET", root, "", nil, 200), &current)

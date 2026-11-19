@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useEventLedger } from "./events";
+import { useAsset } from "./media";
 import type { Schema } from "./client";
 import { VisibleClock } from "../lib/dwell";
 import { newId } from "../lib/id";
@@ -67,6 +68,7 @@ export function useDetailSession(assetId: string, contentVersion: number) {
     };
   }, [assetId, contentVersion, ledger, send]);
   return {
+    id: sessionId.current,
     error,
     retry: () => {
       if (failed.current) send(failed.current);
@@ -89,4 +91,16 @@ export function useDetailSession(assetId: string, contentVersion: number) {
         occurredAt: new Date().toISOString(),
       }),
   };
+}
+
+const noSubscription = () => () => {};
+export function usePlaybackResume(assetId: string, version: number, sessionId: string) {
+  const ledger = useEventLedger();
+  const pending = useSyncExternalStore(ledger?.subscribe ?? noSubscription,
+    () => ledger?.hasEarlierProgress(assetId, version, sessionId) ?? true);
+  // This observer shares the detail query. A prior visit's receipt enables a fresh read
+  // after the write, even if the user reopened the player before that receipt arrived.
+  const detail = useAsset(assetId, !pending);
+  if (pending || detail.isFetching || detail.isStale || detail.isError || detail.data?.contentVersion !== version) return undefined;
+  return detail.data;
 }

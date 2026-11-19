@@ -114,21 +114,39 @@ func snapshotProtectionItems(ctx context.Context, db *sql.DB, batch model.Batch,
 	return items, nil
 }
 
-// Older reports could have taken their item list from a later live database.
-// The local checkpoint and the independently verified copy share this digest.
-func (s *Service) legacySnapshotVersions(ctx context.Context, p BatchProtection) (map[string]ProtectedInput, error) {
-	name := "backups/" + p.CheckpointID + "/snapshot.sqlite"
-	if err := s.verifyContext(ctx, name, p.SnapshotHash, p.SnapshotBytes); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, Fail(409, "snapshot_unavailable", "历史检查点不可读。请取回同一摘要的快照或为当前入库版本新建保护。")
-		}
-		return nil, err
+// One operation uses the same target handle for the snapshot, receipt and
+// original. A permit read with an intact local checkpoint needs no target.
+type protectionFiles struct {
+	service                *Service
+	proof                  BatchProtection
+	target                 *os.Root
+	targetSnapshotVerified bool
+}
+
+func (f *protectionFiles) openTarget(ctx context.Context) (*os.Root, error) {
+	if f.target != nil {
+		return f.target, nil
 	}
-	absolute, err := s.Root.AbsolutePath(name)
+	target, err := f.service.protectionTarget(ctx, f.proof)
 	if err != nil {
 		return nil, err
 	}
-	db, err := store.OpenDatabase(absolute, store.SnapshotDatabase)
+	root, err := os.OpenRoot(target.Path)
+	if err != nil {
+		return nil, Fail(503, "backup_target_unavailable", "独立备份目标当前不可用。")
+	}
+	f.target = root
+	return root, nil
+}
+
+func (f *protectionFiles) close() {
+	if f.target != nil {
+		f.target.Close()
+	}
+}
+
+func readSnapshotVersions(ctx context.Context, name string, p BatchProtection) (map[string]ProtectedInput, error) {
+	db, err := store.OpenDatabase(name, store.SnapshotDatabase)
 	if err != nil {
 		return nil, err
 	}
@@ -140,24 +158,121 @@ func (s *Service) legacySnapshotVersions(ctx context.Context, p BatchProtection)
 	return versions, err
 }
 
-func (s *Service) verifyLegacyProtectionItems(ctx context.Context, p BatchProtection, items []ProtectedInput, cache map[string]map[string]ProtectedInput) error {
-	versions, ok := cache[p.ID]
-	if !ok {
-		var err error
-		versions, err = s.legacySnapshotVersions(ctx, p)
+// Older reports could have taken their item list from a later live database.
+// Only a missing local checkpoint can be substituted with the independent copy.
+func (f *protectionFiles) legacySnapshotVersions(ctx context.Context) (map[string]ProtectedInput, error) {
+	s, p := f.service, f.proof
+	name := "backups/" + p.CheckpointID + "/snapshot.sqlite"
+	err := s.verifyContext(ctx, name, p.SnapshotHash, p.SnapshotBytes)
+	if err == nil {
+		absolute, err := s.Root.AbsolutePath(name)
+		if err != nil {
+			return nil, err
+		}
+		return readSnapshotVersions(ctx, absolute, p)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	versions, err := f.independentSnapshotVersions(ctx)
+	f.targetSnapshotVerified = err == nil
+	return versions, err
+}
+
+func (f *protectionFiles) independentSnapshotVersions(ctx context.Context) (versions map[string]ProtectedInput, err error) {
+	s, p := f.service, f.proof
+	// SQLite opens by filename. Keep one instance-private copy of the exact
+	// bytes hashed from the target, even with several concurrent permit reads.
+	select {
+	case s.protectionRead <- struct{}{}:
+		defer func() { <-s.protectionRead }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.workCtx.Done():
+		return nil, s.workCtx.Err()
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	root, err := f.openTarget(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dir := "cache/protection-read-" + s.InstanceID
+	name := dir + "/snapshot.sqlite"
+	if err = s.ensureParent(name); err != nil {
+		return nil, err
+	}
+	scratch, err := s.Root.OpenDirectoryRoot(dir, syncPathLink)
+	if err != nil {
+		return nil, err
+	}
+	defer scratch.Close()
+	if err = clearProtectionScratch(scratch); err != nil {
+		return nil, err
+	}
+	out, err := scratch.OpenFile("snapshot.sqlite", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, clearProtectionScratch(scratch)) }()
+	err = readTargetObject(ctx, root, protectionSnapshot(p), p.SnapshotHash, p.SnapshotBytes, &reserveWriter{ctx: ctx, s: s, file: out})
+	if errors.Is(err, os.ErrNotExist) {
+		err = Fail(409, "snapshot_unavailable", "本地检查点与独立目标上的同一快照均不可读，来源应保留。")
+	}
+	if err = errors.Join(err, out.Close()); err != nil {
+		return nil, err
+	}
+	absolute, err := s.Root.AbsolutePath(name)
+	if err != nil {
+		return nil, err
+	}
+	return readSnapshotVersions(ctx, absolute, p)
+}
+
+// A hard stop can leave this instance's scratch file or a SQLite sidecar.
+// The slot and data-root ownership lock exclude any other user of these names.
+func clearProtectionScratch(root *os.Root) error {
+	for _, name := range []string{"snapshot.sqlite", "snapshot.sqlite-journal", "snapshot.sqlite-wal", "snapshot.sqlite-shm"} {
+		info, err := root.Lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		if cache != nil {
-			cache[p.ID] = versions
+		if !info.Mode().IsRegular() || syncPathLink(info) {
+			return Fail(409, "snapshot_scratch_occupied", "快照暂存位置已有其他类型的对象，请保留并核对。")
 		}
+		if err = root.Remove(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type legacySnapshotResult struct {
+	versions map[string]ProtectedInput
+	err      error
+}
+
+func (f *protectionFiles) verifyLegacyProtectionItems(ctx context.Context, items []ProtectedInput, cache map[string]legacySnapshotResult) error {
+	result, ok := cache[f.proof.ID]
+	if !ok {
+		result.versions, result.err = f.legacySnapshotVersions(ctx)
+		if cache != nil {
+			cache[f.proof.ID] = result
+		}
+	}
+	if result.err != nil {
+		return result.err
 	}
 	for _, item := range items {
 		if item.State == "retained" {
 			continue
 		}
 		item.State = "ready"
-		if versions[item.InputID] != item {
+		if result.versions[item.InputID] != item {
 			return Fail(409, "input_version_unverified", "业务快照未覆盖这项输入的入库版本，来源应保留。")
 		}
 	}

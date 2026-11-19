@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   all: vi.fn(),
   write: vi.fn(),
   invalidate: vi.fn(),
+  invalidatePlayback: vi.fn(),
 }));
 vi.mock("../src/data/client", () => ({
   api: { POST: mocks.post },
@@ -15,6 +16,7 @@ vi.mock("../src/data/storage", () => ({
 }));
 vi.mock("../src/data/query", () => ({
   queryClient: { invalidateQueries: mocks.invalidate },
+  invalidatePlaybackDetail: mocks.invalidatePlayback,
 }));
 import { EventLedger } from "../src/data/event-ledger";
 import { ApiError } from "../src/lib/errors";

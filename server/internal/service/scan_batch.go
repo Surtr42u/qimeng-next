@@ -186,10 +186,7 @@ func (s *Service) commitFreshScanPrefix(ctx context.Context, run *scanRun, files
 			}
 		}
 	}
-	if err = saveScan(ctx, tx, j); err != nil {
-		return 0, 0, errors.Join(itemErr, err)
-	}
-	if err = tx.Commit(); err != nil {
+	if err = run.commitFileProgress(ctx, tx, j); err != nil {
 		return 0, 0, errors.Join(itemErr, err)
 	}
 	s.wakeAuthorMirror()

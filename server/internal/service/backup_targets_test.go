@@ -19,13 +19,13 @@ func TestIndependentObjectCopyReadsBackAndNeverOverwritesCorruptEvidence(t *test
 	hash := digest([]byte(body))
 	opened := 0
 	open := func() (io.ReadCloser, error) { opened++; return io.NopCloser(strings.NewReader(body)), nil }
-	if e = copyTargetObject(context.Background(), root, directory, "temporary/work.partial", "objects/content", hash, int64(len(body)), 1, open); e != nil {
+	if e = copyTargetObject(context.Background(), root, "temporary/work.partial", "objects/content", hash, int64(len(body)), 1, open); e != nil {
 		t.Fatal(e)
 	}
 	if opened != 1 {
 		t.Fatal("source was not streamed")
 	}
-	if e = copyTargetObject(context.Background(), root, directory, "temporary/work.partial", "objects/content", hash, int64(len(body)), 1, open); e != nil {
+	if e = copyTargetObject(context.Background(), root, "temporary/work.partial", "objects/content", hash, int64(len(body)), 1, open); e != nil {
 		t.Fatal(e)
 	}
 	if opened != 1 {
@@ -39,7 +39,7 @@ func TestIndependentObjectCopyReadsBackAndNeverOverwritesCorruptEvidence(t *test
 		t.Fatal(e)
 	}
 	damaged.Close()
-	if e = copyTargetObject(context.Background(), root, directory, "temporary/work.partial", "objects/content", hash, int64(len(body)), 1, open); e == nil {
+	if e = copyTargetObject(context.Background(), root, "temporary/work.partial", "objects/content", hash, int64(len(body)), 1, open); e == nil {
 		t.Fatal("changed backup object was blessed or overwritten")
 	}
 	if opened != 1 {
