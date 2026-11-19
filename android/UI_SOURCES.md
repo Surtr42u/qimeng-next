@@ -18,6 +18,7 @@
 | `feature/manage/DeviceApplyScreen.kt` 的作者覆盖行及操作按钮 | `app/.../screen/DeviceDeliveryScreen.kt` 沿用「应用时覆盖作者资料」开关、默认关闭和保存草稿的操作。说明文字采用新 Go 预检的修订与人工保护口径。 |
 | `feature/manage/BackupScreen.kt` 的「同步浏览数据」卡 | `MaintenanceScreen.kt` 与上传页共用 `ActivityEventCard.kt`，从同一个 Next 持久队列查看本连接的状态和单条处理操作。 |
 | `feature/manage/{VocabularyEditScreen,VocabularyEditGroupsCard,VocabularyEditDialogs}.kt` | `ExtractionVocabularyScreen.kt` 恢复停用词卡、可展开的出处组及胶囊词条对话框，保存与重算使用 Next 当前连接的词表修订。 |
+| `feature/settings/SettingsScreen.kt` 的「关于」 | `ManagementScreens.kt` 的同位置版本行读取 Next `/system/status` 公布的构建版本。 |
 | `feature/author/{AuthorScreen,AuthorCollectionScreen,CreatorProfileCard,CreatorNewWorks,CreatorProfileDetails}.kt` | 新作者列表、作品集合、资料与维护、订阅区域；查询、编辑、候选、已确认账号与手动检查采用新 Go 服务。 |
 
 ## 依赖与模块边界

@@ -94,6 +94,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return ServerCapabilities(instance.capabilities.aiConfigured, instance.capabilities.recommendations, instance.capabilities.rankings)
     }
 
+    suspend fun serverVersion(target: Session): String? {
+        val status = provider.api(target).getSystemStatus().bodyOrThrow()
+        check(status.instanceId == target.instanceId) { "地址已指向另一个媒体库，请重新登录" }
+        return status.version?.takeIf(String::isNotBlank)
+    }
+
     suspend fun libraryPage(cursor: String? = null): Page<Library> {
         val page = provider.api(target()).listLibraries(cursor = cursor, limit = 50).bodyOrThrow()
         return Page(page.items.map(ApiLibrary::toModel), page.nextCursor, page.totalMatched)

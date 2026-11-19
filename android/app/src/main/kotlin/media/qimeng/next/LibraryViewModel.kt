@@ -225,6 +225,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         graph.uploads.schedule()
         session.value?.let { graph.archives.resume(it) }
     }
+    suspend fun serverVersion(target: Session, transport: Long): String? {
+        val version = repository.serverVersion(target)
+        check(sameTarget(target, session.value) && transport == transportRevision.value) { "连接已改变" }
+        return version
+    }
     fun loadLibraries(next: Boolean = false) = loadPage(libraryState, next) { cursor ->
         val page = repository.libraryPage(cursor)
         if (cursor != null) {

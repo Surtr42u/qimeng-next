@@ -454,6 +454,19 @@ class AndroidRealServerTest {
         archiveRoundTrip(isolatedServerGraph())
     }
 
+    @Test(timeout = 60_000)
+    fun readsDeclaredServiceVersionInAbout() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        val version = requireNotNull(runBlocking { graph.media.serverVersion(target) })
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("版本信息"))
+        compose.waitUntil(20_000) { compose.onAllNodesWithText("服务端 $version").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("服务端 $version").assertIsDisplayed()
+        screenshot("real-server-about-version.png")
+    }
+
     private fun editVisibleField(tag: String, text: String) {
         val field = hasTestTag(tag)
         compose.waitUntil(30_000) { compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
