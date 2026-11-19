@@ -3,7 +3,9 @@ package media.qimeng.next.data
 import android.content.Context
 import kotlinx.coroutines.*
 import media.qimeng.next.model.Asset
+import media.qimeng.next.model.PendingEvent
 import java.time.Instant
+import java.util.UUID
 
 /** Application-scoped composition root shared by foreground UI and WorkManager. */
 class DataGraph private constructor(context: Context) {
@@ -25,6 +27,7 @@ class DataGraph private constructor(context: Context) {
     val deviceDelivery = DeviceDeliveryRepository(context, settings, provider, backups)
     internal val archiveProtection = ArchiveProtection(context, archives.store, provider, queue)
     val uploads = UploadRepository(context, queue, settings)
+    val activityEvents = ActivityEventQueue(queue, settings, uploads::schedule)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** A normal activity exit must not cancel the final visible segment's journal commit. */
@@ -33,7 +36,8 @@ class DataGraph private constructor(context: Context) {
         scope.launch {
             try {
                 if (queue.state.value == null) queue.load()
-                uploads.event(asset, kind, positionMs, sessionId, seconds, occurredAt)
+                activityEvents.append(PendingEvent(UUID.randomUUID().toString(), asset.target, asset.id, kind,
+                    positionMs.coerceAtLeast(0), asset.version, sessionId, seconds, occurredAt, assetName = asset.name.take(240)))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { queue.reportProblem(safeFailure(failure)) }
         }

@@ -679,7 +679,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         graph.uploads.schedule()
     }
     fun reloadQueue() = action { graph.queue.load(); graph.uploads.schedule() }
-    fun retryEvents() = action { graph.uploads.retryEvents() }
+    fun retryEvents(target: Session, id: String? = null) = action { graph.activityEvents.retry(target, id) }
+    fun dismissEvent(target: Session, event: PendingEvent) = action { graph.activityEvents.dismiss(target, event) }
     fun savePreferences(preferences: Preferences) = action { withContext(Dispatchers.IO) { graph.settings.savePreferences(preferences) } }
 
     private fun <T> loadPage(state: MutableStateFlow<ListState<T>>, next: Boolean, loader: suspend (String?) -> Page<T>) {

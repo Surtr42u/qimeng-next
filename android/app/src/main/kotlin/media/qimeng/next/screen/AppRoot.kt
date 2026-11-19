@@ -122,7 +122,7 @@ fun AppRoot(model: LibraryViewModel) {
                                 route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
                                 route == "upload" -> UploadScreen(model)
                                 route == "archive-folder" -> ArchiveSettingsScreen(model::back)
-                                route == "maintenance" -> MaintenanceScreen(model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
+                                route == "maintenance" -> MaintenanceScreen(model, model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
                                 route == "reports" -> TasksScreen(model)
                                 route == "appearance" -> AppearanceScreen(preferences.theme, preferences.material,
                                     { model.savePreferences(preferences.copy(theme = it)) }, { model.savePreferences(preferences.copy(material = it)) }, model::back)

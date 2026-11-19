@@ -202,16 +202,6 @@ class UploadRepository internal constructor(private val context: Context, val qu
         schedule()
     }
 
-    suspend fun event(asset: Asset, kind: String, positionMs: Long = 0, sessionId: String,
-                      seconds: Double = 0.0, occurredAt: String = Instant.now().toString()) {
-        queue.update { snapshot ->
-            check(snapshot.events.size < 1000) { "浏览记录补传队列已满，请连接服务器后再试" }
-            snapshot.copy(events = snapshot.events + PendingEvent(UUID.randomUUID().toString(), asset.target, asset.id, kind,
-                positionMs.coerceAtLeast(0), asset.version, sessionId, seconds, occurredAt))
-        }
-        schedule()
-    }
-
     suspend fun retry(id: String) {
         queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
             if (it.id == id && canRetry(it.state)) {
@@ -253,11 +243,6 @@ class UploadRepository internal constructor(private val context: Context, val qu
             intakeFailures = it.intakeFailures.filterNot { failure -> failure.id in clearedFailures }.map { failure ->
                 if (failure.batchKey == null) failure.copy(message = "应用内未完成副本清理失败，记录已保留；来源文件未改动") else failure
             }) }
-    }
-
-    suspend fun retryEvents() {
-        queue.update { it.copy(events = it.events.map { event -> event.copy(failure = null) }) }
-        schedule()
     }
 
     fun schedule() {
