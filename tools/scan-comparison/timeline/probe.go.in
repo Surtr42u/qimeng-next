@@ -1,0 +1,108 @@
+// Only the isolated Linux experiment imports this package through a Go overlay.
+package scanprobe
+
+import (
+	"encoding/json"
+	"os"
+	"os/signal"
+	"sync"
+	"sync/atomic"
+	"syscall"
+
+	"golang.org/x/sys/unix"
+)
+
+type event struct {
+	Name  string `json:"name"`
+	Start int64  `json:"start_ns"`
+	End   int64  `json:"end_ns"`
+}
+
+var (
+	output = os.Getenv("QIMENG_SCAN_STUDY_DUMP")
+	posts  atomic.Int32
+	active atomic.Bool
+	mu     sync.Mutex
+	events []event
+)
+
+func clock() int64 {
+	var value unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &value); err != nil {
+		panic(err)
+	}
+	return value.Nano()
+}
+
+func Now() int64 {
+	if !active.Load() {
+		return 0
+	}
+	return clock()
+}
+
+func Record(name string, start, end int64) {
+	if start == 0 {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) == cap(events) {
+		panic("synthetic scan trace capacity exceeded")
+	}
+	events = append(events, event{Name: name, Start: start, End: end})
+}
+
+func End(name string, start int64) {
+	if start != 0 {
+		Record(name, start, clock())
+	}
+}
+
+func Point(name string) {
+	stamp := Now()
+	Record(name, stamp, stamp)
+}
+
+func ManualPOST() {
+	if output != "" && posts.Add(1) == 3 {
+		active.Store(true)
+		Point("post.enter")
+	}
+}
+
+func init() {
+	if output == "" {
+		return
+	}
+	events = make([]event, 0, 8192)
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGUSR2)
+	go func() {
+		// The harness asks for a dump only after the physical and identity checks.
+		<-ch
+		mu.Lock()
+		rows := append([]event(nil), events...)
+		mu.Unlock()
+		const samples = 2048
+		start := clock()
+		for i := 0; i < samples; i++ {
+			End("calibration", Now())
+		}
+		calibration := clock() - start
+		raw, err := json.Marshal(struct {
+			Events []event `json:"events"`
+			CalibrationNS int64 `json:"calibration_ns"`
+			Samples int `json:"calibration_samples"`
+		}{rows, calibration, samples})
+		if err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(output+".pending", raw, 0600); err != nil {
+			panic(err)
+		}
+		if err := os.Rename(output+".pending", output); err != nil {
+			panic(err)
+		}
+	}()
+}

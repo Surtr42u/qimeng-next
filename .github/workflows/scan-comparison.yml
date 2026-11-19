@@ -19,10 +19,11 @@ jobs:
     timeout-minutes: 35
     env:
       REFERENCE_SHA: 745974081716a9d69a95002a41220e35e743d764
+      NEXT_BASE: befa334a2b6f5570c01876fff991a2f41b18bc6d
       CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: {path: next, persist-credentials: false}
+        with: {path: next, persist-credentials: false, fetch-depth: 0}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: Surtr42u/qimeng-media
@@ -48,11 +49,15 @@ jobs:
         run: |
           test "$(git -C installed rev-parse HEAD)" = "$REFERENCE_SHA"
           test "$(git -C next rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ "$GITHUB_REF_NAME" == codex/scan-sparse-timing-study ]]; then
+            git -C next diff --exit-code "$NEXT_BASE" "$GITHUB_SHA" -- server tools/scan-comparison/compare.py tools/scan-comparison/identity_check.py
+          fi
           make -C installed sdk-go
           python next/tools/generate_sdks.py --target go
           (cd installed/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/installed-server" ./cmd/qimeng)
           (cd next/server && go build -mod=readonly -trimpath -o "$RUNNER_TEMP/next-server" ./cmd/qimeng)
       - name: Submit and observe manual scans
+        if: github.ref_name != 'codex/scan-sparse-timing-study'
         env:
           BEFORE_NEXT: ${{ inputs.before_next }}
         run: |
@@ -64,14 +69,34 @@ jobs:
             extra+=("$RUNNER_TEMP/before-server")
           fi
           python3 next/tools/scan-comparison/compare.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence "${extra[@]}"
+      - name: Build temporary clock probes against both production checkouts
+        if: github.ref_name == 'codex/scan-sparse-timing-study'
+        run: |
+          python next/tools/scan-comparison/timeline/prepare.py next/server installed/server "$RUNNER_TEMP/scan-overlay"
+          for version in installed next; do
+            (cd "$version/server" && go build -mod=readonly -trimpath -overlay="$RUNNER_TEMP/scan-overlay/$version.json" -o "$RUNNER_TEMP/$version-probe" ./cmd/qimeng)
+          done
+      - name: Alternate five isolated sparse pairs with clocks and five original pairs
+        if: github.ref_name == 'codex/scan-sparse-timing-study'
+        run: python next/tools/scan-comparison/timeline/run.py "$RUNNER_TEMP" evidence/timeline
+      - name: Verify manual metadata and moved identity on plain and probed binaries
+        if: github.ref_name == 'codex/scan-sparse-timing-study'
+        run: |
+          for binary in server probe; do
+            mkdir -p "evidence/identity-$binary"
+            GITHUB_SHA="$NEXT_BASE" python next/tools/scan-comparison/identity_check.py "$RUNNER_TEMP/installed-$binary" "$RUNNER_TEMP/next-$binary" "evidence/identity-$binary"
+          done
       - name: Compare identity when file timestamps and content disagree
+        if: github.ref_name != 'codex/scan-sparse-timing-study'
         run: python3 next/tools/scan-comparison/identity_check.py "$RUNNER_TEMP/installed-server" "$RUNNER_TEMP/next-server" evidence
       - name: Sample the scan functions after the timing trials
+        if: github.ref_name != 'codex/scan-sparse-timing-study'
         working-directory: next/server
         run: |
           go test -mod=readonly -run '^TestUnchangedLibraryScanCountsEveryFileWithoutPerFileCatalogWrites$' -count=12 -cpuprofile="$RUNNER_TEMP/scan.cpu" -o "$RUNNER_TEMP/scan.test" ./internal/httpapi
           go tool pprof -list='service\.\(\*Service\)\.(scanFile|scanMissing|scanSignatures|walkLibrary)$' "$RUNNER_TEMP/scan.test" "$RUNNER_TEMP/scan.cpu" > ../../evidence/scan-function-samples.txt
       - name: Check new matches, manual author removal and identity after a move
+        if: github.ref_name != 'codex/scan-sparse-timing-study'
         run: '"$RUNNER_TEMP/scan.test" -test.v -test.run "^(TestScanningNewAuthorRuleMatchAndLaterManualRemoval|TestScanRegistersExistingFileAndConservesIdentityAfterExternalMove)$"'
       - name: Verify partial commits, cancellation and missing-file reconciliation
         working-directory: next/server
@@ -79,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: installed-next-scan-comparison
+          name: ${{ github.ref_name == 'codex/scan-sparse-timing-study' && 'sparse-clock-timeline' || 'installed-next-scan-comparison' }}
           path: evidence/
-          retention-days: 14
+          retention-days: 60
           if-no-files-found: warn
