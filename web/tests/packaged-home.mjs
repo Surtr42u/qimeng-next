@@ -17,6 +17,23 @@ const browser = await chromium.launch(process.platform === "win32" ? { channel: 
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.goto(base);
+  const entryURLs = await page.locator('script[type="module"][src^="/assets/"], link[rel="stylesheet"][href^="/assets/"]').evaluateAll(
+    nodes => nodes.map(node => node.getAttribute("src") || node.getAttribute("href")));
+  assert.equal(entryURLs.length, 2);
+  for (const url of entryURLs) {
+    const original = await readFile(join(app, "web", url.slice(1)));
+    const compressed = await readFile(join(app, "web", url.slice(1) + ".gz"));
+    const response = await page.request.get(base + url, { headers: { "Accept-Encoding": "gzip, br" } });
+    assert.equal(response.status(), 200);
+    assert.equal(response.headers()["content-encoding"], "gzip");
+    assert.equal(Number(response.headers()["content-length"]), compressed.length);
+    assert.equal(response.headers().vary, "Accept-Encoding");
+    assert.deepEqual(await response.body(), original);
+    const identity = await page.request.get(base + url, { headers: { "Accept-Encoding": "gzip;q=0" } });
+    assert.equal(identity.status(), 200);
+    assert.equal(identity.headers()["content-encoding"], undefined);
+    assert.deepEqual(await identity.body(), original);
+  }
   await page.getByLabel("管理密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("heading", { name: "为你推荐", exact: true }).waitFor();

@@ -142,6 +142,7 @@ func run() error {
 	var handler http.Handler = api
 	if web := os.Getenv("QIMENG_WEB_DIR"); web != "" {
 		files := http.FileServer(http.Dir(web))
+		packaged := loadWebEncodings(web)
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
 				api.ServeHTTP(w, r)
@@ -154,6 +155,9 @@ func run() error {
 			local := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/")))
 			if local == ".." || strings.HasPrefix(local, ".."+string(os.PathSeparator)) || filepath.IsAbs(local) {
 				http.Error(w, "invalid path", 400)
+				return
+			}
+			if entry, ok := packaged[r.URL.Path]; ok && entry.serve(w, r, web) {
 				return
 			}
 			if _, e := os.Stat(filepath.Join(web, local)); errors.Is(e, os.ErrNotExist) {
