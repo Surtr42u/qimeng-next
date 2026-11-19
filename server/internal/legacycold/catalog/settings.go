@@ -63,7 +63,7 @@ func (i *importer) readSettings() error {
 		if key == "author_mirror" {
 			// The SQL projection deliberately excluded the previous filesystem target.
 			var mirror struct {
-				Mode string
+				Mode             string
 				FragmentFilename string
 			}
 			if err := decode(raw, &mirror); err != nil ||
