@@ -44,6 +44,10 @@ Compose 会拉取固定摘要的 Alpine 镜像，直接运行包中的服务程�
 ssh -N -L 18421:127.0.0.1:8421 用户@NAS
 ```
 
+## 配置统计时区
+
+在启动影库的同一终端设置 `QIMENG_TIMEZONE` 为 IANA 时区，例如 Windows PowerShell 中运行 `$env:QIMENG_TIMEZONE = 'Asia/Shanghai'`，再运行 `.\start.cmd`。Linux 和 NAS 在运行 `bash start.sh` 或 `bash start.sh nas` 前运行 `export QIMENG_TIMEZONE=Asia/Shanghai`。日榜、浏览和点赞按服务端时区划分日期。留空时使用服务进程所在环境的默认时区，NAS Compose 使用容器的默认时区。
+
 ## 上传第一张图片
 
 在「数据管理 → 库管理」确认上文对应的服务器目录已登记。进入「数据管理 → 上传文件」，选中这个库，保留默认的「普通上传」，点击「选择文件并立即上传」并选一张测试图片。上传队列显示完成后，到「相册」打开图片核对结果。未完成时先看本页队列的提示，已建立的批次可到「任务与报告」查看逐项结果。
