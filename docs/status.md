@@ -2,6 +2,8 @@
 
 更新于 2026-11-19。本仓已按所有者授权公开，以 MIT 许可证发布。公开验收使用隔离目录和合成资料。真实资料切换、手机安装与 NAS 实机验收以各自的本机记录为准。
 
+本轮的主线和候选提交、待取的 Windows 与 Android 包、后台预热与设备验收步骤见[接手手册](handover.md)。下文保留各自所列提交的历史测量。
+
 已校对图片在保留原始迁移基线后单独合并。Windows 与 Linux 的正式工具均已从合成基线恢复、核对完整字节与时间、发布和开启普通服务，再从新归档恢复并重放同一计划。正常服务分别核验旧地址、回收站、原件损坏与未选条目。完整归档覆盖每个物理成员。[离线交接](https://github.com/Surtr42u/qimeng-next/actions/runs/44516923052) · [服务与恢复回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44518632464)
 
 旧 PC v26 的离线转换器可从已封存的 SQLite、显式选择的原件副本和旧回收站生成 Next 整库备份。Windows x64 和 Linux x64 均用旧仓 26 个正式迁移建立合成库，运行发布工具完成转换、校验、恢复和服务回读。两份相同内容保留各自的资产 ID，磁盘回收站中的原件可恢复。验收覆盖来源变化、空间不足、未知非空表与已有目的地。个人库的覆盖报告及逐文件对账由所有者在本机留存。[操作说明](legacy-cold.md) · [Windows 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179/job/135491534166) · [Linux 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179/job/135491533907)
