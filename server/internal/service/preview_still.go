@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"image/jpeg"
@@ -128,47 +129,76 @@ func orientPreview(src *image.RGBA, orientation int) *image.RGBA {
 	return dst
 }
 
-func (s *Service) scaledStill(source mediaInput, mime string, edge, quality int, scale draw.Scaler) ([]byte, error) {
+// Research frames have separate input and output budgets from display thumbnails.
+type stillPreviewPolicy struct {
+	quality    int
+	scale      draw.Scaler
+	allowLarge bool
+}
+
+var displayStill = stillPreviewPolicy{quality: 92, scale: draw.CatmullRom, allowLarge: true}
+var researchStill = stillPreviewPolicy{quality: 85, scale: draw.ApproxBiLinear}
+
+func previewDimensions(width, height, edge int) (int, int) {
+	if width <= edge && height <= edge {
+		return width, height
+	}
+	if width >= height {
+		return edge, max(1, int(int64(height)*int64(edge)/int64(width)))
+	}
+	return max(1, int(int64(width)*int64(edge)/int64(height))), edge
+}
+
+func (s *Service) scaledStill(ctx context.Context, source mediaInput, mime string, edge int, policy stillPreviewPolicy) ([]byte, error) {
 	f, err := source.reader(s)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	reader := scanReader{ctx: ctx, source: f}
 	orientation := 1
 	if mime == "image/jpeg" {
-		orientation = jpegOrientation(f)
+		orientation = jpegOrientation(reader)
 		if _, err = f.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
 	}
-	cfg, _, err := image.DecodeConfig(f)
+	cfg, format, err := image.DecodeConfig(reader)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, Fail(422, "thumbnail_decode_failed", "无法读取图片尺寸。")
 	}
-	if cfg.Height < 1 || cfg.Width < 1 || int64(cfg.Width) > 40_000_000/int64(cfg.Height) {
+	if cfg.Height < 1 || cfg.Width < 1 {
 		return nil, Fail(422, "thumbnail_resource_limit", "图片超过解码预算，原件可正常读取。")
 	}
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
-	src, _, err := image.Decode(f)
+	width, height := previewDimensions(cfg.Width, cfg.Height, edge)
+	var src image.Image
+	if int64(cfg.Width) > 40_000_000/int64(cfg.Height) {
+		if !policy.allowLarge || mime != "image/"+format || (format != "jpeg" && format != "png") {
+			return nil, Fail(422, "thumbnail_resource_limit", "图片超过解码预算，原件可正常读取。")
+		}
+		src, err = decodeLargeStill(ctx, reader, source.size, format, cfg, width, height)
+	} else {
+		src, _, err = image.Decode(reader)
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if err != nil {
+		if _, ok := err.(*Error); ok {
+			return nil, err
+		}
 		return nil, Fail(422, "thumbnail_decode_failed", "无法解码预览，原件保留。")
 	}
-	width, height := src.Bounds().Dx(), src.Bounds().Dy()
-	if width > edge || height > edge {
-		if width >= height {
-			height = max(1, height*edge/width)
-			width = edge
-		} else {
-			width = max(1, width*edge/height)
-			height = edge
-		}
-	}
 	dst := image.NewRGBA(image.Rect(0, 0, width, height))
-	scale.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
+	policy.scale.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
 	var output bytes.Buffer
-	if err = jpeg.Encode(&output, orientPreview(dst, orientation), &jpeg.Options{Quality: quality}); err != nil {
+	if err = jpeg.Encode(&output, orientPreview(dst, orientation), &jpeg.Options{Quality: policy.quality}); err != nil {
 		return nil, err
 	}
 	return output.Bytes(), nil

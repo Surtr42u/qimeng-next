@@ -93,4 +93,6 @@ PC/NAS 使用 Go 1.27.4、modernc.org/sqlite v1.62.0 与该版本指定的 libc 
 
 可选媒体工具契约依据 [FFmpeg protocol whitelist](https://ffmpeg.org/ffmpeg-protocols.html)、[ffprobe JSON 输出](https://ffmpeg.org/ffprobe.html)。进程不经 shell，禁止网络协议，超时与输出大小有界；运行时工具版本与真实视频格式覆盖仍须在发布环境验收。
 
+大幅顺序 JPEG 使用 2025-12-18 发布的 go-scaled-jpeg v1.2.0（MIT，含 Go BSD-3-Clause 与 IJG 部分）在反变换中降采样。非交错 PNG 使用 2026-03-25 发布的 go-scaled-png v1.0.0（MIT，含 Go BSD-3-Clause 部分）按行缩放。两者用 Go 构建，版本与校验和由模块锁定。渐进 JPEG 的预览只保留各块的 DC 系数，所需内存与块数成正比。具体输入和工作区预算见 [API 使用约定](../docs/api.md#写入与回放)。[JPEG 实现与许可证](https://github.com/m8rge/go-scaled-jpeg/tree/v1.2.0) · [PNG 实现与许可证](https://github.com/m8rge/go-scaled-png/tree/v1.0.0) · [JPEG 编码规范 T.81](https://www.itu.int/rec/T-REC-T.81/en)
+
 局域网发现适配位于 `cmd/qimeng`，锁定 [hashicorp/mdns v1.0.7](https://github.com/hashicorp/mdns/tree/v1.0.7)（MIT），不进入业务服务/数据库。TXT契约为 `txtvers=1, api=0.1.0, id=<实例ID>, scheme=http|https, path=/api/v1`，反向代理可附 `origin`；服务名称或TXT均不是可信身份。Android按[官方DNS-SD机制](https://developer.android.com/develop/connectivity/wifi/use-nsd)解析候选，再回读 `/instance`。单测验证记录和禁用/回环边界，真实路由器/NAS组播另行验收。
