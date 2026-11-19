@@ -1,15 +1,120 @@
 package httpapi_test
 
 import (
+	"context"
 	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
+
+type permitReadGate struct {
+	context.Context
+	scratch string
+	wait    func()
+}
+
+func (g permitReadGate) Err() error {
+	if _, err := os.Stat(g.scratch); err == nil {
+		g.wait()
+	}
+	return g.Context.Err()
+}
+
+func TestLegacyPermitListRechecksOutcomesAfterIndependentRead(t *testing.T) {
+	f := setup(t)
+	distinctProtectionTarget(t, f)
+	var batch model.Batch
+	decode(t, f.json("POST", "/batches", "legacy-permits-in-flight", map[string]any{"libraryId": f.library, "mode": "ordinary", "label": "Synthetic permit outcomes"}, 201), &batch)
+	names := []string{"recorded.png", "replaced.png", "expired.png", "reported-late.png"}
+	ids := f.declareInputs(batch.ID, names...)
+	var originals []model.UploadResult
+	for i, name := range names {
+		upload, _ := f.upload(name, uint8(50+i), map[string]any{"batchId": batch.ID, "inputId": ids[name]})
+		originals = append(originals, f.complete(upload))
+	}
+	proof := completedProtection(t, f, batch.ID, "prior-independent-permits")
+	url := "/batches/" + batch.ID + "/protections/" + proof.ID + "/cleanup-permits"
+	var permits []service.CleanupPermit
+	for _, item := range proof.Items {
+		var permit service.CleanupPermit
+		body := service.CleanupPermitInput{InputID: item.InputID, ExpectedHash: item.Hash, SourceSize: item.Size}
+		decode(t, f.json("POST", url, "old-issued-"+item.InputID, body, 201), &permit)
+		permits = append(permits, permit)
+	}
+	if len(permits) != len(names) {
+		t.Fatal("missing synthetic issued permits")
+	}
+	expire := func(id string) {
+		t.Helper()
+		past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+		if _, err := f.s.DB.DB.Exec("UPDATE source_cleanup_permits SET expires_at=?,data=json_set(data,'$.expiresAt',?) WHERE id=?", past, past, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expire(permits[3].ID)
+	if _, err := f.s.DB.DB.Exec("UPDATE batch_protections SET data=json_remove(data,'$.snapshotInputsVerified') WHERE id=?", proof.ID); err != nil {
+		t.Fatal(err)
+	}
+	local := filepath.Join(f.s.Config.DataDir, "backups", proof.CheckpointID, "snapshot.sqlite")
+	if err := os.Rename(local, local+".held"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	owner, err := f.s.Authenticate(ctx, testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, proceed := make(chan struct{}), make(chan struct{})
+	scratch := filepath.Join(f.s.Config.DataDir, "cache", "protection-read-"+proof.InstanceID, "snapshot.sqlite")
+	gate := permitReadGate{ctx, scratch, sync.OnceFunc(func() {
+		close(started)
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+		}
+	})}
+	type result struct {
+		page model.Page[service.CleanupPermit]
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		page, err := f.s.CleanupPermits(gate, owner, batch.ID, "", "", 20)
+		done <- result{page, err}
+	}()
+	select {
+	case <-started:
+	case early := <-done:
+		t.Fatalf("list returned before reading the independent snapshot: %v", early.err)
+	case <-ctx.Done():
+		t.Fatal("list did not reach snapshot verification")
+	}
+	f.json("POST", "/cleanup-permits/"+permits[0].ID+"/receipt", "record-while-reading-snapshot", service.CleanupReceiptInput{Outcome: "retained"}, 200)
+	a := originals[1].Asset
+	replacement, _ := f.upload("updated-original.png", 72, map[string]any{"replaceAssetId": a.ID, "expectedContentVersion": a.ContentVersion})
+	f.complete(replacement)
+	expire(permits[2].ID)
+	f.json("POST", "/cleanup-permits/"+permits[3].ID+"/receipt", "report-expired-while-reading", service.CleanupReceiptInput{Outcome: "retained"}, 200)
+	close(proceed)
+	got := <-done
+	if got.err != nil || len(got.page.Items) != len(permits) {
+		t.Fatalf("list did not return its selected permits: %v", got.err)
+	}
+	states := map[string]string{permits[0].ID: "recorded", permits[1].ID: "revoked", permits[2].ID: "expired", permits[3].ID: "recorded"}
+	for _, p := range got.page.Items {
+		if p.State != states[p.ID] || p.State == "recorded" && (p.Receipt == nil || p.Receipt.Outcome != "retained") {
+			t.Fatalf("stale permit after snapshot read: %s %s", p.ID, p.State)
+		}
+	}
+}
 
 func TestLegacyProtectionRetryAndIssueFromIndependentCopy(t *testing.T) {
 	f := setup(t)
