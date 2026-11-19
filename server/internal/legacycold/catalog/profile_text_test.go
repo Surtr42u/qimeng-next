@@ -77,7 +77,7 @@ func TestColdCatalogRedactsOnlyDocumentedBiographyQueryFields(t *testing.T) {
 func TestColdCatalogPublicMarkdownInRemarksAndTXT(t *testing.T) {
 	f := newFixture(t)
 	f.author("writer", "Writer", "regular", 1)
-	const note = "联系 [官网](https://artist.example) 和 [作品](https://gallery.example/post/(series))。"
+	const note = "联系[官网](https://artist.example)和[作品](https://gallery.example/post/(series))。详情 https://artist.example　请见上方。"
 	const source = "1  Writer\n来源  [官网](https://artist.example)\n作品\nexample.png"
 	parent := map[string]any{"authorId": "writer", "revision": 1, "status": "verified", "remark": note,
 		"homepageUrl": "https://artist.example/gallery/(series)", "evidenceUrls": []string{"https://artist.example"}}

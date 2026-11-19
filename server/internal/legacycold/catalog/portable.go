@@ -13,7 +13,6 @@ import (
 
 const errPrivate = sourceProblem("nonportable_business_value")
 
-var publicLinks = regexp.MustCompile("(?i)https?://[^\\s<>\"'\u0060，。；！？、（）《》【】「」]+")
 var httpScheme = regexp.MustCompile(`(?i)https?://`)
 var escapedOctet = regexp.MustCompile(`%[0-9a-fA-F]{2}`)
 var privateText = regexp.MustCompile(`(?i)(?:[a-z]:[/\\]|\\\\[^\\]+\\|file://|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:bearer|basic)\s+[a-z0-9+/_=.-]{8,}|\b(?:access[_-]?token|api[_-]?key|password|secret)[ \t]*[:=]\s*\S)`)
@@ -40,23 +39,28 @@ func (i *importer) inspectText(text string, removeQuery bool) (string, int, erro
 	}
 	var out strings.Builder
 	end, removed := 0, 0
-	for _, span := range publicLinks.FindAllStringIndex(text, -1) {
+	for {
+		span := httpScheme.FindStringIndex(text[end:])
+		if span == nil {
+			break
+		}
+		start := end + span[0]
 		// A URL used as the VALUE of a plain credential assignment remains
 		// private regardless of the URL's own host and query.
-		if err := i.nonURLContent(text[end:span[0]], true); err != nil {
+		if err := i.nonURLContent(text[end:start], true); err != nil {
 			return "", 0, err
 		}
-		token := trimProsePunctuation(text[span[0]:span[1]])
+		token := proseLink(text[start:])
 		safe, count, err := i.publicReference(token, removeQuery, 0)
 		if err != nil {
 			return "", 0, err
 		}
 		if removeQuery {
-			out.WriteString(text[end:span[0]])
+			out.WriteString(text[end:start])
 			out.WriteString(safe)
 		}
 		removed += count
-		end = span[0] + len(token)
+		end = start + len(token)
 	}
 	if err := i.nonURLText(text[end:]); err != nil {
 		return "", 0, err
@@ -68,26 +72,30 @@ func (i *importer) inspectText(text string, removeQuery bool) (string, int, erro
 	return out.String(), removed, nil
 }
 
-func trimProsePunctuation(link string) string {
-	// Count closing punctuation once even for a long run of delimiters.
-	excess := map[byte]int{}
-	for close, open := range map[byte]string{')': "(", ']': "[", '}': "{"} {
-		excess[close] = strings.Count(link, string(close)) - strings.Count(link, open)
-	}
-	for len(link) > 0 {
-		switch last := link[len(link)-1]; last {
-		case '.', ',', '!', ';', ':':
-		case ')', ']', '}':
-			if excess[last] <= 0 {
-				return link
+func proseLink(rest string) string {
+	// A closing Markdown delimiter belongs to the surrounding text, even
+	// when another sentence or link immediately follows it. Balanced brackets
+	// in the URL (IPv6 authorities, parenthesized titles) belong to the URL.
+	var opens [3]int
+	end := len(rest)
+scan:
+	for n, r := range rest {
+		switch {
+		case unicode.IsSpace(r) || strings.ContainsRune("<>\"'\u0060，。；！？、（）《》【】「」", r):
+			end = n
+			break scan
+		case strings.ContainsRune("([{", r):
+			opens[strings.IndexRune("([{", r)]++
+		case strings.ContainsRune(")]}", r):
+			slot := strings.IndexRune(")]}", r)
+			if opens[slot] == 0 {
+				end = n
+				break scan
 			}
-			excess[last]--
-		default:
-			return link
+			opens[slot]--
 		}
-		link = link[:len(link)-1]
 	}
-	return link
+	return strings.TrimRight(rest[:end], ".,!;:")
 }
 
 func publicHost(host string) bool {
