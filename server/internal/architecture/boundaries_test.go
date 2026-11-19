@@ -24,7 +24,7 @@ var dependencies = map[string][]string{
 	"engagement":       {"model", "store"},
 	"mediafile":        {},
 	"httpapi":          {"service", "model", "migration", "transport/generated"},
-	"legacycold":       {"backup", "domain", "model", "service", "storage", "store"},
+	"legacycold":       {"analytics", "authorlist", "backup", "domain", "model", "service", "sourcerules", "storage", "store"},
 	"migration":        {"model"},
 	"model":            {},
 	"researchprovider": {},
