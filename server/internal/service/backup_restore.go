@@ -157,7 +157,7 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 					return e
 				}
 			}
-			uploads, e := snapshot.QueryContext(ctx, "SELECT u.id,json_extract(u.data,'$.libraryId'),l.id IS NOT NULL FROM uploads u LEFT JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId')")
+			uploads, e := snapshot.QueryContext(ctx, "SELECT u.id,json_extract(u.data,'$.libraryId'),l.id IS NOT NULL AND u.state!='ingested' FROM uploads u LEFT JOIN libraries l ON l.id=json_extract(u.data,'$.libraryId')")
 			if e != nil {
 				return e
 			}

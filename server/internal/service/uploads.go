@@ -236,6 +236,7 @@ func (s *Service) CreateUpload(ctx context.Context, w *Write, in model.UploadInp
 	}
 	u := model.Upload{UploadInput: in, ID: w.ID("upload"), State: "receiving", ExplicitTaxonomy: explicitTaxonomy, CreatedAt: time.Now().UTC()}
 	s.Root.RegisterUpload(u.ID, u.LibraryID)
+	defer s.Root.UnregisterUpload(u.ID)
 	if e = s.ensureParent(uploadPath(u.ID)); e != nil {
 		return u, e
 	}
