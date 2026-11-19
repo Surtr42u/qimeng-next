@@ -102,7 +102,9 @@ func (s *Service) copySelectedImage(ctx context.Context, id string, version int6
 }
 
 func (s *Service) stageSelectedImage(ctx context.Context, source *os.File, a model.Asset, name string) (_ *os.File, err error) {
-	changed := func() error { return Fail(409, "content_mismatch", "媒体原件的长度或摘要已变化。") }
+	changed := func() error {
+		return Fail(409, "content_mismatch", "媒体原件的长度或摘要已变化。")
+	}
 	info, err := source.Stat()
 	if err != nil {
 		return nil, err
@@ -125,7 +127,9 @@ func (s *Service) stageSelectedImage(ctx context.Context, source *os.File, a mod
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	noSpace := func() error { return Fail(507, "insufficient_storage", "剩余空间不足以暂存并校验图片原件。") }
+	noSpace := func() error {
+		return Fail(507, "insufficient_storage", "剩余空间不足以暂存并校验图片原件。")
+	}
 	free, err := freeBytes(s.Config.DataDir)
 	if err != nil {
 		return nil, err

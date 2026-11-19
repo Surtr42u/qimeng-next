@@ -834,15 +834,19 @@ func (s *Service) openContent(ctx context.Context, id string, version int64, sna
 	if a.Trashed {
 		return nil, a, Fail(404, "not_found", "媒体位于回收站。")
 	}
+	name := assetPath(a)
 	if !snapshot {
 		selected, err := s.selectedImage(ctx, a)
 		if err != nil || selected {
 			return nil, a, err
 		}
 	}
-	name := assetPath(a)
 	if e = s.safe(name); e != nil {
 		return nil, a, e
+	}
+	if !snapshot {
+		f, e := s.Root.Open(name)
+		return f, a, e
 	}
 	f, e := s.Root.OpenFile(name, os.O_RDONLY|syncReadFlags, 0)
 	return f, a, e
