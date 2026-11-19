@@ -1,0 +1,27 @@
+name: Offline exposure proof
+on:
+  push:
+    branches: [proof/offline-exposure-20261119]
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 8be0e9ea449c4957fede2e70b09bb53b68ba1f66
+          path: reference
+          sparse-checkout: server/internal/store/migrations
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.13'}
+      - name: Fingerprint public Next schema
+        run: python schema_fixture.py
