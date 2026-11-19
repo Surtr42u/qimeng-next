@@ -18,7 +18,7 @@ func TestColdCatalogPublicArchiveURLRequiresPublicNestedIdentity(t *testing.T) {
 		"https://mirror.example/record/https%3A%2F%2Fartist.example%2Fpage%3Fview%3Done",
 	} {
 		text := "see " + link + " next"
-		got, changes, err := i.inspectText(text, true)
+		got, changes, err := i.inspectText(text, biographyText)
 		if err != nil || changes != 0 || got != text || i.portableText(text) != nil {
 			t.Fatal("public archived URL failed byte-preserving readback")
 		}
@@ -34,7 +34,7 @@ func TestColdCatalogPublicArchiveURLRequiresPublicNestedIdentity(t *testing.T) {
 		"https://mirror.example/a#access_token=fixture", "https://mirror.example/a?si%2567=fixture",
 		"plain text C:/synthetic/file", "plain text /home/fixture/.ssh/example", "plain text token=fixture",
 	} {
-		if _, _, err := i.inspectText(link, true); !errors.Is(err, errPrivate) {
+		if _, _, err := i.inspectText(link, biographyText); !errors.Is(err, errPrivate) {
 			t.Fatal("unsafe or ambiguous URL was accepted")
 		}
 	}
@@ -59,17 +59,17 @@ func TestColdCatalogRedactsOnlyDocumentedBiographyQueryFields(t *testing.T) {
 		`{"other":"https://artist.example/?token=%s","other":"safe"}`,
 	} {
 		raw := strings.ReplaceAll(input, "%s", marker)
-		if _, _, err := i.inspectJSON([]byte(raw), true); err == nil {
+		if _, _, err := i.inspectJSON([]byte(raw), "creator_profile"); err == nil {
 			t.Fatal("non-descriptive, ambiguous or non-public credential accepted")
 		}
 	}
 	raw := []byte("{ \"biography\" : \"Text https://gallery.example/?key=one+two&view=%2f。\", \"unknown\":9007199254740993 }")
-	got, changes, err := i.inspectJSON(raw, true)
+	got, changes, err := i.inspectJSON(raw, "creator_profile")
 	if err != nil || len(changes) != 0 || !bytes.Equal(raw, got) {
 		t.Fatal("ordinary biography source bytes changed")
 	}
 	unsafe := []byte(`{"biography":"https://artist.example/?access_token=` + marker + `"}`)
-	if _, _, err := i.inspectJSON(unsafe, false); !errors.Is(err, errPrivate) {
+	if _, _, err := i.inspectJSON(unsafe, "ordinary_setting"); !errors.Is(err, errPrivate) {
 		t.Fatal("setting acquired an author-profile editing exception")
 	}
 }

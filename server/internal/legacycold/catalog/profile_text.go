@@ -58,18 +58,18 @@ type jsonInspection struct {
 	catalog *importer
 	raw     json.RawMessage
 	decoder *json.Decoder
-	profile bool
+	record  string
 	edits   []jsonEdit
 }
 
 // Inspect every JSON token, including fields unknown to the projection. A
 // duplicate object key cannot hide its first value in the source archive.
 // Re-encode only the individual strings that require documented redaction.
-func (i *importer) inspectJSON(raw json.RawMessage, profile bool) (json.RawMessage, []textDisposition, error) {
+func (i *importer) inspectJSON(raw json.RawMessage, record string) (json.RawMessage, []textDisposition, error) {
 	if !json.Valid(raw) || !utf8.Valid(raw) {
 		return nil, nil, sourceProblem("business_json_invalid")
 	}
-	d := jsonInspection{catalog: i, raw: raw, decoder: json.NewDecoder(bytes.NewReader(raw)), profile: profile}
+	d := jsonInspection{catalog: i, raw: raw, decoder: json.NewDecoder(bytes.NewReader(raw)), record: record}
 	d.decoder.UseNumber()
 	if err := d.visit(nil); err != nil {
 		return nil, nil, err
@@ -102,18 +102,24 @@ func (d *jsonInspection) visit(path []string) error {
 	}
 	switch v := token.(type) {
 	case string:
-		if d.profile && len(path) == 1 && path[0] == "avatarData" {
+		if d.record == "creator_profile" && len(path) == 1 && path[0] == "avatarData" {
 			return nil // decoded and validated as an image before any commit
 		}
-		if v != "" && d.profile && structuredProfileURL(path) {
-			_, _, err := d.catalog.publicReference(v, false, 0)
+		if v != "" && d.record == "creator_profile" && structuredProfileURL(path) {
+			_, _, err := d.catalog.publicReference(v, strictText, 0)
 			return err
 		}
 		pointer := ""
-		if d.profile {
+		policy := strictText
+		if d.record == "creator_profile" {
 			pointer = biographyPointer(path)
+			if pointer != "" {
+				policy = biographyText
+			}
+		} else if d.record == "imported_txt_sources" && len(path) == 2 && path[0] == "" && path[1] == "content" {
+			policy = fragmentText
 		}
-		text, count, err := d.catalog.inspectText(v, pointer != "")
+		text, count, err := d.catalog.inspectText(v, policy)
 		if err != nil || count == 0 {
 			return err
 		}

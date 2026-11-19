@@ -39,7 +39,7 @@ func (i *importer) importProfiles() error {
 		if !exists || len(raw) == 0 {
 			return sourceProblem("profile_owner_or_size_invalid")
 		}
-		portable, decisions, err := i.inspectJSON(raw, true)
+		portable, decisions, err := i.inspectJSON(raw, "creator_profile")
 		if err != nil {
 			return err
 		}

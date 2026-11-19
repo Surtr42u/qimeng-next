@@ -27,13 +27,21 @@ func sensitiveKey(key string) bool {
 }
 
 func (i *importer) portableText(text string) error {
-	_, _, err := i.inspectText(text, false)
+	_, _, err := i.inspectText(text, strictText)
 	return err
 }
 
 // Only a known descriptive profile field can request removal. Ordinary text,
 // structured URL fields and inner URLs always require an already portable value.
-func (i *importer) inspectText(text string, removeQuery bool) (string, int, error) {
+type textPolicy int
+
+const (
+	strictText textPolicy = iota
+	biographyText
+	fragmentText
+)
+
+func (i *importer) inspectText(text string, policy textPolicy) (string, int, error) {
 	if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return "", 0, sourceProblem("business_text_invalid")
 	}
@@ -51,11 +59,11 @@ func (i *importer) inspectText(text string, removeQuery bool) (string, int, erro
 			return "", 0, err
 		}
 		token := proseLink(text[start:])
-		safe, count, err := i.publicReference(token, removeQuery, 0)
+		safe, count, err := i.publicReference(token, policy, 0)
 		if err != nil {
 			return "", 0, err
 		}
-		if removeQuery {
+		if policy == biographyText {
 			out.WriteString(text[end:start])
 			out.WriteString(safe)
 		}
@@ -81,7 +89,7 @@ func proseLink(rest string) string {
 scan:
 	for n, r := range rest {
 		switch {
-		case unicode.IsSpace(r) || unicode.In(r, unicode.Pi, unicode.Pf) || strings.ContainsRune("<>\"'\u0060，。；！？、（）《》【】「」", r):
+		case unicode.IsSpace(r) || unicode.In(r, unicode.Pi, unicode.Pf) || strings.ContainsRune("<>\"'\u0060，。；：！？、（）《》【】「」", r):
 			end = n
 			break scan
 		case strings.ContainsRune("([{", r):
@@ -125,7 +133,7 @@ func publicHost(host string) bool {
 	return true
 }
 
-func (i *importer) publicReference(raw string, removeQuery bool, depth int) (string, int, error) {
+func (i *importer) publicReference(raw string, policy textPolicy, depth int) (string, int, error) {
 	u, err := url.Parse(raw)
 	if err != nil || strings.ContainsFunc(raw, unicode.IsSpace) || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.User != nil || strings.HasSuffix(u.Host, ":") ||
 		!publicHost(u.Hostname()) || depth > 4 {
@@ -140,7 +148,7 @@ func (i *importer) publicReference(raw string, removeQuery bool, depth int) (str
 			return "", 0, errPrivate
 		}
 		prefix = u.Path[:at[0]]
-		if _, _, err := i.publicReference(u.Path[at[0]:], false, depth+1); err != nil {
+		if _, _, err := i.publicReference(u.Path[at[0]:], strictText, depth+1); err != nil {
 			return "", 0, err
 		}
 	}
@@ -155,6 +163,18 @@ func (i *importer) publicReference(raw string, removeQuery bool, depth int) (str
 	}
 	if u.RawQuery == "" {
 		return raw, 0, nil
+	}
+	// A v26 TXT citation can name a public relay whose entire query is one
+	// percent-encoded HTTPS URL. Reject literal URI/query separators here;
+	// ordinary keys, assigned values, and other JSON fields keep their rules.
+	if policy == fragmentText && u.Scheme == "https" && !strings.ContainsAny(u.RawQuery, ":/?@&=;\\") {
+		inner, err := url.QueryUnescape(u.RawQuery)
+		if err == nil && len(inner) >= len("https://") && strings.EqualFold(inner[:len("https://")], "https://") {
+			if _, _, err := i.publicReference(inner, fragmentText, depth+1); err != nil {
+				return "", 0, err
+			}
+			return raw, 0, nil
+		}
 	}
 	var kept []string
 	count := 0
@@ -172,13 +192,13 @@ func (i *importer) publicReference(raw string, removeQuery bool, depth int) (str
 			return "", 0, errPrivate
 		}
 		if sensitiveKey(key) {
-			if !removeQuery {
+			if policy != biographyText {
 				return "", 0, errPrivate
 			}
 			count++
 			continue
 		}
-		if removeQuery {
+		if policy == biographyText {
 			kept = append(kept, pair)
 		}
 	}
