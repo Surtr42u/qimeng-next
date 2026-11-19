@@ -125,12 +125,16 @@ func TestImageLookupUsesOnlyOneAuthorizedDerivedFrameAndReceipt(t *testing.T) {
 	imageResearchTask(t, f, denied, library.ID, true, 41, 403)
 	grant := imageResearchGrant(t, f, library.ID, true)
 	_, narrowToken := imageResearchTask(t, f, grant, library.ID, false, 42, 201)
-	batchID, token := imageResearchTask(t, f, grant, library.ID, true, 43, 201)
-	batch := "/batches/" + batchID
 	inputs := []model.IntakeInput{{ID: "fixture-first", OriginalFileName: "synthetic-first.png"}, {ID: "fixture-second", OriginalFileName: "synthetic-second.png"}}
-	f.request("PUT", batch+"/inputs", researchTestOwner, "image-lookup-manifest", model.BatchInputsSet{ExpectedManifestRevision: 1, Inputs: inputs}).expect(t, 200, nil)
+	app := queuedBatch(t, f, "image-lookup-manifest", library.ID, "intelligent", inputs...)
+	batchID, token := app.ID, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{43}, 32))
+	batch := "/batches/" + batchID
 	u := f.stage(t, library.ID, batchID, inputs[0].ID, inputs[0].OriginalFileName, "", 81)
 	second := f.stage(t, library.ID, batchID, inputs[1].ID, inputs[1].OriginalFileName, "", 127)
+	claim := map[string]any{"kind": "intake", "mode": "intelligent", "label": "App frame lookup", "batchId": batchID, "libraryId": library.ID,
+		"readyManifestFingerprint": app.ManifestFingerprint, "credentialSecret": token, "allowImageLookup": true}
+	f.request("POST", "/ai/delegated-tasks", denied.Credential.Token, "no-image-claim", claim).expect(t, 403, nil)
+	f.request("POST", "/ai/delegated-tasks", grant.Credential.Token, "authorized-image-claim", claim).expect(t, 201, nil)
 	var materials service.ResearchMaterials
 	f.request("GET", "/uploads/"+u.ID+"/research-materials?expectedHash="+u.Hash, token, "", nil).expect(t, 200, &materials)
 	if len(materials.Artifacts) != 1 {
@@ -218,7 +222,7 @@ func TestImageLookupUsesOnlyOneAuthorizedDerivedFrameAndReceipt(t *testing.T) {
 	f.request("POST", imageLookupRoute, token, "frame-over-budget", in).expect(t, 429, nil)
 	var detail model.BatchDetail
 	f.request("GET", batch, token, "", nil).expect(t, 200, &detail)
-	if sends.Load() != 4 || detail.Batch.ResearchCalls != 4 {
+	if sends.Load() != 4 || detail.Batch.ResearchCalls != 4 || detail.Batch.MaxResearchCalls != 8 {
 		t.Fatal("denied calls or replays consumed a request or research budget")
 	}
 	var possible model.Author

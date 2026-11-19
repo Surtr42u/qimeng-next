@@ -36,8 +36,9 @@ def full_result(runtime, value):
 
 
 class WorkerIntake:
-    def __init__(self, runtime, batch_id, report):
+    def __init__(self, runtime, batch_id, report, can_research):
         self.runtime, self.batch_id = runtime, batch_id
+        self.can_research = can_research
         self.plans = {}
         self.views = {}
         self.stale = set()
@@ -55,6 +56,8 @@ class WorkerIntake:
         if report["batch"]["id"] != self.batch_id or report["batch"]["manifestState"] != "sealed":
             raise ToolError("TASK_RESPONSE_INVALID", "读取的清单不属于当前已封存任务")
         self.report = report
+        self.research = (self.runtime.transport.call("getResearchProviderContext", {})
+                         if self.can_research and report["batch"]["state"] not in {"completed", "cancelled"} else None)
         self.by_number = {row["ordinal"] + 1: row for row in report["inputs"]}
         self.uploads = {row["upload"]["id"]: row for row in report["items"]}
         self.by_upload = {row["uploadId"]: number for number, row in self.by_number.items() if row.get("uploadId")}
@@ -117,7 +120,7 @@ class WorkerIntake:
         result = {"request": batch["label"], "state": batch["state"], "inputs": visible,
                   "readyInputs": [row["input"] for row in visible if row.get("canPrepare")],
                   "totalInputs": len(rows), "plans": [{"plan": key, "state": plan["state"], "requiresNewPlan": key in self.stale} for key, plan in self.plans.items()],
-                  "remainingResearchCalls": batch["maxResearchCalls"] - batch["researchCalls"]}
+                  "remainingResearchCalls": self.research["remainingResearchCalls"] if self.research else 0}
         if next_offset is not None:
             result["nextOffset"] = next_offset
         return result

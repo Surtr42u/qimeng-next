@@ -90,14 +90,8 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.host.release.set)
         self.library = self.request("POST", "/libraries", {"name": "Queue " + self._testMethodName, "kind": "regular"},
                                     key="auto-lib-" + self._testMethodName)
-        grant = self.request("POST", "/ai/delegations", {
-            "label": "Explicit App executor", "libraryIds": [self.library["id"]], "authorIds": [],
-            "allAuthors": False, "allowedFields": [], "candidateBlocks": [], "allowClear": False,
-            "canIngest": True, "canOrganize": True, "canResearch": True, "canLookupImages": True,
-            "maxResearchCalls": 1, "maxUpdates": 1,
-            "maxTasksPerDay": 1 if self._testMethodName.startswith("test_app_receives") else 12, "validDays": 1})
-        self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
-        self.secret = grant["credential"]["token"]
+        self.secret = self.grant(can_research=True, limit=1, images=True,
+                                 daily=1 if self._testMethodName.startswith("test_app_receives") else 12)
         self.env = {"PATH": os.environ["PATH"], "PYTHONPATH": os.environ["PYTHONPATH"],
                     "QIMENG_API_BASE": os.environ["QIMENG_TEST_BASE"], "QIMENG_API_TOKEN": self.secret,
                     "QIMENG_AI_STATE_DIR": str(self.root / "state"), "QIMENG_AI_PERMISSIONS": "read,delegate,organize,research",
@@ -105,9 +99,20 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                     "QIMENG_AI_WORKER_MODEL": "fixture", "QIMENG_AI_WORKER_TOKEN": self.host.host_key,
                     "QIMENG_AI_WORKER_POLL_SECONDS": "1", "QIMENG_AI_WORKER_IMAGE_LOOKUP": "true"}
 
-    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=0):
-        batch = self.request("POST", "/batches", {"libraryId": self.library["id"], "label": name,
-                             "mode": mode, "maxResearchCalls": research_calls}, key=name + "-batch")
+    def grant(self, *, can_research, limit, images, daily=12):
+        grant = self.request("POST", "/ai/delegations", {
+            "label": "Explicit App executor", "libraryIds": [self.library["id"]], "authorIds": [],
+            "allAuthors": False, "allowedFields": [], "candidateBlocks": [], "allowClear": False,
+            "canIngest": True, "canOrganize": True, "canResearch": can_research, "canLookupImages": images,
+            "maxResearchCalls": limit, "maxUpdates": 1, "maxTasksPerDay": daily, "validDays": 1})
+        self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
+        return grant["credential"]["token"]
+
+    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=None):
+        body = {"libraryId": self.library["id"], "label": name, "mode": mode}
+        if research_calls is not None:
+            body["maxResearchCalls"] = research_calls
+        batch = self.request("POST", "/batches", body, key=name + "-batch")
         source = self.root / (name + ".png")
         color = hashlib.sha256(name.encode()).hexdigest()[:6]
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
@@ -301,6 +306,59 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         completed, = (await self.worker())["batches"]
         self.assertEqual(completed["state"], "completed")
         self.assertEqual(len(self.request("GET", "/batches/" + batch)["plans"]), 1)
+
+    async def test_default_app_batches_publish_with_zero_or_limited_research(self):
+        cases = [
+            ("android-no-research", None, False, 0, False, True),
+            ("web-zero-budget", 8, True, 0, False, True),
+            ("web-local-research", 8, True, 1, False, True),
+            ("android-frame-opt-in", None, True, 3, True, True),
+            ("web-organize-worker", 8, True, 3, True, False),
+        ]
+        for label, app_limit, allowed, limit, images, local_research in cases:
+            with self.subTest(label=label):
+                secret = self.grant(can_research=allowed, limit=limit, images=images)
+                env = {**self.env, "QIMENG_API_TOKEN": secret}
+                if not local_research:
+                    env.update(QIMENG_AI_PERMISSIONS="read,delegate,organize", QIMENG_AI_WORKER_IMAGE_LOOKUP="false")
+                batch = self.submit(label, mixed=True, research_calls=app_limit)
+                self.host.requests.clear()
+                effective = limit if local_research else 0
+                def script(results):
+                    if not results:
+                        return "worker_tools", {"group": "research"}
+                    if effective and len(results) == 1:
+                        return "research_submit", {"input": 1, "body": {"outcome": "unknown", "candidates": [], "callsUsed": 1}}
+                    if "plan" not in results[-1]:
+                        return "plan_prepare_originals", {}
+                    return "plan_commit", {"plan": results[-1]["plan"]}
+                self.host.scripts[batch] = script
+                outcome, = (await self.worker(env=env))["batches"]
+                self.assertEqual((outcome["batchId"], outcome["state"]), (batch, "partial"))
+                first, expanded = self.host.requests[:2]
+                report = first["messages"][1]["content"]
+                self.assertEqual(json.loads(report[report.index("{"):])["remainingResearchCalls"], effective)
+                def functions(request):
+                    return {entry["function"]["name"]: entry["function"]["parameters"] for entry in request["tools"]}
+                groups = functions(first)["worker_tools"]["properties"]["group"]["enum"]
+                self.assertEqual("research" in groups, effective > 0)
+                tools = functions(expanded)
+                self.assertNotIn("platform_artifact_read", tools)
+                self.assertNotIn("research_provider_query", tools)
+                self.assertEqual("research_image_search" in tools, bool(images and effective))
+                if effective:
+                    self.assertEqual(tools["research_submit"]["properties"]["body"]["properties"]["callsUsed"]["maximum"], effective)
+                    if effective == 1:
+                        self.assertNotIn("research_submit", functions(self.host.requests[2]))
+                    self.assertEqual(outcome["modelUsage"]["toolResults"][1], {"tool": "research.submit", "code": "ok"})
+                else:
+                    self.assertFalse(any(name.startswith("research_") for name in tools))
+                    self.assertEqual(outcome["modelUsage"]["toolResults"][0]["code"], "INVALID_INPUT")
+                final = self.request("GET", "/batches/" + batch)
+                self.assertEqual((final["batch"]["maxResearchCalls"], final["batch"]["researchCalls"]), (8, int(bool(effective))))
+                good, bad = final["inputs"]
+                self.assertEqual((good["state"], bad["state"], bad["errorCode"]), ("ingested", "failed", "unsupported_media"))
+                self.assertEqual(self.request("GET", "/assets/" + good["assetId"])["hash"], self.source_sha)
 
     async def test_worker_rechecks_frozen_intent_and_original_plan_on_real_go(self):
         batch = self.submit("worker-intent-race", mixed=True, research_calls=1)

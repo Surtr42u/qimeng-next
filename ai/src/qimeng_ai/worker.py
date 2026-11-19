@@ -27,11 +27,13 @@ class ClaimJournal:
                 action TEXT, args TEXT, next_attempt REAL NOT NULL DEFAULT 0,
                 paused TEXT, revision INTEGER)""")
 
-    def remember(self, candidate, allow_image_lookup):
+    def remember(self, candidate, allow_research, allow_image_lookup):
         body = {"kind": "intake", "mode": "intelligent", "label": "App 智能整理",
                 "batchId": candidate["batchId"], "libraryId": candidate["libraryId"],
                 "readyManifestFingerprint": candidate["manifestFingerprint"]}
-        if allow_image_lookup and candidate["maxResearchCalls"] > 0:
+        if not allow_research:
+            body["maxResearchCalls"] = 0
+        elif allow_image_lookup and candidate["maxResearchCalls"] > 0:
             body["allowImageLookup"] = True
         with self.state.transaction() as db:
             db.execute("""INSERT INTO worker_claims(batch,claim_key,body) VALUES(?,?,?)
@@ -129,7 +131,7 @@ def intake_state(report):
     return "waiting"
 
 
-def drive_claim(runtime, host, journal, row, stop, usage, status):
+def drive_claim(runtime, host, journal, row, stop, usage, status, allow_image_lookup):
     batch = row["batch"]
     body = json.loads(row["body"])
     try:
@@ -157,7 +159,7 @@ def drive_claim(runtime, host, journal, row, stop, usage, status):
     before = intake_state(report)
     if before != "staged" or stop.is_set():
         return ("stopped" if stop.is_set() else before), report["batch"]["revision"]
-    outcome = work_with_host(runtime, host, journal, batch, visible, stop, body.get("allowImageLookup", False),
+    outcome = work_with_host(runtime, host, journal, batch, visible, stop, allow_image_lookup and body.get("allowImageLookup", False),
                              usage, lambda: status.transition(batch, "claimed"))
     report, _ = current_report(runtime, batch)
     status.observe(report)
@@ -189,7 +191,7 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
             policy = runtime.transport.call("getCurrentAIDelegation", {})
             allow_image_lookup = policy.get("canLookupImages") is True
         for candidate in ready:
-            journal.remember(candidate, allow_image_lookup)
+            journal.remember(candidate, "research" in runtime.config.permissions, allow_image_lookup)
         outcomes = []
         for row in journal.due():
             if stop.is_set():
@@ -198,7 +200,7 @@ def worker_pass(runtime, host, stop, allow_image_lookup, poll_seconds, retry_bat
             usage = ModelUsage()
             revision = None
             try:
-                outcome, revision = drive_claim(runtime, host, journal, row, stop, usage, status)
+                outcome, revision = drive_claim(runtime, host, journal, row, stop, usage, status, allow_image_lookup)
             except ToolError as exc:
                 outcome = exc.code
             if outcome == "unchanged":

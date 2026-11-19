@@ -323,6 +323,9 @@ type Principal struct {
 	ParentDelegationID string    `json:"parentDelegationId,omitempty"`
 	Generation         int64     `json:"generation,omitempty"`
 	ExpiresAt          time.Time `json:"expiresAt"`
+
+	// A queue claim can organize under a smaller research ceiling than the submitting batch.
+	IntakeResearchLimit *int `json:"intakeResearchLimit,omitempty"`
 }
 
 func (p Principal) Has(scope string) bool {

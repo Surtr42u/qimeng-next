@@ -140,7 +140,7 @@ func (s *Service) activeProviderSubject(ctx context.Context, p model.Principal, 
 		if !l.Enabled {
 			return g, Fail(409, "library_disabled", "媒体库已停用。")
 		}
-		g.researchLeft = min(g.researchLeft, b.MaxResearchCalls-b.ResearchCalls)
+		g.researchLeft = min(g.researchLeft, remainingBatchResearch(b, p))
 		g.batch = &b
 		g.libraryID = b.LibraryID
 	case "asset":

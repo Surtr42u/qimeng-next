@@ -26,7 +26,7 @@ func TestReadyIntakePollSeeksAuthorizedLibraryAndLimitsOldestFirst(t *testing.T)
 		t.Fatal(err)
 	}
 	const libraries = `["allowed"]`
-	plans, err := s.DB.Query("EXPLAIN QUERY PLAN "+readyIntakeList, libraries, 0)
+	plans, err := s.DB.Query("EXPLAIN QUERY PLAN "+readyIntakeList, 0, libraries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestReadyIntakePollSeeksAuthorizedLibraryAndLimitsOldestFirst(t *testing.T)
 	if plan := strings.Join(details, "\n"); !strings.Contains(plan, "SEARCH b USING INDEX batches_intelligent_intake") {
 		t.Fatalf("discovery lost its per-library active-intake seek:\n%s", plan)
 	}
-	rows, err := s.DB.Query(readyIntakeList, libraries, 0)
+	rows, err := s.DB.Query(readyIntakeList, 0, libraries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestReadyIntakePollSeeksAuthorizedLibraryAndLimitsOldestFirst(t *testing.T)
 		if err = rows.Scan(&b.BatchID, &b.LibraryID, &b.ManifestFingerprint, &b.MaxResearchCalls); err != nil {
 			t.Fatal(err)
 		}
-		if b.BatchID != fmt.Sprintf("batch-%02d", count+2) || b.MaxResearchCalls != 0 {
+		if b.BatchID != fmt.Sprintf("batch-%02d", count+1) || b.MaxResearchCalls != 0 {
 			t.Fatal("queue did not respect submission order or the grant budget")
 		}
 		count++

@@ -39,7 +39,7 @@ func queueGrant(t *testing.T, f *researchFixture, library string, organize bool)
 func queuedBatch(t *testing.T, f *researchFixture, key, library, mode string, inputs ...model.IntakeInput) model.Batch {
 	t.Helper()
 	var batch model.Batch
-	f.request("POST", "/batches", researchTestOwner, key+"-create", map[string]any{"libraryId": library, "mode": mode, "label": key, "maxResearchCalls": 0}).expect(t, 201, &batch)
+	f.request("POST", "/batches", researchTestOwner, key+"-create", map[string]any{"libraryId": library, "mode": mode, "label": key}).expect(t, 201, &batch)
 	if len(inputs) > 0 {
 		f.request("PUT", "/batches/"+batch.ID+"/inputs", researchTestOwner, key+"-manifest", model.BatchInputsSet{ExpectedManifestRevision: batch.ManifestRevision, Inputs: inputs}).expect(t, 200, &batch)
 	}
@@ -92,7 +92,7 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	z := f.stage(t, library.ID, b.ID, second.ID, second.OriginalFileName, "", 154)
 	for _, g := range grants {
 		rows := readyFor(t, f, g.Credential.Token)
-		if len(rows) != 1 || rows[0].BatchID != b.ID || rows[0].LibraryID != library.ID || rows[0].ManifestFingerprint != b.ManifestFingerprint {
+		if len(rows) != 1 || rows[0].BatchID != b.ID || rows[0].LibraryID != library.ID || rows[0].ManifestFingerprint != b.ManifestFingerprint || rows[0].MaxResearchCalls != 0 {
 			t.Fatal("ready list did not restrict visibility or excluded the valid remainder of mixed input")
 		}
 	}
@@ -172,6 +172,9 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	if receipt.State != "committed" || receipt.Response.TaskID != b.ID || receipt.Operation != "POST /api/v1/ai/delegated-tasks" || receipt.Response.Credential.ParentDelegationID != grants[winner].Delegation.ID {
 		t.Fatal("claim could not be reconciled against its issuing grant")
 	}
+	if b.MaxResearchCalls != 8 || receipt.Response.Credential.Has("research") || receipt.Response.Credential.IntakeResearchLimit == nil || *receipt.Response.Credential.IntakeResearchLimit != 0 {
+		t.Fatal("the default App batch did not receive an organize-only task")
+	}
 	f.request("POST", "/ai/delegated-tasks/"+b.ID+"/resume", grants[other].Credential.Token, "foreign-cannot-resume", map[string]string{"credentialSecret": secrets[other]}).expect(t, 403, nil)
 	f.request("GET", "/batches/"+b.ID, reader.Token, "", nil).expect(t, 200, nil)
 	f.request("GET", readyBatchRoute, token, "", nil).expect(t, 429, nil)
@@ -202,4 +205,81 @@ func TestReadyIntakeTwoWorkersRecoveryAndPublication(t *testing.T) {
 	}
 	f.request("DELETE", "/ai/delegations/"+grants[other].Delegation.ID, researchTestOwner, "", nil).expect(t, 204, nil)
 	f.request("GET", readyBatchRoute, grants[other].Credential.Token, "", nil).expect(t, 401, nil)
+}
+
+func TestReadyIntakeResearchCeilingSurvivesMixedSpendingAndRotation(t *testing.T) {
+	f := researchServer(t, nil, nil)
+	var library model.Library
+	f.request("POST", "/libraries", researchTestOwner, "scope-test-library", map[string]string{"name": "Scoped research", "kind": "regular"}).expect(t, 201, &library)
+	policy := service.DelegationPolicy{Label: "Scoped research", LibraryIDs: []string{library.ID}, AuthorIDs: []string{}, AllowedFields: []string{}, CandidateBlocks: []string{}, CanIngest: true, CanOrganize: true,
+		CanResearch: true, ResearchProviders: []string{"fxtwitter"}, MaxResearchCalls: 5, MaxUpdates: 1, MaxTasksPerDay: 4, ValidDays: 1}
+	var grant service.DelegationCreated
+	f.request("POST", "/ai/delegations", researchTestOwner, "", policy).expect(t, 201, &grant)
+	var app model.Batch
+	f.request("POST", "/batches", researchTestOwner, "web-intake-cap", map[string]any{"libraryId": library.ID, "mode": "intelligent", "label": "Web intake", "maxResearchCalls": 8}).expect(t, 201, &app)
+	inputs := []model.IntakeInput{{ID: "before-claim", OriginalFileName: "before.png"}, {ID: "after-claim", OriginalFileName: "after.png"}}
+	batch := "/batches/" + app.ID
+	f.request("PUT", batch+"/inputs", researchTestOwner, "web-intake-seal", model.BatchInputsSet{ExpectedManifestRevision: app.ManifestRevision, Inputs: inputs}).expect(t, 200, &app)
+	first := f.stage(t, library.ID, app.ID, inputs[0].ID, inputs[0].OriginalFileName, "", 43)
+	second := f.stage(t, library.ID, app.ID, inputs[1].ID, inputs[1].OriginalFileName, "", 94)
+	submit := func(token, key string, u model.Upload, used, status int) {
+		t.Helper()
+		var d model.BatchDetail
+		f.request("GET", batch, token, "", nil).expect(t, 200, &d)
+		in := model.Research{ExpectedRevision: d.Batch.Revision, UploadID: u.ID, ExpectedHash: u.Hash, Outcome: "unknown", Candidates: []model.ResearchCandidate{}, CallsUsed: used}
+		f.request("POST", batch+"/research", token, key, in).expect(t, status, nil)
+	}
+	submit(researchTestOwner, "prior-local-check", first, 1, 200)
+	offers := readyFor(t, f, grant.Credential.Token)
+	if len(offers) != 1 || offers[0].BatchID != app.ID || offers[0].MaxResearchCalls != 5 {
+		t.Fatal("queue did not offer this Web batch with the parent ceiling")
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{82}, 32))
+	claim := map[string]any{"kind": "intake", "mode": "intelligent", "label": "Web intake", "libraryId": library.ID, "batchId": app.ID, "credentialSecret": token}
+	start := "/ai/delegated-tasks"
+	f.request("POST", start, grant.Credential.Token, "manual-over-budget", claim).expect(t, 409, nil)
+	claim["readyManifestFingerprint"], claim["maxResearchCalls"] = app.ManifestFingerprint, 6
+	f.request("POST", start, grant.Credential.Token, "excess-task-budget", claim).expect(t, 403, nil)
+	claim["maxResearchCalls"] = 3
+	var task service.DelegatedTask
+	f.request("POST", start, grant.Credential.Token, "narrower-task-budget", claim).expect(t, 201, &task)
+	check := func(token string, want int) {
+		t.Helper()
+		var session model.Principal
+		f.request("GET", "/sessions/current", token, "", nil).expect(t, 200, &session)
+		var context struct {
+			RemainingResearchCalls int
+			Batch                  model.Batch
+		}
+		f.request("GET", "/ai/tasks/"+app.ID+"/context", token, "", nil).expect(t, 200, &context)
+		var research service.PublicResearchContext
+		f.request("GET", "/research/context", token, "", nil).expect(t, 200, &research)
+		if !session.Has("research") || session.IntakeResearchLimit == nil || *session.IntakeResearchLimit != 3 ||
+			context.Batch.MaxResearchCalls != 8 || context.RemainingResearchCalls != want || research.RemainingResearchCalls == nil || *research.RemainingResearchCalls != want || research.ImageLookupAllowed {
+			t.Fatal("session or task context widened the shared research budget or enabled image export")
+		}
+	}
+	check(token, 2)
+	submit(token, "too-many-local-checks", second, 3, 409)
+	submit(token, "one-local-check", second, 1, 200)
+	check(token, 1)
+	rotated := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{83}, 32))
+	f.request("POST", start+"/"+app.ID+"/resume", grant.Credential.Token, "rotate-narrowed-task", map[string]string{"credentialSecret": rotated}).expect(t, 200, nil)
+	f.request("GET", batch, token, "", nil).expect(t, 401, nil)
+	check(rotated, 1)
+	query := service.PublicResearchInput{Operation: "author", Target: "fixture", UploadID: second.ID, ExpectedHash: second.Hash}
+	path := "/research/providers/fxtwitter/query"
+	one := f.request("POST", path, rotated, "one-public-check", query)
+	one.expect(t, 200, nil)
+	replay := f.request("POST", path, rotated, "one-public-check", query)
+	replay.expect(t, 200, nil)
+	if !bytes.Equal(one.raw, replay.raw) || f.hits.Load() != 1 {
+		t.Fatal("replaying a charged query sent another request")
+	}
+	check(rotated, 0)
+	f.request("POST", path, rotated, "exhausted-public-check", query).expect(t, 429, nil)
+	submit(rotated, "exhausted-local-check", second, 1, 409)
+	if f.hits.Load() != 1 {
+		t.Fatal("exhausted research reached the synthetic provider")
+	}
 }
