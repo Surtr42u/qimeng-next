@@ -34,6 +34,7 @@ type fileIntent struct {
 	CopyStamp                                   string                `json:"copyStamp,omitempty"`
 	SourceStamp                                 string                `json:"sourceStamp,omitempty"`
 	SpellingOnly                                bool                  `json:"spellingOnly,omitempty"`
+	PrincipalGeneration                         int64                 `json:"principalGeneration,omitempty"`
 	MaintenanceTask                             *AssetMaintenanceTask `json:"assetMaintenanceTask,omitempty"`
 	DeclaredSourceIDs                           *[]string             `json:"declaredSourceIds,omitempty"`
 }
@@ -176,15 +177,32 @@ func (s *Service) saveIntent(ctx context.Context, j fileIntent) error {
 	_, e = s.DB.DB.ExecContext(ctx, "INSERT INTO file_intents(id,kind,state,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,data=excluded.data", j.ID, j.Kind, j.State, raw)
 	return e
 }
+func (s *Service) existingFileIntent(ctx context.Context, w *Write, j fileIntent) (fileIntent, error) {
+	old, e := store.Get[fileIntent](ctx, s.DB.DB, "SELECT data FROM file_intents WHERE id=?", j.ID)
+	if e != nil {
+		return old, e
+	}
+	sameOperation := old.Operation == w.operation
+	if !sameOperation && old.Operation == "" && old.Key == "" && old.Kind == "ingest" && old.UploadID != "" && w.Principal.Has("admin") {
+		// An ordinary ingest with no recorded operation can only be adopted
+		// through an explicit, authorized completion of that same upload.
+		u, err := store.Get[model.Upload](ctx, s.DB.DB, "SELECT data FROM uploads WHERE id=?", old.UploadID)
+		if err != nil {
+			return old, err
+		}
+		sameOperation = u.Mode == "ordinary"
+	}
+	if old.Kind != j.Kind || old.UploadID != j.UploadID || !sameOperation {
+		return old, Fail(409, "publication_pending", "此输入已有不同发布操作，须先回读原操作并恢复，不能用新计划覆盖。")
+	}
+	return old, nil
+}
 func (s *Service) prepareFile(ctx context.Context, w *Write, j fileIntent) (fileIntent, error) {
 	if w.tx != nil {
 		return j, errors.New("file intent must precede transaction")
 	}
-	old, e := store.Get[fileIntent](ctx, s.DB.DB, "SELECT data FROM file_intents WHERE id=?", j.ID)
+	old, e := s.existingFileIntent(ctx, w, j)
 	if e == nil {
-		if old.Kind != j.Kind || old.UploadID != j.UploadID || old.Operation != w.operation {
-			return j, Fail(409, "publication_pending", "此输入已有不同发布操作，须先回读原操作并恢复，不能用新计划覆盖。")
-		}
 		return old, nil
 	}
 	if !errors.Is(e, sql.ErrNoRows) {
@@ -263,6 +281,7 @@ func (s *Service) prepareFile(ctx context.Context, w *Write, j fileIntent) (file
 	j.CopyPublication = j.CopyPublication || runtime.GOOS == "android" && j.Kind != "purge"
 	j.State = "prepared"
 	j.PrincipalID = w.Principal.ID
+	j.PrincipalGeneration = w.Principal.Generation
 	j.Operation = w.operation
 	j.Key = w.key
 	j.InputHash = w.inputHash
@@ -423,11 +442,7 @@ func (s *Service) commitFile(ctx context.Context, q store.Querier, j *fileIntent
 		if e != nil {
 			return e
 		}
-		u.AssetID = j.After.ID
-		u.PublishedContentVersion = j.After.ContentVersion
-		u.State = "ingested"
-		u.ErrorCode = ""
-		u.ErrorMessage = ""
+		u = publishedUpload(u, j.After)
 		if e = store.SaveUpload(ctx, q, u); e != nil {
 			return e
 		}
@@ -556,17 +571,21 @@ func (s *Service) runFile(ctx context.Context, w *Write, j fileIntent) (model.As
 	if e != nil {
 		return j.After, publicationError("prepare", e)
 	}
+	return s.runPreparedFile(ctx, w, j)
+}
+func (s *Service) runPreparedFile(ctx context.Context, w *Write, j fileIntent) (model.Asset, error) {
 	if j.State == "done" {
 		return j.After, nil
 	}
 	if j.State == "committed" {
 		return j.After, s.finishFile(ctx, j)
 	}
-	if e = s.validatePublicationBase(ctx, s.DB.DB, j); e != nil {
+	if e := s.validatePublicationBase(ctx, s.DB.DB, j); e != nil {
 		return j.After, e
 	}
+	var e error
 	reservedUpload := w.preparedUpload != "" && w.preparedUpload == j.UploadID
-	if reservedUpload && j.Kind == "ingest" {
+	if reservedUpload && j.Kind == "ingest" && j.SourceObject != "" {
 		e = s.applyReservedUpload(ctx, w, &j)
 	} else {
 		e = s.applyFile(ctx, &j)
@@ -591,8 +610,9 @@ func (s *Service) runFile(ctx context.Context, w *Write, j fileIntent) (model.As
 	return j.After, nil
 }
 func (s *Service) recoverIntents(ctx context.Context) error {
+	var lastID string
 	for {
-		intents, e := store.List[fileIntent](ctx, s.DB.DB, "SELECT data FROM file_intents WHERE state!='done' ORDER BY id LIMIT 64")
+		intents, e := store.List[fileIntent](ctx, s.DB.DB, "SELECT data FROM file_intents WHERE state NOT IN ('done','cancelled') AND id>? ORDER BY id LIMIT 64", lastID)
 		if e != nil {
 			return e
 		}
@@ -600,6 +620,7 @@ func (s *Service) recoverIntents(ctx context.Context) error {
 			return nil
 		}
 		for _, j := range intents {
+			lastID = j.ID
 			j, e = s.recoverMoveSpelling(ctx, j)
 			if e != nil {
 				return e
@@ -608,8 +629,12 @@ func (s *Service) recoverIntents(ctx context.Context) error {
 				if e = s.validatePublicationBase(ctx, s.DB.DB, j); e != nil {
 					return e
 				}
-				if e = s.applyFile(ctx, &j); e != nil {
+				installed, e := s.installRecoveringFile(ctx, &j)
+				if e != nil {
 					return fmt.Errorf("intent %s: %w", j.ID, e)
+				}
+				if !installed {
+					continue
 				}
 				tx, e := s.DB.DB.BeginTx(ctx, nil)
 				if e != nil {

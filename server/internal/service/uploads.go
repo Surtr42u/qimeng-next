@@ -411,6 +411,22 @@ func (s *Service) completeUpload(ctx context.Context, w *Write, id string, prepa
 	if u.State == "cancelled" {
 		return model.UploadResult{}, Fail(409, "upload_cancelled", "上传已取消。")
 	}
+	if u.Mode == "ordinary" && u.ReplaceAssetID == "" && u.ErrorCode == "publication_pending" {
+		// The accepted target may already exist on disk. Resume its exact
+		// name and asset instead of allocating again or reporting a duplicate.
+		j, err := s.existingFileIntent(ctx, w, fileIntent{ID: digest([]byte("publish:" + u.ID))[:32], Kind: "ingest", UploadID: u.ID})
+		if err != nil {
+			return model.UploadResult{}, err
+		}
+		if err = s.checkUploadPublication(ctx, w.Principal, u, &j); err != nil {
+			return model.UploadResult{}, err
+		}
+		asset, err := s.runPreparedFile(ctx, w, j)
+		if err != nil {
+			return model.UploadResult{}, err
+		}
+		return model.UploadResult{Upload: publishedUpload(u, asset), Asset: &asset}, nil
+	}
 	if e = s.uploadsAllowed(ctx); e != nil {
 		return model.UploadResult{}, e
 	}
@@ -426,6 +442,11 @@ func (s *Service) completeUpload(ctx context.Context, w *Write, id string, prepa
 	}
 	if inspectionErr != nil {
 		return model.UploadResult{}, inspectionErr
+	}
+	if u.Mode == "ordinary" || prepared != nil {
+		if e = s.checkUploadLibrary(ctx, u.LibraryID); e != nil {
+			return model.UploadResult{}, e
+		}
 	}
 	if prepared != nil {
 		if e = s.checkUploadInspection(ctx, u, prepared); e != nil {
@@ -662,10 +683,15 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 	if e != nil {
 		return model.UploadResult{}, e
 	}
-	u.State = "ingested"
+	return model.UploadResult{Upload: publishedUpload(u, a), Asset: &a}, nil
+}
+func publishedUpload(u model.Upload, a model.Asset) model.Upload {
 	u.AssetID = a.ID
 	u.PublishedContentVersion = a.ContentVersion
-	return model.UploadResult{Upload: u, Asset: &a}, nil
+	u.State = "ingested"
+	u.ErrorCode = ""
+	u.ErrorMessage = ""
+	return u
 }
 func safeNote(note string) string {
 	v := strings.Map(func(r rune) rune {
