@@ -146,6 +146,7 @@ def open_archive(file, hashes, native):
         zroot = zipfile.Path(archive)
         if native:
             entries = paths(zroot, hashes, file.stem + "/")
+            assert json.loads((zroot / file.stem / "SOURCE.json").read_bytes())["sourceCommit"] == built_commit()
             manifest = (zroot / file.stem / "SHA256SUMS").read_text().splitlines()
             assert all(f"{digest}  {name.removeprefix(file.stem + '/')}" in manifest for name, digest in entries.items())
             executable = "qimeng-next.exe" if "windows-" in file.name else "qimeng-next"
@@ -156,6 +157,7 @@ def open_archive(file, hashes, native):
             binaries = [f"{native_root}/{abi}/libqimeng.so" for abi in ABI]
             for abi in ABI:
                 manifest = json.loads((zroot / f"assets/third-party/{abi}/manifest.json").read_bytes())
+                assert (manifest["repositoryCommit"], manifest["abi"]) == (built_commit(), abi)
                 assert manifest["previewDecoderNotices"] == {name.removeprefix("assets/"): digest for name, digest in entries.items()}
         modules = {}
         with tempfile.TemporaryDirectory() as temporary:
@@ -167,9 +169,13 @@ def open_archive(file, hashes, native):
         return {"name": file.name, "archiveSha256": archive_hash, "noticeMembers": entries, "goBuildInfo": modules}
 
 
+def built_commit():
+    return os.environ.get("NOTICE_BUILD_COMMIT", os.environ["GITHUB_SHA"])
+
+
 def delivered():
     sources = json.loads((OUT / "sources.json").read_text())
-    assert sources["commit"] == os.environ["GITHUB_SHA"]
+    assert sources["commit"] == built_commit()
     hashes = sources["noticeSha256"]
     root = ROOT / "build/delivered"
     artifacts = {}
@@ -183,20 +189,24 @@ def delivered():
         name = "android-native-" + abi
         directory = one(root / name, "manifest.json").parent
         records = paths(directory, hashes, "")
-        assert json.loads((directory / "manifest.json").read_text())["previewDecoderNotices"] == records
+        manifest = json.loads((directory / "manifest.json").read_text())
+        assert (manifest["repositoryCommit"], manifest["abi"]) == (built_commit(), abi)
+        assert manifest["previewDecoderNotices"] == records
         artifacts[name] = {"noticeMembers": records, "goBuildInfo": module_info(directory / "libqimeng.so", True)}
     for kind in ("qimeng-legacy-cold-", "qimeng-selected-image-merge-"):
         for target in ("windows-amd64", "linux-amd64"):
             name = kind + target
             product = root / name
             records = paths(product, hashes, "")
-            manifest = (product / "SHA256SUMS").read_text().splitlines()
-            assert all(f"{digest}  {entry}" in manifest for entry, digest in records.items())
+            manifest = set((product / "SHA256SUMS").read_text().splitlines())
+            for entry, digest in records.items():
+                # GNU sha256sum records text mode with a space and binary mode with an asterisk.
+                assert {f"{digest}  {entry}", f"{digest} *{entry}"} & manifest, (name, entry)
             binary = one(product, "qimeng-backup.exe" if target.startswith("windows") else "qimeng-backup")
             artifacts[name] = {"noticeMembers": records, "restoreGoBuildInfo": module_info(binary, False)}
     linux = root / "linux-runtime"
     artifacts["linux-runtime"] = {"noticeMembers": paths(linux, hashes, ""), "goBuildInfo": module_info(linux / "qimeng-next", True)}
-    return {"commit": sources["commit"], "artifacts": artifacts}
+    return {"buildCommit": sources["commit"], "verificationCommit": os.environ["GITHUB_SHA"], "artifacts": artifacts}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,32 @@
+name: Read pinned released preview notice artifacts
+on:
+  push:
+    branches: [proof/package-preview-notices]
+    paths: ['.github/workflows/preview-notice-readback.yml', 'tools/package_preview_proof.py']
+permissions: {contents: read, actions: read}
+env:
+  NOTICE_BUILD_RUN: '44553391488'
+  NOTICE_BUILD_COMMIT: 2c52e2584e81cf7563558b5095a1aada62588391
+jobs:
+  readback:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Verify the original package run and commit
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NOTICE_BUILD_RUN" --jq .head_sha)" = "$NOTICE_BUILD_COMMIT"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {github-token: '${{ github.token }}', run-id: '${{ env.NOTICE_BUILD_RUN }}', pattern: 'qimeng-*', path: build/delivered}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {github-token: '${{ github.token }}', run-id: '${{ env.NOTICE_BUILD_RUN }}', pattern: 'android-*', path: build/delivered}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {github-token: '${{ github.token }}', run-id: '${{ env.NOTICE_BUILD_RUN }}', name: linux-runtime, path: build/delivered/linux-runtime}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {github-token: '${{ github.token }}', run-id: '${{ env.NOTICE_BUILD_RUN }}', name: pinned-preview-notice-sources, path: build/preview-proof}
+      - run: python tools/package_preview_proof.py archives
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: delivered-preview-notice-paths-and-hashes, path: 'build/preview-proof/*.json', retention-days: 14, if-no-files-found: error}
