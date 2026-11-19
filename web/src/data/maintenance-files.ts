@@ -1,6 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { fileDigest } from "./hash";
-import { newId } from "../lib/id";
 
 export type Directory = FileSystemDirectoryHandle & {
   queryPermission(options: { mode: "readwrite" }): Promise<PermissionState>;
@@ -27,14 +26,19 @@ async function parentAt(root: FileSystemDirectoryHandle, path: string[], create:
   for (const name of path.slice(0, -1)) parent = await parent.getDirectoryHandle(name, { create });
   return parent;
 }
-async function writeStream(root: FileSystemDirectoryHandle, path: string[], stream: ReadableStream<Uint8Array>, expected: string, signal: AbortSignal) {
+async function writeStream(root: FileSystemDirectoryHandle, path: string[], stream: ReadableStream<Uint8Array>, expected: string | undefined, signal: AbortSignal,
+  beforeClose?: (hash: string) => Promise<void>) {
   signal.throwIfAborted();
   const parent = await parentAt(root, path, true);
   const output = await (await parent.getFileHandle(path.at(-1)!, { create: true })).createWritable();
   const hash = sha256.create();
   const verify = new TransformStream<Uint8Array, Uint8Array>({
     transform(bytes, writer) { hash.update(bytes); writer.enqueue(bytes); },
-    flush() { if (toHex(hash.digest()) !== expected) throw new Error("内容与预期 SHA-256 不符，本次写入已中止。"); },
+    async flush() {
+      const actual = toHex(hash.digest());
+      if (expected !== undefined && actual !== expected) throw new Error("内容与预期 SHA-256 不符，本次写入已中止。");
+      await beforeClose?.(actual);
+    },
   });
   // pipeTo aborts the writable on a failed digest/read, before its atomic close.
   await stream.pipeThrough(verify).pipeTo(output, { signal });
@@ -60,7 +64,10 @@ const layout = {
 } as const;
 type Part = keyof typeof layout;
 const parts = Object.keys(layout) as Part[];
+const materialParts = ["master", "report", "index"] as const;
+type MaterialPart = typeof materialParts[number];
 const stageRoot = ".绮梦下一代暂存";
+const ownerName = ".绮梦暂存所有者";
 const journalName = ".绮梦下一代轮换.json";
 const mobileJournal = ".绮梦手机轮换.json";
 async function checkOtherWriter(root: Directory) {
@@ -69,7 +76,7 @@ async function checkOtherWriter(root: Directory) {
 const recordName = ".绮梦下一代清单.json";
 const checksum = /^[a-f0-9]{64}$/;
 export type Generation = { instanceId: string; businessRevision: string; backupId: string; hashes: Record<Part, string> };
-type Journal = { stage: string; phase: "previous" | "current"; current?: Generation; previous?: Generation; next: Generation };
+type Journal = { stage: string; stageOwner?: string; phase: "previous" | "current"; current?: Generation; previous?: Generation; next: Generation };
 function generation(value: unknown): Generation {
   const row = value as Generation;
   if (!row || typeof row.instanceId !== "string" || !/^\d+$/.test(row.businessRevision) || typeof row.backupId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(row.backupId) ||
@@ -87,6 +94,8 @@ async function readJournal(root: Directory) {
   if (!file?.size) return;
   const row: Journal = JSON.parse(await smallText(file));
   if (!row || !/^[A-Za-z0-9_-]{8,128}$/.test(row.stage) || !["previous", "current"].includes(row.phase)) throw new Error("维护目录中的轮换记录无效。");
+  if (row.stageOwner !== undefined && (typeof row.stageOwner !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(row.stageOwner)))
+    throw new Error("轮换记录的暂存所有者无效。");
   generation(row.next); if (row.current) generation(row.current); if (row.previous) generation(row.previous);
   if ([row.current, row.previous].some(g => g && g.instanceId !== row.next.instanceId)) throw new Error("两代清单属于不同影库。");
   return row;
@@ -130,6 +139,17 @@ export async function resumeRotation(root: Directory, instanceId: string, downlo
   const job = await readJournal(root);
   if (!job) return;
   if (job.next.instanceId !== instanceId) throw new Error("维护目录中有另一个影库未完成的轮换。");
+  if (!sameGeneration(await readGeneration(root, "当前"), job.next)) {
+    await verifyMaterials(root, rotationMaterials(job), signal);
+  }
+  return finishRotation(root, job, download, signal);
+}
+
+function rotationMaterials(job: Journal): Materials {
+  return { stage: job.stage, owner: job.stageOwner, hashes: job.next.hashes };
+}
+
+async function finishRotation(root: Directory, job: Journal, download: ArchiveStream, signal: AbortSignal) {
   if (job.phase === "previous" && job.current) {
     await publish(root, "上次", job.previous, job.current, async part => {
       const source = await fileAt(root, ["当前", ...layout[part]]);
@@ -148,43 +168,100 @@ export async function resumeRotation(root: Directory, instanceId: string, downlo
     if (!file) throw new Error("待提交的作者资料缺失。");
     return file.stream();
   }, signal);
-  await releaseMaterials(root, { stage: job.stage, hashes: job.next.hashes }, signal);
+  await releaseMaterials(root, rotationMaterials(job), signal);
+  signal.throwIfAborted();
   await root.removeEntry(journalName);
   return job.next;
 }
-export type Materials = { stage: string; hashes: Record<"master" | "report" | "index", string> };
-export async function releaseMaterials(root: Directory, materials: Materials, signal: AbortSignal) {
-  const parent = await root.getDirectoryHandle(stageRoot);
-  let stage: FileSystemDirectoryHandle;
-  try { stage = await parent.getDirectoryHandle(materials.stage); }
-  catch (error) { if (missing(error)) return; throw error; }
-  for (const part of ["master", "report", "index"] as const) {
-    const name = layout[part][1];
-    const file = await fileAt(stage, [name]);
-    if (!file) continue;
-    if (await digest(file, signal) !== materials.hashes[part]) throw new Error("暂存资料出现外部修改，已保留原文件。");
-    await stage.removeEntry(name);
+
+type MaterialProgress = { stage: string; owner?: string; hashes: Partial<Record<MaterialPart, string>>; writing?: MaterialPart };
+export type MaterialCapture = MaterialProgress & { owner: string };
+export type Materials = MaterialProgress & { hashes: Record<MaterialPart, string> };
+
+async function materialDirectory(root: Directory, stage: string, create: boolean) {
+  try {
+    const parent = await root.getDirectoryHandle(stageRoot, { create });
+    return { parent, directory: await parent.getDirectoryHandle(stage, { create }) };
+  } catch (error) {
+    if (!create && missing(error)) return undefined;
+    throw error;
   }
-  const iterable = stage as FileSystemDirectoryHandle & { values(): AsyncIterable<FileSystemHandle> };
-  for await (const _entry of iterable.values()) return;
+}
+
+async function inspectMaterials(directory: FileSystemDirectoryHandle, materials: MaterialProgress, signal: AbortSignal) {
+  const owner = await fileAt(directory, [ownerName]);
+  const owned = !!materials.owner && !!owner?.size && await smallText(owner, 1024) === materials.owner;
+  if (owner?.size && !owned) throw new Error("暂存所有者已改变，已保留目录。");
+  const files = new Set<MaterialPart>();
+  const verified = new Set<MaterialPart>();
+  const iterable = directory as FileSystemDirectoryHandle & { values(): AsyncIterable<FileSystemHandle> };
+  for await (const entry of iterable.values()) {
+    if (entry.kind === "file" && entry.name === ownerName && materials.owner) continue;
+    const part = materialParts.find(part => layout[part][1] === entry.name);
+    if (!part || entry.kind !== "file" || (materials.owner && !owned)) throw new Error("暂存目录出现外部修改，已保留原文件。");
+    const file = await (entry as FileSystemFileHandle).getFile();
+    const expected = materials.hashes[part];
+    files.add(part);
+    if (expected && await digest(file, signal) === expected) verified.add(part);
+    else if (materials.writing !== part || file.size !== 0) throw new Error("暂存资料出现外部修改，已保留原文件。");
+  }
+  return { owner, owned, files, verified };
+}
+
+async function verifyMaterials(root: Directory, materials: Materials, signal: AbortSignal) {
+  const location = await materialDirectory(root, materials.stage, false);
+  if (!location || (await inspectMaterials(location.directory, materials, signal)).verified.size !== materialParts.length)
+    throw new Error("待提交的作者资料缺失。");
+}
+
+export async function releaseMaterials(root: Directory, materials: MaterialProgress, signal: AbortSignal) {
+  const location = await materialDirectory(root, materials.stage, false);
+  if (!location) return;
+  const { parent, directory } = location;
+  const { files, owner } = await inspectMaterials(directory, materials, signal);
+  for (const part of files) {
+    signal.throwIfAborted();
+    await directory.removeEntry(layout[part][1]);
+  }
+  signal.throwIfAborted();
+  if (owner) await directory.removeEntry(ownerName);
   await parent.removeEntry(materials.stage);
 }
-export async function stageMaterials(root: Directory, master: ReadableStream<Uint8Array>, report: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<Materials> {
-  const stage = newId();
-  const hashes = { master: "", report: "", index: "" };
-  const files = { master, report, index: new Blob([JSON.stringify(["作者总表.txt"])]).stream() };
-  for (const part of ["master", "report", "index"] as const) {
-    const path = [stageRoot, stage, layout[part][1]];
-    if (await fileAt(root, path)) throw new Error("暂存文件已存在，未覆盖。");
-    const hash = sha256.create();
-    const parent = await parentAt(root, path, true);
-    const output = await (await parent.getFileHandle(path.at(-1)!, { create: true })).createWritable();
-    await files[part].pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, writer) { hash.update(chunk); writer.enqueue(chunk); },
-    })).pipeTo(output, { signal });
-    hashes[part] = toHex(hash.digest());
+
+export async function stageMaterials(root: Directory, capture: MaterialCapture,
+  read: (part: "master" | "report") => Promise<ReadableStream<Uint8Array> | null>,
+  save: (progress: MaterialCapture) => Promise<void>, signal: AbortSignal): Promise<Materials> {
+  signal.throwIfAborted();
+  const started = capture.writing !== undefined || Object.keys(capture.hashes).length > 0;
+  const location = await materialDirectory(root, capture.stage, !started);
+  if (!location) throw new Error("暂存目录缺失，已停止写入。");
+  const { directory } = location;
+  const { owned, verified } = await inspectMaterials(directory, capture, signal);
+  if (!owned) {
+    if (started) throw new Error("无法确认暂存目录的所有者，已保留原文件。");
+    await writeText(directory, [ownerName], capture.owner, signal);
   }
-  return { stage, hashes };
+  for (const part of materialParts) {
+    if (capture.hashes[part] && capture.writing !== part && !verified.has(part))
+      throw new Error("已写入的暂存资料缺失，已停止写入。");
+  }
+
+  async function record(progress: MaterialCapture) {
+    await save(progress);
+    capture = progress;
+  }
+  for (const part of materialParts) {
+    if (!verified.has(part)) {
+      if (capture.writing !== part) await record({ ...capture, writing: part });
+      const stream = part === "index" ? new Blob([JSON.stringify(["作者总表.txt"])]).stream() : await read(part);
+      if (!stream) throw new Error("作者资料正文缺失，已保留原代次。");
+      // A close may outlive the page. Its expected digest must be durable first.
+      await writeStream(directory, [layout[part][1]], stream, capture.hashes[part], signal,
+        hash => record({ ...capture, hashes: { ...capture.hashes, [part]: hash } }));
+    }
+    if (capture.writing === part) await record({ ...capture, writing: undefined });
+  }
+  return { stage: capture.stage, owner: capture.owner, hashes: capture.hashes as Materials["hashes"] };
 }
 export async function rotate(root: Directory, identity: Omit<Generation, "hashes">, archiveHash: string, materials: Materials, download: ArchiveStream, signal: AbortSignal) {
   await checkOtherWriter(root);
@@ -194,10 +271,18 @@ export async function rotate(root: Directory, identity: Omit<Generation, "hashes
   if (!current && previous) throw new Error("当前代缺失，上一代仍然保留。");
   await checkParts(root, "当前", current, undefined, signal, false);
   if (current) await checkParts(root, "上次", previous, undefined, signal, false);
-  const next = generation({ ...identity, hashes: { archive: archiveHash, ...materials.hashes } });
-  const job: Journal = { stage: materials.stage, phase: current ? "previous" : "current", current, previous, next };
+  const next = generation({ ...identity, hashes: { ...materials.hashes, archive: archiveHash } });
+  if (sameGeneration(current, next)) {
+    await releaseMaterials(root, materials, signal);
+    return next;
+  }
+  if (current && BigInt(current.businessRevision) >= BigInt(next.businessRevision))
+    throw new Error("当前代已更新，已保留目录中的两代资料。");
+  await verifyMaterials(root, materials, signal);
+  await checkOtherWriter(root);
+  const job: Journal = { stage: materials.stage, stageOwner: materials.owner, phase: current ? "previous" : "current", current, previous, next };
   await writeText(root, [journalName], JSON.stringify(job), signal);
-  return await resumeRotation(root, identity.instanceId, download, signal);
+  return finishRotation(root, job, download, signal);
 }
 export async function verifyGeneration(root: Directory, slot: Slot, expected: Generation, signal: AbortSignal) {
   await checkParts(root, slot, expected, undefined, signal, false);

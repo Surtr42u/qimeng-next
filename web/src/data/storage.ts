@@ -62,11 +62,11 @@ export async function localWrite(
     const transaction = db.transaction(store, "readwrite");
     if (typeof item === "string") transaction.objectStore(store).delete(item);
     else transaction.objectStore(store).put(item);
-    // Request success is not transaction success: quota errors can still abort afterwards.
+    // Settle on the transaction outcome. On explicit abort, pending requests can
+    // emit error before the abort event while transaction.error is still null.
     transaction.oncomplete = () => resolve();
     transaction.onabort = () =>
       reject(transaction.error ?? new Error("本地写入被中止"));
-    transaction.onerror = () => reject(transaction.error);
   });
 }
 

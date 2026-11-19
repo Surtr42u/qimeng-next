@@ -11,10 +11,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import urllib.request
 
+import httpx
 from mcp import Client
 
 from live_fixture import CloudGoFixture
@@ -439,6 +441,78 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
             final = self.request("GET", "/batches/" + batch)
             self.assertEqual([p["state"] for p in final["plans"]], ["completed"])
             self.assertEqual(self.request("GET", "/assets/" + final["inputs"][0]["assetId"])["hash"], self.source_sha)
+
+    async def test_gateway_errors_defer_the_original_claim_and_lost_commit_across_restart(self):
+        batch = self.submit("worker-gateway-restart")
+        config = Config.load(self.env)
+        runtime = Runtime(config)
+        self.addCleanup(runtime.close)
+        batch_path = "/api/v1/batches/" + batch
+        read_failures = [
+            (502, {"text": "synthetic gateway unavailable"}),
+            (503, {"json": {"code": "gateway_unavailable"}}),
+            (504, {"json": {"code": "gateway_timeout"}}),
+        ]
+        commit_keys = []
+        send = runtime.transport.client.send
+
+        def gateway(request, *args, **kwargs):
+            if request.method == "GET" and request.url.path == batch_path and read_failures:
+                status, body = read_failures.pop(0)
+                return httpx.Response(status, request=request, **body)
+            response = send(request, *args, **kwargs)
+            if (request.method == "POST" and request.url.path.startswith(batch_path + "/plans/")
+                    and request.url.path.endswith("/commit")):
+                self.assertEqual(response.status_code, 200)
+                commit_keys.append(request.headers["Idempotency-Key"])
+                response.close()
+                return httpx.Response(504, json={"code": "gateway_timeout"}, request=request)
+            return response
+
+        def saved_claim():
+            with runtime.connect().transaction() as db:
+                return db.execute("SELECT * FROM worker_claims WHERE batch=?", (batch,)).fetchone()
+
+        now = time.time() - 60
+        with patch.object(runtime.transport.client, "send", side_effect=gateway), patch("qimeng_ai.worker.time") as clock:
+            clock.time.return_value = now
+            original_key = None
+            for expected in ("RESPONSE_INVALID", "gateway_unavailable", "gateway_timeout"):
+                outcome, = run_worker(runtime, once=True, env=self.env)["batches"]
+                self.assertEqual((outcome["batchId"], outcome["state"]), (batch, expected))
+                claim = saved_claim()
+                original_key = original_key or claim["claim_key"]
+                self.assertEqual((claim["claim_key"], claim["paused"], claim["revision"]), (original_key, None, None))
+                self.assertEqual(run_worker(runtime, once=True, env=self.env)["state"], "idle")
+                clock.time.return_value += 1
+            self.assertEqual(self.host.requests, [])
+
+            lost, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual(lost["state"], "gateway_timeout")
+            key, = commit_keys
+            claim = saved_claim()
+            self.assertEqual((claim["claim_key"], claim["action"]), (original_key, "plan.commit"))
+            self.assertEqual(json.loads(claim["args"])["Idempotency-Key"], key)
+            self.assertEqual([entry["key"] for entry in runtime.task_state(batch).status()["pending"]], [key])
+
+        committed = self.request("GET", "/batches/" + batch)
+        plan, = committed["plans"]
+        item, = committed["inputs"]
+        self.assertEqual((plan["state"], item["state"]), ("completed", "ingested"))
+        self.assertEqual(self.request("GET", "/assets/" + item["assetId"])["hash"], self.source_sha)
+        model_turns = len(self.host.requests)
+        resumed, = (await self.worker())["batches"]
+        self.assertEqual((resumed["batchId"], resumed["state"]), (batch, "completed"))
+        self.assertEqual(len(self.host.requests), model_turns)
+        self.assertEqual(self.request("GET", "/batches/" + batch), committed)
+        self.assertIsNone(saved_claim())
+        self.assertEqual(runtime.task_state(batch).status()["pending"], [])
+        receipt = runtime.transport.call("getOperation", {"key": key, "operation": "commitPlan:" + plan["id"]})
+        self.assertEqual((receipt["state"], receipt["idempotencyKey"]), ("committed", key))
+        runtime.task_state(None)
+        receipt = runtime.transport.call("getOperation", {"key": original_key})
+        self.assertEqual((receipt["response"]["taskId"], receipt["response"]["credential"]["generation"]), (batch, 1))
+        self.assertEqual((await self.worker())["state"], "idle")
 
     async def test_app_receives_mixed_work_across_process_death_without_a_chat_prompt(self):
         self.submit("worker-ordinary", mode="ordinary")

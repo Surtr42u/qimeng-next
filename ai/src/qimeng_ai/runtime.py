@@ -175,6 +175,9 @@ class Runtime:
 
             value = self._metered(state, task_id, name, arguments, key, dispatch,
                                   author_task=binding.id if author_write else None, inferred_revision=inferred_revision)
+            if name == "platform.result.read":
+                # A cached result was already redacted. Redacting a text slice can change it again.
+                return value
             visible = value.metadata if isinstance(value, ImageResult) else value
             if verify_author_write:
                 visible = binding.readback(self.transport, key, arguments["body"], visible)
@@ -237,7 +240,7 @@ class Runtime:
             return tool
         if name == "platform.result.read":
             return output.page(state, arguments["resultRef"], arguments.get("pointer", ""),
-                               arguments.get("offset", 0), arguments.get("limit", 20))
+                               arguments.get("offset", 0), arguments.get("limit", 20), max_bytes=self.config.output_bytes)
         if name in self.operations:
             return self.transport.call(self.operations[name][0], arguments)
         if name in {"task.start", "task.resume"}:

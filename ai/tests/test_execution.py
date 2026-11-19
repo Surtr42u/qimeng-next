@@ -139,7 +139,7 @@ class BudgetAndReferences(unittest.TestCase):
                           State(config(directory, QIMENG_API_TOKEN="different-synthetic"), "instance-a", "contract-a")):
                 with self.assertRaises(ToolError):
                     other.read(reference)
-            self.assertEqual(page(first, reference, "/items", 1, 1)["items"], ["b"])
+            self.assertEqual(page(first, reference, "/items", 1, 1, max_bytes=2048)["items"], ["b"])
 
     def test_long_result_is_recoverable_and_token_is_removed(self):
         with tempfile.TemporaryDirectory() as directory:

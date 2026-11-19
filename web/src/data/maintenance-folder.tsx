@@ -3,13 +3,21 @@ import type { ReactNode } from "react";
 import { api, read } from "./client";
 import { createCheckpoint, downloadArchiveStream, getBackup, requestExport } from "./backups";
 import { archiveOriginal, resumeRotation, rotate, readGeneration, verifyGeneration, pickFolder, folderLock, releaseMaterials, stageMaterials } from "./maintenance-files";
-import type { Directory, Materials } from "./maintenance-files";
+import type { Directory, MaterialCapture, Materials } from "./maintenance-files";
 import { localRead, localWrite } from "./storage";
 import { useSession } from "./session";
 import { newId } from "../lib/id";
 import type { UploadArchive } from "./upload-queue";
 
-type Job = { createKey: string; exportKey: string; id?: string; revision?: string; materials?: Materials };
+type Job = {
+  createKey: string;
+  exportKey: string;
+  id?: string;
+  revision?: string;
+  capture?: MaterialCapture;
+  discardCapture?: true;
+  materials?: Materials;
+};
 export type FolderBinding = { id: string; token: string; root: Directory; job?: Job };
 type FolderState = { loading: boolean; binding?: FolderBinding; busy: boolean; status?: string; error?: unknown };
 const initial: FolderState = { loading: true, busy: false };
@@ -48,8 +56,10 @@ class MaintenanceFolder {
     if (this.value.busy) return;
     // The picker and permission prompt must start in the user gesture.
     this.update({ busy: true, error: undefined });
+    let picking = true;
     try {
       const root = await pickFolder();
+      picking = false;
       this.controller.signal.throwIfAborted();
       await folderLock(async () => {
         const old = await localRead<FolderBinding>("maintenance_folders", this.scope);
@@ -59,7 +69,9 @@ class MaintenanceFolder {
         await this.store({ id: this.scope, token: newId(), root });
       }, this.controller.signal);
     } catch (error) {
-      this.update({ busy: false, ...(error instanceof DOMException && error.name === "AbortError" ? {} : { error }) }); return;
+      const cancelled = picking && error instanceof DOMException && error.name === "AbortError";
+      this.update({ busy: false, error: cancelled ? undefined : error });
+      return;
     }
     this.update({ busy: false }); await this.sync(false);
   }
@@ -72,8 +84,9 @@ class MaintenanceFolder {
       const permission = manual ? await selected.root.requestPermission({ mode: "readwrite" }) : await selected.root.queryPermission({ mode: "readwrite" });
       if (permission !== "granted") { this.update({ status: "请点击更新全部归档，重新授权维护目录。" }); return; }
       await folderLock(async () => {
-        let binding = await localRead<FolderBinding>("maintenance_folders", this.scope);
-        if (!binding || binding.token !== selected.token) { this.update({ binding, status: "维护目录绑定已变更。" }); return; }
+        const saved = await localRead<FolderBinding>("maintenance_folders", this.scope);
+        if (!saved || saved.token !== selected.token) { this.update({ binding: saved, status: "维护目录绑定已变更。" }); return; }
+        let binding = saved;
         const root = binding.root;
         const anchor = () => read(api.GET("/backups/change-state", { signal }));
         const resumed = await resumeRotation(root, this.instanceId, downloadArchiveStream, signal);
@@ -86,41 +99,64 @@ class MaintenanceFolder {
           if (manual) await verifyGeneration(root, "当前", current, signal);
           this.update({ status: "当前资料已是最新一代。" }); return;
         }
-        const job: Job = binding.job ?? { createKey: newId(), exportKey: newId() };
-        if (!binding.job) { binding = { ...binding, job }; await this.store(binding); }
+        let job: Job = binding.job ?? { createKey: newId(), exportKey: newId() };
+        const saveJob = async (next: Job) => {
+          const updated = { ...binding, job: next };
+          await this.store(updated);
+          binding = updated;
+          job = next;
+        };
+        const discardCapture = async (status: string) => {
+          const capture = job.capture;
+          if (capture) {
+            if (!job.discardCapture) await saveJob({ ...job, discardCapture: true });
+            await releaseMaterials(root, capture, signal);
+          }
+          await this.store({ ...binding, job: undefined });
+          this.update({ status });
+        };
+        if (!binding.job) await saveJob(job);
         const checkpoint = job.id ? await getBackup(job.id, signal) : await createCheckpoint(job.createKey, signal);
         if (!checkpoint.businessRevision) throw new Error("快照未返回业务修订，不能自动轮换。");
-        if (!job.id) { job.id = checkpoint.id; job.revision = checkpoint.businessRevision; await this.store(binding); }
-        if (!job.materials) {
-          if (state.businessRevision !== checkpoint.businessRevision) {
-            await this.store({ ...binding, job: undefined }); this.update({ status: "资料已变化，将捕获新的统一快照。" }); return;
+        if ((job.id && job.id !== checkpoint.id) || (job.revision && job.revision !== checkpoint.businessRevision))
+          throw new Error("快照身份或业务修订已变化，已停止写回。");
+        if (!job.id || !job.revision) await saveJob({ ...job, id: checkpoint.id, revision: checkpoint.businessRevision });
+        let materials = job.materials;
+        if (!materials) {
+          if (job.discardCapture || state.businessRevision !== checkpoint.businessRevision) {
+            await discardCapture("资料已变化，将捕获新的统一快照。");
+            return;
           }
-          const master = await read(api.GET("/author-lists/master", { parseAs: "stream", signal }));
-          const report = await read(api.GET("/backups/{id}/author-documents", { params: { path: { id: checkpoint.id } }, parseAs: "stream", signal }));
-          if (!master || !report) throw new Error("作者资料正文缺失，已保留原代次。");
-          const materials = await stageMaterials(root, master, report, signal);
+          const capture = job.capture ?? { stage: newId(), owner: newId(), hashes: {} };
+          if (!job.capture) await saveJob({ ...job, capture });
+          materials = await stageMaterials(root, capture, part => part === "master"
+            ? read(api.GET("/author-lists/master", { parseAs: "stream", signal }))
+            : read(api.GET("/backups/{id}/author-documents", { params: { path: { id: checkpoint.id } }, parseAs: "stream", signal })),
+          progress => saveJob({ ...job, capture: progress }), signal);
           const after = await anchor();
           if (after.instanceId !== this.instanceId || after.businessRevision !== checkpoint.businessRevision) {
-            await releaseMaterials(root, materials, signal);
-            await this.store({ ...binding, job: undefined }); this.update({ status: "读取作者总表时资料变化，将重新取快照。" }); return;
+            await discardCapture("读取作者总表时资料变化，将重新取快照。");
+            return;
           }
-          job.materials = materials; await this.store(binding);
+          await saveJob({ ...job, materials, capture: undefined });
         }
         let backup = checkpoint;
         if (["failed", "interrupted"].includes(backup.exportState ?? "")) {
           if (!manual) throw new Error("服务器归档中断或失败，点击更新全部归档重试。");
-          job.exportKey = newId(); await this.store(binding);
-          backup = await requestExport(job.id!, job.exportKey, signal);
-        } else if (backup.exportState === "not_started") backup = await requestExport(job.id!, job.exportKey, signal);
+          await saveJob({ ...job, exportKey: newId() });
+          backup = await requestExport(checkpoint.id, job.exportKey, signal);
+        } else if (backup.exportState === "not_started") backup = await requestExport(checkpoint.id, job.exportKey, signal);
         if (backup.exportState === "queued" || backup.exportState === "running") {
           this.update({ status: "服务器正在准备完整归档（" + (backup.exportedFiles ?? 0) + "/" + (backup.totalFiles ?? "—") + "）。" }); return;
         }
         if (backup.exportState !== "completed" || !backup.archiveHash) throw new Error("完整归档不可用：" + (backup.exportError || backup.exportState || "未返回状态"));
+        if (backup.id !== checkpoint.id || (backup.businessRevision && backup.businessRevision !== checkpoint.businessRevision))
+          throw new Error("归档与原快照不一致，已停止写回。");
         this.update({ status: "正在核对旧代并写入维护目录…" });
-        await rotate(root, { instanceId: state.instanceId, businessRevision: checkpoint.businessRevision, backupId: backup.id }, backup.archiveHash, job.materials, downloadArchiveStream, signal);
+        await rotate(root, { instanceId: state.instanceId, businessRevision: checkpoint.businessRevision, backupId: backup.id }, backup.archiveHash, materials, downloadArchiveStream, signal);
         await this.store({ ...binding, job: undefined }); this.update({ status: "当前备份与作者资料已更新。" });
       }, signal);
-    } catch (error) { if (!signal.aborted) this.update({ error }); }
+    } catch (error) { if (!signal.aborted) this.update({ error, status: undefined }); }
     finally {
       this.update({ busy: false });
       if (!this.value.error) this.schedule(this.value.binding?.job ? 3000 : 60000);
