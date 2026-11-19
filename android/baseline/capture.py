@@ -205,8 +205,21 @@ def boot_and_login():
     shell("settings", "put", "system", "font_scale", "1.0")
     shell("cmd", "uimode", "night", "no")
     shell("am", "start", "-W", "-n", PACKAGE + "/.MainActivity")
-    tap("NAS / 电脑")
-    tap("手动填写地址", scroll=True)
+    tap("NAS / 电脑", stable=True)
+    # The discovery message reflows this card. Wait for discovery's own enabled button
+    # and the manual-address toggle to settle before using their screen coordinates.
+    def enabled_button(nodes, label):
+        return [n for n in nodes if n.get("enabled") == "true" and n.get("clickable") == "true"
+                and matching(n.iter("node"), label)]
+
+    wait_for("重新寻找", match=lambda nodes: enabled_button(nodes, "重新寻找"), stable=True)
+    for attempt in range(3):
+        if matching(tree(), "收起手动地址"):
+            break
+        tap("手动填写地址", scroll=True, match=lambda nodes: enabled_button(nodes, "手动填写地址"), stable=True)
+        if matching(tree(), "收起手动地址"):
+            break
+    wait_for("收起手动地址")
     tap("server address", scroll=True, match=lambda nodes: [
         n for n in nodes if n.get("class") == "android.widget.EditText" and n.get("password") != "true"
     ])
