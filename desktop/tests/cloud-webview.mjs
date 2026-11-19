@@ -17,9 +17,24 @@ const installers = (await readdir(bundles)).filter(file => file.endsWith("-setup
 assert.equal(installers.length, 1, "Expected one installer from this build.");
 await mkdir(evidence, { recursive: true });
 
-async function site(label) {
-  const seen = { range: false, page: false, trustedLinkClick: false, openError: false, originalRequests: 0, original: false };
+async function listen(server) {
+  await new Promise(done => server.listen(0, "127.0.0.1", done));
+  return "http://127.0.0.1:" + server.address().port;
+}
+
+async function site(label, interruptProbe) {
+  const seen = { probes: 0, probeWithCredentials: false, range: false, page: false, trustedLinkClick: false, openError: false, originalRequests: 0, original: false };
   const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/api/v1/instance") {
+      seen.probes++;
+      if (req.headers.authorization || req.headers.cookie) seen.probeWithCredentials = true;
+      if (interruptProbe?.(seen.probes, res)) return;
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" }).end(JSON.stringify({
+        id: "synthetic-" + label, name: label, apiVersion: "0.1.0",
+        capabilities: { aiConfigured: false, recommendations: true, rankings: true, stats: true, backups: true, migration: true },
+      }));
+      return;
+    }
     if (req.url === "/range") {
       const ok = req.headers.range === "bytes=4-7" && req.headers.cookie?.includes("synthetic_session=ok");
       res.writeHead(ok ? 206 : 403, { "Content-Range": "bytes 4-7/8" });
@@ -62,28 +77,58 @@ async function site(label) {
       'const r=await fetch("/range",{headers:{Range:"bytes=4-7"}});' +
       'if (r.status===206 && await r.text()==="4567") await fetch("/range-read",{method:"POST"});})();</script>');
   });
-  await new Promise(done => server.listen(0, "127.0.0.1", done));
-  return { server, origin: "http://127.0.0.1:" + server.address().port, seen };
+  return { server, origin: await listen(server), seen };
 }
 
 const first = await site("one");
-const second = await site("two");
+const second = await site("two", (attempt, res) => {
+  if (attempt === 1) {
+    res.writeHead(200, { "Content-Type": "text/html" }).end("<title>Service status</title>");
+    return true;
+  }
+  if (attempt === 2) {
+    res.writeHead(302, { Location: first.origin + "/api/v1/instance" }).end();
+    return true;
+  }
+  if (attempt === 3) {
+    // Keep the body pending until the client's total request deadline expires.
+    res.writeHead(200, { "Content-Type": "application/json" }).write("{");
+    return true;
+  }
+  return false;
+});
+const offline = createServer();
+const offlineOrigin = await listen(offline);
+await new Promise(done => offline.close(done));
+const configDirectory = join(process.env.APPDATA, "media.qimeng.next.desktop");
+// Only a fresh hosted runner may exercise the installed application's real config location.
+await mkdir(configDirectory);
 let shell;
+async function exerciseShell(executable, args, controls) {
+  shell = spawn(executable, args, { windowsHide: true, stdio: "ignore",
+    env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: join(temp, "webview") } });
+  const exited = new Promise((done, fail) => { shell.once("exit", done); shell.once("error", fail); });
+  // Windows PowerShell loads the native UI Automation assemblies included in .NET Framework.
+  const result = await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA",
+    "-File", resolve("tests/window-automation.ps1"), "-OwnerPid", String(shell.pid), ...controls],
+    { windowsHide: true, timeout: 240000, encoding: "utf8" });
+  process.stdout.write(result.stdout);
+  assert.equal(await Promise.race([exited, delay(15000).then(() => "timeout")]), 0, "Closing the library should exit the shell.");
+}
+
 try {
   execFileSync(join(bundles, installers[0]), ["/S", "/D=" + installed],
     { windowsHide: true, stdio: "ignore", timeout: 300000 });
   const executable = join(installed, "qimeng-next-desktop.exe");
   await access(executable);
-  shell = spawn(executable, ["--setup"], { windowsHide: true, stdio: "ignore",
-    env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: join(temp, "webview") } });
-  const exited = new Promise((done, fail) => { shell.once("exit", done); shell.once("error", fail); });
-  // Windows PowerShell loads the native UI Automation assemblies included in .NET Framework.
-  const result = await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA",
-    "-File", resolve("tests/window-automation.ps1"), "-OwnerPid", String(shell.pid),
-    "-FirstOrigin", first.origin, "-SecondOrigin", second.origin, "-Evidence", evidence],
-    { windowsHide: true, timeout: 240000, encoding: "utf8" });
-  process.stdout.write(result.stdout);
-  assert.equal(await Promise.race([exited, delay(15000).then(() => "timeout")]), 0, "Closing the library should exit the shell.");
+  await exerciseShell(executable, ["--setup"], [
+    "-FirstOrigin", first.origin, "-SecondOrigin", second.origin, "-OfflineOrigin", offlineOrigin,
+    "-ConfigDirectory", configDirectory, "-Evidence", evidence,
+  ]);
+  await exerciseShell(executable, [], ["-Restored"]);
+  assert.equal(first.seen.probes, 1, "The redirect must not probe the other instance.");
+  assert.equal(second.seen.probes, 4, "Retry the rejected handshakes and restore the saved origin directly on restart.");
+  assert(!first.seen.probeWithCredentials && !second.seen.probeWithCredentials, "The instance probe must be anonymous.");
   assert(first.seen.page && first.seen.range && first.seen.original && second.seen.page && second.seen.range,
     "Both sites must confirm the desktop session, including a cookie-bearing range request.");
   const uninstaller = (await readdir(installed)).find(name => /^uninstall.*\.exe$/i.test(name));
@@ -97,7 +142,8 @@ try {
   }
   await writeFile(join(evidence, "native-window.json"), JSON.stringify({ sourceCommit: process.env.GITHUB_SHA,
     installedNSIS: true, setup: true, maximize: true, minimize: true, mediaWindow: true,
-    switchClosesOldWindows: true, cookieRange: true, mainCloseExits: true, uninstalled: true }, null, 2) + "\n");
+    failedSwitchPreservesConfigAndWindows: true, redirectRejected: true, probeTimeout: true, anonymousProbe: true,
+    switchClosesOldWindows: true, restartOpensSavedServer: true, cookieRange: true, mainCloseExits: true, uninstalled: true }, null, 2) + "\n");
 } catch (error) {
   console.error("Synthetic site receipts", JSON.stringify({ first: first.seen, second: second.seen }));
   if (error.stdout) process.stderr.write(error.stdout);

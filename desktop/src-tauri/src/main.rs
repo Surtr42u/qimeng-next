@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod connection;
-use std::sync::{atomic::{AtomicU64, Ordering}, Mutex};
+mod instance;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tauri::async_runtime::Mutex;
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{Menu, MenuItem};
@@ -11,7 +13,7 @@ use connection::Connection;
 
 static NEXT_WINDOW: AtomicU64 = AtomicU64::new(1);
 static ACTIVE_LIBRARY: AtomicU64 = AtomicU64::new(0);
-static SWITCHING: Mutex<()> = Mutex::new(());
+static SWITCHING: Mutex<()> = Mutex::const_new(());
 
 fn active_label() -> String {
     format!("library-{}", ACTIVE_LIBRARY.load(Ordering::Acquire))
@@ -56,7 +58,6 @@ async fn open_original(app: tauri::AppHandle, window: WebviewWindow, address: St
 }
 
 fn open_library(app: &tauri::AppHandle, connection: &Connection, save: bool) -> Result<(), String> {
-    let _switch = SWITCHING.try_lock().map_err(|_| "已有连接正在打开，请稍后再试")?;
     let origin = connection::normalize(&connection.origin)?;
     let generation = NEXT_WINDOW.fetch_add(1, Ordering::Relaxed);
     let label = format!("library-{generation}");
@@ -146,7 +147,12 @@ async fn current_connection(app: tauri::AppHandle, window: WebviewWindow) -> Res
 #[tauri::command]
 async fn save_connection(app: tauri::AppHandle, window: WebviewWindow, address: String) -> Result<Connection, String> {
     check_local_window(&window)?;
-    let connection = Connection { origin: connection::normalize(&address)?.to_string() };
+    let _switch = SWITCHING.try_lock().map_err(|_| "已有连接正在打开，请稍后再试")?;
+    let origin = connection::normalize(&address)?;
+    instance::verify(&origin).await?;
+    // A settings window closed during the handshake can no longer commit its result.
+    check_local_window(&window)?;
+    let connection = Connection { origin: origin.to_string() };
     open_library(&app, &connection, true)?;
     window.hide().map_err(|_| "已连接，但连接窗口未能隐藏")?;
     Ok(connection)
@@ -170,6 +176,8 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![current_connection, save_connection, window_action, open_original])
         .setup(|app| {
+            // Keep a tray-initiated switch from racing the initial window while WebView2 starts.
+            let _startup = SWITCHING.try_lock()?;
             let open = MenuItem::with_id(app, "open", "打开主窗口", true, None::<&str>)?;
             let setup = MenuItem::with_id(app, "setup", "切换服务器地址", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
