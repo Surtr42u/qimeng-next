@@ -26,6 +26,8 @@ type Receipt struct {
 	SourceInstanceID   string      `json:"sourceInstanceId"`
 	RestoredInstanceID string      `json:"restoredInstanceId"`
 	TargetInstanceID   string      `json:"targetInstanceId"`
+	RestoredSchema     int         `json:"restoredSchema"`
+	OutputSchema       int         `json:"outputSchema"`
 	ArchiveSHA         string      `json:"archiveSHA256"`
 	RestoredSHA        string      `json:"restoredCatalogSHA256"`
 	TargetSHA          string      `json:"targetCatalogSHA256"`
@@ -121,23 +123,35 @@ func prepare(ctx context.Context, o Options, dir, ready string, inputs []*inputF
 	if err := copyCatalog(ctx, inputs[3], targetFile, o.TargetSHA); err != nil {
 		return result, err
 	}
-	for _, name := range []string{sourceFile, targetFile} {
-		if err := sealedDB(ctx, name); err != nil {
-			return result, err
-		}
+	restoredSchema, err := sealedVersion(ctx, sourceFile)
+	if err != nil {
+		return result, err
+	}
+	if restoredSchema != 44 && restoredSchema != installedSchema {
+		return result, refusal("unsupported_restored_source_schema")
+	}
+	if err := requireInstalledCatalog(ctx, targetFile); err != nil {
+		return result, err
 	}
 	snapshot := filepath.Join(dir, "archive.sqlite")
 	r, err := verifySource(ctx, inputs[0], inputs[2], inputs[1], snapshot, o)
 	if err != nil {
 		return result, err
 	}
+	if restoredSchema == 44 {
+		if err := matchSchema44(ctx, snapshot, sourceFile, r); err != nil {
+			return result, err
+		}
+	}
 	catalog, err := store.Open(snapshot)
 	if err != nil {
 		return result, err
 	}
 	defer catalog.DB.Close()
-	if err := matchRestored(ctx, catalog.DB, sourceFile, r); err != nil {
-		return result, err
+	if restoredSchema == installedSchema {
+		if err := matchRestored(ctx, catalog.DB, sourceFile, r); err != nil {
+			return result, err
+		}
 	}
 	targetID, err := checkTarget(ctx, catalog.DB, targetFile, r)
 	if err != nil {
@@ -167,7 +181,7 @@ func prepare(ctx context.Context, o Options, dir, ready string, inputs []*inputF
 	if err := os.Chmod(outputFile, 0600); err != nil {
 		return result, err
 	}
-	if err := sealedDB(ctx, outputFile); err != nil {
+	if err := requireInstalledCatalog(ctx, outputFile); err != nil {
 		return result, err
 	}
 	outputSHA, err := hashFile(outputFile)
@@ -175,7 +189,7 @@ func prepare(ctx context.Context, o Options, dir, ready string, inputs []*inputF
 		return result, err
 	}
 	result = Receipt{State: "prepared", BackupID: r.BackupID, SourceInstanceID: r.SourceInstanceID, RestoredInstanceID: r.InstanceID,
-		TargetInstanceID: targetID, ArchiveSHA: o.ArchiveSHA, RestoredSHA: o.RestoredSHA, TargetSHA: o.TargetSHA,
+		TargetInstanceID: targetID, RestoredSchema: restoredSchema, OutputSchema: installedSchema, ArchiveSHA: o.ArchiveSHA, RestoredSHA: o.RestoredSHA, TargetSHA: o.TargetSHA,
 		PlanSHA: o.PlanSHA, InventorySHA: o.InventorySHA, OutputSHA: outputSHA,
 		Libraries: len(d.roots), Live: len(d.live), Trash: d.trashed, StagedTrash: d.staged}
 	out, err := os.OpenFile(filepath.Join(ready, "phone-relink.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)

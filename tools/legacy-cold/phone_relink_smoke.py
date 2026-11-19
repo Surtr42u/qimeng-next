@@ -147,15 +147,17 @@ def run(options, base):
     before = (cold.digest(source_db), cold.digest(target_db))
     dest = base / "prepared"
 
-    def invoke(target=target_db, source=source_db, destination=dest, success=True, budget=0):
-        return cold.command([backup, "phone-relink", "--archive", archive, "--sha256", cold.digest(archive),
-                             "--restored-db", source, "--restored-sha256", cold.digest(source), "--restore-receipt", receipt_file,
+    def invoke(target=target_db, source=source_db, destination=dest, success=True, budget=0,
+               baseline=archive, restore_receipt=receipt_file):
+        return cold.command([backup, "phone-relink", "--archive", baseline, "--sha256", cold.digest(baseline),
+                             "--restored-db", source, "--restored-sha256", cold.digest(source), "--restore-receipt", restore_receipt,
                              "--target-db", target, "--target-sha256", cold.digest(target),
                              "--plan", pfile, "--plan-sha256", cold.digest(pfile), "--inventory", ifile,
                              "--inventory-sha256", cold.digest(ifile), "--destination", destination,
                              "--trash-budget-bytes", str(budget)], success)
 
     receipt = json.loads(invoke().stdout)
+    assert (receipt["restoredSchema"], receipt["outputSchema"]) == (45, 45)
     assert receipt == cold.read_json(dest / "phone-relink.json")
     assert (receipt["liveOriginals"], receipt["trashOriginals"], receipt["libraries"]) == (2, 1, 1)
     assert receipt["targetInstanceId"] == original_id != receipt["restoredInstanceId"]
@@ -182,6 +184,44 @@ def run(options, base):
         assert reason.encode() in proc.stderr, f"{name} returned {proc.stderr.decode(errors='replace')[-120:]}"
         assert not destination.exists() and not list(base.glob(".qimeng-phone-relink-*")), name
         refused.append(name)
+
+    # Produce the earlier archive and cold restore using their released source
+    # revision. Do not construct a historical ledger by modifying a newer DB.
+    old_tools = options.schema44_bin.resolve()
+    archive44 = base / "converted-44" / "library.qnext"
+    cold.command([old_tools / convert.name, "--source-db", old_db, "--roots", roots, "--trash-root", trash,
+                  "--source-timezone", "Asia/Shanghai", "--output", archive44.parent])
+    source44 = base / "restored-44" / "qimeng.sqlite"
+    receipt44 = base / "restore-44.json"
+    write_json(receipt44, restore(old_tools / backup.name, archive44, source44.parent))
+    assert read_rows(source44, "SELECT max(version) FROM schema_migrations") == [(44,)]
+    before44 = cold.digest(source44)
+    older = {"baseline": archive44, "source": source44, "restore_receipt": receipt44}
+    output44 = base / "from-old-tool" / "qimeng.sqlite"
+    old_receipt = json.loads(invoke(**older, destination=output44.parent).stdout)
+    assert (old_receipt["restoredSchema"], old_receipt["outputSchema"]) == (44, 45)
+    assert old_receipt["targetInstanceId"] == original_id and cold.digest(output44) == old_receipt["outputCatalogSHA256"]
+    ledger = "SELECT version,name,sha256 FROM schema_migrations ORDER BY version"
+    assert read_rows(output44, ledger) == read_rows(target_db, ledger)
+    assert read_rows(output44, "SELECT count(*) FROM selected_image_merge_groups") == [(0,)]
+    for table in ("asset_content_versions", "events", "likes", "migration_media_aliases", "migration_relation_origins"):
+        sql = f"SELECT * FROM {table} ORDER BY 1,2"
+        assert read_rows(source44, sql) == read_rows(output44, sql), table
+    assert read_rows(output44, "SELECT * FROM credentials ORDER BY id") == read_rows(target_db, "SELECT * FROM credentials ORDER BY id")
+    with serving(server, output44.parent, phone) as (call, _):
+        assert call("/api/v1/sessions/current", token=phone_login["token"])["id"] == phone_login["id"]
+        media44 = call("/api/v1/assets/" + cold.A, token=phone_login["token"])
+        assert call(media44["contentUrl"], token=phone_login["token"], raw=True) == (media / "first.png").read_bytes()
+        assert call("/api/v1/history", token=phone_login["token"])["items"]
+    refusal("schema44-target", "installed_schema_45_required", **older, target=source44)
+    altered44 = base / "changed-44" / "qimeng.sqlite"
+    altered44.parent.mkdir()
+    shutil.copyfile(source44, altered44)
+    with closing(sqlite3.connect(altered44)) as con:
+        con.execute("DELETE FROM events")
+        con.commit()
+    refusal("edited-schema44-restore", "catalog_differs_from_verified_restore", **{**older, "source": altered44})
+    assert cold.digest(source44) == before44 and read_rows(source44, "SELECT max(version) FROM schema_migrations") == [(44,)]
 
     for name, amend, why in (
         ("traversal", lambda p, i: i["files"][0].update(phoneRelativePath="../escape.png"), "invalid_phone_file_evidence"),
@@ -212,6 +252,7 @@ def run(options, base):
         ("activity", "INSERT INTO recommendation_shown VALUES('2024-01-02','old-target',1)", "target_has_business_or_nondefault_state"),
         ("queue", "INSERT INTO batches VALUES('old-target','2024','{}')", "target_has_business_or_nondefault_state"),
         ("author-edit", "UPDATE authors SET data=json_set(data,'$.biography','edit')", "target_default_author_changed"),
+        ("unknown-target-setting", "INSERT INTO settings VALUES('unknown_target_setting','{}')", "target_has_business_or_nondefault_state"),
         ("conflicting-settings", "INSERT INTO settings VALUES('operational_settings','{}')", "target_setting_conflicts_with_source"),
         ("unknown-schema", "CREATE TABLE non_native_state(id INTEGER)", "incompatible_or_damaged_catalog"),
     ):
@@ -289,6 +330,8 @@ def run(options, base):
         shutil.copyfileobj(src, dst)
     assert cold.digest(trash_path) == staged["sha256"]
     return {"sourceCommit": os.environ["GITHUB_SHA"], "runner": os.environ["RUNNER_OS"], "schema": 45,
+            "schema44ToolCommit": os.environ["SCHEMA44_TOOL_SHA"], "verifiedRestoreSchemaUpgrades": [[44,45],[45,45]],
+            "sealedSchema44Unchanged": True, "schema44TargetLoginAndNativeHistoryReadBack": True,
             "liveOriginalsRead": 2, "nativeTrashReadBack": 1, "distinctSameContentFiles": 2,
             "targetInstanceAndLoginVerified": True, "sourceCredentialExcluded": True, "eventAndOriginRowsPreserved": True,
             "ordinaryServiceContentReadBack": True, "nativeArchiveRoundTrip": True,
@@ -297,7 +340,7 @@ def run(options, base):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    for option in ("migrations", "bin", "server", "receipt"):
+    for option in ("migrations", "bin", "server", "schema44-bin", "receipt"):
         parser.add_argument("--" + option, type=Path, required=True)
     opts = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="phone-relink-synthetic-") as temporary:

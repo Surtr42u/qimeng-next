@@ -54,23 +54,53 @@ func sameTable(ctx context.Context, db *sql.DB, other, name string) error {
 	return nil
 }
 
-func sealedDB(ctx context.Context, name string) error {
+const installedSchema = 45
+
+func catalogVersion(ctx context.Context, db *sql.DB) (int, error) {
+	var version int
+	err := db.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version)
+	return version, err
+}
+
+func sealedVersion(ctx context.Context, name string) (int, error) {
 	db, err := store.OpenDatabase(name, store.SnapshotDatabase)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer db.Close()
 	if err := store.ValidateBackupSchema(ctx, db); err != nil {
-		return errors.Join(refusal("incompatible_or_damaged_catalog"), err)
+		return 0, errors.Join(refusal("incompatible_or_damaged_catalog"), err)
 	}
-	var version int
-	if err := db.QueryRowContext(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version); err != nil {
+	return catalogVersion(ctx, db)
+}
+
+func requireInstalledCatalog(ctx context.Context, name string) error {
+	version, err := sealedVersion(ctx, name)
+	if err != nil {
 		return err
 	}
-	if version != 45 {
+	if version != installedSchema {
 		return refusal("installed_schema_45_required")
 	}
 	return nil
+}
+
+// The released 0044 converter and restore used the same native reset policy.
+// Compare their complete tables before the production 0045 migration creates
+// its new relations. Only the extracted working snapshot is changed.
+func matchSchema44(ctx context.Context, snapshot, restored string, receipt service.RestoreResult) error {
+	db, err := store.OpenDatabase(snapshot, store.CatalogDatabase)
+	if err != nil {
+		return err
+	}
+	version, err := catalogVersion(ctx, db)
+	if err == nil && version != 44 {
+		err = refusal("archive_and_restored_schema_differ")
+	}
+	if err == nil {
+		err = matchRestored(ctx, db, restored, receipt)
+	}
+	return errors.Join(err, db.Close())
 }
 
 // Re-run the official catalog restore on the independently verified archive

@@ -77,10 +77,13 @@ jobs:
     timeout-minutes: 35
     env:
       REFERENCE_SHA: d0215962bb1e9c29baabeed9fc9dc5c8b4b94555
+      SCHEMA44_TOOL_SHA: d56ca163ab62fcb4436edc7163fbca2a4306ce13
       CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {path: next, persist-credentials: false}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {ref: '${{ env.SCHEMA44_TOOL_SHA }}', path: schema44, persist-credentials: false}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: Surtr42u/qimeng-media
@@ -97,19 +100,23 @@ jobs:
         env: {SUFFIX: '${{ matrix.ext }}'}
         run: |
           test "$(git -C reference rev-parse HEAD)" = "$REFERENCE_SHA"
+          test "$(git -C schema44 rev-parse HEAD)" = "$SCHEMA44_TOOL_SHA"
           python -m pip install PyYAML==6.0.3
           python next/tools/generate_sdks.py --target go
-          mkdir -p package fixture-bin
+          mkdir -p package fixture-bin schema44-bin
           cd next/server
           go build -mod=readonly -trimpath -o "../../package/qimeng-legacy-convert$SUFFIX" ./cmd/qimeng-legacy-convert
           go build -mod=readonly -trimpath -o "../../package/qimeng-backup$SUFFIX" ./cmd/qimeng-backup
           go build -mod=readonly -trimpath -o "../../fixture-bin/qimeng-next$SUFFIX" ./cmd/qimeng
+          cd ../../schema44/server
+          go build -mod=readonly -trimpath -o "../../schema44-bin/qimeng-legacy-convert$SUFFIX" ./cmd/qimeng-legacy-convert
+          go build -mod=readonly -trimpath -o "../../schema44-bin/qimeng-backup$SUFFIX" ./cmd/qimeng-backup
       - name: Convert synthetic v26 data and read it through the restored server
         shell: bash
         run: python next/tools/legacy-cold/smoke.py --migrations reference/server/migrations --bin package --server fixture-bin --receipt package/cloud-receipt.json
       - name: Relink an empty phone catalog and read original shared files with its existing credential
         shell: bash
-        run: python next/tools/legacy-cold/phone_relink_smoke.py --migrations reference/server/migrations --bin package --server fixture-bin --receipt package/phone-relink-cloud-receipt.json
+        run: python next/tools/legacy-cold/phone_relink_smoke.py --migrations reference/server/migrations --bin package --server fixture-bin --schema44-bin schema44-bin --receipt package/phone-relink-cloud-receipt.json
       - name: Include instructions and checksums for the two tools
         shell: bash
         env: {SUFFIX: '${{ matrix.ext }}'}
