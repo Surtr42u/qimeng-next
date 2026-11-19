@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -124,7 +125,8 @@ internal fun MaintenanceCard(icon: ImageVector, title: String, content: @Composa
 @Composable
 private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewModel, library: LibraryViewModel) {
     var restoreInfo by remember { mutableStateOf(false) }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("maintenance-backup-list"),
+        verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { MaintenanceCard(BackupRestoreIcon, "备份与恢复") {
             Text("保存作品原件、作者、头像、标签及浏览记录。", style = MaterialTheme.typography.bodySmall)
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {

@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import media.qimeng.next.LibraryViewModel
@@ -52,7 +53,7 @@ internal fun ActivityEventCard(model: LibraryViewModel) {
             LazyColumn(Modifier.heightIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (review.isEmpty()) item { Text("没有待处理的记录") }
                 items(review.asReversed(), key = PendingEvent::id) { event ->
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(Modifier.testTag("activity-event:${event.id}"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(event.assetName ?: event.assetId, style = MaterialTheme.typography.titleSmall)
                         Text(eventDescription(event), style = MaterialTheme.typography.bodySmall)
                         val reason = event.issue?.message ?: "旧版补传结果 · ${event.failure.orEmpty()}"
