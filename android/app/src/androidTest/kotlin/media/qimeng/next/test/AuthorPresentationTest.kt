@@ -166,7 +166,7 @@ class AuthorPresentationTest {
             inputIds = inputs, editedStems = stems, batchKey = batch)
         withTimeout(120_000) {
             while (true) {
-                val transfers = graph.queue.state.value?.transfers.orEmpty().filter { it.batchId == batch }
+                val transfers = graph.queue.state.value?.transfers.orEmpty().filter { it.batchKey == batch }
                 check(transfers.none { it.state == TransferState.FAILED }) { "Synthetic author media failed to publish" }
                 if (transfers.size == assetCount && transfers.all { it.state == TransferState.SUCCEEDED }) break
                 delay(500)
