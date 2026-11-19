@@ -417,11 +417,11 @@ func project(ctx context.Context, source *sql.DB, filename string, room int64, m
 	}
 	media.report.Stage = "catalog"
 	if err = catalog(ctx, source, tx, media.sourceID); err != nil {
-		return failed("catalog_projection_failed")
+		return projectionFailure("catalog", err)
 	}
 	media.report.Stage = "activity"
 	if err = activity(ctx, source, tx, media.sourceID); err != nil {
-		return failed("activity_projection_failed")
+		return projectionFailure("activity", err)
 	}
 	media.report.Stage = "historical_records"
 	if err = importHistory(ctx, source, tx, media.sourceID); err != nil {

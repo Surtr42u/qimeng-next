@@ -26,11 +26,27 @@ type issue struct {
 	Table   string `json:"table,omitempty"`
 	RowID   int64  `json:"rowId,omitempty"`
 	Locator string `json:"locatorSHA256,omitempty"`
+	Section string `json:"section,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 func (i *issue) Error() string { return i.Code }
 
 func failed(code string) error { return &issue{Code: code} }
+
+func projectionFailure(stage string, err error) error {
+	i := &issue{Code: stage + "_projection_failed"}
+	// Projection adapters publish fixed machine codes through this interface.
+	// The wrapped driver error may contain private column values or filenames.
+	var diagnostic interface{ ColdDiagnostic() (string, string) }
+	if errors.As(err, &diagnostic) {
+		section, reason := diagnostic.ColdDiagnostic()
+		if plainTable.MatchString(section) && plainTable.MatchString(reason) {
+			i.Section, i.Reason = section, reason
+		}
+	}
+	return i
+}
 
 func locate(err error, table string, row int64, locator string) error {
 	var i *issue

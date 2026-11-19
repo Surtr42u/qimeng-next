@@ -126,9 +126,9 @@ def serve_restored(binary, data, original):
     env = {k: v for k, v in os.environ.items() if not k.startswith("QIMENG_")}
     env.update(QIMENG_DATA_DIR=str(data), QIMENG_LISTEN=f"127.0.0.1:{port}", QIMENG_ADMIN_TOKEN=token)
 
-    def request(path, payload=None):
+    def request(path, payload=None, extra_headers=None):
         req = urllib.request.Request(f"http://127.0.0.1:{port}" + path, data=payload,
-                                     headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+                                     headers={"Authorization": "Bearer " + token, **(extra_headers or {})})
         with urllib.request.urlopen(req, timeout=10) as res:
             return res.read()
 
@@ -155,7 +155,8 @@ def serve_restored(binary, data, original):
             second = json.loads(request("/api/v1/assets/" + B))
             assert second["id"] != asset["id"] and second["hash"] == asset["hash"]
             try:
-                request("/api/v1/migration/v2/imports", b"{}")
+                request("/api/v1/migration/v2/imports?sourceId=fixture-old-source", b"{}",
+                        {"Content-Type": "application/octet-stream", "Idempotency-Key": "fixture-retired-import"})
             except urllib.error.HTTPError as e:
                 assert e.code == 410, e.code
             else:
