@@ -16,9 +16,9 @@ const errPrivate = sourceProblem("nonportable_business_value")
 var publicLinks = regexp.MustCompile("(?i)https?://[^\\s<>\"'\u0060，。；！？、（）《》【】「」]+")
 var httpScheme = regexp.MustCompile(`(?i)https?://`)
 var escapedOctet = regexp.MustCompile(`%[0-9a-fA-F]{2}`)
-var privateText = regexp.MustCompile(`(?i)(?:[a-z]:[/\\]|\\\\[^\\]+\\|file://|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:bearer|basic)\s+[a-z0-9+/_=.-]{8,})`)
+var privateText = regexp.MustCompile(`(?i)(?:[a-z]:[/\\]|\\\\[^\\]+\\|file://|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:bearer|basic)\s+[a-z0-9+/_=.-]{8,}|\b(?:access[_-]?token|api[_-]?key|password|secret)[ \t]*[:=]\s*\S)`)
 var homePath = regexp.MustCompile(`(?i)/(?:home|users)/[^/ \t\r\n]+/(?:\.ssh|\.config|desktop|documents|downloads|library)(?:/|$)`)
-var assignment = regexp.MustCompile(`(?i)(?:^|[\s?&#;/,(\[])([a-z][a-z0-9_.-]*)[ \t]*[:=][ \t]*\S`)
+var assignment = regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.-]*)["'“”‘’]?[ \t]*[:=：＝]`)
 
 func sensitiveKey(key string) bool {
 	k := strings.ToLower(strings.NewReplacer("-", "", "_", "", ".", "").Replace(key))
@@ -70,14 +70,19 @@ func (i *importer) inspectText(text string, removeQuery bool) (string, int, erro
 }
 
 func trimProsePunctuation(link string) string {
+	// Count closing punctuation once even for a long run of delimiters.
+	excess := map[byte]int{}
+	for close, open := range map[byte]string{')': "(", ']': "[", '}': "{"} {
+		excess[close] = strings.Count(link, string(close)) - strings.Count(link, open)
+	}
 	for len(link) > 0 {
 		switch last := link[len(link)-1]; last {
 		case '.', ',', '!', ';', ':':
 		case ')', ']', '}':
-			open := map[byte]string{')': "(", ']': "[", '}': "{"}[last]
-			if strings.Count(link, string(last)) <= strings.Count(link, open) {
+			if excess[last] <= 0 {
 				return link
 			}
+			excess[last]--
 		default:
 			return link
 		}
@@ -197,8 +202,9 @@ func (i *importer) nonURLText(text string) error {
 	if privateText.MatchString(text) || homePath.MatchString(text) {
 		return errPrivate
 	}
-	for _, pair := range assignment.FindAllStringSubmatch(text, -1) {
-		if sensitiveKey(pair[1]) {
+	lastValue := len(strings.TrimRightFunc(text, unicode.IsSpace))
+	for _, pair := range assignment.FindAllStringSubmatchIndex(text, -1) {
+		if pair[1] < lastValue && sensitiveKey(text[pair[2]:pair[3]]) {
 			return errPrivate
 		}
 	}
@@ -219,7 +225,8 @@ func (i *importer) nonURLText(text string) error {
 			if !found {
 				break
 			}
-			if after == "" || strings.ContainsAny(after[:1], "/ \t\r\n,;)'\"]}") {
+			next, _ := utf8.DecodeRuneInString(after)
+			if after == "" || unicode.IsSpace(next) || strings.ContainsRune("/,;)'\"]}，。；！？、）》】」”’", next) {
 				return errPrivate
 			}
 			rest = after

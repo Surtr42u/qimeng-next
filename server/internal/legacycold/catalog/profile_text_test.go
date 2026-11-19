@@ -86,7 +86,7 @@ func TestColdCatalogRedactedBiographyAbsentFromNativeDBAndArchive(t *testing.T) 
 		"homepageUrl": nested, "evidenceUrls": []string{nested}, "biography": annotated,
 		"xProfile": map[string]any{"url": "https://x.com/synthetic_fixture",
 			"biography": "Original (" + link + "?sig=" + marker + ").", "biographyZh": "译文 " + link + "?token=" + marker + "。保留"},
-		"candidate": map[string]any{"biography": "Draft " + link + "?view=lower&api_key=" + marker, "evidenceUrls": []string{nested}},
+		"candidate":    map[string]any{"biography": "Draft " + link + "?view=lower&api_key=" + marker, "evidenceUrls": []string{nested}},
 		"extraInteger": json.Number("9007199254740993"),
 	}
 	raw, err := json.Marshal(profile)
@@ -131,5 +131,41 @@ func TestColdCatalogRedactedBiographyAbsentFromNativeDBAndArchive(t *testing.T) 
 				AND json_extract(original,'$.decision.action')='remove_sensitive_url_query_parameters' AND json_extract(original,'$.decision.removedParameters')=1`,
 				sampleSource, sampleSource, path)
 		}
+	}
+}
+
+func TestColdCatalogRejectsClearCredentialsAfterProseAndQuotes(t *testing.T) {
+	for _, tc := range []struct {
+		name, field, prefix string
+	}{
+		{"Chinese label in biography", "biography", "说明：access_token="},
+		{"Chinese quote in remark", "remark", "公开备注「api_key="},
+		{"quoted key in remark", "remark", "作者备注中有“signature”：“"},
+		{"ASCII quote in TXT", "txt", "笔记 'password="},
+		{"Chinese comma in TXT", "txt", "说明，secret="},
+		{"adjacent assignments in TXT", "txt", "note:token="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.author("writer", "Writer", "regular", 0)
+			marker := rand.Text()
+			key := "creator_profile:writer"
+			var value any = map[string]any{"authorId": "writer", "status": "empty", "revision": 1, tc.field: tc.prefix + marker}
+			if tc.field == "txt" {
+				key = "imported_txt_sources"
+				value = []fragment{{Filename: "synthetic.txt", Content: "1  Writer\n来源  " + tc.prefix + marker}}
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.setting(key, string(data))
+			err = f.run()
+			if !errors.Is(err, errPrivate) || strings.Contains(err.Error(), marker) {
+				t.Fatal("expected redacted rejection of a clear credential")
+			}
+			f.expect("0", "SELECT count(*) FROM migration_relation_origins")
+			f.expect("0", "SELECT count(*) FROM authors WHERE id='writer'")
+		})
 	}
 }
