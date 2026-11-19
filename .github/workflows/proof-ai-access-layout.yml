@@ -8,7 +8,7 @@ concurrency:
   group: ai-access-evidence-${{ github.ref }}
   cancel-in-progress: true
 env:
-  APP_SHA: d635a0f7b6d7aa0f26e8c96b77ee1cf3b19be78d
+  APP_SHA: b3a6a5e5bb3178183c822a8e615d0fe1924598c3
 jobs:
   browser:
     name: ${{ matrix.os }} browser checks and layout

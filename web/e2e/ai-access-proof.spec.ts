@@ -14,6 +14,7 @@ const archived: Grant = {
   libraryIds: ['synthetic-library'], authorIds: [], allAuthors: false,
   allowedFields: [], candidateBlocks: [], allowClear: false, canIngest: true,
   canOrganize: false, canResearch: true, researchProviders: ['steam'], canLookupImages: true,
+  canResearchAssets: false, canRecycleSources: false,
   maxResearchCalls: 2, maxUpdates: 1, maxTasksPerDay: 5, validDays: 30, maxCallsPerTask: 100, taskSeconds: 3600,
 };
 

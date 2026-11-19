@@ -105,6 +105,7 @@ test('a narrow history row keeps the entire grant name and opens its permissions
     createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-01-31T00:00:00Z',
     libraryIds: ['synthetic-library'], authorIds: [], allAuthors: false, allowedFields: [], candidateBlocks: [],
     allowClear: false, canIngest: true, canResearch: true, canOrganize: false, canLookupImages: true,
+    canResearchAssets: false, canRecycleSources: false,
     maxResearchCalls: 2, maxUpdates: 1, maxTasksPerDay: 10, validDays: 30,
     maxCallsPerTask: 100, taskSeconds: 3600,
   };
