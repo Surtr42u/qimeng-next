@@ -1,6 +1,10 @@
 # 当前状态
 
-更新于 2026-11-19。本仓已按所有者授权公开，以 MIT 许可证发布。公开验收使用隔离目录和合成资料。真实资料切换、手机安装与 NAS 实机验收以各自的本机记录为准。
+更新于 2026-11-20。本仓已按所有者授权公开，以 MIT 许可证发布。公开验收使用隔离目录和合成资料。真实资料切换、手机安装与 NAS 实机验收以各自的本机记录为准。
+
+`8b2c415` 已合入两项审查修复。扫描把原件被同名目录取代的情况登记为缺件，并保留原索引和人工资料。Web 补发浏览事件时，同一作品等待恢复，队列里的其他作品仍可继续。[PR 18 与完整检查](https://github.com/Surtr42u/qimeng-next/pull/18) · [发布、迁移与恢复交接](handover.md)
+
+11 月 20 日的 Android 对照使用旧正式包 `74597408`。新版已在隔离服务中取得三个统计窗口的白卡截图，以及作者资料、筛选与媒体网格依次排列的截图。手机端和服务端的缩略图缓存分别计量，Go 的低空间及恢复补齐回归已通过。[旧版实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44588916908) · [新版阶段截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44591454981/artifacts/14564568156) · [缓存后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44588983656/job/135790515054) · [功能与验收范围](../android/UI_PARITY_TASKS.md)
 
 2026-11-19，主线在 `407ed69` 之后合入三档后台预热、大图展示解码、Web 维护界面和随包许可，合并提交为 `55d4963`。取 Windows 与 Android 包、确认正常后台缓存和安排实体设备验收，按接手手册从对应主线作业继续。下文保留各自所列提交的历史测量。[PR #17](https://github.com/Surtr42u/qimeng-next/pull/17) · [主线产品作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44556256306) · [接手手册](handover.md)
 
