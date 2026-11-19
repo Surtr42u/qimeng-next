@@ -201,40 +201,8 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 		return result, e
 	}
 	defer db.DB.Close()
-	tx, e := db.DB.BeginTx(ctx, nil)
-	if e != nil {
-		return result, e
-	}
-	defer tx.Rollback()
 	result.InstanceID = ID()
-	// Runtime capabilities cannot survive a cross-instance restore. Business task
-	// reports remain, but no previous session or delegated writer can claim them.
-	for _, statement := range []string{
-		"DELETE FROM credentials", "DELETE FROM idempotency", "DELETE FROM file_intents", "DELETE FROM delegated_tasks",
-		"DELETE FROM author_list_mirror", "DELETE FROM client_diagnostics",
-		"DELETE FROM detached_upload_roots",
-		"DELETE FROM device_apply_chunks",
-		"DELETE FROM device_apply_requests",
-		"UPDATE device_apply_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled','$.finishedAt',qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now')),'$.revision',json_extract(data,'$.revision')+1) WHERE state IN ('pending','claimed')",
-		"UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
-		"UPDATE research_provider_calls SET state='interrupted',data=json_set(data,'$.state','interrupted','$.finishedAt',qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) WHERE state='pending'",
-		"UPDATE author_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE state='authorized'",
-		"UPDATE asset_maintenance_tasks SET data=json_set(data,'$.state','revoked') WHERE coalesce(json_extract(data,'$.state'),'authorized')!='revoked'",
-		"UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",
-		"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')",
-		"UPDATE backups SET data=json_set(json_remove(data,'$.archiveHash','$.archiveBytes','$.exportedAt'),'$.state','snapshot_not_included','$.exportState','unavailable','$.exportError','backup_snapshot_not_included')",
-		"UPDATE batches SET data=json_set(data,'$.backupState','not_covered')",
-		"UPDATE batch_protections SET state='historical',data=json_set(data,'$.state','historical')",
-		"UPDATE source_cleanup_permits SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='issued'",
-	} {
-		if _, e = tx.ExecContext(ctx, statement); e != nil {
-			return result, e
-		}
-	}
-	if _, e = tx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='instance_id'", result.InstanceID); e != nil {
-		return result, e
-	}
-	if e = tx.Commit(); e != nil {
+	if e = ResetRestoredCatalog(ctx, db.DB, result.InstanceID); e != nil {
 		return result, e
 	}
 	if _, e = db.DB.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); e != nil {
@@ -263,6 +231,46 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 	result.State = "restored"
 	return result, nil
 }
+
+// ResetRestoredCatalog applies the native restore policy to a private copy of a
+// verified archive catalog. An offline comparison can repeat it with the same
+// restored instance ID without extracting a second set of originals.
+func ResetRestoredCatalog(ctx context.Context, db *sql.DB, instanceID string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Runtime capabilities cannot survive a cross-instance restore. Business task
+	// reports remain, but no previous session or delegated writer can claim them.
+	for _, statement := range []string{
+		"DELETE FROM credentials", "DELETE FROM idempotency", "DELETE FROM file_intents", "DELETE FROM delegated_tasks",
+		"DELETE FROM author_list_mirror", "DELETE FROM client_diagnostics",
+		"DELETE FROM detached_upload_roots",
+		"DELETE FROM device_apply_chunks",
+		"DELETE FROM device_apply_requests",
+		"UPDATE device_apply_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled','$.finishedAt',qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now')),'$.revision',json_extract(data,'$.revision')+1) WHERE state IN ('pending','claimed')",
+		"UPDATE ai_delegations SET state='revoked',data=json_set(data,'$.state','revoked')",
+		"UPDATE research_provider_calls SET state='interrupted',data=json_set(data,'$.state','interrupted','$.finishedAt',qimeng_time_key(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) WHERE state='pending'",
+		"UPDATE author_tasks SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE state='authorized'",
+		"UPDATE asset_maintenance_tasks SET data=json_set(data,'$.state','revoked') WHERE coalesce(json_extract(data,'$.state'),'authorized')!='revoked'",
+		"UPDATE libraries SET data=json_set(data,'$.storageId','data','$.rootRelativePath','')",
+		"UPDATE scans SET state='interrupted',data=json_set(data,'$.state','interrupted') WHERE state IN ('queued','running')",
+		"UPDATE backups SET data=json_set(json_remove(data,'$.archiveHash','$.archiveBytes','$.exportedAt'),'$.state','snapshot_not_included','$.exportState','unavailable','$.exportError','backup_snapshot_not_included')",
+		"UPDATE batches SET data=json_set(data,'$.backupState','not_covered')",
+		"UPDATE batch_protections SET state='historical',data=json_set(data,'$.state','historical')",
+		"UPDATE source_cleanup_permits SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='issued'",
+	} {
+		if _, e := tx.ExecContext(ctx, statement); e != nil {
+			return e
+		}
+	}
+	if _, e := tx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='instance_id'", instanceID); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
 func safeBackupID(id string) bool {
 	return id != "" && len(id) <= 256 && !strings.ContainsAny(id, "/\\:\x00") && id != "." && id != ".."
 }
@@ -359,6 +367,13 @@ func VerifyBackup(ctx context.Context, filename, expected string) (RestoreResult
 		return result, e
 	}
 	defer os.RemoveAll(temporary)
+	return VerifyBackupCatalog(ctx, file, expected, filepath.Join(temporary, "snapshot.sqlite"))
+}
+
+// VerifyBackupCatalog leaves only the snapshot in a new private file selected
+// by the caller. Its result is valid after all native payloads have been read.
+func VerifyBackupCatalog(ctx context.Context, file io.Reader, expected, name string) (RestoreResult, error) {
+	result := RestoreResult{}
 	var db *sql.DB
 	defer func() {
 		if db != nil {
@@ -368,12 +383,11 @@ func VerifyBackup(ctx context.Context, filename, expected string) (RestoreResult
 	hash := sha256.New()
 	consume := func(entry archive.File, reader io.Reader) error {
 		if entry.Kind == "snapshot" {
-			name := filepath.Join(temporary, "snapshot.sqlite")
 			out, e := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if e != nil {
 				return e
 			}
-			_, e = io.Copy(&restoreWriter{ctx: ctx, root: temporary, reserve: 512 << 20, file: out}, reader)
+			_, e = io.Copy(&restoreWriter{ctx: ctx, root: filepath.Dir(name), reserve: 512 << 20, file: out}, reader)
 			closeErr := out.Close()
 			if e == nil {
 				e = closeErr

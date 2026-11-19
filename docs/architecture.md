@@ -36,6 +36,7 @@ SQLite 位于服务本地磁盘。单服务排他锁、SQLite WAL、外键、FUL
 | Go 命令入口 | `cmd/qimeng` 装配配置、实例和服务。独立的 `cmd/qimeng-backup` 负责离线备份工具 |
 | 旧 PC 冷库转换 | 独立命令 `cmd/qimeng-legacy-convert` 装配 `legacycold` 的原件、目录关系与活动投影。只读的旧 SQLite 及授权文件根供该命令读取。它在新事务中调用 `store` 与服务的离线目录持久化适配，随后用 `backup` 写原生归档。HTTP、运行服务和客户端均不能导入该模块。 |
 | 已校对图片的合并 | 离线命令 `cmd/qimeng-merge-selected` 核验原生归档、恢复收据和所有者的逐项计划，再调用 `assetmerge/facts` 在一个事务内登记代表、原成员和来源。常规服务按成员关系解析旧链接，并在破坏性文件操作前保护原件。备份仍逐份枚举和校验物理文件。 |
+| 在空手机实例绑定已有原件 | PC 离线命令 `qimeng-backup phone-relink` 由 `phonerelink` 复用原生归档验证、恢复的凭据撤销和 SQLite 校验，以目标冷副本及冻结的实物清单生成新数据库。普通服务和客户端继续通过原有存储路由读取 `phone` 逻辑根。[操作与证据](phone-relink.md) |
 | HTTP 与业务用例 | `internal/httpapi.API` 实现由 OpenAPI 生成的 Go `ServerInterface`。服务使用生成的标准库路由挂载业务端点。认证、结构校验和协议编码位于该层；业务权限、幂等回执与事务提交由 `service` 负责。健康检查和静态 Web 由宿主挂载 |
 | 收藏与当日点赞 | `internal/engagement` 只接收已获授权的事务、当前资产与服务时间，更新该意图负责的字段或当天记录。它只引用 `model` 和 `store`。Web 和 Android 提交用户点击的那一个开关，状态、累计数与历史均从 Go 回读 |
 | 上传内容核验 | `internal/mediafile` 从传入的文件流检验媒体容器、长度与 SHA-256，支持调用者取消读取。该包不依赖其他业务包。授权、内容版本、命名与目标占用复核、持久化发布意图及最终事务都由 `service` 负责 |

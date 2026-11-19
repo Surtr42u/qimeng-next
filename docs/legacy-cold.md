@@ -2,6 +2,8 @@
 
 Windows 工具包带有 `qimeng-legacy-convert.exe` 和同一提交的 `qimeng-backup.exe`。前者从旧资料制作原生 `.qnext`，后者校验归档、恢复到新的 Next 数据目录。`SHA256SUMS` 用于核对这两个程序。`cloud-receipt.json` 记录产生工具包的提交、运行平台及合成库验收结果。
 
+目标手机已有全量原件、Next 现装空库且要保留登录时，先完成本文的隔离恢复，再在 PC [生成手机专用数据库](phone-relink.md)。工具包中的 `phone-relink.md` 提供相同的操作说明。
+
 ## 准备私有输入
 
 1. 停止旧版的扫描、写入、回收清理和服务，保持原件与回收元数据冻结，直至转换结束。使用已完成 v26 迁移的一致 SQLite 单文件冷副本。若数据库仍有 `-wal`、`-shm` 或 `-journal`，请先以 SQLite 一致备份方式重新封存。直接丢弃这些文件可能丢失已提交的历史。

@@ -71,6 +71,8 @@ Android 普通应用在私有数据目录也会遇到硬链接被拒绝。文件
 
 一次性的 `cmd/qimeng-legacy-convert` 通过 `internal/legacycold` 只读访问已封存的旧 PC v26 资料，在私有新目录制作原生备份。普通服务和 Android 均独立于这个命令。归档由 `cmd/qimeng-backup` 验证和恢复。[操作与私有覆盖报告](../docs/legacy-cold.md)
 
+已初始化、业务为空的现装手机可使用同一个 PC 工具的 `phone-relink` 子命令生成离线控制库。原生完整归档负责证明来源业务和原件，手机自己的冷库与实物清单负责证明目标身份、授权目录及已存在的文件。[手机原件绑定](../docs/phone-relink.md)
+
 `cmd/qimeng-merge-selected` 在已核验的恢复工作副本中处理所有者明确选定的同内容图片，保存数据库和选中原件的合并前副本，再将结果发布到新目录。内容版本、旧地址、关系、逐条历史与来源的复核步骤见[图片合并交接说明](../docs/selected-image-merge.md)。
 
 数据库启动时先将已记录的迁移逐个与本程序核对，检查通过才运行待执行的 SQL。每项迁移与其校验记录在同一事务提交。启动与备份验证共享迁移定义。SQLite 会保留建表 SQL 的文本，因此迁移记录表沿用原始定义，以便旧备份通过相同的完整性检查。[架构边界](../docs/architecture.md#module-boundaries) · [工程检查](../docs/verification.md#engineering-gates)

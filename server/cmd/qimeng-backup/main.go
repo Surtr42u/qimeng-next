@@ -10,10 +10,18 @@ import (
 	"os"
 	"os/signal"
 
+	"qimeng.local/next/server/internal/phonerelink"
 	"qimeng.local/next/server/internal/service"
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "phone-relink" {
+		if err := phoneRelink(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "Phone relink:", phonerelink.FailureCode(err))
+			os.Exit(1)
+		}
+		return
+	}
 	if e := run(); e != nil {
 		fmt.Fprintln(os.Stderr, "Backup operation failed; the source is unchanged. Incomplete restore directories remain marked.")
 		os.Exit(1)

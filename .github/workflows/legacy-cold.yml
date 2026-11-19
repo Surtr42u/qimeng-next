@@ -6,12 +6,14 @@ on:
     paths: &archive_paths
       - '.github/workflows/legacy-cold.yml'
       - 'docs/legacy-cold.md'
+      - 'docs/phone-relink.md'
       - 'deploy/third-party/preview-decoders/**'
       - 'tools/preview_notices.py'
       - 'tools/legacy-cold/**'
       - 'server/cmd/qimeng-legacy-convert/**'
       - 'server/cmd/qimeng-backup/**'
       - 'server/internal/legacycold/**'
+      - 'server/internal/phonerelink/**'
       - 'server/internal/service/cold_catalog.go'
       - 'server/internal/backup/**'
       - 'server/internal/service/backup*.go'
@@ -105,14 +107,18 @@ jobs:
       - name: Convert synthetic v26 data and read it through the restored server
         shell: bash
         run: python next/tools/legacy-cold/smoke.py --migrations reference/server/migrations --bin package --server fixture-bin --receipt package/cloud-receipt.json
+      - name: Relink an empty phone catalog and read original shared files with its existing credential
+        shell: bash
+        run: python next/tools/legacy-cold/phone_relink_smoke.py --migrations reference/server/migrations --bin package --server fixture-bin --receipt package/phone-relink-cloud-receipt.json
       - name: Include instructions and checksums for the two tools
         shell: bash
         env: {SUFFIX: '${{ matrix.ext }}'}
         run: |
           cp next/docs/legacy-cold.md package/README.md
+          cp next/docs/phone-relink.md package/phone-relink.md
           python next/tools/preview_notices.py package
           cd package
-          sha256sum "qimeng-legacy-convert$SUFFIX" "qimeng-backup$SUFFIX" third-party/preview-decoders/* > SHA256SUMS
+          sha256sum "qimeng-legacy-convert$SUFFIX" "qimeng-backup$SUFFIX" phone-relink.md phone-relink-cloud-receipt.json third-party/preview-decoders/* > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: qimeng-legacy-cold-${{ matrix.platform }}
