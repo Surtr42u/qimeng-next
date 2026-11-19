@@ -9,8 +9,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -53,6 +51,7 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val assetAuthors by model.assetAuthors.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
+    val pendingTools by model.pendingAssetTools.collectAsStateWithLifecycle()
     var chromeVisible by rememberSaveable(id) { mutableStateOf(true) }
     var zoomImmersive by rememberSaveable(id) { mutableStateOf(false) }
     var resetImage by rememberSaveable(id) { mutableIntStateOf(0) }
@@ -65,9 +64,14 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     var showInfo by rememberSaveable(id) { mutableStateOf(false) }
     var showRename by rememberSaveable(id) { mutableStateOf(false) }
     var showTrash by rememberSaveable(id) { mutableStateOf(false) }
-    var showAuthors by rememberSaveable(id) { mutableStateOf(false) }
     var showRelations by rememberSaveable(id) { mutableStateOf(false) }
     var showAcquisition by rememberSaveable(id) { mutableStateOf(false) }
+    LaunchedEffect(id, pendingTools) {
+        if (pendingTools == id) {
+            showEditor = true
+            model.consumeAssetTools(id)
+        }
+    }
     LaunchedEffect(id) { if (asset?.id != id) model.refreshAsset(id) }
     val item = asset?.takeIf { it.id == id && sameTarget(it.target, target) }
     if (item == null) {
@@ -95,12 +99,12 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     }
     if (showAuthorSheet) DetailAuthorSheet(assetAuthors, busy,
         { id -> assetAuthors.find { it.id == id }?.let(model::followAssetAuthor) }, { author, _ -> model.openAuthor(author) },
-        { showEditor = true }, { showAuthorSheet = false })
+        { model.openAssetEditor(item) }, { showAuthorSheet = false })
     if (showEditor) ModalBottomSheet(onDismissRequest = { showEditor = false }) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(item.name, style = MaterialTheme.typography.titleLarge)
             item.collectionId?.let { collection -> TextButton(onClick = { model.navigate("collection:$collection") }) { Text("同组作品${item.page?.let { " · 第 $it 项" }.orEmpty()}") } }
-            TextButton(onClick = { showAuthors = true; model.loadAuthors() }) { Text("修改关联作者") }
+            TextButton(onClick = { showEditor = false; model.openAssetEditor(item) }) { Text("修改关联作者") }
             if (item.positionMs > 0 && item.positionVersion != item.version) Text("旧内容版本的播放位置为 ${item.positionMs / 1000} 秒。媒体已替换，本次从头播放。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("标签", style = MaterialTheme.typography.titleSmall)
             Text(if (item.tags.isEmpty()) "暂无标签" else item.tags.joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -119,7 +123,6 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
         }
     }
     if (showTags) TagsDialog(item, model) { showTags = false }
-    if (showAuthors) AuthorsDialog(item, model) { showAuthors = false }
     if (showRelations) AssetRelationsDialog(item, model) { showRelations = false }
     if (showAcquisition) {
         val revision = rememberSaveable(item.id) { item.revision }
@@ -142,37 +145,6 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
         dismissButton = { TextButton(onClick = { showTrash = false }) { Text("取消") } })
     }
     if (showInfo) DetailInfoSheet(item) { showInfo = false }
-}
-
-@Composable
-private fun AuthorsDialog(asset: Asset, model: LibraryViewModel, onClose: () -> Unit) {
-    val state by model.authors.collectAsStateWithLifecycle()
-    val associated by model.assetAuthors.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
-    val message by model.message.collectAsStateWithLifecycle()
-    val revision = rememberSaveable(asset.id) { asset.revision }
-    val authorRevision = rememberSaveable(asset.id) { asset.authorsRevision }
-    var selected by rememberSaveable(asset.id) { mutableStateOf(asset.authorIds) }
-    var names by rememberSaveable(asset.id) { mutableStateOf("") }
-    AlertDialog(onDismissRequest = { if (!busy) onClose() }, title = { Text("关联作者 · ${selected.size}") },
-        text = { Column(Modifier.heightIn(max = 460.dp)) {
-            LazyColumn(Modifier.weight(1f, fill = false)) {
-                items(associated.filter { it.kind == "cos" }, key = { it.id }) { author -> Text("${author.name} · COS 目录作者") }
-                items(state.items.filter { it.kind == "regular" && it.id != "unknown" }, key = { it.id }) { author ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(author.id in selected, { checked -> selected = if (checked) selected + author.id else selected - author.id })
-                        Text(author.name)
-                    }
-                }
-                if (state.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !state.loading) { Text("加载更多作者") } }
-            }
-            OutlinedTextField(names, { names = it }, label = { Text("新增作者名称（每行一个）") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
-            state.error?.let { ErrorNotice(it) { model.loadAuthors() } }
-            message?.let { ErrorNotice(it) }
-        } }, confirmButton = { TextButton(onClick = { model.saveAuthors(asset, selected.filterNot { it == "unknown" },
-            names.lines().map(String::trim).filter(String::isNotEmpty).distinct(), revision, authorRevision, onClose) },
-            enabled = !busy && !state.loading) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onClose, enabled = !busy) { Text("取消") } })
 }
 
 @Composable

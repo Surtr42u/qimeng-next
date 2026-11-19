@@ -42,6 +42,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val lastPublication = graph.uploads.lastPublication
     val queueError = graph.queue.error
     val route = saved.getStateFlow("route", "main")
+    val pendingAssetTools = saved.getStateFlow<String?>("pendingAssetTools", null)
     val tab = saved.getStateFlow("tab", 0)
     val uploadLibrary = saved.getStateFlow("uploadLibrary", "")
     val uploadDirectory = saved.getStateFlow("uploadDirectory", "")
@@ -296,7 +297,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     private fun discardForeignObjectRoutes(target: Session?) {
         if (target != null && ownsObjectRoutes(target)) return
-        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("task:")
+        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("asset-edit:") || value.startsWith("task:")
+        saved["pendingAssetTools"] = null
         val stack = saved.get<ArrayList<String>>("backStack").orEmpty()
         val retained = stack.filterNot(::objectRoute)
         if (objectRoute(route.value)) {
@@ -319,6 +321,24 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private fun targetForRefresh(destination: String) = session.value?.takeIf { route.value == destination && ownsObjectRoutes(it) }
 
     fun refreshAsset(id: String) { targetForRefresh("asset:$id")?.let { openAsset(id, target = it) } }
+
+    fun targetForAssetEditor(id: String): Session? = targetForRefresh("asset-edit:$id")
+
+    fun openAssetEditor(asset: Asset) {
+        if (route.value == "asset:${asset.id}" && bindObjectTarget(asset.target)) navigate("asset-edit:${asset.id}")
+    }
+
+    fun closeAssetEditor(id: String, more: Boolean = false) {
+        if (targetForAssetEditor(id) == null) return
+        back()
+        if (route.value != "asset:$id") return
+        if (more) saved["pendingAssetTools"] = id
+        refreshAsset(id)
+    }
+
+    fun consumeAssetTools(id: String) {
+        if (pendingAssetTools.value == id) saved["pendingAssetTools"] = null
+    }
 
     fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value) {
         if (target == null || !bindObjectTarget(target)) return
@@ -387,12 +407,6 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun saveNote(asset: Asset, note: String, onSaved: () -> Unit) = action {
         publishAsset(repository.updateNote(asset, note)); onSaved()
-    }
-    fun saveAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long, onSaved: () -> Unit) = action {
-        val result = repository.updateAuthors(asset, ids, names, revision, authorsRevision)
-        publishAsset(result)
-        mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it, result.target) } }.awaitAll() }
-        onSaved()
     }
     fun saveRelations(asset: Asset, sources: List<String>, characters: List<String>, onSaved: () -> Unit) = action {
         publishAsset(repository.updateRelations(asset, sources, characters)); onSaved()

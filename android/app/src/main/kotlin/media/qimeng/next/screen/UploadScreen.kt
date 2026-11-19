@@ -197,13 +197,13 @@ private fun UploadAssociations(model: LibraryViewModel, target: Session, transpo
             if (authorIds.isNotEmpty()) {
                 OutlinedTextField(authorSources, model::setUploadAuthorSources, enabled = !busy,
                     label = { Text("追加到所选作者的来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
-                AcquisitionChoiceRow(options.data.orEmpty(), acquisitionLines(authorSources), !busy, "upload-author-source") {
+                AcquisitionChoiceRow(options.data.orEmpty(), acquisitionTerms(authorSources), !busy, "upload-author-source") {
                     model.setUploadAuthorSources(toggleAcquisition(authorSources, it))
                 }
             }
             OutlinedTextField(acquisitionSources, model::setUploadSources, enabled = !busy,
                 label = { Text("获取渠道 / 来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
-            AcquisitionChoiceRow(options.data.orEmpty(), acquisitionLines(acquisitionSources), !busy, "upload-asset-source") {
+            AcquisitionChoiceRow(options.data.orEmpty(), acquisitionTerms(acquisitionSources), !busy, "upload-asset-source") {
                 model.setUploadSources(toggleAcquisition(acquisitionSources, it))
             }
             OutlinedButton(onClick = { model.loadCollections(); chooseCollection = true }, enabled = libraryId.isNotEmpty() && !busy) { Text("组图 / 短剧集合") }

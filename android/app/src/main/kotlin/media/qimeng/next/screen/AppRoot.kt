@@ -28,6 +28,7 @@ import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.AssetEditorTarget
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
 import media.qimeng.next.ui.glass.GlassNavItem
@@ -89,7 +90,7 @@ fun AppRoot(model: LibraryViewModel) {
                 val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
                 val detailRoute = route.startsWith("asset:")
                 val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage", "thumbnail-cache", "source-rules") || route.startsWith("author:") ||
-                    route.startsWith("profile:") || route.startsWith("profile-archive:")
+                    route.startsWith("profile:") || route.startsWith("profile-archive:") || route.startsWith("asset-edit:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
                         if (!detailRoute && !ownTopBar && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "favorites", "history")) PageHeader(routeTitle(route), model::back)
@@ -106,6 +107,13 @@ fun AppRoot(model: LibraryViewModel) {
                         SingleSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) {
                             when {
                                 route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'), session)
+                                route.startsWith("asset-edit:") -> {
+                                    val id = route.substringAfter(':')
+                                    model.targetForAssetEditor(id)?.let { target ->
+                                        AssetEditScreen(AssetEditorTarget(target, transportRevision, id),
+                                            { model.closeAssetEditor(id) }, { model.closeAssetEditor(id, more = true) })
+                                    }
+                                }
                                 route.startsWith("author:") -> AuthorCollectionScreen(model, route.substringAfter(':'))
                                 route.startsWith("profile:") -> AuthorProfileScreen(route.substringAfter(':'), model)
                                 route.startsWith("profile-archive:") -> AuthorProfileScreen(route.split(':')[1], model, archiveId = route.split(':')[2])
