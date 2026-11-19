@@ -3,7 +3,7 @@ package service
 import (
 	"bytes"
 	"image"
-	"image/jpeg"
+	"image/png"
 	"os"
 	"testing"
 )
@@ -18,7 +18,11 @@ func TestProgressiveOrdinaryChromaAndRestartIntervals(t *testing.T) {
 			if bytes.Count(data, []byte{0xff, 0xd0}) < 2 {
 				t.Fatal("fixture does not contain repeated restart markers")
 			}
-			original, err := jpeg.Decode(bytes.NewReader(data))
+			full, err := os.ReadFile("testdata/" + name + ".png")
+			if err != nil {
+				t.Fatal(err)
+			}
+			original, err := png.Decode(bytes.NewReader(full))
 			if err != nil {
 				t.Fatal(err)
 			}

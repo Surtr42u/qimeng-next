@@ -43,6 +43,12 @@ jobs:
           0: 0 0 1 0; 1: 0 0 1 0; 2: 0 0 1 0;
           SCANS
           cjpeg -quality 92 -sample 2x2,1x1,1x1 -restart 5B -scans scans.txt -outfile separate-dc.jpg colors.ppm
+          python - <<'PY'
+          from PIL import Image
+          for name in ("progressive-420.jpg", "progressive-gray.jpg", "separate-dc.jpg"):
+              with Image.open(name) as img:
+                  img.convert("RGB").save(name + ".png")
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: synthetic-large-stills
