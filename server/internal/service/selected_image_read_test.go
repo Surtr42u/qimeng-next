@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"image"
 	"io"
 	"math"
 	"os"
@@ -76,7 +77,7 @@ func TestSelectedImageReadPreviewUsesCheckedDecoderInput(t *testing.T) {
 	if err = os.WriteFile(name, syntheticPNG(t, 21), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.scaledStill(ctx, source, a.MimeType, 512, displayStill)
+	got, err := s.scaledStill(ctx, source, a.MimeType, image.Pt(a.Width, a.Height), 512, displayStill)
 	if err != nil || !bytes.Equal(want, got) {
 		t.Fatal("the builtin decoder lost its selected input", err)
 	}
