@@ -25,6 +25,24 @@ jobs:
           python server/internal/service/testdata/large_stills.py build/large-stills small
           cp build/large-stills/progressive-patches.jpg server/internal/service/testdata/
           cd build/large-stills && sha256sum *.png *.jpg > SHA256SUMS
+      - name: Encode other normal progressive scan layouts
+        working-directory: server/internal/service/testdata
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libjpeg-turbo-progs
+          python - <<'PY'
+          from PIL import Image
+          with Image.open("progressive-patches.jpg") as img:
+              img.save("progressive-420.jpg", quality=92, progressive=True, subsampling=2, restart_marker_blocks=5)
+              img.convert("L").save("progressive-gray.jpg", quality=92, progressive=True, restart_marker_blocks=3)
+              img.save("colors.ppm")
+          PY
+          cat > scans.txt <<'SCANS'
+          0: 0 0 0 1; 1: 0 0 0 1; 2: 0 0 0 1;
+          0: 1 63 0 0; 1: 1 63 0 0; 2: 1 63 0 0;
+          0: 0 0 1 0; 1: 0 0 1 0; 2: 0 0 1 0;
+          SCANS
+          cjpeg -quality 92 -sample 2x2,1x1,1x1 -restart 5B -scans scans.txt -outfile separate-dc.jpg colors.ppm
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: synthetic-large-stills
