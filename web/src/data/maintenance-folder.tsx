@@ -56,8 +56,10 @@ class MaintenanceFolder {
     if (this.value.busy) return;
     // The picker and permission prompt must start in the user gesture.
     this.update({ busy: true, error: undefined });
+    let picking = true;
     try {
       const root = await pickFolder();
+      picking = false;
       this.controller.signal.throwIfAborted();
       await folderLock(async () => {
         const old = await localRead<FolderBinding>("maintenance_folders", this.scope);
@@ -67,7 +69,9 @@ class MaintenanceFolder {
         await this.store({ id: this.scope, token: newId(), root });
       }, this.controller.signal);
     } catch (error) {
-      this.update({ busy: false, ...(error instanceof DOMException && error.name === "AbortError" ? {} : { error }) }); return;
+      const cancelled = picking && error instanceof DOMException && error.name === "AbortError";
+      this.update({ busy: false, error: cancelled ? undefined : error });
+      return;
     }
     this.update({ busy: false }); await this.sync(false);
   }
@@ -152,7 +156,7 @@ class MaintenanceFolder {
         await rotate(root, { instanceId: state.instanceId, businessRevision: checkpoint.businessRevision, backupId: backup.id }, backup.archiveHash, materials, downloadArchiveStream, signal);
         await this.store({ ...binding, job: undefined }); this.update({ status: "当前备份与作者资料已更新。" });
       }, signal);
-    } catch (error) { if (!signal.aborted) this.update({ error }); }
+    } catch (error) { if (!signal.aborted) this.update({ error, status: undefined }); }
     finally {
       this.update({ busy: false });
       if (!this.value.error) this.schedule(this.value.binding?.job ? 3000 : 60000);

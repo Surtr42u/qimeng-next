@@ -111,7 +111,15 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
   test.skip(browserName !== "chromium", "Uses the Chromium file-system writable API with a synthetic OPFS root.");
   await mockLibrary(page);
   await page.addInitScript(() => {
-    Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: () => navigator.storage.getDirectory() });
+    let first = true;
+    Object.defineProperty(window, "showDirectoryPicker", { configurable: true, value: async () => {
+      if (first) {
+        first = false;
+        document.documentElement.dataset.maintenancePickerCancelled = "true";
+        throw new DOMException("Synthetic picker dismissal", "AbortError");
+      }
+      return navigator.storage.getDirectory();
+    } });
   });
   let revision = "1";
   let created = 0;
@@ -154,7 +162,13 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
     await page.setViewportSize({ width, height: 800 });
     await page.screenshot({ path: testInfo.outputPath("parity-backup-" + width + ".png"), fullPage: true });
   }
-  await page.getByRole("button", { name: "选择根目录并生成资料" }).click();
+  const pick = page.getByRole("button", { name: "选择根目录并生成资料" });
+  await pick.click();
+  await expect(page.locator("html")).toHaveAttribute("data-maintenance-picker-cancelled", "true");
+  await expect(pick).toBeEnabled();
+  await expect(page.getByRole("region", { name: "维护根目录" }).getByRole("alert")).toHaveCount(0);
+  expect(created).toBe(0);
+  await pick.click();
   const text = (slot: string, category: string, name: string) => page.evaluate(async ([slot, category, name]) => {
     const root = await navigator.storage.getDirectory();
     const dir = await (await root.getDirectoryHandle(slot!)).getDirectoryHandle(category!);
@@ -224,7 +238,12 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
       const capture = item?.job?.capture;
       if (this.name === "maintenance_folders" && capture?.writing === "report" && capture.hashes.report) {
         IDBObjectStore.prototype.put = put;
-        this.transaction.abort();
+        const transaction = this.transaction;
+        transaction.addEventListener("abort", () => {
+          document.documentElement.dataset.maintenanceAbortedStage = capture.stage;
+          document.documentElement.dataset.maintenanceAbortedDigest = capture.hashes.report;
+        }, { once: true });
+        transaction.abort();
       }
       return request;
     };
@@ -233,8 +252,12 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
   await expect(page.getByRole("alert").filter({ hasText: "本地写入被中止" })).toBeVisible();
   const interrupted = (await capture())!;
   expect(interrupted.writing).toBe("report");
+  await expect(page.locator("html")).toHaveAttribute("data-maintenance-aborted-stage", interrupted.stage);
+  await expect(page.locator("html")).toHaveAttribute("data-maintenance-aborted-digest",
+    createHash("sha256").update("# 合成作者资料 2").digest("hex"));
   expect(interrupted.hashes).toEqual({ master: createHash("sha256").update("作者总表 2").digest("hex") });
   expect(await stages()).toEqual([interrupted.stage]);
+  expect(await text(stageRoot, interrupted.stage, ".绮梦暂存所有者")).toBe(interrupted.owner);
   expect(await text(stageRoot, interrupted.stage, "作者总表.txt")).toBe("作者总表 2");
   expect(await text(stageRoot, interrupted.stage, "作者资料.md")).toBe("");
   expect(await text("当前", "备份", "影库备份.qnext")).toBe(archive("1"));
@@ -244,6 +267,7 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
   await expect(page.getByRole("alert").filter({ hasText: "没有收到成功确认" })).toBeVisible();
   const staged = (await capture())!;
   expect(staged.stage).toBe(interrupted.stage);
+  expect(staged.owner).toBe(interrupted.owner);
   expect(Object.keys(staged.hashes).sort()).toEqual(["index", "master", "report"]);
   expect(await stages()).toEqual([interrupted.stage]);
   expect(materialReads.filter(read => read.endsWith(":2"))).toEqual(["master:2", "report:2", "report:2"]);
