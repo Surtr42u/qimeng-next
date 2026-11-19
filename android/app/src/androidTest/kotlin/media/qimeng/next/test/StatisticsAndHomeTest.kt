@@ -162,7 +162,8 @@ class StatisticsAndHomeTest {
 
     private fun openStatisticsCard(label: String) {
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(label))
-        compose.onNodeWithText(label).performClick()
+        // The chart inside a statistics card handles its own taps. Use the visible heading link.
+        compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo().performTouchInput { click(center) }
     }
 
     private fun awaitText(label: String) {
