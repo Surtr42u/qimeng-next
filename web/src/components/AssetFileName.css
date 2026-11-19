@@ -1,0 +1,11 @@
+.pill.asset-file-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+  /* Keep the old flex footprint: the 14px icon used to sit on its own line.
+     The icon and gap now use 18px of the pill's original horizontal padding. */
+  margin-block: 7px;
+  padding-inline: 3px;
+}
