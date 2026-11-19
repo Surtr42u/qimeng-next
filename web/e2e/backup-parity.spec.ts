@@ -116,6 +116,9 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
   let revision = "1";
   let created = 0;
   let failNextDownload = false;
+  let failAfterMaterials = false;
+  let failNextAnchor = false;
+  const materialReads: string[] = [];
   const archive = (rev: string) => "synthetic-qnext-" + rev;
   const hash = (rev: string) => createHash("sha256").update(archive(rev)).digest("hex");
   const backup = (rev: string, ready = false) => ({ id: "backup-" + rev, businessRevision: rev, state: "awaiting_external_backup",
@@ -125,11 +128,21 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
     if (route.request().method() === "GET") return route.fulfill({ json: { items: [] } });
     created++; return route.fulfill({ status: 201, json: backup(revision) });
   });
-  await page.route("**/api/v1/backups/change-state", route => route.fulfill({ json: { instanceId: "synthetic-instance", businessRevision: revision } }));
-  await page.route("**/api/v1/author-lists/master", route => route.fulfill({ contentType: "text/plain", body: "作者总表 " + revision }));
+  await page.route("**/api/v1/backups/change-state", route => {
+    if (failNextAnchor) { failNextAnchor = false; return route.abort("connectionreset"); }
+    return route.fulfill({ json: { instanceId: "synthetic-instance", businessRevision: revision } });
+  });
+  await page.route("**/api/v1/author-lists/master", route => {
+    materialReads.push("master:" + revision);
+    return route.fulfill({ contentType: "text/plain", body: "作者总表 " + revision });
+  });
   await page.route(/\/api\/v1\/backups\/backup-(\d+)(?:\/(export|archive|author-documents))?$/, route => {
     const [, rev, part] = new URL(route.request().url()).pathname.match(/backup-(\d+)(?:\/(.*))?$/)!;
-    if (part === "author-documents") return route.fulfill({ contentType: "text/plain", body: "# 合成作者资料 " + rev });
+    if (part === "author-documents") {
+      materialReads.push("report:" + rev);
+      if (failAfterMaterials) { failAfterMaterials = false; failNextAnchor = true; }
+      return route.fulfill({ contentType: "text/plain", body: "# 合成作者资料 " + rev });
+    }
     if (part === "archive") {
       if (failNextDownload) { failNextDownload = false; return route.abort("connectionreset"); }
       return route.fulfill({ contentType: "application/octet-stream", body: archive(rev!) });
@@ -147,6 +160,34 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
     const dir = await (await root.getDirectoryHandle(slot!)).getDirectoryHandle(category!);
     return (await (await dir.getFileHandle(name!)).getFile()).text();
   }, [slot, category, name]);
+  const capture = () => page.evaluate(async () => {
+    type Capture = { stage: string; owner: string; writing?: string; hashes: Record<string, string> };
+    return new Promise<Capture | undefined>((resolve, reject) => {
+      const open = indexedDB.open("qimeng-device-state", 3);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const database = open.result;
+        const rows = database.transaction("maintenance_folders").objectStore("maintenance_folders").getAll();
+        rows.onerror = () => { database.close(); reject(rows.error); };
+        rows.onsuccess = () => { database.close(); resolve(rows.result[0]?.job?.capture); };
+      };
+    });
+  });
+  const stageRoot = ".绮梦下一代暂存";
+  const stages = () => page.evaluate(async name => {
+    const root = await navigator.storage.getDirectory();
+    const scratch = await root.getDirectoryHandle(name) as FileSystemDirectoryHandle & { keys(): AsyncIterable<string> };
+    const ids: string[] = [];
+    for await (const id of scratch.keys()) ids.push(id);
+    return ids;
+  }, stageRoot);
+  const editStage = (stage: string, name: string, value: string) => page.evaluate(async ({ stageRoot, stage, name, value }) => {
+    const parent = await (await navigator.storage.getDirectory()).getDirectoryHandle(stageRoot);
+    const folder = await parent.getDirectoryHandle(stage);
+    const output = await (await folder.getFileHandle(name)).createWritable();
+    await output.write(value);
+    await output.close();
+  }, { stageRoot, stage, name, value });
   await expect(page.getByText("当前备份与作者资料已更新。", { exact: true })).toBeVisible();
   const panel = page.getByRole("region", { name: "备份导入 / 导出" });
   const current = panel.getByRole("button", { name: "恢复当前备份" });
@@ -175,23 +216,90 @@ test("maintenance folder freezes real browser files, resumes interrupted rotatio
   expect(created).toBe(1);
   expect(await text("当前", "备份", "影库备份.qnext")).toBe(archive("1"));
   await page.evaluate(async () => (await navigator.storage.getDirectory()).removeEntry(".绮梦手机轮换.json"));
-  revision = "2"; failNextDownload = true;
+  revision = "2";
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (item, key) {
+      const request = put.call(this, item, key);
+      const capture = item?.job?.capture;
+      if (this.name === "maintenance_folders" && capture?.writing === "report" && capture.hashes.report) {
+        IDBObjectStore.prototype.put = put;
+        this.transaction.abort();
+      }
+      return request;
+    };
+  });
+  await page.getByRole("button", { name: "更新全部归档" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "本地写入被中止" })).toBeVisible();
+  const interrupted = (await capture())!;
+  expect(interrupted.writing).toBe("report");
+  expect(interrupted.hashes).toEqual({ master: createHash("sha256").update("作者总表 2").digest("hex") });
+  expect(await stages()).toEqual([interrupted.stage]);
+  expect(await text(stageRoot, interrupted.stage, "作者总表.txt")).toBe("作者总表 2");
+  expect(await text(stageRoot, interrupted.stage, "作者资料.md")).toBe("");
+  expect(await text("当前", "备份", "影库备份.qnext")).toBe(archive("1"));
+
+  failAfterMaterials = true;
   await page.getByRole("button", { name: "更新全部归档" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "没有收到成功确认" })).toBeVisible();
+  const staged = (await capture())!;
+  expect(staged.stage).toBe(interrupted.stage);
+  expect(Object.keys(staged.hashes).sort()).toEqual(["index", "master", "report"]);
+  expect(await stages()).toEqual([interrupted.stage]);
+  expect(materialReads.filter(read => read.endsWith(":2"))).toEqual(["master:2", "report:2", "report:2"]);
+
+  failNextDownload = true;
+  await page.reload();
+  await expect(page.getByRole("alert").filter({ hasText: "没有收到成功确认" })).toBeVisible();
+  expect(materialReads.filter(read => read.endsWith(":2"))).toHaveLength(3);
+  expect(await stages()).toEqual([interrupted.stage]);
   expect(await text("上次", "备份", "影库备份.qnext")).toBe(archive("1"));
+  // An older rotation journal has the same file digests and no ownership marker.
+  await page.evaluate(async ({ stageRoot, stage }) => {
+    const root = await navigator.storage.getDirectory();
+    const journal = await root.getFileHandle(".绮梦下一代轮换.json");
+    const record = JSON.parse(await (await journal.getFile()).text());
+    const directory = await (await root.getDirectoryHandle(stageRoot)).getDirectoryHandle(stage);
+    await directory.removeEntry(".绮梦暂存所有者");
+    delete record.stageOwner;
+    const output = await journal.createWritable();
+    await output.write(JSON.stringify(record));
+    await output.close();
+  }, { stageRoot, stage: interrupted.stage });
   await page.getByRole("button", { name: "更新全部归档" }).click();
   await expect.poll(() => text("当前", "作者资料", "作者资料.md")).toBe("# 合成作者资料 2");
   await expect(page.getByRole("button", { name: "更新全部归档" })).toBeEnabled();
   expect(await text("当前", "备份", "影库备份.qnext.sha256")).toBe(hash("2") + "\n");
   expect(await text("上次", "作者资料", "作者总表.txt")).toBe("作者总表 1");
   expect(created).toBe(2);
+  expect(await stages()).toEqual([]);
+
+  revision = "3"; failAfterMaterials = true;
+  await page.getByRole("button", { name: "更新全部归档" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "没有收到成功确认" })).toBeVisible();
+  const third = (await capture())!;
+  await editStage(third.stage, ".绮梦暂存所有者", "合成手工修改");
+  await page.getByRole("button", { name: "更新全部归档" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "暂存所有者已改变" })).toBeVisible();
+  await editStage(third.stage, ".绮梦暂存所有者", third.owner);
+  await editStage(third.stage, "作者资料.md", "合成暂存编辑");
+  await page.getByRole("button", { name: "更新全部归档" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "暂存资料出现外部修改" })).toBeVisible();
+  expect(await text(stageRoot, third.stage, "作者资料.md")).toBe("合成暂存编辑");
+  expect(await text("当前", "备份", "影库备份.qnext")).toBe(archive("2"));
+  expect(await text("上次", "备份", "影库备份.qnext")).toBe(archive("1"));
+  await editStage(third.stage, "作者资料.md", "# 合成作者资料 3");
+  revision = "4";
+  await page.getByRole("button", { name: "更新全部归档" }).click();
+  await expect(page.getByText("资料已变化，将捕获新的统一快照。", { exact: true })).toBeVisible();
+  expect(await stages()).toEqual([]);
+
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     const dir = await (await root.getDirectoryHandle("上次")).getDirectoryHandle("作者资料");
     const output = await (await dir.getFileHandle("作者总表.txt")).createWritable();
     await output.write("合成手工修改"); await output.close();
   });
-  revision = "3";
   await page.getByRole("button", { name: "更新全部归档" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "外部修改" })).toBeVisible();
   expect(await text("当前", "备份", "影库备份.qnext")).toBe(archive("2"));
