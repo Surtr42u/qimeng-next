@@ -2,6 +2,8 @@
 
 更新于 2026-11-19。本仓已按所有者授权公开，以 MIT 许可证发布。公开验收使用隔离目录和合成资料。真实资料切换、手机安装与 NAS 实机验收以各自的本机记录为准。
 
+2026-11-19，主线在 `407ed69` 之后合入三档后台预热、大图展示解码、Web 维护界面和随包许可，合并提交为 `55d4963`。取 Windows 与 Android 包、确认正常后台缓存和安排实体设备验收，按接手手册从对应主线作业继续。下文保留各自所列提交的历史测量。[PR #17](https://github.com/Surtr42u/qimeng-next/pull/17) · [主线产品作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44556256306) · [接手手册](handover.md)
+
 已校对图片在保留原始迁移基线后单独合并。Windows 与 Linux 的正式工具均已从合成基线恢复、核对完整字节与时间、发布和开启普通服务，再从新归档恢复并重放同一计划。正常服务分别核验旧地址、回收站、原件损坏与未选条目。完整归档覆盖每个物理成员。[离线交接](https://github.com/Surtr42u/qimeng-next/actions/runs/44516923052) · [服务与恢复回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44518632464)
 
 旧 PC v26 的离线转换器可从已封存的 SQLite、显式选择的原件副本和旧回收站生成 Next 整库备份。Windows x64 和 Linux x64 均用旧仓 26 个正式迁移建立合成库，运行发布工具完成转换、校验、恢复和服务回读。两份相同内容保留各自的资产 ID，磁盘回收站中的原件可恢复。验收覆盖来源变化、空间不足、未知非空表与已有目的地。个人库的覆盖报告及逐文件对账由所有者在本机留存。[操作说明](legacy-cold.md) · [Windows 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179/job/135491534166) · [Linux 实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44504237179/job/135491533907)
@@ -76,13 +78,13 @@ Android 已接回旧版四档导航、首页间距及标签底部弹层。旧版
 | Web 与桌面 | 浏览器在两个独立 Go 服务间签发资料包，回读目标实际 TXT、逐项回执，并在刷新后按设备找到原记录。Windows 的 `4012001` 在云机完成 NSIS 安装、原生窗口最大化/最小化、真实鼠标打开带认证会话的原件、HTTP Range、切换服务关闭旧窗口、退出及卸载。[Web 双实例实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44354939835/job/134981903063) · [Windows 完整操作](https://github.com/Surtr42u/qimeng-next/actions/runs/44354017708/job/134978093760) |
 | PC／NAS 启动包 | `f43bf02` 的三个原生服务包都在端口已被另一进程占用时退出，按字节核对的合成历史库及其迁移记录保持完整。释放端口后，各包用同一目录从 Next 结构 5 升至 44，登录后读回原实例与作者，并在新目录恢复备份。历史样本按早期 Next 的四份迁移构造。[Windows x64](https://github.com/Surtr42u/qimeng-next/actions/runs/44476684736/job/135399405967) · [Linux x64](https://github.com/Surtr42u/qimeng-next/actions/runs/44476684736/job/135399406020) · [Linux ARM64](https://github.com/Surtr42u/qimeng-next/actions/runs/44476684736/job/135399405923) |
 | AI 执行器与 MCP | `c0760bc` 的 26 项真实 Go 与正式 worker 集成全部通过。50 个合成原件的清单及恢复的原计划都能翻完并只提交一次。重复同一页仍受无进展限制。换宿主后可显式续接原任务，已失效的租约会被拒绝。Pi、官方 TypeScript SDK 和 Hermes 宿主验证另有对应作业。[执行器及独立客户端](https://github.com/Surtr42u/qimeng-next/actions/runs/44471246374/job/135381725569) · [兼容性和实测范围](mcp-compatibility.md) |
-| 数据升级 | Next 使用自己的数据库迁移、整库归档和选择性交付版本。云验收从早期 Next 结构升级，重开数据库，在新目录恢复并回读关联与历史。已有 v2 导入记录可读，新的个人旧资料迁入留给单独的一次性工具。[原生升级与恢复](migration.md) |
+| 数据升级 | Next 使用自己的数据库迁移、整库归档和选择性交付版本。云验收从早期 Next 结构升级，重开数据库，在新目录恢复并回读关联与历史。已有 v2 导入记录可读。封存的旧 PC v26 另由一次性工具转换。[原生升级与恢复](migration.md) · [旧 PC 转换与核对](legacy-cold.md) |
 
 可按作业查看 [e9fe1df 集成记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44264832227) 和 [此前的本机启动检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44238104432)。
 
 ## 接手复查
 
-本轮由两位 GPT-6.2 Astra / max 子代理分别负责 Go 数据恢复与 AI 工作流、旧版对新版的扫描实测。Android 子代理负责手机的真实消费端和画面对照，主代理整合协议锁、跨端云测及交付证据。
+下表记录较早一轮 Go 恢复、AI 工作流、旧新版扫描及 Android 消费端的复查。该轮由两位 GPT-6.2 Astra / max 子代理负责 Go 与扫描，Android 子代理负责手机消费端和画面对照，主代理整合协议锁与跨端云测。
 
 | 已定位的触发条件 | 处理结果与验收范围 |
 |---|---|
