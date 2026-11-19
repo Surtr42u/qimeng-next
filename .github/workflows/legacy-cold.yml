@@ -1,5 +1,6 @@
 name: Offline PC v26 conversion and native restore
 on:
+  workflow_call: {}
   workflow_dispatch:
   push:
     branches: [main]

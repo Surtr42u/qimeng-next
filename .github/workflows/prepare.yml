@@ -5,7 +5,7 @@ on:
       suite:
         description: Checks to run on this revision
         type: choice
-        options: [all, contracts, backend, web, android, windows, archived-import]
+        options: [all, contracts, backend, web, android, windows, archived-import, notices-proof]
         default: all
       refresh_locks:
         description: Refresh dependency locks and collect the resulting files
@@ -22,6 +22,41 @@ concurrency:
   group: prepare-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  notice-sources:
+    if: inputs.suite == 'notices-proof'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - run: python tools/package_preview_proof.py sources
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: pinned-preview-notice-sources, path: 'build/preview-proof/sources.json', retention-days: 14, if-no-files-found: error}
+  notice-legacy-tools:
+    if: inputs.suite == 'notices-proof'
+    uses: ./.github/workflows/legacy-cold.yml
+  notice-merge-tools:
+    if: inputs.suite == 'notices-proof'
+    uses: ./.github/workflows/selected-image-merge.yml
+  notice-archives:
+    if: inputs.suite == 'notices-proof'
+    needs: [notice-sources, server-runtime, server-packages, android-embedded, notice-legacy-tools, notice-merge-tools]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: server/go.mod, cache: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {pattern: 'qimeng-*', path: build/delivered}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {pattern: 'android-*', path: build/delivered}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: linux-runtime, path: build/delivered/linux-runtime}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: pinned-preview-notice-sources, path: build/preview-proof}
+      - run: python tools/package_preview_proof.py archives
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: delivered-preview-notice-paths-and-hashes, path: 'build/preview-proof/*.json', retention-days: 14, if-no-files-found: error}
   generate:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -84,7 +119,7 @@ jobs:
           git ls-files --error-unmatch api/sdk.lock server/go.mod server/go.sum web/package-lock.json ai/requirements.lock tools/mcp-compat/package-lock.json desktop/package-lock.json desktop/src-tauri/Cargo.lock
           git diff --exit-code -- api/sdk.lock server/go.mod server/go.sum web/package-lock.json ai/requirements.lock tools/mcp-compat/package-lock.json
   server-runtime:
-    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || (inputs.suite == 'backend' || inputs.suite == 'web' || inputs.suite == 'android')
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || (inputs.suite == 'backend' || inputs.suite == 'web' || inputs.suite == 'android' || inputs.suite == 'notices-proof')
     needs: generate
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -143,7 +178,7 @@ jobs:
             server/go.mod
             server/go.sum
   web:
-    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'web'
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'web' || inputs.suite == 'notices-proof'
     needs: generate
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -167,6 +202,7 @@ jobs:
           if-no-files-found: error
           path: web/dist/
   web-ui:
+    if: inputs.suite != 'notices-proof'
     needs: [generate, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -193,7 +229,7 @@ jobs:
           path: |
             web/test-results/**/*.png
   server-packages:
-    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all'
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'notices-proof'
     needs: web
     uses: ./.github/workflows/server-packages.yml
   ai:
@@ -268,7 +304,7 @@ jobs:
             android/**/build/reports/
             android/app/build/outputs/apk/client/debug/*.apk
   android-native:
-    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'android'
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'android' || inputs.suite == 'notices-proof'
     needs: generate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -304,7 +340,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   android-embedded:
-    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'android'
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'android' || inputs.suite == 'notices-proof'
     needs: [generate, android-native]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
