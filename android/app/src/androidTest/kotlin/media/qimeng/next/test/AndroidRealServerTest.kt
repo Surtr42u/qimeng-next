@@ -357,7 +357,7 @@ class AndroidRealServerTest {
     }
 
     @Test(timeout = 240_000)
-    fun playRealVideoThroughTheLandscapeWindow() {
+    fun playRealVideoThroughTheLandscapeWindow() = compose.withVideoFailureEvidence("real-server-video-playback-failure.png") {
         val graph = runBlocking { isolatedServerGraph() }
         val video = runBlocking {
             graph.media.assets(AssetQuery(mediaType = "video")).items.firstOrNull { it.originalName == "android-synthetic.mp4" } ?: run {

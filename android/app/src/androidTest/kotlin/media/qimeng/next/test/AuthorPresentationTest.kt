@@ -115,7 +115,7 @@ class AuthorPresentationTest {
             compose.onNodeWithTag("author-profile-top-bar").assertIsDisplayed()
             await(hasText("身份已确认"))
             verifyOverview(author)
-            verifyEditor()
+            verifyEditor(graph, author)
             verifyCandidate(graph, author)
             compose.onNode(hasContentDescription("返回") and hasAnyAncestor(hasTestTag("author-profile-top-bar"))).performClick()
             await(hasText("详细资料"))
@@ -268,7 +268,7 @@ class AuthorPresentationTest {
         compose.onNodeWithTag("author-profile-top-bar").assertIsDisplayed()
     }
 
-    private fun verifyEditor() {
+    private fun verifyEditor(graph: DataGraph, author: Author) {
         val edit = hasText("编辑X 资料")
         overview.performScrollToNode(edit)
         compose.onNode(edit).performClick()
@@ -286,6 +286,25 @@ class AuthorPresentationTest {
         compose.onNodeWithText(chinese).assertDoesNotExist()
         compose.onNodeWithText("原文").performClick()
         biography.assertTextContains("变更后的合成原文")
+
+        val concurrentName = "另一端更新的合成姓名"
+        val concurrentRevision = runBlocking {
+            val document = graph.authorProfiles.profile(author.id)
+            val block = document.blocks.single { it.block == "x" }
+            graph.authorProfiles.save(document, block, ProfileValues(displayName = concurrentName), block.evidence, null, false).revision
+        }
+        compose.onNodeWithText("保存资料").performClick()
+        val conflict = hasText("服务器状态已变化或存在重复，请刷新核对后再决定") and
+            hasAnyAncestor(hasTestTag("author-profile-save-bar"))
+        await(conflict)
+        compose.onNode(conflict).assertIsDisplayed()
+        biography.assertTextContains("变更后的合成原文")
+        val stored = runBlocking { graph.authorProfiles.profile(author.id).blocks.single { it.block == "x" } }
+        assertEquals(concurrentRevision, stored.revision)
+        assertEquals(concurrentName, stored.values.displayName)
+        assertEquals(original, stored.values.biographyOriginal)
+        screenshot("editor-conflict")
+
         compose.onNodeWithText("取消").performClick()
         await(hasText("放弃未保存的修改？"))
         compose.onNodeWithText("继续编辑").performClick()

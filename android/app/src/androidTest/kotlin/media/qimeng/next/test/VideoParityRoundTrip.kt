@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.net.Uri
 import android.os.SystemClock
+import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
@@ -39,7 +40,7 @@ internal typealias VideoTestRule = AndroidComposeTestRule<ActivityScenarioRule<M
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class VideoParityRoundTrip(private val compose: VideoTestRule, private val graph: DataGraph) {
-    fun run() {
+    fun run() = compose.withVideoFailureEvidence("installed-video-playback-failure.png") {
         val (landscape, portrait, authorId) = seed()
         compose.onNodeWithTag("navigation:home").performTouchInput { click(center) }
         openFromGrid("home:0", landscape)
@@ -384,6 +385,38 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
     }
 }
 
+private const val VIDEO_EVIDENCE_TAG = "QimengVideoTest"
+
+internal fun VideoTestRule.withVideoFailureEvidence(fileName: String, exercise: () -> Unit) {
+    try {
+        exercise()
+    } catch (failure: Throwable) {
+        runCatching { activityRule.scenario.onActivity { Log.e(VIDEO_EVIDENCE_TAG, it.videoWindowState()) } }
+            .exceptionOrNull()?.let(failure::addSuppressed)
+        runCatching { check(captureCloudScreenshot(fileName)) { "Could not save $fileName" } }
+            .exceptionOrNull()?.let(failure::addSuppressed)
+        throw failure
+    }
+}
+
+private fun Activity.videoWindowState(): String {
+    val decor = window.decorView
+    val insets = ViewCompat.getRootWindowInsets(decor)
+    val controls = listOf("播放进度", "播放", "暂停", "开启声音", "静音", "进入全屏", "退出横屏", "退出全屏")
+        .mapNotNull { label ->
+            findVideoControl(label)?.let { control ->
+                val visible = Rect()
+                val clipped = visible.takeIf { control.getGlobalVisibleRect(it) }
+                "$label=${control.screenBounds()}, visible=$clipped, enabled=${control.isEnabled}"
+            }
+        }
+    return "Window=${decor.screenBounds()}, safe=${insets?.let { videoSafeBounds(it) }}, focus=${hasWindowFocus()}, " +
+        "status=${insets?.isVisible(WindowInsetsCompat.Type.statusBars())}, navigation=${insets?.isVisible(WindowInsetsCompat.Type.navigationBars())}, " +
+        "navInsets=${insets?.getInsets(WindowInsetsCompat.Type.navigationBars())}, " +
+        "tappable=${insets?.getInsets(WindowInsetsCompat.Type.tappableElement())}, " +
+        "orientation=$requestedOrientation/${resources.configuration.orientation}, controls=$controls"
+}
+
 internal fun Activity.findVideoControl(description: String): View? {
     val views = arrayListOf<View>()
     window.decorView.findViewsWithText(views, description, View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
@@ -394,11 +427,16 @@ internal fun Activity.videoControlTouchBounds(description: String, enabled: Bool
     if (!hasWindowFocus()) return null
     val control = findVideoControl(description)?.takeIf { it.isEnabled == enabled } ?: return null
     val insets = ViewCompat.getRootWindowInsets(window.decorView) ?: return null
+    val safe = videoSafeBounds(insets)
+    return control.screenBounds().takeIf { !it.isEmpty && safe.contains(it.centerX(), it.centerY()) }
+        ?.also { Log.i(VIDEO_EVIDENCE_TAG, "Control $description: bounds=$it, safe=$safe") }
+}
+
+private fun Activity.videoSafeBounds(insets: WindowInsetsCompat): Rect {
     val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-    val safe = window.decorView.screenBounds().apply {
+    return window.decorView.screenBounds().apply {
         set(left + bars.left, top + bars.top, right - bars.right, bottom - bars.bottom)
     }
-    return control.screenBounds().takeIf { !it.isEmpty && safe.contains(it.centerX(), it.centerY()) }
 }
 
 internal fun View.screenBounds(): Rect {
@@ -408,6 +446,7 @@ internal fun View.screenBounds(): Rect {
 }
 
 internal fun sendVideoTouch(downTime: Long, action: Int, x: Float, y: Float) {
+    if (action != MotionEvent.ACTION_MOVE) Log.i(VIDEO_EVIDENCE_TAG, "${MotionEvent.actionToString(action)} at $x,$y")
     val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0)
     try { InstrumentationRegistry.getInstrumentation().sendPointerSync(event) }
     finally { event.recycle() }

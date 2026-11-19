@@ -124,6 +124,8 @@ gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugA
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceToken="$source_token" \
   -Pandroid.testInstrumentationRunnerArguments.qimengServerUrl=http://127.0.0.1:18481/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
+app_results="android/app/build/outputs/androidTest-results/connected"
+if [[ -d "$app_results" ]]; then cp -r "$app_results" android/build/cloud-screenshots/connected-app-results; fi
 
 python3 tools/cloud_android_author_gate.py &
 author_gate_pid=$!
@@ -146,8 +148,7 @@ for layout in '360 1.0' '320 1.3'; do
     -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" \
     -Pandroid.testInstrumentationRunnerArguments.qimengAuthorWidth="$author_width" \
     -Pandroid.testInstrumentationRunnerArguments.qimengAuthorFont="$author_font" --stacktrace || checks=1
-  results="android/app/build/outputs/androidTest-results/connected"
-  if [[ -d "$results" ]]; then cp -r "$results" "android/build/cloud-screenshots/author-${author_width}dp-results"; fi
+  if [[ -d "$app_results" ]]; then cp -r "$app_results" "android/build/cloud-screenshots/author-${author_width}dp-results"; fi
 done
 adb -s emulator-5556 reverse tcp:18481 tcp:18481
 if (( checks != 0 )); then prepare_transport after-failure || true; fi
