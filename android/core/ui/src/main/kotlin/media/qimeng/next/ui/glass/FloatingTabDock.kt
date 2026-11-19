@@ -157,7 +157,13 @@ object TabDockDefaults {
 
     val DockClearance: Dp = DockHeight + DockBottomOffset
 
-    val PillHeight: Dp = 27.dp
+    val IndicatorInset: Dp = 4.dp
+
+    @Composable
+    fun indicatorHeight(): Dp {
+        val labelHeight = with(LocalDensity.current) { MaterialTheme.typography.labelMedium.lineHeight.toDp() }
+        return maxOf(DockHeight - IndicatorInset * 2, IconSize + LABEL_TOP_SPACING + labelHeight + IndicatorInset * 2)
+    }
 
     val IconSize: Dp = 24.dp
 
@@ -180,8 +186,6 @@ data class GlassNavItem(
 private const val PILL_TINT_ALPHA = 0.30f
 
 private const val ICON_SELECTED_SCALE = 1.12f
-
-private val LENS_PILL_INSET = 4.dp
 
 private val LENS_PILL_SURFACE_DARK = Color(0xFFFFFFFF).copy(alpha = 0.10f)
 
@@ -321,7 +325,8 @@ private fun DockItemsRow(
         } else {
             0f
         }
-    val pillWidthPx = (slotWidthPx - 2 * slotInnerPaddingPx).coerceAtLeast(0f)
+    val indicatorInsetPx = with(density) { TabDockDefaults.IndicatorInset.toPx() }
+    val pillWidthPx = (slotWidthPx - 2 * indicatorInsetPx).coerceAtLeast(0f)
     val pillCenter = remember { Animatable(Float.NaN) }
     val reduced = LocalReducedMotion.current
     LaunchedEffect(slotWidthPx, selectedIndex, reduced) {
@@ -407,13 +412,7 @@ private fun DockItemsRow(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .width(with(density) { pillWidthPx.toDp() })
-                    .height(
-                        if (useLensPill) {
-                            TabDockDefaults.DockHeight - LENS_PILL_INSET * 2
-                        } else {
-                            TabDockDefaults.PillHeight
-                        },
-                    )
+                    .height(TabDockDefaults.indicatorHeight().coerceAtMost(TabDockDefaults.DockHeight))
                     .graphicsLayer {
                         val center = pillCenter.value
                         if (center.isNaN()) {

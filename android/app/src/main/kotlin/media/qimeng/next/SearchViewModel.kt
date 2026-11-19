@@ -6,7 +6,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import media.qimeng.next.model.Session
 import media.qimeng.next.model.SearchWord
+import media.qimeng.next.model.sameTarget
 
 class SearchViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     private val graph = (application as QimengApplication).graph
@@ -19,7 +21,33 @@ class SearchViewModel(application: Application, private val saved: SavedStateHan
     private val mutableError = MutableStateFlow<String?>(null)
     val error = mutableError.asStateFlow()
     private var lookup: Job? = null
-    init { viewModelScope.launch { graph.settings.session.collect { refreshWords() } } }
+    init {
+        synchronizeTarget(graph.settings.session.value)
+        viewModelScope.launch {
+            graph.settings.session.collect { target ->
+                synchronizeTarget(target)
+                refreshWords()
+            }
+        }
+    }
+
+    private fun synchronizeTarget(target: Session?) {
+        if (saved.get<String>("searchInstance") == target?.instanceId &&
+            saved.get<String>("searchEndpoint") == target?.baseUrl) return
+        clearQuery()
+        saved["openedTag"] = null
+        saved["searchInstance"] = target?.instanceId
+        saved["searchEndpoint"] = target?.baseUrl
+    }
+
+    fun open(initialQuery: String?) {
+        synchronizeTarget(graph.settings.session.value)
+        if (!initialQuery.isNullOrBlank() && saved.get<String>("openedTag") != initialQuery) {
+            saved["openedTag"] = initialQuery
+            saved["initialTag"] = initialQuery.trim()
+            submit(initialQuery)
+        } else if (phase.value == "entry") refreshWords()
+    }
 
     fun edit(value: String) {
         saved["query"] = value
@@ -38,23 +66,39 @@ class SearchViewModel(application: Application, private val saved: SavedStateHan
             catch (_: Exception) { mutableError.value = "搜索已提交，但历史未能保存" }
         }
     }
-    fun back(): Boolean = when (phase.value) {
-        "result" -> { enterEditing(); true }
-        "suggest" -> { edit(""); true }
-        else -> false
+    fun back(): Boolean {
+        val returnToStatistics = phase.value == "result" && query.value == saved.get<String>("initialTag")
+        val handled = phase.value != "entry" && !returnToStatistics
+        clearQuery()
+        if (handled) refreshWords() else saved["openedTag"] = null
+        return handled
     }
+
+    private fun clearQuery() {
+        lookup?.cancel()
+        mutableError.value = null
+        mutableWords.value = LoadState()
+        saved["initialTag"] = null
+        saved["query"] = ""
+        saved["submitted"] = ""
+        saved["phase"] = "entry"
+    }
+
     fun refreshWords() {
         lookup?.cancel()
-        if (graph.settings.session.value == null || phase.value == "result") return
+        val target = graph.settings.session.value ?: return
+        if (phase.value == "result") return
         val text = query.value.trim()
         mutableWords.value = LoadState(loading = true)
         lookup = viewModelScope.launch {
             try {
                 if (text.isNotEmpty()) delay(250)
-                val words = graph.media.searchSuggestions(text, recommend = text.isEmpty())
-                mutableWords.value = LoadState(data = words)
+                val words = graph.media.searchSuggestions(text, recommend = text.isEmpty(), target = target)
+                if (sameTarget(target, graph.settings.session.value)) mutableWords.value = LoadState(data = words)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { mutableWords.value = LoadState(error = "无法读取搜索词，请重试") }
+            catch (_: Exception) {
+                if (sameTarget(target, graph.settings.session.value)) mutableWords.value = LoadState(error = "无法读取搜索词，请重试")
+            }
         }
     }
     fun clearHistory() { viewModelScope.launch {

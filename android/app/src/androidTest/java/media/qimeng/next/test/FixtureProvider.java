@@ -34,6 +34,7 @@ public final class FixtureProvider extends ContentProvider {
     private File file(Uri uri) {
         String name = uri.getLastPathSegment();
         if (!"android-synthetic.png".equals(name) && !"android-synthetic.mp4".equals(name)
+                && !"parity-landscape.mp4".equals(name) && !"parity-portrait.mp4".equals(name)
                 && !"known-empty.png".equals(name) && !"unknown-empty.png".equals(name)
                 && !"mixed-good.png".equals(name) && !"mixed-notes.txt".equals(name)) {
             throw new IllegalArgumentException("Unknown synthetic input");
@@ -42,7 +43,9 @@ public final class FixtureProvider extends ContentProvider {
     }
 
     @Override public String getType(Uri uri) {
-        return "android-synthetic.mp4".equals(uri.getLastPathSegment()) ? "video/mp4" : null;
+        String name = uri.getLastPathSegment();
+        return "android-synthetic.mp4".equals(name) || "parity-landscape.mp4".equals(name)
+                || "parity-portrait.mp4".equals(name) ? "video/mp4" : null;
     }
 
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {

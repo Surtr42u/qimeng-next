@@ -20,6 +20,8 @@
 
 ## 系统审查后的客户端验收
 
+11 月 20 日的 Android 对照使用旧正式包 `74597408`。新版已在隔离服务中取得三个统计窗口的白卡截图，以及作者资料、筛选与媒体网格依次排列的截图。手机端和服务端的缩略图缓存分别计量，Go 的低空间及恢复补齐回归已通过。[旧版实测](https://github.com/Surtr42u/qimeng-next/actions/runs/44588916908) · [新版阶段截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44591454981/artifacts/14564568156) · [缓存后端回归](https://github.com/Surtr42u/qimeng-next/actions/runs/44588983656/job/135790515054) · [功能与验收范围](../android/UI_PARITY_TASKS.md)
+
 Web 的 `9c2a5f7` 与安装版 `74597408` 使用相同的字体、媒体、主题和视口比较。桌面与窄屏的首页、相册、详情六组均通过，锚点偏差均在 1 CSS 像素内，退出详情后两端回到原相册及原滚动位置。[六组测量与截图](https://github.com/Surtr42u/qimeng-next/actions/runs/44455888042/job/135330670726)
 
 作者资料、归档和 AI 接入沿用现有加载方式。断网前已读过作者主页时，首次打开详细资料仍可查看和编辑简介。保留这些操作及离线 AI 草稿的分包试案仅减少 3,794 字节首页 TCP 下行，首页可用时间中位数同为 1,233 毫秒，首次打开归档记录则从 87 增至 168 毫秒。[同机计时、四种离线操作及安装版画面对照](https://github.com/Surtr42u/qimeng-next/actions/runs/44485507746/job/135427849678)

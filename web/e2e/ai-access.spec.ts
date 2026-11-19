@@ -40,6 +40,7 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   expect(await credential.inputValue() === syntheticSecret).toBe(true);
   expect(record?.canIngest).toBe(false);
   expect(record?.canResearchAssets).toBe(false);
+  expect(record?.canLookupImages).toBe(false);
   expect(record?.researchProviders).toEqual([]);
   expect(record?.assetFields).toEqual([]);
   expect(record?.candidateBlocks).toEqual([]);

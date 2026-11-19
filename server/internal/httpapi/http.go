@@ -374,6 +374,7 @@ func (a *API) ListAssets(w http.ResponseWriter, r *http.Request, params generate
 		if e != nil {
 			return nil, e
 		}
+		f.DateCountsBy = r.URL.Query().Get("dateCountsBy")
 		return a.s.Assets(r.Context(), f)
 	})
 }
@@ -464,7 +465,8 @@ func (a *API) GetAssetThumbnail(w http.ResponseWriter, r *http.Request, id gener
 		fail(w, e)
 		return
 	}
-	f, asset, e := a.s.ThumbnailSize(r.Context(), id, v, r.URL.Query().Get("size"))
+	background := params.Background != nil && *params.Background
+	f, asset, e := a.s.ThumbnailWithPriority(r.Context(), id, v, r.URL.Query().Get("size"), background)
 	if e != nil {
 		fail(w, e)
 		return
@@ -480,10 +482,27 @@ func (a *API) GetAssetThumbnail(w http.ResponseWriter, r *http.Request, id gener
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("X-Qimeng-Instance-Id", a.s.InstanceID)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("ETag", `"thumb-`+hex.EncodeToString(hash.Sum(nil))+`"`)
 	http.ServeContent(w, r, "thumbnail.jpg", asset.UpdatedAt, f)
+}
+
+func (a *API) ListThumbnailCandidates(w http.ResponseWriter, r *http.Request, params generated.ListThumbnailCandidatesParams) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		n, e := limit(r)
+		if e != nil {
+			return nil, e
+		}
+		return a.s.ThumbnailCandidates(r.Context(), r.URL.Query().Get("cursor"), n)
+	})
+}
+
+func (a *API) GetThumbnailProgress(w http.ResponseWriter, r *http.Request) {
+	a.readScoped(w, r, "admin", func(r *http.Request) (any, error) {
+		return a.s.ThumbnailProgress(r.Context())
+	})
 }
 
 func (a *API) MoveAsset(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.MoveAssetParams) {

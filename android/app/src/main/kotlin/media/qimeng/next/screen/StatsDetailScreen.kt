@@ -73,7 +73,7 @@ fun StatsDetailScreen(model: LibraryViewModel, mode: String, range: String) {
                             tags.firstOrNull()?.let { add("最常看标签「${it.name}」，浏览 ${it.views} 次") }
                         }) }
                         item { InterestRankingCard("常看作者", "按浏览聚合 · Top 15", "作者", authors) { model.openAuthor(it.id) } }
-                        item { InterestRankingCard("常看标签", "按浏览聚合 · Top 10", "标签", tags) { model.navigate("tag:${it.name}") } }
+                        item { InterestRankingCard("常看标签", "按浏览聚合 · Top 10", "标签", tags) { model.openTagSearch(it.name) } }
                     }
                 }
             }
@@ -87,14 +87,17 @@ private fun share(value: Long, total: Long) = if (total == 0L) 0 else (value.toD
 @Composable
 internal fun StatsDetailTopBar(title: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(32.dp).clickable(onClick = onBack), contentAlignment = Alignment.Center) { Icon(BackIcon, "返回") }
-        Text(title, Modifier.padding(start = 8.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Box(Modifier.size(32.dp).clickable(onClick = onBack), contentAlignment = Alignment.Center) {
+            Icon(BackIcon, "返回", tint = MaterialTheme.colorScheme.onBackground)
+        }
+        Text(title, Modifier.padding(start = 8.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
     }
 }
 
 @Composable
 internal fun DetailStatCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier.softDaylightShadow(RoundedCornerShape(20.dp)), color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
+    Surface(modifier.softDaylightShadow(RoundedCornerShape(20.dp)), color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(12.dp), content = content)
     }
 }
@@ -151,7 +154,8 @@ private fun DetailTrendCard(title: String, dimensions: List<StatDimension>, poin
         if (points.isEmpty()) Text("暂无趋势数据", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         else QimengTrendLineChart(active.map { dimension -> QimengTrendSeries(points.map { point ->
             (point.mediaTypes + point.sources).first { it.key == dimension.key }.views }, dimension.label) },
-            active.map { it.color }, points.map { it.label }, Modifier.fillMaxWidth().padding(top = 8.dp).height(240.dp))
+            active.map { it.color }, points.map { it.label }, Modifier.fillMaxWidth().padding(top = 8.dp).height(240.dp),
+            chartTitle = title)
     }
 }
 
@@ -170,7 +174,7 @@ private fun InterestRankingCard(title: String, subtitle: String, kind: String, r
 @Composable
 private fun InterestRankRow(rank: Int?, title: String, subtitle: String?, value: String?, percent: Int, onClick: (() -> Unit)?) {
     Surface(Modifier.fillMaxWidth().softDaylightShadow(RoundedCornerShape(20.dp)).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
+        color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(rank?.toString() ?: "—", Modifier.width(28.dp), fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                 color = if (rank != null && rank <= 3) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)

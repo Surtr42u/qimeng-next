@@ -46,6 +46,7 @@ const initialPolicy: Policy = {
   allowClear: false,
   canIngest: false,
   canResearch: false,
+  canLookupImages: false,
   researchProviders: [],
   canResearchAssets: false,
   assetFields: [],
@@ -62,6 +63,9 @@ const toggle = <T,>(values: T[], value: T) =>
   values.includes(value)
     ? values.filter((item) => item !== value)
     : [...values, value];
+
+const canGrantImageLookup = (policy: Policy) => policy.canResearch && policy.maxResearchCalls > 0 &&
+  policy.libraryIds.length > 0 && (policy.canIngest || !!policy.canResearchAssets);
 
 const stateNames: Record<Delegation["state"], string> = {
   active: "授权有效", revoked: "已撤销", expired: "已到期",
@@ -278,6 +282,7 @@ function DelegationForm({ complete, cancel }: {
       const next = { ...current, ...patch };
       if (!next.canIngest || !next.libraryIds.length) next.canRecycleSources = false;
       if (!next.canResearch || !next.libraryIds.length) next.canResearchAssets = false;
+      if (!canGrantImageLookup(next)) next.canLookupImages = false;
       if (!next.canResearch || next.maxResearchCalls <= 0) next.researchProviders = [];
       if (!next.libraryIds.length) next.assetFields = [];
       return next;
@@ -395,6 +400,11 @@ function DelegationForm({ complete, cancel }: {
                 </div>
               </fieldset>
             </>}
+            {policy.canResearch && <div className="ai-subgroup">
+              <Choice checked={!!policy.canLookupImages} disabled={!canGrantImageLookup(policy)}
+                onChange={checked => change({ canLookupImages: checked })}>允许单帧识图</Choice>
+              <p className="ai-help">允许向已配置的识图服务发送一帧派生预览。需选择媒体库，授权接收文件或已有作品预览，并设置正数研究调用上限。</p>
+            </div>}
           </fieldset>
 
           {hasAuthorWrites && (
@@ -576,7 +586,9 @@ function PolicySummary({ policy, libraryNames, authorNames }: {
       {(policy.canResearch || !!policy.researchProviders?.length) && (
         <div><dt>允许发送文字查询的公开来源</dt><dd>{policy.researchProviders?.map(name => providerNames[name]).join("、") || "未授权"}</dd></div>
       )}
-      {policy.canLookupImages && <div><dt>单帧识图</dt><dd>允许将派生的单帧预览发送至已配置的识图服务</dd></div>}
+      {(policy.canResearch || policy.canLookupImages) && <div><dt>单帧识图</dt><dd>
+        {policy.canLookupImages ? "允许将派生的单帧预览发送至已配置的识图服务" : "未授权"}
+      </dd></div>}
       <div><dt>作者范围</dt><dd>{policy.allAuthors ? "全部作者（含今后新增）" : scopedNames(policy.authorIds, authorNames)}</dd></div>
       <div><dt>资料候选</dt><dd>{policy.candidateBlocks.map(block => blockNames[block]).join("、") || "未授权"}</dd></div>
       <div><dt>直接维护字段</dt><dd>{policy.allowedFields.map(field => fieldNames[field]).join("、") || "未授权"}{policy.allowClear && " · 允许明确清空已授权字段"}</dd></div>

@@ -11,7 +11,9 @@ import android.provider.DocumentsContract
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -19,6 +21,8 @@ import kotlinx.coroutines.withTimeout
 import media.qimeng.next.MainActivity
 import media.qimeng.next.data.DataGraph
 import media.qimeng.next.model.AssetQuery
+import media.qimeng.next.model.EventDeliveryKind
+import media.qimeng.next.model.PendingEvent
 import media.qimeng.next.model.TabBarMaterial
 import media.qimeng.next.model.TransferState
 import media.qimeng.next.model.UploadMode
@@ -211,12 +215,153 @@ class AndroidRealServerTest {
     }
 
     @Test(timeout = 240_000)
+    fun maintainsExtractionVocabularyFromDataManagement() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        scrollDataManagementAboveDock()
+        compose.onNodeWithText("数据管理").performClick()
+        awaitDataManagementDestination(model)
+        compose.onNodeWithText("词表维护").performScrollTo().performClick()
+        compose.onNodeWithText("原名提取词表").performClick()
+        val list = compose.onNodeWithTag("extraction-vocabulary-list")
+        fun press(label: String) {
+            val node = hasText(label) and hasClickAction() and isEnabled()
+            list.performScrollToNode(node)
+            compose.onNode(node).performClick()
+        }
+        fun add(button: String, value: String) {
+            press(button)
+            editVisibleField("extraction-term", value)
+            compose.onNodeWithText("确定").performClick()
+        }
+        val target = requireNotNull(graph.settings.session.value)
+        val before = runBlocking { graph.extractionVocabulary.read(target) }
+        val suffix = UUID.randomUUID().toString().take(8)
+        val group = "合成出处$suffix"
+        val variant = "合成变体$suffix"
+        val role = "合成角色$suffix"
+        val alias = "合成别名$suffix"
+        val stopWord = "合成停用$suffix"
+        val attemptedWord = "保留草稿$suffix"
+        val externalWord = "外部编辑$suffix"
+        compose.waitUntil(30_000) { compose.onAllNodesWithText("添加停用词").fetchSemanticsNodes().isNotEmpty() }
+        add("添加停用词", stopWord)
+        add("添加出处组", group)
+        list.performScrollToNode(hasText(group))
+        compose.onNodeWithTag("extraction-group:$group").performClick()
+        add("添加变体", variant)
+        add("添加角色", role)
+        press("角色别名")
+        add("添加别名", alias)
+        press("保存修改")
+        await("extraction-vocabulary-rebuild", graph) {
+            val current = graph.extractionVocabulary.read(target)
+            current.revision == before.revision + 1 && current.rebuildState == "completed"
+        }
+        val saved = runBlocking { graph.extractionVocabulary.read(target) }
+        assertTrue(stopWord in saved.layer.stopWords)
+        assertEquals(listOf(variant), saved.layer.groups.single { it.canonical == group }.variants)
+        assertEquals(listOf(alias), saved.layer.groups.single { it.canonical == group }.roles.single { it.canonical == role }.aliases)
+        list.performScrollToIndex(0)
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithText("已保存 · 服务端重算完成 · 修订 ${saved.revision}").fetchSemanticsNodes().isNotEmpty()
+        }
+        screenshot("real-server-extraction-vocabulary.png")
+
+        add("添加停用词", attemptedWord)
+        val newer = runBlocking { graph.extractionVocabulary.save(target, saved.revision,
+            saved.layer.copy(stopWords = saved.layer.stopWords + externalWord), UUID.randomUUID().toString()) }
+        press("保存修改")
+        list.performScrollToIndex(0)
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithText("服务端词表已被修改。本次草稿仍保留。").fetchSemanticsNodes().isNotEmpty()
+        }
+        list.performScrollToNode(hasText(attemptedWord))
+        compose.onNodeWithText(attemptedWord).assertExists()
+        assertEquals(newer.revision, runBlocking { graph.extractionVocabulary.read(target) }.revision)
+        press("读取服务端新词表")
+        compose.onNodeWithText("放弃并读取").performClick()
+        list.performScrollToIndex(0)
+        compose.waitUntil(15_000) { compose.onAllNodesWithText(externalWord).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(attemptedWord).assertDoesNotExist()
+    }
+
+    @Test(timeout = 240_000)
     fun mixedProviderInputsRetainEveryDispositionAndOnlyUploadGoodMedia() = runBlocking {
         mixedUploadRoundTrip(isolatedServerGraph())
     }
 
     @Test(timeout = 240_000)
-    fun playRealVideoThroughTheLandscapeWindow() {
+    fun ordinaryUploadUsesAuthorSourceAndFileNameSuggestions() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        assertFalse(runBlocking { graph.media.capabilities().aiConfigured })
+        val suffix = UUID.randomUUID().toString().take(8)
+        val family = "上传建议-$suffix"
+        val authorChannel = "作者渠道$suffix"
+        val assetChannel = "作品渠道$suffix"
+        val library = runBlocking { graph.media.createLibrary("普通上传 $suffix", false) }
+        val alias = "检索别名$suffix"
+        val author = runBlocking { graph.media.createNamedAuthor(target, listOf("合成作者$suffix", alias), UUID.randomUUID().toString()) }
+        setSyntheticAcquisitionOptions(graph, target, authorChannel, assetChannel)
+        runBlocking {
+            graph.queue.state.value!!.drafts.filter { it.intakeGroup == null }.forEach { graph.uploads.discardDraft(it.id) }
+            seedMetadataAsset(graph, target, library.id, "$family 01.png")
+        }
+        val (source, originalBytes) = writeMetadataImage("new-$suffix")
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        scrollDataManagementAboveDock()
+        compose.onNodeWithText("数据管理").performClick()
+        awaitDataManagementDestination(model)
+        compose.onNodeWithText("上传文件").performClick()
+        val list = compose.onNodeWithTag("upload-list")
+        compose.waitUntil(30_000) { model.libraries.value.any { it.id == library.id } }
+        list.performScrollToNode(hasText(library.name))
+        compose.onNodeWithText(library.name).performClick()
+        compose.waitUntil(20_000) { model.uploadLibrary.value == library.id }
+        compose.runOnIdle { model.receiveFiles(listOf(source)) }
+        await("ordinary-suggest-draft", graph) { graph.queue.state.value?.drafts?.count { it.intakeGroup == null } == 1 }
+        val draft = graph.queue.state.value!!.drafts.single { it.intakeGroup == null }
+        list.performScrollToNode(hasText("作者与来源"))
+        compose.onNodeWithText("作者与来源").performClick()
+        list.performScrollToNode(hasText("选择作者"))
+        compose.onNodeWithText("选择作者").performClick()
+        editVisibleField("upload-author-search", alias)
+        val authorTag = "upload-author-search:${author.id}"
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag(authorTag).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag(authorTag).performClick()
+        compose.onNodeWithText("应用").performClick()
+        list.performScrollToNode(hasTestTag("upload-author-source:$authorChannel"))
+        compose.onNodeWithTag("upload-author-source:$authorChannel").performClick()
+        list.performScrollToNode(hasTestTag("upload-asset-source:$assetChannel"))
+        compose.onNodeWithTag("upload-asset-source:$assetChannel").performClick()
+        list.performScrollToNode(hasTestTag("draft-name:${draft.id}"))
+        editVisibleField("draft-name:${draft.id}", family)
+        val suggested = "$family 02.png"
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(suggested).fetchSemanticsNodes().isNotEmpty() }
+        list.performScrollToNode(hasText(suggested))
+        screenshot("real-server-ordinary-upload-suggestion.png")
+        compose.onNodeWithText(suggested).performClick()
+        compose.onNodeWithTag("draft-name:${draft.id}").assertTextEquals("$family 02")
+        compose.onNodeWithText("锁定").assertExists()
+        list.performScrollToNode(hasText("开始上传（1 项）"))
+        compose.onNodeWithText("开始上传（1 项）").performClick()
+        await("ordinary-upload-readback", graph) { graph.queue.state.value!!.transfers.any { it.id == draft.id && it.state == TransferState.SUCCEEDED } }
+        val transfer = graph.queue.state.value!!.transfers.single { it.id == draft.id }
+        val asset = runBlocking { graph.media.asset(requireNotNull(transfer.assetId), target) }
+        assertEquals(suggested, asset.name)
+        assertEquals(draft.originalName, asset.originalName)
+        assertEquals(listOf(author.id), asset.authorIds)
+        assertEquals(listOf(assetChannel), asset.acquisitionSources)
+        assertEquals(listOf(authorChannel), runBlocking { graph.media.author(author.id, target).acquisitionSources })
+        val providerBytes = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver.openInputStream(source)!!.use { it.readBytes() }
+        assertArrayEquals(originalBytes, providerBytes)
+    }
+
+    @Test(timeout = 240_000)
+    fun playRealVideoThroughTheLandscapeWindow() = compose.withVideoFailureEvidence("real-server-video-playback-failure.png") {
         val graph = runBlocking { isolatedServerGraph() }
         val video = runBlocking {
             graph.media.assets(AssetQuery(mediaType = "video")).items.firstOrNull { it.originalName == "android-synthetic.mp4" } ?: run {
@@ -255,22 +400,23 @@ class AndroidRealServerTest {
                 }
                 assertTrue("The new player must start at the position read back from Go", requireNotNull(position) >= resumePosition)
             }
-            compose.waitUntil(30_000) { compose.onAllNodesWithContentDescription("进入全屏").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithContentDescription("进入全屏").performClick()
-            compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
+            clickVideoControl("进入全屏")
             compose.waitUntil(10_000) { playbackOrientation().let {
-                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE &&
+                it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE &&
                     it.configuration == android.content.res.Configuration.ORIENTATION_LANDSCAPE
             } }
             captureDecoderSurface(compose.activity, suffix)
             screenshotWithMedia("real-server-video-fullscreen$suffix.png", landscape = true)
             await("video-play-event$suffix", graph) { (graph.media.asset(video.id).playCount ?: 0L) > (before.playCount ?: 0L) }
             assertTrue(runBlocking { graph.media.history().items.any { it.assetId == video.id && it.kind == "view" } })
-            compose.onNodeWithContentDescription("退出全屏").performClick()
+            clickVideoControl("退出全屏")
             try {
-                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
+                compose.waitUntil(15_000) { playbackOrientation().let {
+                    it.request == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT &&
+                        it.configuration == android.content.res.Configuration.ORIENTATION_PORTRAIT
+                } }
             } catch (failure: ComposeTimeoutException) {
-                throw AssertionError("Leaving fullscreen should restore $originalOrientation, observed ${playbackOrientation()}", failure)
+                throw AssertionError("Leaving fullscreen should return to portrait, observed ${playbackOrientation()}", failure)
             }
             if (index == 0) {
                 compose.waitUntil(10_000) {
@@ -298,8 +444,32 @@ class AndroidRealServerTest {
                     }
                     leftDetail
                 }
+                compose.waitUntil(15_000) { playbackOrientation() == originalOrientation }
             }
         }
+    }
+
+
+    @Test(timeout = 300_000)
+    fun videoControlsMatchTheInstalledAppFromNormalEntrances() {
+        VideoParityRoundTrip(compose, runBlocking { isolatedServerGraph() }).run()
+    }
+
+    private fun clickVideoControl(description: String) {
+        // Finish the old detail chrome fade before injecting a native PlayerView tap.
+        // A visible native control can still be covered by the outgoing Compose author button.
+        compose.waitForIdle()
+        var control: android.graphics.Rect? = null
+        compose.waitUntil(15_000) {
+            compose.activityRule.scenario.onActivity { activity ->
+                control = activity.videoControlTouchBounds(description)
+            }
+            control?.isEmpty == false
+        }
+        val bounds = requireNotNull(control)
+        val down = android.os.SystemClock.uptimeMillis()
+        sendVideoTouch(down, android.view.MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY())
+        sendVideoTouch(down, android.view.MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY())
     }
 
     private data class PlaybackOrientation(val request: Int, val configuration: Int, val rotation: Int)
@@ -382,13 +552,206 @@ class AndroidRealServerTest {
         archiveRoundTrip(isolatedServerGraph())
     }
 
+    @Test(timeout = 60_000)
+    fun readsDeclaredServiceVersionInAbout() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        val version = requireNotNull(runBlocking { graph.media.serverVersion(target) })
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("版本信息"))
+        compose.waitUntil(20_000) { compose.onAllNodesWithText("服务端 $version").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("服务端 $version").assertIsDisplayed()
+        screenshot("real-server-about-version.png")
+    }
+
+    @Test(timeout = 240_000)
+    fun savesIndependentAssetEditorAndPreservesDraftAfterAuthorConflict() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        val suffix = UUID.randomUUID().toString().take(8)
+        val family = "编辑建议-$suffix"
+        val library = runBlocking { graph.media.createLibrary("独立媒体编辑 $suffix", false) }
+        val first = runBlocking { graph.media.createNamedAuthor(target, listOf("编辑作者甲$suffix"), UUID.randomUUID().toString()) }
+        val second = runBlocking { graph.media.createNamedAuthor(target, listOf("编辑作者乙$suffix"), UUID.randomUUID().toString()) }
+        val before = runBlocking {
+            seedMetadataAsset(graph, target, library.id, "$family 01.png")
+            seedMetadataAsset(graph, target, library.id, "独立编辑原名-$suffix.png", listOf(first.id, second.id))
+        }
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.openAsset(before.id, target = target) }
+        fun openEditor() {
+            compose.waitUntil(20_000) { model.asset.value?.id == before.id && model.assetAuthors.value.size == 2 }
+            compose.onNodeWithContentDescription("作者").performClick()
+            compose.onNode(hasText("编辑作者与来源") and hasClickAction()).performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("asset-editor-name").fetchSemanticsNodes().isNotEmpty() }
+        }
+        openEditor()
+        editVisibleField("asset-editor-name", family)
+        val suggested = "$family 02.png"
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(suggested).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(suggested).performClick()
+        compose.onNodeWithTag("asset-editor-name").assertTextEquals("$family 02")
+        compose.onNodeWithText("锁定").assertIsDisplayed()
+        screenshot("real-server-independent-media-editor.png")
+        val list = compose.onNodeWithTag("asset-editor-list")
+        fun authorSource(authorId: String, value: String) {
+            val tag = "asset-editor-author-source:$authorId"
+            list.performScrollToNode(hasTestTag(tag))
+            editVisibleField(tag, value)
+        }
+        authorSource(first.id, "甲手工来源")
+        authorSource(second.id, "乙待保存来源")
+        runBlocking { graph.media.saveAuthorSources(target, second, listOf("乙外部更新")) }
+        val save = hasText("保存") and hasClickAction() and isEnabled()
+        list.performScrollToNode(save)
+        compose.onNode(save).performClick()
+        await("edit-partial-confirmed", graph) {
+            graph.media.asset(before.id, target).name == suggested &&
+                graph.media.author(first.id, target).acquisitionSources == listOf("甲手工来源")
+        }
+        list.performScrollToIndex(0)
+        val conflict = "服务端已修改，请重新读取。待保存的输入仍保留。"
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(conflict, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("已保存：文件名、${first.name}的来源").assertExists()
+        val secondTag = "asset-editor-author-source:${second.id}"
+        list.performScrollToNode(hasTestTag(secondTag))
+        compose.onNodeWithTag(secondTag).assertTextContains("乙待保存来源")
+        assertEquals(listOf("乙外部更新"), runBlocking { graph.media.author(second.id, target).acquisitionSources })
+
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithText("有未保存的修改").assertIsDisplayed()
+        compose.onNodeWithText("继续编辑").performClick()
+        compose.onNodeWithTag(secondTag).assertTextContains("乙待保存来源")
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithText("放弃修改离开").performClick()
+
+        openEditor()
+        authorSource(second.id, "乙确认来源")
+        list.performScrollToNode(save)
+        compose.onNode(save).performClick()
+        compose.waitUntil(20_000) { model.route.value == "asset:${before.id}" }
+        val result = runBlocking { graph.media.asset(before.id, target) }
+        assertEquals(suggested, result.name)
+        assertEquals(before.version, result.version)
+        assertEquals(before.originalName, result.originalName)
+        assertEquals(listOf(first.id, second.id), result.authorIds)
+        assertEquals(listOf("甲手工来源"), runBlocking { graph.media.author(first.id, target).acquisitionSources })
+        assertEquals(listOf("乙确认来源"), runBlocking { graph.media.author(second.id, target).acquisitionSources })
+    }
+
+    @Test(timeout = 180_000)
+    fun syncsActivityFromMaintenanceAfterRestoreAndConfirmsOnlyOneRejectedRecord() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        val suffix = UUID.randomUUID().toString()
+        val library = runBlocking { graph.media.createLibrary("补传验收", false) }
+        val asset = runBlocking { seedMetadataAsset(graph, target, library.id, "补传-${suffix.take(8)}.png") }
+        val waitingSession = "waiting-$suffix"
+        val missingSession = "missing-$suffix"
+        val absent = asset.copy(id = missingSession, name = "合成缺失原件")
+        val foreign = PendingEvent("foreign-$suffix", target.copy(instanceId = "foreign-$suffix", label = "合成其他实例"),
+            asset.id, "view", 0, asset.version, "foreign-session-$suffix", occurredAt = "2026-01-01T00:00:00Z",
+            failure = "旧版补传结果")
+        runBlocking {
+            graph.media.trash(asset)
+            graph.queue.update { it.copy(events = it.events + foreign) }
+        }
+        graph.recordEvent(asset, "view", waitingSession)
+        graph.recordEvent(absent, "view", missingSession)
+        fun event(session: String) = graph.queue.state.value?.events?.singleOrNull { it.sessionId == session }
+        await("maintenance-event-dispositions", graph) {
+            event(waitingSession)?.issue?.kind == EventDeliveryKind.WAITING &&
+                event(missingSession)?.issue?.kind == EventDeliveryKind.REJECTED
+        }
+        val rejected = requireNotNull(event(missingSession))
+        val waiting = requireNotNull(event(waitingSession))
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        scrollDataManagementAboveDock()
+        compose.onNodeWithText("数据管理").performClick()
+        awaitDataManagementDestination(model)
+        compose.onNodeWithText("资料备份与归档").performScrollTo().performClick()
+        val list = compose.onNodeWithTag("maintenance-backup-list")
+        list.performScrollToNode(hasText("查看待处理记录"))
+        compose.onNodeWithText("等待恢复 1 条").assertExists()
+        screenshot("real-server-activity-event-maintenance.png")
+        compose.onNodeWithText("查看待处理记录").performClick()
+        val canClear = hasText("清理此条") and hasAnyAncestor(hasTestTag("activity-event:${rejected.id}"))
+        compose.onNode(canClear).performClick()
+        compose.onNodeWithText("取消").performClick()
+        assertEquals(rejected, event(missingSession))
+        compose.onNode(canClear).performClick()
+        compose.onNodeWithText("确认清理").performClick()
+        await("maintenance-event-acknowledged", graph) { event(missingSession) == null }
+        assertEquals(waiting, event(waitingSession))
+        assertTrue(graph.queue.state.value!!.events.contains(foreign))
+
+        val recoverable = runBlocking { graph.media.trashPage().items.single { it.id == asset.id } }
+        runBlocking { graph.media.restore(recoverable) }
+        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithText("立即补传").performClick()
+        await("maintenance-event-restored", graph) {
+            event(waitingSession) == null && graph.media.history().items.any { it.id == waiting.id && it.assetId == asset.id }
+        }
+        assertTrue(graph.queue.state.value!!.events.contains(foreign))
+    }
+
+    private fun scrollDataManagementAboveDock() {
+        val list = compose.onNodeWithTag("profile-settings-list")
+        val entry = hasText("数据管理") and hasClickAction()
+        list.performScrollToNode(entry)
+        compose.waitForIdle()
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val dockTop = listOf("home", "albums", "stats", "me").minOf { tab ->
+            compose.onNodeWithTag("navigation:$tab").fetchSemanticsNode().boundsInRoot.top
+        }
+        // The dock overlays the full-height list: ScrollToNode can leave the row behind it.
+        // Scroll the real list to center the row in the unobscured viewport, then retain the real tap.
+        val safeBottom = minOf(viewport.bottom, dockTop)
+        val targetY = (viewport.top + safeBottom) / 2f
+        val delta = compose.onNode(entry).fetchSemanticsNode().boundsInRoot.center.y - targetY
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scroll -> scroll(0f, delta) }
+        compose.waitForIdle()
+        val reachable = compose.onNode(entry).fetchSemanticsNode().boundsInRoot
+        assertTrue("Data-management row must be above the overlaid dock before tapping: " +
+            "row=$reachable viewport=$viewport dockTop=$dockTop",
+            reachable.top >= viewport.top && reachable.bottom < safeBottom)
+    }
+
+    private fun awaitDataManagementDestination(model: media.qimeng.next.LibraryViewModel) {
+        val destinations = listOf("上传文件", "词表维护", "资料备份与归档")
+        try {
+            compose.waitUntil(15_000) {
+                model.route.value == "data-manage" && destinations.all { label ->
+                    compose.onAllNodes(hasText(label) and hasClickAction()).fetchSemanticsNodes().size == 1
+                }
+            }
+        } catch (failure: ComposeTimeoutException) {
+            // Report only navigation semantics, not connection details or the transfer journal.
+            val route = model.route.value
+            val tab = model.tab.value
+            val counts = destinations.associateWith { label ->
+                compose.onAllNodes(hasText(label) and hasClickAction()).fetchSemanticsNodes().size
+            }
+            val profileNodes = compose.onAllNodesWithTag("profile-settings-list").fetchSemanticsNodes().size
+            val entry = compose.onAllNodes(hasText("数据管理") and hasClickAction()).fetchSemanticsNodes()
+                .map { "bounds=${it.boundsInRoot}" }
+            runCatching { saveScreenshot("failed-data-management-navigation.png") }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw AssertionError("Data-management click did not reach its destination: route=$route tab=$tab " +
+                "profileNodes=$profileNodes entry=$entry destinationNodeCounts=$counts", failure)
+        }
+    }
+
     private fun editVisibleField(tag: String, text: String) {
         val field = hasTestTag(tag)
         compose.waitUntil(30_000) { compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(field).assertIsDisplayed().performClick()
         compose.waitUntil(30_000) { compose.onAllNodes(field and isFocused()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(field).performTextReplacement(text)
-        compose.onNode(field).assertTextEquals(text)
+        // Labels are merged into Text; verify only the editable value, without weakening equality.
+        compose.onNode(field).assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(text)))
     }
 
     private suspend fun isolatedServerGraph(): DataGraph {
@@ -400,6 +763,91 @@ class AndroidRealServerTest {
         graph.awaitRecovery()
         if (graph.settings.session.value?.baseUrl != address) graph.media.login(address, requireNotNull(args.getString("qimengToken")))
         return graph
+    }
+
+    private fun openAIAccessFromProfile() {
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("navigation:me").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("navigation:me").performClick()
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("AI 接入"))
+        compose.onNodeWithText("AI 接入").performClick()
+    }
+
+    @Test fun verifyReadOnlyAccessFromProfile() = runBlocking<Unit> {
+        val graph = isolatedServerGraph()
+        val label = "云端只读接入 ${UUID.randomUUID().toString().take(8)}"
+        openAIAccessFromProfile()
+        compose.onNodeWithText("新增 AI 接入").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement(label)
+        compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("允许单帧识图").assertDoesNotExist()
+        compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("执行动作 · 仅全库读取").assertExists()
+        compose.onNodeWithText("单帧识图 · 未授权").assertExists()
+        compose.onNodeWithText("授权有效期 · 30 天").assertExists()
+        try {
+            compose.onNodeWithText("创建接入凭据").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("显示凭据").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("•••• •••• •••• ••••").assertExists()
+            compose.onNodeWithText("复制凭据").performClick()
+            compose.onNodeWithText("已复制").assertExists()
+            compose.onNodeWithText("已保存，关闭").performClick()
+            val grant = graph.aiAccess.list("active").items.single { it.policy.label == label }
+            assertFalse(grant.canLookupImages)
+            assertEquals(0, grant.policy.maxResearchCalls)
+            val record = hasTestTag("ai-grant:${grant.id}")
+            compose.onNodeWithTag("ai-access-records").performScrollToNode(record)
+            compose.onNode(hasText("权限详情") and hasAnyAncestor(record)).performClick()
+            compose.onNodeWithText("单帧识图 · 未授权").assertExists()
+            compose.onNodeWithText("每日最多 20 个任务，每任务最多 100 次工具调用，有效 3600 秒").assertExists()
+        } finally {
+            graph.aiAccess.list("active").items.filter { it.policy.label == label }.forEach { graph.aiAccess.revoke(it.id) }
+        }
+    }
+
+    @Test fun verifySingleFrameAccessFromProfile() = runBlocking<Unit> {
+        val graph = isolatedServerGraph()
+        val label = "云端单帧接入 ${UUID.randomUUID().toString().take(8)}"
+        val target = graph.media.createLibrary("$label 影库", false)
+        openAIAccessFromProfile()
+        compose.onNodeWithText("新增 AI 接入").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement(label)
+        compose.onNodeWithText("新增媒体").performScrollTo().performClick()
+        compose.onNodeWithText("研究").performScrollTo().performClick()
+        compose.onNodeWithText("下一步").performClick()
+        val imageLookup = compose.onNodeWithText("允许单帧识图")
+        imageLookup.assertIsNotEnabled().assertIsOff()
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(target.name).fetchSemanticsNodes().isNotEmpty() }
+        val library = compose.onNodeWithText(target.name)
+        library.performScrollTo().performClick()
+        imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
+        imageLookup.assertIsOn()
+        val budget = compose.onNodeWithTag("ai-access-research-budget")
+        budget.performScrollTo().performTextReplacement("0")
+        imageLookup.assertIsNotEnabled().assertIsOff()
+        budget.performTextReplacement("2")
+        imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
+        compose.onNodeWithText("下一步").performClick()
+        val permission = "单帧识图 · 允许向已配置的识图服务发送一帧派生预览"
+        compose.onNodeWithText(permission).assertExists()
+        try {
+            compose.onNodeWithText("创建接入凭据").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("显示凭据").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("已保存，关闭").performClick()
+            val grant = graph.aiAccess.list("active").items.single { it.policy.label == label }
+            assertTrue(grant.canLookupImages)
+            assertTrue(grant.policy.canIngest)
+            assertTrue(grant.policy.canResearch)
+            assertFalse(grant.policy.canResearchAssets)
+            assertFalse(grant.policy.canOrganize)
+            assertEquals(listOf(target.id), grant.policy.libraryIds)
+            assertEquals(2, grant.policy.maxResearchCalls)
+            val record = hasTestTag("ai-grant:${grant.id}")
+            compose.onNodeWithTag("ai-access-records").performScrollToNode(record)
+            compose.onNode(hasText("权限详情") and hasAnyAncestor(record)).performClick()
+            compose.onNode(hasText(permission) and hasAnyAncestor(record)).assertExists()
+        } finally {
+            graph.aiAccess.list("active").items.filter { it.policy.label == label }.forEach { graph.aiAccess.revoke(it.id) }
+        }
     }
 
     @Test fun wrongInstanceMaintenanceFolderKeepsItsGrantTemporary() = runBlocking {
@@ -512,7 +960,12 @@ class AndroidRealServerTest {
 
 internal fun copyCloudVideo(uri: Uri) {
     val instrument = InstrumentationRegistry.getInstrumentation()
-    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/qimeng-next-test.mp4")).use { input ->
+    val sample = when (uri.lastPathSegment) {
+        "parity-landscape.mp4" -> "qimeng-next-test-landscape.mp4"
+        "parity-portrait.mp4" -> "qimeng-next-test-portrait.mp4"
+        else -> "qimeng-next-test.mp4"
+    }
+    ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("cat /data/local/tmp/$sample")).use { input ->
         requireNotNull(instrument.targetContext.contentResolver.openOutputStream(uri, "w")).use { output ->
             assertTrue("The cloud H.264 fixture must have bytes", input.copyTo(output) in 100L..8_000_000L)
         }

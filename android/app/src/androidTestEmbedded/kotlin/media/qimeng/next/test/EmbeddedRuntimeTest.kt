@@ -208,13 +208,16 @@ class EmbeddedRuntimeTest {
 
     private fun assertCopied(label: String, expected: String) {
         var focused = false
-        compose.waitUntil(15_000) {
-            compose.activityRule.scenario.onActivity { focused = it.hasWindowFocus() }
-            focused
-        }
-        compose.onNodeWithContentDescription("复制$label").performScrollTo().performClick()
         var observed: String? = null
+        var stage = "await-window-focus"
         try {
+            compose.waitUntil(15_000) {
+                compose.activityRule.scenario.onActivity { focused = it.hasWindowFocus() }
+                focused
+            }
+            stage = "copy-click"
+            compose.onNodeWithContentDescription("复制$label").performScrollTo().performClick()
+            stage = "clipboard-read"
             compose.waitUntil(15_000) {
                 compose.activityRule.scenario.onActivity { activity ->
                     focused = activity.hasWindowFocus()
@@ -226,7 +229,25 @@ class EmbeddedRuntimeTest {
                 focused && observed == expected
             }
         } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
-            throw AssertionError("$label 剪贴板读取超时，窗口焦点=$focused，系统已提供文本=${observed != null}", failure)
+            var window = "unavailable"
+            runCatching {
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    window = "lifecycle=${activity.lifecycle.currentState}, activityFocus=${activity.hasWindowFocus()}, " +
+                        "decorFocus=${decor.hasWindowFocus()}, shown=${decor.isShown}, " +
+                        "viewFocus=${activity.currentFocus?.javaClass?.simpleName}"
+                }
+            }.exceptionOrNull()?.let(failure::addSuppressed)
+            val activeWindow = runCatching {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow?.let {
+                    // Describe the foreground owner only; never include node text or clipboard contents.
+                    "package=${it.packageName}, class=${it.className}"
+                } ?: "no-accessibility-root"
+            }.getOrElse { "unavailable:${it.javaClass.simpleName}" }
+            runCatching { media.qimeng.next.testsupport.captureCloudScreenshot("embedded-copy-failure.png") }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw AssertionError("$label 复制检查超时，阶段=$stage，窗口焦点=$focused，" +
+                "系统已提供文本=${observed != null}; $window; activeWindow=$activeWindow", failure)
         }
     }
 

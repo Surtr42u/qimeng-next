@@ -2,16 +2,20 @@ package media.qimeng.next.data
 
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import com.google.gson.annotations.SerializedName
 import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.api.DefaultApi
 import media.qimeng.next.transport.PinnedTls
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import retrofit2.Converter
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Query
 import java.io.IOException
+import java.lang.reflect.Type
 import java.util.concurrent.TimeUnit
 
 class ApiFailure(val status: Int, override val message: String, val code: String? = null) : IOException(message)
@@ -110,7 +114,19 @@ internal class ApiProvider(private val settings: SecureSettings) {
     fun apiWithoutRetries(target: Session): DefaultApi = build(target.baseUrl, client(target).newBuilder().retryOnConnectionFailure(false).build())
     private fun build(baseUrl: String, client: OkHttpClient): DefaultApi = Retrofit.Builder()
         .baseUrl(baseUrl.toHttpUrl().resolve("api/v1/")!!).client(client)
+        .addConverterFactory(QueryEnumConverterFactory)
         .addConverterFactory(GsonConverterFactory.create(Gson())).build().create(DefaultApi::class.java)
+}
+
+private object QueryEnumConverterFactory : Converter.Factory() {
+    override fun stringConverter(type: Type, annotations: Array<Annotation>, retrofit: Retrofit): Converter<*, String>? {
+        val enumType = type as? Class<*> ?: return null
+        if (!enumType.isEnum || annotations.none { it is Query }) return null
+        // OpenAPI names such as "7d" are legal query values but cannot be Kotlin enum identifiers.
+        return Converter<Enum<*>, String> { value ->
+            enumType.getField(value.name).getAnnotation(SerializedName::class.java)?.value ?: value.toString()
+        }
+    }
 }
 
 internal fun sameOrigin(left: HttpUrl, right: HttpUrl) = left.scheme == right.scheme && left.host == right.host && left.port == right.port

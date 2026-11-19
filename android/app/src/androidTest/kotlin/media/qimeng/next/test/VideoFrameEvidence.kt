@@ -32,7 +32,7 @@ internal fun saturatedSamples(image: Bitmap): Int {
 private data class SurfaceFrame(val description: String, val image: Bitmap? = null)
 
 /** Sample the real decoder layer separately so a black composited window can be diagnosed. */
-internal fun captureDecoderSurface(activity: Activity, suffix: String) {
+internal fun captureDecoderSurface(activity: Activity, suffix: String): Boolean {
     var description = "no surface"
     var best: Bitmap? = null
     var samples = -1
@@ -52,6 +52,7 @@ internal fun captureDecoderSurface(activity: Activity, suffix: String) {
         }
         best?.let { saveCloudBitmap("diagnostic-video-decoder-surface$suffix.png", it) }
         Log.i("QimengFrameEvidence", "decoderSurface$suffix $description saturatedSamples=$samples")
+        return samples >= 30
     } finally { best?.recycle() }
 }
 

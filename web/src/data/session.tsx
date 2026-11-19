@@ -123,7 +123,7 @@ export function SessionGate({ children }: { children: ReactNode }) {
   if (!instance.data)
     return (
       <div className="connection-screen">
-        <img src="/icon.svg" width="64" height="64" alt="" />
+        <img src="/icons/icon-192.png" width="64" height="64" alt="" />
         <h1>绮梦影库</h1>
         <ConnectionCheck query={instance} queryKey={instanceKey} text="正在连接影库…" />
       </div>

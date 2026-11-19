@@ -7,6 +7,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.model.*
 import java.util.UUID
@@ -37,11 +39,14 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val repository = graph.media
     val session = repository.session
     val preferences = graph.settings.preferences
+    val albumColumns = graph.settings.albumColumns
+    private val albumColumnWrites = Mutex()
     val settingsError = graph.settings.error
     val queue = graph.queue.state
     val lastPublication = graph.uploads.lastPublication
     val queueError = graph.queue.error
     val route = saved.getStateFlow("route", "main")
+    val pendingAssetTools = saved.getStateFlow<String?>("pendingAssetTools", null)
     val tab = saved.getStateFlow("tab", 0)
     val uploadLibrary = saved.getStateFlow("uploadLibrary", "")
     val uploadDirectory = saved.getStateFlow("uploadDirectory", "")
@@ -69,6 +74,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val asset = mutableAsset.asStateFlow()
     private val mutableAuthor = MutableStateFlow<Author?>(null)
     val author = mutableAuthor.asStateFlow()
+    private val mutableAuthorFollow = MutableStateFlow(LoadState<String>())
+    val authorFollow = mutableAuthorFollow.asStateFlow()
     private val mutableAssetAuthors = MutableStateFlow<List<Author>>(emptyList())
     val assetAuthors = mutableAssetAuthors.asStateFlow()
     private val mutableReport = MutableStateFlow<TaskReport?>(null)
@@ -125,7 +132,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 detailGeneration.next()
                 reactionRetries.clear()
                 lists.values.forEach { it.value = ListState() }
-                mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null; mutableReport.value = null
+                mutableAsset.value = null; mutableAuthor.value = null; mutableAuthorFollow.value = LoadState()
+                mutableStats.value = null; mutableReport.value = null
                 discardForeignObjectRoutes(connection)
                 mutableAssetAuthors.value = emptyList()
                 tagReads.next()
@@ -153,6 +161,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
 
     fun assets(key: String): StateFlow<ListState<Asset>> = assetState(key)
+    fun saveAlbumColumns(columns: Int) {
+        viewModelScope.launch {
+            try {
+                albumColumnWrites.withLock {
+                    withContext(Dispatchers.IO) { graph.settings.saveAlbumColumns(columns) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { mutableMessage.value = explain(failure) }
+        }
+    }
+
+    suspend fun prefetchNearbyThumbnails(assets: List<Asset>) = graph.thumbnails.prefetchNearby(assets)
+
     private fun assetState(key: String): MutableStateFlow<ListState<Asset>> {
         lists[key]?.let { return it }
         val dynamic = lists.keys.filter { it.startsWith("author:") || it.startsWith("collection:") }
@@ -169,6 +190,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         lists[key]?.let { state ->
             if (state.value.loading) state.value = state.value.copy(loading = false, loaded = false)
         }
+    }
+    fun clearSearchResults() {
+        cancelBrowse("search")
+        assetState("search").value = ListState()
+    }
+    fun refreshAfterAlbumBatch(target: Session) {
+        if (!sameTarget(target, session.value)) return
+        lists.forEach { (key, state) ->
+            cancelBrowse(key)
+            state.value = state.value.copy(loaded = false)
+        }
+        browse("albums", force = true)
     }
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
@@ -214,6 +247,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         saved["route"] = stack.lastOrNull() ?: "main"
         saved["backStack"] = ArrayList(stack.dropLast(1))
     }
+    fun openTagSearch(tag: String) {
+        val target = session.value ?: return
+        if (bindObjectTarget(target)) navigate("tag:$tag")
+    }
 
     fun refreshConnection() = action(blocking = false) {
         val caps = repository.capabilities()
@@ -222,6 +259,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         graph.uploads.schedule()
         session.value?.let { graph.archives.resume(it) }
     }
+    suspend fun readServerVersion(target: Session, transport: Long): LoadState<String> = try {
+        val version = repository.serverVersion(target)
+        check(sameTarget(target, session.value) && transport == transportRevision.value) { "连接已改变" }
+        LoadState(data = version)
+    } catch (cancelled: CancellationException) { throw cancelled }
+    catch (failure: ApiFailure) { LoadState(error = failure.message) }
+    catch (_: java.io.IOException) { LoadState(error = "未连接到服务") }
+    catch (_: IllegalStateException) { LoadState(error = "连接已改变，请重新登录") }
+    catch (_: Exception) { LoadState(error = "无法读取服务版本") }
     fun loadLibraries(next: Boolean = false) = loadPage(libraryState, next) { cursor ->
         val page = repository.libraryPage(cursor)
         if (cursor != null) {
@@ -288,7 +334,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     private fun discardForeignObjectRoutes(target: Session?) {
         if (target != null && ownsObjectRoutes(target)) return
-        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("task:")
+        fun objectRoute(value: String) = value.startsWith("asset:") || value.startsWith("asset-edit:") ||
+            value.startsWith("task:") || value.startsWith("tag:")
+        saved["pendingAssetTools"] = null
         val stack = saved.get<ArrayList<String>>("backStack").orEmpty()
         val retained = stack.filterNot(::objectRoute)
         if (objectRoute(route.value)) {
@@ -311,6 +359,24 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private fun targetForRefresh(destination: String) = session.value?.takeIf { route.value == destination && ownsObjectRoutes(it) }
 
     fun refreshAsset(id: String) { targetForRefresh("asset:$id")?.let { openAsset(id, target = it) } }
+
+    fun targetForAssetEditor(id: String): Session? = targetForRefresh("asset-edit:$id")
+
+    fun openAssetEditor(asset: Asset) {
+        if (route.value == "asset:${asset.id}" && bindObjectTarget(asset.target)) navigate("asset-edit:${asset.id}")
+    }
+
+    fun closeAssetEditor(id: String, more: Boolean = false) {
+        if (targetForAssetEditor(id) == null) return
+        back()
+        if (route.value != "asset:$id") return
+        if (more) saved["pendingAssetTools"] = id
+        refreshAsset(id)
+    }
+
+    fun consumeAssetTools(id: String) {
+        if (pendingAssetTools.value == id) saved["pendingAssetTools"] = null
+    }
 
     fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value) {
         if (target == null || !bindObjectTarget(target)) return
@@ -380,12 +446,6 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun saveNote(asset: Asset, note: String, onSaved: () -> Unit) = action {
         publishAsset(repository.updateNote(asset, note)); onSaved()
     }
-    fun saveAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long, onSaved: () -> Unit) = action {
-        val result = repository.updateAuthors(asset, ids, names, revision, authorsRevision)
-        publishAsset(result)
-        mutableAssetAuthors.value = coroutineScope { result.authorIds.map { async { repository.author(it, result.target) } }.awaitAll() }
-        onSaved()
-    }
     fun saveRelations(asset: Asset, sources: List<String>, characters: List<String>, onSaved: () -> Unit) = action {
         publishAsset(repository.updateRelations(asset, sources, characters)); onSaved()
     }
@@ -418,6 +478,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         if (seconds >= 1.0) graph.recordEvent(asset, "dwell", sessionId, seconds = seconds, occurredAt = startedAt)
     }
     fun mediaClient(target: Session) = repository.mediaClient(target)
+    fun addThumbnailImageComponents(builder: coil3.ComponentRegistry.Builder) = graph.thumbnails.addImageComponents(builder)
     private fun publishAsset(asset: Asset) {
         if (!sameTarget(asset.target, session.value)) return
         if (mutableAsset.value?.let { it.id == asset.id && it.revision <= asset.revision } == true) mutableAsset.value = asset
@@ -434,7 +495,22 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         navigate("author:$id"); mutableAuthor.value = null
         action { val result = repository.author(id); if (route.value == "author:$id") mutableAuthor.value = result }
     }
-    fun followAuthor() = action { mutableAuthor.value?.let { mutableAuthor.value = repository.follow(it) } }
+    fun followAuthor(authorId: String) {
+        val current = mutableAuthor.value?.takeIf { it.id == authorId } ?: return
+        val target = session.value ?: return
+        action {
+            mutableAuthorFollow.value = LoadState(data = authorId, loading = true)
+            try {
+                val updated = repository.follow(current, target)
+                if (sameTarget(target, session.value) && mutableAuthor.value?.id == authorId) mutableAuthor.value = updated
+                if (sameTarget(target, session.value)) mutableAuthorFollow.value = LoadState()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (sameTarget(target, session.value)) mutableAuthorFollow.value = LoadState(data = authorId, error = explain(failure))
+            }
+        }
+    }
     fun followAssetAuthor(author: Author) = action {
         val updated = repository.follow(author)
         mutableAssetAuthors.value = mutableAssetAuthors.value.map { if (it.id == author.id) updated else it }
@@ -660,7 +736,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         graph.uploads.schedule()
     }
     fun reloadQueue() = action { graph.queue.load(); graph.uploads.schedule() }
-    fun retryEvents() = action { graph.uploads.retryEvents() }
+    fun retryEvents(target: Session, id: String? = null) = action { graph.activityEvents.retry(target, id) }
+    fun dismissEvent(target: Session, event: PendingEvent) = action { graph.activityEvents.dismiss(target, event) }
     fun savePreferences(preferences: Preferences) = action { withContext(Dispatchers.IO) { graph.settings.savePreferences(preferences) } }
 
     private fun <T> loadPage(state: MutableStateFlow<ListState<T>>, next: Boolean, loader: suspend (String?) -> Page<T>) {

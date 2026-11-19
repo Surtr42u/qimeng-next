@@ -43,7 +43,13 @@ data class QimengTrendSeries(val values: List<Number>, val name: String = "")
 
 /** Retained old line/area/point/axis presentation; Vico owns chart coordinates and rendering. */
 @Composable
-fun QimengTrendLineChart(series: List<QimengTrendSeries>, seriesColors: List<Color>, xLabels: List<String>, modifier: Modifier = Modifier) {
+fun QimengTrendLineChart(
+    series: List<QimengTrendSeries>,
+    seriesColors: List<Color>,
+    xLabels: List<String>,
+    modifier: Modifier = Modifier,
+    chartTitle: String = "浏览趋势",
+) {
     require(seriesColors.size >= series.size)
     if (series.isEmpty() || xLabels.isEmpty()) return
     var selected by rememberSaveable(xLabels) { mutableStateOf<Double?>(null) }
@@ -85,7 +91,7 @@ fun QimengTrendLineChart(series: List<QimengTrendSeries>, seriesColors: List<Col
                 target?.let { selected = if (selected == it.x) null else it.x }
             }
         }.semantics {
-            contentDescription = "浏览趋势，共 ${xLabels.size} 个时段"
+            contentDescription = "$chartTitle，共 ${xLabels.size} 个时段"
             stateDescription = description
             customActions = listOf(
                 CustomAccessibilityAction("下一个数据点") {

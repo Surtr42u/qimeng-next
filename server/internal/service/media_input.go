@@ -17,10 +17,11 @@ import (
 const inheritedMediaFD = runtime.GOOS == "android" || runtime.GOOS == "linux"
 
 type mediaInput struct {
-	name    string
-	file    *os.File
-	size    int64
-	cleanup func() error
+	name           string
+	file           *os.File
+	size           int64
+	temporaryBytes int64
+	cleanup        func() error
 }
 type mediaReader interface {
 	io.ReadSeeker

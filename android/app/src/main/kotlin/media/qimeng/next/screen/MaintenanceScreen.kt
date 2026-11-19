@@ -16,10 +16,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.MaintenanceState
 import media.qimeng.next.MaintenanceViewModel
 import media.qimeng.next.model.*
@@ -32,7 +35,7 @@ import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 @Composable
-internal fun MaintenanceScreen(back: () -> Unit, upload: () -> Unit, archiveSettings: () -> Unit,
+internal fun MaintenanceScreen(library: LibraryViewModel, back: () -> Unit, upload: () -> Unit, archiveSettings: () -> Unit,
     device: @Composable () -> Unit, model: MaintenanceViewModel = viewModel()) {
     val state by model.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -67,15 +70,25 @@ internal fun MaintenanceScreen(back: () -> Unit, upload: () -> Unit, archiveSett
                 state.error?.let { ErrorNotice(it) }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("备份恢复", "作者主表", "原件归档", "设备领取").forEachIndexed { index, name ->
-                FilterChip(selected = tab == index, enabled = !state.busy, onClick = { tab = index },
-                    modifier = Modifier.weight(1f).heightIn(min = 44.dp), shape = RoundedCornerShape(14.dp),
-                    label = { Text(name, style = MaterialTheme.typography.labelLarge, maxLines = 1) })
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            val labels = listOf("备份恢复", "作者主表", "原件归档", "设备领取")
+            val style = MaterialTheme.typography.labelLarge
+            val chipWidth = with(LocalDensity.current) { style.fontSize.toDp() } * 4 + 32.dp
+            val columns = if (maxWidth >= chipWidth * 4 + 24.dp) 4 else 2
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                labels.indices.chunked(columns).forEach { indices ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        indices.forEach { index ->
+                            FilterChip(selected = tab == index, enabled = !state.busy, onClick = { tab = index },
+                                modifier = Modifier.weight(1f).heightIn(min = 44.dp), shape = RoundedCornerShape(14.dp),
+                                label = { Text(labels[index], style = style) })
+                        }
+                    }
+                }
             }
         }
         when (tab) {
-            0 -> BackupMaintenance(state, model)
+            0 -> BackupMaintenance(state, model, library)
             1 -> AuthorMaintenance(state, model)
             2 -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
                 MaintenanceCard(ArchiveBoxIcon, "上传后的原件") {
@@ -110,9 +123,10 @@ internal fun MaintenanceCard(icon: ImageVector, title: String, content: @Composa
 }
 
 @Composable
-private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewModel) {
+private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewModel, library: LibraryViewModel) {
     var restoreInfo by remember { mutableStateOf(false) }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("maintenance-backup-list"),
+        verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { MaintenanceCard(BackupRestoreIcon, "备份与恢复") {
             Text("保存作品原件、作者、头像、标签及浏览记录。", style = MaterialTheme.typography.bodySmall)
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
@@ -136,6 +150,7 @@ private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewMod
             Column(Modifier.weight(1f)) { Text("自动备份", style = MaterialTheme.typography.titleSmall); Text("每天一次，打开影库时保存", style = MaterialTheme.typography.bodySmall) }
             Switch(state.folder.automatic, model::automatic, enabled = state.folder.tree != null && !state.busy)
         } } }
+        item { ActivityEventCard(library) }
     }
 }
 

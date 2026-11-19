@@ -1,5 +1,6 @@
 package media.qimeng.next.screen
 
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,6 +36,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val mode by model.uploadMode.collectAsStateWithLifecycle()
     val queue by model.queue.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
+    val transport by model.transportRevision.collectAsStateWithLifecycle()
     val queueError by model.queueError.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
@@ -45,6 +48,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
     val stems by model.editedStems.collectAsStateWithLifecycle()
     val drafts = queue?.drafts.orEmpty().filter { it.intakeGroup == null }
     var numberClass by rememberSaveable { mutableStateOf("image") }
+    var activeName by rememberSaveable { mutableStateOf<String?>(null) }
     val namingDrafts = drafts.filter { it.bytes > 0 }
     val needsNaming = mode == UploadMode.ORDINARY.name && (autoName || collectionId != null) && namingDrafts.isNotEmpty()
     val namingRequest = if (needsNaming && selected.isNotEmpty()) NamingRequest(selected, directory, family.trim(), collectionId, numberClass, note,
@@ -59,7 +63,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { QimengPageIntro("选好上传位置，再添加你想收藏的作品。") }
         item { UploadDestinationSection(model) }
-        item { UploadAssociations(model) }
+        item { session?.let { target -> key(target, transport) { UploadAssociations(model, target, transport) } } }
         item { UploadPanel("添加文件", "选择后可修改文件名，确认后点「开始上传」。作者与来源可稍后整理。") {
             Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy && queue != null, modifier = Modifier.fillMaxWidth()) { Text("系统文件") }
             TextButton(onClick = { showGuide = !showGuide }) { Text(if (showGuide) "收起选择说明" else "权限与格式说明") }
@@ -72,16 +76,9 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("待上传文件（${drafts.size} 项）", style = MaterialTheme.typography.titleSmall)
                     drafts.forEach { draft -> key(draft.id) {
-                        val extension = draft.lockedExtension()
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            QimengCapsuleTextField(stems[draft.id] ?: draft.name.removeSuffix(extension), { model.editStem(draft, it) },
-                                modifier = Modifier.weight(1f).testTag("draft-name:${draft.id}"), placeholder = "作品名", singleLine = true, enabled = !busy)
-                            if (extension.isNotEmpty()) {
-                                Text(extension, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("锁定", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            TextButton(onClick = { model.removeDraft(draft.id) }, enabled = !busy) { Text("移除") }
-                        }
+                        UploadFileRow(draft, stems[draft.id], busy, activeName == draft.id && mode == UploadMode.ORDINARY.name,
+                            session, transport, selected, directory, { activeName = draft.id }, { model.editStem(draft, it) },
+                            { model.removeDraft(draft.id) })
                     } }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         QimengSegPill("普通上传", mode == UploadMode.ORDINARY.name, { model.setUploadMode(UploadMode.ORDINARY) }, enabled = !busy)
@@ -128,20 +125,46 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                 }
             }
         }
-        if (queue?.events?.isNotEmpty() == true) item {
-            ContentCard {
-                Text("${queue!!.events.size} 条浏览事件等待补传", style = MaterialTheme.typography.bodySmall)
-                queue!!.events.firstOrNull { it.failure != null }?.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                TextButton(onClick = model::retryEvents) { Text("重试浏览记录补传") }
-            }
-        }
+        if (queue?.events?.isNotEmpty() == true) item { ActivityEventCard(model) }
         item { Spacer(Modifier.navigationBarsPadding()) }
     }
     }
 }
 
 @Composable
-private fun UploadAssociations(model: LibraryViewModel) {
+private fun UploadFileRow(
+    draft: UploadDraft,
+    input: String?,
+    busy: Boolean,
+    showSuggestions: Boolean,
+    target: Session?,
+    transport: Long,
+    library: String,
+    directory: String,
+    onEdit: () -> Unit,
+    onName: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val extension = draft.lockedExtension()
+    val stem = input ?: draft.name.removeSuffix(extension)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        QimengCapsuleTextField(stem, { onEdit(); onName(it) }, enabled = !busy, placeholder = "作品名", singleLine = true,
+            modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onEdit() }.testTag("draft-name:${draft.id}"))
+        if (extension.isNotEmpty()) {
+            Text(extension, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("锁定", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        TextButton(onClick = onRemove, enabled = !busy) { Text("移除") }
+    }
+    if (showSuggestions && target != null && draft.bytes > 0) {
+        val platformMime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.removePrefix(".").lowercase())
+        val kind = if (draft.mimeType.startsWith("video/") || platformMime?.startsWith("video/") == true) "video" else "image"
+        FileNameHints(target, transport, library, directory, stem, extension, kind, !busy, onName)
+    }
+}
+
+@Composable
+private fun UploadAssociations(model: LibraryViewModel, target: Session, transport: Long) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var chooseAuthors by rememberSaveable { mutableStateOf(false) }
     var chooseCollection by rememberSaveable { mutableStateOf(false) }
@@ -152,7 +175,6 @@ private fun UploadAssociations(model: LibraryViewModel) {
     val acquisitionSources by model.uploadSources.collectAsStateWithLifecycle()
     val authorSources by model.uploadAuthorSources.collectAsStateWithLifecycle()
     val libraryId by model.uploadLibrary.collectAsStateWithLifecycle()
-    val authors by model.authors.collectAsStateWithLifecycle()
     val collections by model.collections.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     QimengSettingsCard {
@@ -167,10 +189,23 @@ private fun UploadAssociations(model: LibraryViewModel) {
         }
         if (expanded) {
             Text("仅对这次提交的全部待传文件应用所选关联；混合内容可保持未指定。", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = { model.loadAuthors(); chooseAuthors = true }, enabled = !busy) { Text("选择作者") }
-            if (authorIds.isNotEmpty()) OutlinedTextField(authorSources, model::setUploadAuthorSources, enabled = !busy,
-                label = { Text("追加到所选作者的来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(acquisitionSources, model::setUploadSources, label = { Text("获取渠道 / 来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
+            OutlinedButton(onClick = { chooseAuthors = true }, enabled = !busy) { Text("选择作者") }
+            var refreshSources by remember { mutableIntStateOf(0) }
+            val options = acquisitionOptions(target, transport, refreshSources)
+            if (options.loading) Text("正在读取已有来源…", style = MaterialTheme.typography.bodySmall)
+            options.error?.let { ErrorNotice(it) { refreshSources++ } }
+            if (authorIds.isNotEmpty()) {
+                OutlinedTextField(authorSources, model::setUploadAuthorSources, enabled = !busy,
+                    label = { Text("追加到所选作者的来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
+                AcquisitionChoiceRow(options.data.orEmpty(), acquisitionTerms(authorSources), !busy, "upload-author-source") {
+                    model.setUploadAuthorSources(toggleAcquisition(authorSources, it))
+                }
+            }
+            OutlinedTextField(acquisitionSources, model::setUploadSources, enabled = !busy,
+                label = { Text("获取渠道 / 来源（每行一条）") }, modifier = Modifier.fillMaxWidth())
+            AcquisitionChoiceRow(options.data.orEmpty(), acquisitionTerms(acquisitionSources), !busy, "upload-asset-source") {
+                model.setUploadSources(toggleAcquisition(acquisitionSources, it))
+            }
             OutlinedButton(onClick = { model.loadCollections(); chooseCollection = true }, enabled = libraryId.isNotEmpty() && !busy) { Text("组图 / 短剧集合") }
             OutlinedTextField(note, model::setUploadNote, label = { Text("本批备注（原样保存）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
         }
@@ -179,12 +214,11 @@ private fun UploadAssociations(model: LibraryViewModel) {
     if (chooseAuthors) {
         var selected by rememberSaveable { mutableStateOf(authorIds) }
         AlertDialog(onDismissRequest = { chooseAuthors = false }, title = { Text("本批关联作者") }, text = {
-            LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                items(authors.items.filter { it.kind == "regular" && it.id != "unknown" }, key = { it.id }) { author -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(author.id in selected, { checked -> selected = if (checked) selected + author.id else selected - author.id }); Text(author.name)
-                } }
-                if (authors.cursor != null) item { TextButton(onClick = { model.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") } }
-                authors.error?.let { item { ErrorNotice(it) { model.loadAuthors() } } }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("已选 ${selected.size} 位作者", style = MaterialTheme.typography.bodySmall)
+                AuthorLookup(target, transport, selected, !busy, "upload-author-search", onPick = { author ->
+                    selected = if (author.id in selected) selected - author.id else selected + author.id
+                })
             }
         }, confirmButton = { TextButton(onClick = { model.setUploadAuthors(selected); chooseAuthors = false }) { Text("应用") } },
             dismissButton = { TextButton(onClick = { chooseAuthors = false }) { Text("取消") } })

@@ -94,6 +94,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return ServerCapabilities(instance.capabilities.aiConfigured, instance.capabilities.recommendations, instance.capabilities.rankings)
     }
 
+    suspend fun serverVersion(target: Session): String? {
+        val status = provider.api(target).getSystemStatus().bodyOrThrow()
+        check(status.instanceId == target.instanceId) { "地址已指向另一个媒体库，请重新登录" }
+        return status.version?.takeIf(String::isNotBlank)
+    }
+
     suspend fun libraryPage(cursor: String? = null): Page<Library> {
         val page = provider.api(target()).listLibraries(cursor = cursor, limit = 50).bodyOrThrow()
         return Page(page.items.map(ApiLibrary::toModel), page.nextCursor, page.totalMatched)
@@ -171,7 +177,9 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             playRange = DefaultApi.PlayRangeListAssets.entries.first { it.value == query.playRange },
             sizeRange = DefaultApi.SizeRangeListAssets.entries.first { it.value == query.sizeRange },
             timeRange = DefaultApi.TimeRangeListAssets.entries.first { it.value == query.timeRange }, fromYear = query.fromYear, toYear = query.toYear,
-            dateCounts = cursor == null, tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
+            dateCounts = cursor == null, dateCountsBy = if (cursor == null && query.sort == "favorited")
+                DefaultApi.DateCountsByListAssets.entries.first { it.value == "favoritedAt" } else null,
+            tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
         return Page(page.items.map { it.toModel(target) }, page.nextCursor, page.totalMatched,
             page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) }, page.unknownDateCount)
     }
@@ -192,7 +200,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return FacetResult(page.items.map { FacetChoice(it.key, it.kind.value, it.id, it.name, it.count) }, page.nextCursor, page.totalMatched, page.totalOptions)
     }
 
-    suspend fun searchSuggestions(query: String, recommend: Boolean = false): List<SearchWord> = provider.api(target())
+    suspend fun searchSuggestions(query: String, recommend: Boolean = false, target: Session = target()): List<SearchWord> = provider.api(target)
         .getSearchSuggestions(q = query, recommend = recommend, limit = 10).bodyOrThrow().items.map { SearchWord(it.id, it.type.value, it.name) }
 
     suspend fun asset(id: String, target: Session = target()): Asset {
@@ -225,9 +233,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision, note = note))
             .bodyOrThrow().toModel(target)
     }
-    suspend fun updateAuthors(asset: Asset, ids: List<String>, names: List<String>, revision: Long, authorsRevision: Long): Asset {
-        val input = AssetUpdate(expectedRevision = revision, authorIds = ids, newAuthorNames = names, expectedAuthorsRevision = authorsRevision)
-        val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf("asset-authors", asset.target.instanceId, asset.id, input)).toByteArray()).toString()
+    suspend fun updateEditableAsset(asset: Asset, ids: List<String>?, names: List<String>, sources: List<String>?): Asset {
+        val input = AssetUpdate(expectedRevision = asset.revision, authorIds = ids, newAuthorNames = names.takeIf { it.isNotEmpty() },
+            expectedAuthorsRevision = asset.authorsRevision.takeIf { ids != null }, acquisitionSources = sources)
+        val key = operationKey("android-asset-edit", asset.target.instanceId, asset.id, com.google.gson.Gson().toJson(input))
         return provider.api(asset.target).updateAsset(id = asset.id, idempotencyKey = key, assetUpdate = input).bodyOrThrow().toModel(asset.target)
     }
     suspend fun updateRelations(asset: Asset, sources: List<String>, characters: List<String>): Asset {
@@ -241,8 +250,9 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun updateAcquisitionSources(asset: Asset, sources: List<String>): Asset {
         val target = asset.target
-        return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
-            acquisitionSources = sources)).bodyOrThrow().toModel(target)
+        val input = AssetUpdate(expectedRevision = asset.revision, acquisitionSources = sources)
+        val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf("asset-acquisition", target.instanceId, asset.id, input)).toByteArray()).toString()
+        return provider.api(target).updateAsset(id = asset.id, idempotencyKey = key, assetUpdate = input).bodyOrThrow().toModel(target)
     }
 
     suspend fun tags(cursor: String? = null): Page<String> = provider.api(target()).listTags(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items, it.nextCursor) }
@@ -275,6 +285,9 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     suspend fun author(id: String, target: Session = target()): Author = provider.api(target).getAuthor(id).bodyOrThrow().toModel()
+
+    suspend fun acquisitionChoices(target: Session): List<String> =
+        provider.api(target).getAcquisitionVocabulary().bodyOrThrow().suggestions
     suspend fun follow(author: Author, target: Session = target()): Author {
         val input = AuthorUpdate(expectedRevision = author.revision, following = !author.followed)
         return provider.api(target).updateAuthor(id = author.id, idempotencyKey = stableAuthorKey(target, author.id, input), authorUpdate = input).bodyOrThrow().toModel()
@@ -324,7 +337,8 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun rename(asset: Asset, relativePath: String): Asset {
         val target = asset.target
-        return provider.api(target).moveAsset(id = asset.id, idempotencyKey = UUID.randomUUID().toString(),
+        val key = operationKey("android-rename", target.instanceId, asset.id, asset.revision.toString(), relativePath)
+        return provider.api(target).moveAsset(id = asset.id, idempotencyKey = key,
             moveRequest = MoveRequest(expectedRevision = asset.revision, relativePath = relativePath)).bodyOrThrow().toModel(target)
     }
 
@@ -390,11 +404,12 @@ private fun ApiAsset.toModel(target: Session): Asset {
         collectionId = collectionId, page = page,
         contentUrl = media.toString(), thumbnailUrl = thumbnail?.toString().orEmpty(), addedAt = createdAt,
         fileDate = fileDate, workGroups = workFacets.orEmpty().map { AssetGroup(it.key, it.name) },
-        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount, cosWorkName = cosWorkName, sourceName = source)
+        roleGroups = roleFacets.orEmpty().map { AssetGroup(it.key, it.name) }, playCount = playCount, cosWorkName = cosWorkName, sourceName = source,
+        favoritedAt = favoritedAt)
 }
 
 private fun ApiAuthor.toModel() = Author(id, name, kind?.value ?: "regular", aliases.orEmpty(), biography.orEmpty(), listOfNotNull(homepage), following, revision,
-    fileCount, viewCount, acquisitionSources.orEmpty())
+    fileCount, viewCount, acquisitionSources.orEmpty(), txtOrder, createdAt)
 private fun ApiBatch.toModel(target: Session) = TaskReport(id, revision, mode.value, state.value,
     "${label} · ${if (manifestState.value == "sealed") "原始清单 $expectedInputs 项" else "原始清单尚未核验"} · ${if (backupState.value == "awaiting_external_backup") "等待独立备份确认" else "尚未取得备份覆盖凭据"} · 来源文件保留", createdAt, emptyList(), target)
 internal fun BatchInput.intakeFailure(): String? {

@@ -13,9 +13,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -32,7 +36,7 @@ import media.qimeng.next.ui.icon.ClearIcon
 
 /** Existing SearchScreen top row, entry words, suggestion rows and two result filters; new state/API owner. */
 @Composable
-fun SearchScreen(library: LibraryViewModel, model: SearchViewModel = viewModel()) {
+fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: SearchViewModel = viewModel()) {
     val query by model.query.collectAsStateWithLifecycle()
     val submitted by model.submitted.collectAsStateWithLifecycle()
     val phase by model.phase.collectAsStateWithLifecycle()
@@ -41,21 +45,46 @@ fun SearchScreen(library: LibraryViewModel, model: SearchViewModel = viewModel()
     val error by model.error.collectAsStateWithLifecycle()
     val controls = rememberBrowserControls("search")
     val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    val field = remember { FocusRequester() }
+    LaunchedEffect(initialTag) { model.open(initialTag) }
     LaunchedEffect(phase) { if (phase != "result") library.cancelBrowse("search") }
-    DisposableEffect(library) { onDispose { library.cancelBrowse("search") } }
-    val back = { if (!model.back()) library.back() }
+    DisposableEffect(library) {
+        onDispose {
+            if (!library.route.value.startsWith("asset:")) library.cancelBrowse("search")
+        }
+    }
+    val back = {
+        focus.clearFocus()
+        keyboard?.hide()
+        controls.type.value = null
+        controls.partition.value = null
+        library.clearSearchResults()
+        if (!model.back()) library.back()
+    }
     val submit: (String) -> Unit = { word ->
-        if (word.trim() != submitted) { controls.type.value = null; controls.partition.value = null }
-        model.submit(word); keyboard?.hide()
+        if (word.isNotBlank()) {
+            controls.type.value = null
+            controls.partition.value = null
+            focus.clearFocus()
+            keyboard?.hide()
+            model.submit(word)
+        }
+    }
+    val onFieldTap by rememberUpdatedState {
+        model.enterEditing()
+        field.requestFocus()
+        keyboard?.show()
     }
     BackHandler(onBack = back)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = back) { Icon(BackIcon, "返回") }
-            Box(Modifier.weight(1f).interceptSearchResultTap(phase == "result", model::enterEditing)) {
+            Box(Modifier.weight(1f).interceptSearchResultTap(phase == "result") { onFieldTap() }) {
                 QimengCapsuleTextField(query, model::edit, placeholder = "搜索文件、出处、角色、COS作者…", singleLine = true,
                     leadingIcon = { Icon(SearchIcon, null) }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submit(query) }), modifier = Modifier.fillMaxWidth())
+                    keyboardActions = KeyboardActions(onSearch = { submit(query) }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(field).testTag("search-input"))
             }
             TextButton(onClick = { submit(query) }) { Text("搜索", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Normal)) }
         }

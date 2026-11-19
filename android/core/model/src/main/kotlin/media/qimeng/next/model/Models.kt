@@ -58,6 +58,7 @@ data class Asset(
     val lastViewedAt: String? = null,
     val cosWorkName: String? = null,
     val sourceName: String? = null,
+    val favoritedAt: String? = null,
 )
 data class AssetGroup(val key: String, val name: String)
 data class AssetQuery(
@@ -94,7 +95,8 @@ data class FacetChoice(val key: String, val kind: String, val id: String, val na
 data class FacetResult(val items: List<FacetChoice>, val nextCursor: String?, val totalMatched: Long, val totalOptions: Long)
 data class SearchWord(val id: String, val type: String, val name: String)
 data class Author(val id: String, val name: String, val kind: String, val aliases: List<String>, val biography: String, val sources: List<String>, val followed: Boolean, val revision: Long,
-    val fileCount: Long? = null, val viewCount: Long? = null, val acquisitionSources: List<String> = emptyList()) : java.io.Serializable
+    val fileCount: Long? = null, val viewCount: Long? = null, val acquisitionSources: List<String> = emptyList(),
+    val txtOrder: Long? = null, val createdAt: String? = null) : java.io.Serializable
 data class TaskItem(val id: String, val fileName: String, val state: String, val message: String, val assetId: String?)
 data class TaskReport(val id: String, val revision: Long, val mode: String, val state: String, val summary: String, val createdAt: String, val items: List<TaskItem>, val target: Session)
 data class AuthorTaskReport(val id: String, val authorId: String, val state: String, val allowedFields: List<String>,
@@ -136,7 +138,13 @@ data class Transfer(
     val archiveSourceState: String? = null,
 )
 data class PendingEvent(val id: String, val target: Session, val assetId: String, val kind: String, val positionMs: Long, val contentVersion: Long,
-    val sessionId: String, val seconds: Double = 0.0, val occurredAt: String, val failure: String? = null)
+    val sessionId: String, val seconds: Double = 0.0, val occurredAt: String, val failure: String? = null,
+    val assetName: String? = null, val issue: EventDeliveryIssue? = null, val retryRequested: Boolean? = null) {
+    val canRetry: Boolean get() = issue?.kind != EventDeliveryKind.REJECTED
+    val canDismiss: Boolean get() = issue?.kind in setOf(EventDeliveryKind.REJECTED, EventDeliveryKind.UNCONFIRMED) || failure != null
+}
+enum class EventDeliveryKind { WAITING, RETRYABLE, REJECTED, UNCONFIRMED }
+data class EventDeliveryIssue(val kind: EventDeliveryKind, val message: String, val code: String? = null)
 data class UploadDraft(val id: String, val name: String, val mimeType: String, val bytes: Long, val spoolName: String, val sourceHash: String, val originalName: String,
     val sourceMtime: String? = null, val intakeGroup: String? = null)
 data class IntakeFailure(val id: String, val name: String, val message: String, val batchKey: String? = null)

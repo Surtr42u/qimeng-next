@@ -4,6 +4,7 @@ import media.qimeng.next.model.AIAccessGrant
 import media.qimeng.next.model.AIAccessPolicy
 import media.qimeng.next.model.AIResearchSources
 import media.qimeng.next.model.Page
+import media.qimeng.next.model.canGrantImageLookup
 import media.qimeng.next.sdk.api.DefaultApi
 import media.qimeng.next.sdk.model.AIDelegation
 import media.qimeng.next.sdk.model.AIDelegationPolicy
@@ -28,12 +29,17 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
         require(!policy.canResearchAssets || (policy.canResearch && policy.libraryIds.isNotEmpty())) { "研究现有作品需要研究权限及明确影库范围" }
         require(policy.assetFields.isEmpty() || policy.libraryIds.isNotEmpty()) { "编辑现有作品需要明确影库范围" }
         require(policy.researchProviders.isEmpty() || (policy.canResearch && policy.maxResearchCalls > 0)) { "选择外部来源需要研究权限和大于零的调用上限" }
+        require(!policy.canLookupImages || canGrantImageLookup(policy.canResearch, policy.maxResearchCalls,
+            policy.libraryIds, policy.canIngest, policy.canResearchAssets)) {
+            "单帧识图需要明确影库范围、接收或作品预览权限和大于零的研究调用上限"
+        }
         val input = AIDelegationPolicy(label = policy.label, libraryIds = policy.libraryIds.toSet(), authorIds = policy.authorIds.toSet(),
             allAuthors = policy.allAuthors, allowedFields = policy.allowedFields.map { field -> AIDelegationPolicy.AllowedFields.entries.first { it.value == field } }.toSet(),
             candidateBlocks = policy.candidateBlocks.map { block -> AIDelegationPolicy.CandidateBlocks.entries.first { it.value == block } }.toSet(),
             allowClear = policy.allowClear, canIngest = policy.canIngest, canResearch = policy.canResearch, canOrganize = policy.canOrganize,
             canRecycleSources = policy.canRecycleSources,
             canResearchAssets = policy.canResearchAssets,
+            canLookupImages = policy.canLookupImages,
             researchProviders = policy.researchProviders.map { name -> ResearchProviderName.entries.first { it.value == name } }.toSet(),
             assetFields = policy.assetFields.map { field -> media.qimeng.next.sdk.model.AssetMaintenanceField.entries.first { it.value == field } }.toSet(),
             maxResearchCalls = policy.maxResearchCalls, maxUpdates = policy.maxUpdates, maxTasksPerDay = policy.maxTasksPerDay,
@@ -49,6 +55,16 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
     }
 }
 
-private fun AIDelegation.toModel() = AIAccessGrant(id, label, state.value, expiresAt, libraryIds.toList(), authorIds.toList(), allAuthors,
-    allowedFields.map { it.value }, candidateBlocks.map { it.value }, canIngest, canResearch, canOrganize, maxTasksPerDay, maxUpdates, maxResearchCalls,
-    canRecycleSources == true, canResearchAssets == true, assetFields.orEmpty().map { it.value }, researchProviders.orEmpty().map { it.value })
+private fun AIDelegation.toModel() = AIAccessGrant(
+    id = id, state = state.value, createdAt = createdAt, expiresAt = expiresAt,
+    policy = AIAccessPolicy(
+        label = label, libraryIds = libraryIds.toList(), authorIds = authorIds.toList(), allAuthors = allAuthors,
+        allowedFields = allowedFields.map { it.value }, candidateBlocks = candidateBlocks.map { it.value }, allowClear = allowClear,
+        canIngest = canIngest, canResearch = canResearch, canOrganize = canOrganize, canRecycleSources = canRecycleSources == true,
+        canResearchAssets = canResearchAssets == true, assetFields = assetFields.orEmpty().map { it.value },
+        canLookupImages = canLookupImages == true,
+        researchProviders = researchProviders.orEmpty().map { it.value },
+        maxResearchCalls = maxResearchCalls, maxUpdates = maxUpdates, maxTasksPerDay = maxTasksPerDay,
+        validDays = validDays, maxCallsPerTask = maxCallsPerTask ?: 100, taskSeconds = taskSeconds ?: 3600,
+    ),
+)

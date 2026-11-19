@@ -1,7 +1,10 @@
 package media.qimeng.next.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -11,6 +14,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -22,6 +26,8 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -29,13 +35,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import media.qimeng.next.AlbumBatchViewModel
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.AssetQuery
@@ -90,7 +100,7 @@ fun HomeScreen(model: LibraryViewModel) {
                     OutlinedButton(onClick = model::refreshConnection) { Text("重试") }
                 }
             } else {
-                MediaBrowser(model, "home:$page", kind = if (page == 1) "cos" else null, bottomDock = true,
+                MediaBrowser(model, "home:$page", kind = if (page == 1) "cos" else "regular", bottomDock = true,
                     source = if (page == 2) "rankings" else "recommendations", seed = seeds.getOrElse(page) { 1L }, period = period,
                     onRefresh = if (page != 2) ({ seeds = seeds.mapIndexed { index, value -> if (index == page) kotlin.random.Random.nextLong(1, Long.MAX_VALUE) else value } }) else null,
                     controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == mode })
@@ -226,16 +236,29 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val state by model.assets(key).collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
     val publication by model.lastPublication.collectAsStateWithLifecycle()
-    var columns by controls.columns
+    val batch = if (key == "albums") viewModel<AlbumBatchViewModel>() else null
+    val selection = batch?.selection?.collectAsStateWithLifecycle()?.value
+    val selecting = selection?.selecting == true
+    val sharedColumns = key in setOf("albums", "favorites", "history")
+    val committedColumns = if (sharedColumns) model.albumColumns.collectAsStateWithLifecycle().value else controls.columns.intValue
+    var pinchColumns by remember(key) { mutableStateOf<Int?>(null) }
+    val columns = pinchColumns ?: committedColumns
+    val currentColumns by rememberUpdatedState(committedColumns)
+    val setColumns by rememberUpdatedState<(Int) -> Unit> { count ->
+        if (sharedColumns) model.saveAlbumColumns(count) else controls.columns.intValue = count
+    }
     val grid = rememberLazyGridState()
     LaunchedEffect(scrollTab, grid) { if (scrollTab != null) TabScrollController.events.collect { if (it == scrollTab) grid.scrollToItem(0) } }
     val scope = rememberCoroutineScope()
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
         sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId,
-        history = true.takeIf { source == "history" }))
-    val group = if (albumTitle != null) controls.row else null
+        history = true.takeIf { source == "history" })).let {
+        if (favorite == true) it.copy(sort = "favorited", order = "desc") else it
+    }
+    val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
-    LaunchedEffect(key, query, group, publication) {
+    LaunchedEffect(key, session, query, group, publication) {
+        batch?.bindQuery(query)
         model.browse(key, query)
         val current = query.toString() + group
         if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }
@@ -247,6 +270,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     LaunchedEffect(nearEnd, state.cursor, query) {
         if (nearEnd && state.error == null) model.browse(key, query, next = true)
     }
+    val entries = if (state.loadedQuery == query) state.items else emptyList()
+    if (batch != null && selection != null) {
+        BackHandler(enabled = selecting && !selection.sheetOpen, onBack = batch::exit)
+        if (selection.sheetOpen) AlbumBatchSheet(batch, selection, model::refreshAfterAlbumBatch)
+    }
     Column(Modifier.fillMaxSize()) {
         var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
         var filters: (@Composable () -> Unit)? = null
@@ -256,62 +284,124 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             rows = values
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
             filters = { AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, values,
-                onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind) }
+                onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
+                loadFailed = state.error != null, columns = columns, showTitle = !selecting,
+                onToggleColumns = { setColumns(if (columns == 5) 2 else columns + 1) }) }
+            if (batch != null && selection != null && selecting) AlbumSelectionBar(batch, selection, entries)
             if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
                 FilterChip(controls.type.value == value, { controls.type.value = value }, label = { Text(label) })
             }
             IconButton(onClick = { controls.showFilters.value = true }) { Icon(Icons.Outlined.Tune, "筛选") }
-            IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "列数") }
+            IconButton(onClick = { setColumns(if (columns == 5) 2 else columns + 1) }) { Icon(Icons.Outlined.GridView, "列数") }
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
-        state.error?.let { ErrorNotice(it) {
+        val retry: () -> Unit = {
             if (state.reloadFromStart) {
                 if (onRefresh != null) onRefresh() else {
                     scope.launch { grid.scrollToItem(0) }; model.browse(key, query, force = true)
                 }
             } else model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true)
-        } }
-        val entries = if (state.loadedQuery == query) state.items else emptyList()
-        val sectionMode = when { source == "history" -> "history"; authorKind != null || favorite == true || caption -> "partitions"; else -> group }
+        }
+        if (leading == null) state.error?.let { ErrorNotice(it, retry) }
+        val sectionMode = when {
+            source == "history" -> "history"
+            favorite == true -> "favorite"
+            authorKind != null || caption -> "partitions"
+            else -> group
+        }
         val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }
+        if (sharedColumns && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
         PullToRefreshBox(isRefreshing = state.loading && state.loaded && state.cursor == null,
             onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
-            if (!state.loaded && state.error == null) {
+            if (leading == null && !state.loaded && state.error == null) {
                 QimengSkeletonGrid(columns, columns * QIMENG_SKELETON_GRID_ROWS)
                 return@PullToRefreshBox
             }
-            if (state.loaded && entries.isEmpty() && !state.loading && key !in setOf("home:0", "home:1"))
+            if (leading == null && state.loaded && entries.isEmpty() && !state.loading && key !in setOf("home:0", "home:1"))
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (key == "home:2") "暂无数据" else "没有符合条件的媒体") }
             LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
-                contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = if (bottomDock) TabDockDefaults.bottomClearance() else 24.dp),
-                modifier = Modifier.padding(top = QimengDimens.SpaceM).fillMaxSize().pointerInput(key, pinchEnabled) {
+                contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = when {
+                    bottomDock && !selecting -> TabDockDefaults.bottomClearance()
+                    leading != null -> QimengDimens.ListBottomContentPadding
+                    else -> 24.dp
+                }),
+                modifier = Modifier.padding(top = QimengDimens.SpaceM).fillMaxSize()
+                    .then(if (sharedColumns) Modifier.testTag("gallery-grid:$key").semantics { stateDescription = "$columns 列" } else Modifier)
+                    .then(if (leading == null) Modifier else Modifier.testTag("author-media-scroll")).pointerInput(key, pinchEnabled) {
                     if (!pinchEnabled) return@pointerInput
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val initialColumns = currentColumns
+                        var pendingColumns = initialColumns
                         var accumulated = 1f
-                        do {
-                            val event = awaitPointerEvent()
-                            if (event.changes.count { it.pressed } >= 2) {
-                                accumulated *= event.calculateZoom()
-                                if (accumulated > 1.22f) { columns = (columns - 1).coerceAtLeast(2); accumulated = 1f }
-                                if (accumulated < 0.82f) { columns = (columns + 1).coerceAtMost(5); accumulated = 1f }
-                                event.changes.forEach { it.consume() }
-                            }
-                        } while (event.changes.any { it.pressed })
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.changes.count { it.pressed } >= 2) {
+                                    accumulated *= event.calculateZoom()
+                                    val step = when {
+                                        accumulated > 1.22f -> -1
+                                        accumulated < 0.82f -> 1
+                                        else -> 0
+                                    }
+                                    if (step != 0) {
+                                        pendingColumns = (pendingColumns + step).coerceIn(2, 5)
+                                        pinchColumns = pendingColumns
+                                        accumulated = 1f
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                }
+                            } while (event.changes.any { it.pressed })
+                            if (pendingColumns != initialColumns) setColumns(pendingColumns)
+                        } finally {
+                            pinchColumns = null
+                        }
                     }
                 }) {
-                if (leading != null) item(key = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading(); filters?.invoke() }
+                if (leading != null) {
+                    item(key = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading() }
+                    filters?.let { authorFilters ->
+                        item(key = "author-filters", span = { GridItemSpan(maxLineSpan) }) { Column { authorFilters() } }
+                    }
+                    val message = state.error
+                    when {
+                        message != null -> {
+                            item(key = "author-error", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.padding(horizontal = QimengDimens.ScreenPaddingHorizontal, vertical = QimengDimens.SpaceM)) {
+                                    ErrorNotice(message, retry)
+                                }
+                            }
+                        }
+                        state.loadedQuery != query -> {
+                            item(key = "author-loading", span = { GridItemSpan(maxLineSpan) }) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp).testTag("author-media-loading"))
+                            }
+                        }
+                        entries.isEmpty() && !state.loading -> {
+                            item(key = "author-empty", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                                    Text("没有符合条件的媒体", style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                }
                 sections.forEach { section ->
                     section.header?.let { label -> item(key = "group:${section.key}", span = { GridItemSpan(maxLineSpan) }) {
                         Text(label, Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     } }
-                    items(section.items, key = Asset::id) { asset -> MediaTile(asset, caption) { model.openAsset(asset.id, key) } }
+                    items(section.items, key = Asset::id) { asset ->
+                        val selected = if (selecting) selection?.selected?.containsKey(asset.id) else null
+                        MediaTile(asset, caption, selected, onLongClick = if (batch != null && !selecting) ({ batch.select(asset) }) else null) {
+                            if (selecting) batch?.select(asset) else model.openAsset(asset.id, key, asset.target)
+                        }
+                    }
                 }
                 if (key in setOf("home:0", "home:1") && state.loadedQuery == query && entries.isNotEmpty() && state.cursor == null && state.error == null)
                     item(key = "footer:end", span = { GridItemSpan(maxLineSpan) }) {
@@ -320,32 +410,57 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     }
             }
         }
+        if (batch != null && selection != null && selecting && selection.selected.isNotEmpty()) {
+            Button(onClick = batch::openSheet, modifier = Modifier.fillMaxWidth().padding(
+                start = 16.dp, end = 16.dp, bottom = TabDockDefaults.bottomClearance(), top = 4.dp,
+            )) { Text("批量设置作者与来源 (${selection.selected.size})") }
+        }
     }
 }
 
 @Composable
-private fun MediaTile(asset: Asset, shortTitle: Boolean, onClick: () -> Unit) {
+private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
     val context = LocalContext.current
     val radius = with(LocalDensity.current) { 24f.toDp() }
     // Existing AssetCard: 16:9 frame, 5dp outer spacing and a 24px corner; only search adds a caption.
     val animated = asset.mediaType == "animated_image"
-    val source = if (animated) asset.contentUrl else asset.thumbnailUrl
-    val cacheKey = "${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:" + if (animated) "animated-grid" else "thumbnail"
+    val shape = RoundedCornerShape(radius)
+    val click = if (onLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "选择媒体")
+        else Modifier.clickable(onClick = onClick)
     Column {
-        Box(Modifier.padding(5.dp).fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(radius))
-            .background(MaterialTheme.colorScheme.secondaryContainer).clickable(onClick = onClick).semantics { contentDescription = asset.name }) {
-            if (source.isNotEmpty()) {
-                AsyncImage(model = ImageRequest.Builder(context).data(source)
-                    .memoryCacheKey(cacheKey).diskCacheKey(cacheKey)
-                    .diskCachePolicy(if (animated) coil3.request.CachePolicy.DISABLED else coil3.request.CachePolicy.ENABLED).build(), imageLoader = LocalMediaImages.current,
+        Box(Modifier.padding(5.dp).fillMaxWidth().aspectRatio(16f / 9f).clip(shape)
+            .then(if (isSelected == true) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+            .background(MaterialTheme.colorScheme.secondaryContainer).then(click).semantics {
+                contentDescription = asset.name
+                if (isSelected != null) selected = isSelected
+            }) {
+            if (animated || asset.thumbnailUrl.isNotEmpty()) {
+                val request = if (animated) {
+                    ImageRequest.Builder(context).data(asset.contentUrl)
+                        .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:animated-grid")
+                        .diskCachePolicy(coil3.request.CachePolicy.DISABLED).build()
+                } else asset
+                AsyncImage(model = request, imageLoader = LocalMediaImages.current,
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
             else Icon(Icons.Outlined.Image, "预览尚未生成", Modifier.align(Alignment.Center).size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (isSelected == true) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)))
             if (asset.mediaType == "video") detailDuration(asset.durationMs)?.let { badge ->
                 Text(badge,
                     Modifier.align(Alignment.BottomEnd).padding(8.dp), color = androidx.compose.ui.graphics.Color.White,
                     style = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, shadow = androidx.compose.ui.graphics.Shadow(
                         androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f), androidx.compose.ui.geometry.Offset(0f, 1f), 4f)))
+            }
+            if (isSelected != null) {
+                val marker = Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp)
+                if (isSelected) {
+                    Box(marker.background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(CheckMarkIcon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                } else {
+                    Box(marker.background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                        .border(1.5.dp, Color.White.copy(alpha = 0.85f), CircleShape))
+                }
             }
         }
         if (shortTitle) Text(asset.name.substringBeforeLast('.', asset.name), Modifier.fillMaxWidth().padding(horizontal = 5.dp), maxLines = 1,

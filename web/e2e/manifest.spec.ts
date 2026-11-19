@@ -36,7 +36,7 @@ test('the original manifest includes unreceived and unnamed inputs after reload'
 
 test('device storage upgrade preserves existing metadata and adds the batch store', async ({ page }) => {
   await mockLibrary(page);
-  await page.goto('/icon.svg');
+  await page.goto('/icons/icon-192.png');
   await page.evaluate(() => new Promise<void>((resolve, reject) => {
     const request = indexedDB.open('qimeng-device-state', 1);
     request.onupgradeneeded = () => { request.result.createObjectStore('uploads', { keyPath: 'id' }); request.result.createObjectStore('events', { keyPath: 'id' }); };

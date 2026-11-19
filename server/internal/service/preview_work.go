@@ -21,6 +21,8 @@ type previewWork struct {
 	parallel, waiting int
 	scopes            map[previewScope]bool
 	full              bool
+	progress          chan struct{}
+	available         func(string) (int64, error)
 }
 
 func (p *previewWork) init() {
@@ -29,6 +31,8 @@ func (p *previewWork) init() {
 	p.parallel = min(2, runtime.GOMAXPROCS(0))
 	p.scopes = make(map[previewScope]bool)
 	p.full = true
+	p.progress = make(chan struct{}, 1)
+	p.available = freeBytes
 }
 func (p *previewWork) signal() {
 	if p.space != nil {

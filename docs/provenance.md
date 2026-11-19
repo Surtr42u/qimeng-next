@@ -1,5 +1,7 @@
 # 来源与实现纪律
 
+2026-11-20 的 Android 对照和 `55d4963` 审查修复按所有者指定，向新子代理显式派发 GPT-6.2 Sol、max 推理。主代理协调共享导航、缩略图与视频的接线，复核不同提交的测试结果。旧发行包的合成测量包括首页、统计、作者、缓存与视频。[旧发行包测量](https://github.com/Surtr42u/qimeng-next/actions/runs/44588916908) · [Android 集成](https://github.com/Surtr42u/qimeng-next/pull/19) · [事件与扫描修复](https://github.com/Surtr42u/qimeng-next/pull/18)
+
 2026-11-19 的维护交接与文档复核由独立文档代理完成，已从该代理本轮 `turn_context` 核对 `gpt-6.2-astra` 与 `max`。公开手册引用源码、合成作业和产品合并提交。真实交付状态由所有者私下保存。[接手手册](handover.md) · [产品合并记录](https://github.com/Surtr42u/qimeng-next/pull/17)
 
 图片合并先由独立代理核对已有能力、身份、统计与备份边界，随后分派事务与来源、文件与发布、普通服务读写保护。主代理整合，独立审查代理复核。参与代理均以各自当轮运行记录核实 GPT-6.2 Astra、max 推理。公开验证使用虚构的身份和媒体。[双驱动事务验证](https://github.com/Surtr42u/qimeng-next/actions/runs/44515875860) · [双平台发布与恢复](https://github.com/Surtr42u/qimeng-next/actions/runs/44516923052)

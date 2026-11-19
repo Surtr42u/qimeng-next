@@ -27,6 +27,7 @@ class SecureSettings(context: Context) {
     private val mutableRecentServers = MutableStateFlow<List<String>>(emptyList())
     private val mutableTransportRevision = MutableStateFlow(0L)
     private val mutableSearchHistory = MutableStateFlow<List<String>>(emptyList())
+    private val mutableAlbumColumns = MutableStateFlow(3)
     private val mutableDefaultEndpoint = MutableStateFlow<String?>(null)
     val session = mutableSession.asStateFlow()
     val preferences = mutablePreferences.asStateFlow()
@@ -34,6 +35,7 @@ class SecureSettings(context: Context) {
     val recentServers = mutableRecentServers.asStateFlow()
     val transportRevision = mutableTransportRevision.asStateFlow()
     val searchHistory = mutableSearchHistory.asStateFlow()
+    val albumColumns = mutableAlbumColumns.asStateFlow()
     val defaultEndpoint = mutableDefaultEndpoint.asStateFlow()
 
     init {
@@ -47,6 +49,7 @@ class SecureSettings(context: Context) {
             }
             storage.getString("recent-servers", null)?.let { mutableRecentServers.value = gson.fromJson(it, Array<String>::class.java).toList() }
             storage.getString("search-history", null)?.let { mutableSearchHistory.value = gson.fromJson(it, Array<String>::class.java).toList() }
+            mutableAlbumColumns.value = storage.getInt("album-columns", 3).coerceIn(2, 5)
             mutableDefaultEndpoint.value = storage.getString("default-endpoint", null)?.takeIf { it in setOf("local", "nas") }
         } catch (_: Exception) {
             mutableError.value = "连接配置无法读取，请重新登录。原有传输记录仍保留。"
@@ -91,6 +94,14 @@ class SecureSettings(context: Context) {
     fun savePreferences(preferences: Preferences) {
         check(storage.edit().putString("preferences", gson.toJson(preferences)).commit()) { "无法保存外观设置" }
         mutablePreferences.value = preferences
+    }
+
+    @Synchronized
+    fun saveAlbumColumns(columns: Int) {
+        val value = columns.coerceIn(2, 5)
+        if (value == mutableAlbumColumns.value) return
+        check(storage.edit().putInt("album-columns", value).commit()) { "无法保存网格列数" }
+        mutableAlbumColumns.value = value
     }
 
     @Synchronized

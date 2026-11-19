@@ -107,6 +107,8 @@ type AssetFilter struct {
 	FromYear, ToYear, TZOffsetMinutes                                                                                                    int
 	Trashed, DateCounts, Recursive, IncludeDisabled                                                                                      bool
 	Limit                                                                                                                                int
+
+	DateCountsBy string `json:"-"`
 }
 type cursorValue struct {
 	Offset int    `json:"o"`
