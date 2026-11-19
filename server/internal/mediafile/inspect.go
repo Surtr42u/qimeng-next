@@ -16,16 +16,18 @@ import (
 
 var ErrContainer = errors.New("media container does not match its declaration")
 
+const ContainerHeaderBytes = 512
+
 func validContainer(name, declared string, head []byte) bool {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".avif":
-		return len(head) >= 12 && string(head[4:8]) == "ftyp" && (bytes.Contains(head[8:], []byte("avif")) || bytes.Contains(head[8:], []byte("avis")))
+		return hasFileTypeBox(head) && (bytes.Contains(head[8:], []byte("avif")) || bytes.Contains(head[8:], []byte("avis")))
 	case ".mp4", ".m4v", ".mov":
-		return len(head) >= 12 && string(head[4:8]) == "ftyp"
+		return hasFileTypeBox(head)
 	case ".mkv", ".webm":
-		return bytes.HasPrefix(head, []byte{0x1a, 0x45, 0xdf, 0xa3})
+		return hasEBMLHeader(head)
 	case ".avi":
-		return len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "AVI "
+		return hasAVIHeader(head)
 	case ".webp":
 		return len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WEBP"
 	default:
@@ -48,7 +50,7 @@ func (r cancellableReader) Read(buffer []byte) (int, error) {
 func Inspect(ctx context.Context, source io.Reader, name, declared string) (string, int64, error) {
 	reader := cancellableReader{ctx, source}
 	hash := sha256.New()
-	head := make([]byte, 512)
+	head := make([]byte, ContainerHeaderBytes)
 	n, err := io.ReadFull(reader, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return "", 0, err

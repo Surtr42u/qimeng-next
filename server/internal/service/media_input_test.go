@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"testing"
 )
@@ -55,6 +56,48 @@ func TestInheritedDecoderReadsTheSelectedObjectAfterPathReused(t *testing.T) {
 		video, ok := probe.primary()
 		if !ok || video.Width != 2 || video.Height != 2 {
 			t.Fatal("decoder followed the replacement at the original path")
+		}
+	}
+}
+
+func TestVideoDemuxerReadsThePinnedObjectWithoutMovingItsPosition(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "source-*.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	n, err := file.WriteString("\x00\x00\x00\x14ftypisom\x00\x00\x00\x00mp42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{}
+	input := mediaInput{file: file, size: int64(n)}
+	demuxer, err := s.inputDemuxer(t.Context(), input, "video/x-matroska")
+	if err != nil || demuxer != "mov" {
+		t.Fatalf("detected %q from the selected descriptor: %v", demuxer, err)
+	}
+	offset, err := file.Seek(0, io.SeekCurrent)
+	if err != nil || offset != int64(n) {
+		t.Fatalf("media header read changed the descriptor position to %d: %v", offset, err)
+	}
+}
+
+func TestVideoDemuxerRetainsTheExistingFormatBoundary(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "source-*.mov")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	n, err := file.WriteString("\x00\x00\x00\x08wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{}
+	input := mediaInput{file: file, size: int64(n)}
+	for mime, expected := range map[string]string{"video/quicktime": "mov", "image/webp": "webp_pipe", "application/octet-stream": ""} {
+		demuxer, err := s.inputDemuxer(t.Context(), input, mime)
+		if err != nil || demuxer != expected {
+			t.Fatalf("%s uses demuxer %q, want %q: %v", mime, demuxer, expected, err)
 		}
 	}
 }
