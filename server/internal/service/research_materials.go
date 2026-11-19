@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"image"
 	"image/jpeg"
 	"io"
 	"os"
@@ -297,7 +298,7 @@ func (s *Service) researchFrame(ctx context.Context, source mediaInput, mime str
 		return nil, Fail(422, "research_image_limit", "画面超过研究预览解码预算，原件仍可正常保留。")
 	}
 	if builtinImage(mime) {
-		return s.scaledStill(ctx, source, mime, 640, researchStill)
+		return s.scaledStill(ctx, source, mime, image.Pt(width, height), 640, researchStill)
 	}
 	ffmpeg := toolPath("QIMENG_FFMPEG", "ffmpeg")
 	if ffmpeg == "" {
