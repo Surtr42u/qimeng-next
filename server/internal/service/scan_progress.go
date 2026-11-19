@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/model"
+	"qimeng.local/next/server/internal/store"
 )
 
 type scanWorker struct {
@@ -53,8 +54,7 @@ func (r scanReader) Read(buffer []byte) (int, error) {
 	return r.source.Read(buffer)
 }
 
-// One scan owns these counters. Asset mutations still read the current asset
-// and commit their own result together with the catalog row.
+// One worker owns the skips accumulated since its last committed progress.
 type scanRun struct {
 	id         string
 	library    model.Library
@@ -65,6 +65,30 @@ type scanRun struct {
 	manualFull bool
 	targets    scanTargets
 	hashBuffer []byte
+}
+
+func (run *scanRun) saveProgress(ctx context.Context, q store.Querier, job ScanJob) error {
+	job.Skipped += run.skipped
+	job.Processed += run.skipped
+	return saveScan(ctx, q, job)
+}
+
+func (run *scanRun) progressCommitted() {
+	run.skipped = 0
+	run.lastFlush = time.Now()
+}
+
+// A rolled-back asset batch leaves the pending skips for the next commit or
+// the terminal job update. Only a successful commit consumes them.
+func (run *scanRun) commitFileProgress(ctx context.Context, tx *sql.Tx, job ScanJob) error {
+	if err := run.saveProgress(ctx, tx, job); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	run.progressCommitted()
+	return nil
 }
 
 func (s *Service) skipScannedEntry(ctx context.Context, run *scanRun) error {
@@ -81,14 +105,11 @@ func (s *Service) skipScannedEntry(ctx context.Context, run *scanRun) error {
 	if job.State == "cancelled" {
 		return context.Canceled
 	}
-	job.Skipped += run.skipped
-	job.Processed += run.skipped
 	job.UpdatedAt = time.Now().UTC()
-	if err = saveScan(ctx, s.DB.DB, job); err != nil {
+	if err = run.saveProgress(ctx, s.DB.DB, job); err != nil {
 		return err
 	}
-	run.skipped = 0
-	run.lastFlush = time.Now()
+	run.progressCommitted()
 	return nil
 }
 

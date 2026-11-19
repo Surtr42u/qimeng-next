@@ -165,25 +165,17 @@ class Runtime:
                 key = arguments.get("Idempotency-Key") or arguments.get("operationId")
                 if not key:
                     raise ToolError("OPERATION_ID_REQUIRED", "写入必须提供稳定操作身份，重试沿用原值")
-            request = state.reserve(name, arguments, key, author_task=binding.id if author_write else None,
-                                    inferred_revision=inferred_revision)
-            try:
-                # Go reserves the task and research budgets together with the query key.
-                if task_id and name not in RESEARCH_QUERY_OPERATIONS:
-                    self.transport.call("reserveDelegatedCall", {"id": task_id, "Idempotency-Key": "call-" + secrets.token_hex(16)})
+
+            def dispatch():
                 value = self._dispatch(name, arguments, state)
                 if name == "task.context":
                     from .task_actions import present_batch_actions
                     value = present_batch_actions(self, value, tools)
-            except ToolError as exc:
-                state.finish(request, exc.as_dict(), key, uncertain=exc.uncertain, completed=False)
-                raise
-            except Exception:
-                state.finish(request, {"code": "EXECUTOR_ERROR"}, key, uncertain=bool(key))
-                raise ToolError("EXECUTOR_ERROR", "执行器未能确认结果，请回读原操作", uncertain=bool(key)) from None
+                return value
+
+            value = self._metered(state, task_id, name, arguments, key, dispatch,
+                                  author_task=binding.id if author_write else None, inferred_revision=inferred_revision)
             visible = value.metadata if isinstance(value, ImageResult) else value
-            pending_query = name in RESEARCH_QUERY_OPERATIONS and isinstance(visible, dict) and visible.get("state") == "pending"
-            state.finish(request, visible, key, uncertain=pending_query)
             if verify_author_write:
                 visible = binding.readback(self.transport, key, arguments["body"], visible)
             try:
@@ -192,6 +184,32 @@ class Runtime:
             except ToolError as exc:
                 raise ToolError("RESULT_PRESENTATION_FAILED", "操作已返回，但结果无法完整呈现；按原ID回读",
                                 details={"executionCompleted": True, "cause": exc.code}) from None
+
+    def read_worker_page(self, task_id, identity, read):
+        """A continuation of a worker-held Go snapshot uses the same live lease and call budgets."""
+        with self.lock:
+            if "read" not in self.config.permissions:
+                raise ToolError("PERMISSION_DENIED", "可信端未授予读取权限")
+            state = self.task_state(task_id)
+            return self._metered(state, task_id, "worker.page", identity, None, read)
+
+    def _metered(self, state, task_id, name, arguments, key, dispatch, *, author_task=None, inferred_revision=False):
+        request = state.reserve(name, arguments, key, author_task=author_task, inferred_revision=inferred_revision)
+        try:
+            # Go reserves the task and research budgets together with the query key.
+            if task_id and name not in RESEARCH_QUERY_OPERATIONS:
+                self.transport.call("reserveDelegatedCall", {"id": task_id, "Idempotency-Key": "call-" + secrets.token_hex(16)})
+            value = dispatch()
+        except ToolError as exc:
+            state.finish(request, exc.as_dict(), key, uncertain=exc.uncertain, completed=False)
+            raise
+        except Exception:
+            state.finish(request, {"code": "EXECUTOR_ERROR"}, key, uncertain=bool(key))
+            raise ToolError("EXECUTOR_ERROR", "执行器未能确认结果，请回读原操作", uncertain=bool(key)) from None
+        visible = value.metadata if isinstance(value, ImageResult) else value
+        pending_query = name in RESEARCH_QUERY_OPERATIONS and isinstance(visible, dict) and visible.get("state") == "pending"
+        state.finish(request, visible, key, uncertain=pending_query)
+        return value
 
     def _dispatch(self, name: str, arguments: dict, state: State):
         if name == "platform.catalog":

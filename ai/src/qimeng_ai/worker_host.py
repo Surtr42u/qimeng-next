@@ -262,9 +262,10 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
                         intake.groups.add(args["group"])
                         value = {"opened": args["group"]}
                     elif name == "task.context" and not (args.keys() - {"offset"}):
-                        detail = runtime.call("task.read", {"taskId": batch_id, "id": batch_id})
-                        intake.update(full_result(runtime, detail))
-                        value = intake.summary(offset)
+                        value = intake.read_page(offset)
+                    elif name == "plan.read" and "planId" not in args:
+                        intake.bind(name, args, reviewed, observed_revision, shown, page)
+                        value = intake.read_page(offset, args["plan"])
                     else:
                         args = intake.bind(name, args, reviewed, observed_revision, shown, page)
                         operation = "plan.prepare" if name == "plan.prepare.originals" else name
@@ -278,7 +279,7 @@ def work_with_host(runtime, host, journal, batch_id, report, stop, allow_image_l
                         value = runtime.call(operation, args)
                         intake.observed_choices(name, args, value)
                         if operation in {"plan.prepare", "plan.read"}:
-                            value = intake.preview(full_result(runtime, value), offset, intake.excluded if operation == "plan.prepare" else None)
+                            value = intake.preview(full_result(runtime, value), intake.excluded if operation == "plan.prepare" else None)
                         elif name in {"research.provider.query", "research.image.search"} and value.get("state") != "pending":
                             intake.refresh()
                         elif name in {"research.submit", "plan.commit"}:

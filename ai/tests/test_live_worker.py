@@ -55,11 +55,11 @@ class ChatHost(BaseHTTPRequestHandler):
                 name = "plan_prepare"
                 args = {"items": [{"input": u["input"], "family": Path(u["name"]).stem} for u in staged]}
             else:
-                if behavior == "hold_after_plan":
-                    self.server.plan_ready.set()
-                    self.server.release.wait(40)
                 name = "plan_commit"
                 args = {"plan": preview["plan"]}
+            if behavior == "hold_after_plan" and tools and "plan" in tools[-1] and "items" in tools[-1]:
+                self.server.plan_ready.set()
+                self.server.release.wait(40)
             calls = [{"id": "call_" + str(len(self.server.requests)), "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args)}}]
         reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}]}
@@ -95,7 +95,7 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.library = self.request("POST", "/libraries", {"name": "Queue " + self._testMethodName, "kind": "regular"},
                                     key="auto-lib-" + self._testMethodName)
         self.secret = self.grant(can_research=True, limit=1, images=True,
-                                 daily=1 if self._testMethodName.startswith("test_app_receives") else 12)
+                                 daily=1 if self._testMethodName.startswith(("test_app_receives", "test_explicit_retry_on_new_host")) else 12)
         self.env = {"PATH": os.environ["PATH"], "PYTHONPATH": os.environ["PYTHONPATH"],
                     "QIMENG_API_BASE": os.environ["QIMENG_TEST_BASE"], "QIMENG_API_TOKEN": self.secret,
                     "QIMENG_AI_STATE_DIR": str(self.root / "state"), "QIMENG_AI_PERMISSIONS": "read,delegate,organize,research",
@@ -112,33 +112,39 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.request, "DELETE", "/ai/delegations/" + grant["delegation"]["id"])
         return grant["credential"]["token"]
 
-    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=None):
+    def submit(self, name, *, mixed=False, mode="intelligent", research_calls=None, count=1):
         body = {"libraryId": self.library["id"], "label": name, "mode": mode}
         if research_calls is not None:
             body["maxResearchCalls"] = research_calls
         batch = self.request("POST", "/batches", body, key=name + "-batch")
-        source = self.root / (name + ".png")
-        color = hashlib.sha256(name.encode()).hexdigest()[:6]
-        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
-                        "-frames:v", "1", "-threads", "1", str(source)], check=True, timeout=30)
-        raw = source.read_bytes()
-        self.source_sha = hashlib.sha256(raw).hexdigest()
-        good = {"id": name + "-input", "originalFileName": source.name, "size": len(raw), "expectedHash": self.source_sha}
-        inputs = [good]
+        media = []
+        for index in range(count):
+            stem = name if count == 1 else f"{name}-{index + 1:02}"
+            source = self.root / (stem + ".png")
+            color = hashlib.sha256(stem.encode()).hexdigest()[:6]
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x" + color + ":s=32x24",
+                            "-frames:v", "1", "-threads", "1", str(source)], check=True, timeout=30)
+            raw = source.read_bytes()
+            media.append(({"id": stem + "-input", "originalFileName": source.name, "size": len(raw),
+                           "expectedHash": hashlib.sha256(raw).hexdigest()}, raw))
+        inputs = [item for item, _ in media]
+        self.source_sha = inputs[0]["expectedHash"]
+        self.assertEqual(len({item["expectedHash"] for item in inputs}), count)
         if mixed:
             inputs.append({"id": name + "-notes", "originalFileName": "notes.txt", "size": 7})
         self.request("PUT", "/batches/" + batch["id"] + "/inputs",
                      {"expectedManifestRevision": batch["manifestRevision"], "inputs": inputs}, key=name + "-seal")
-        upload = self.request("POST", "/uploads", {"batchId": batch["id"], "inputId": good["id"],
-                              "libraryId": self.library["id"], "mode": mode, "fileName": source.name,
-                              "size": len(raw), "mimeType": "image/png", "expectedHash": self.source_sha}, key=name + "-upload")
-        url = os.environ["QIMENG_TEST_BASE"] + "/api/v1/uploads/" + upload["id"] + "/content"
-        chunk = urllib.request.Request(url, method="PUT", data=raw,
-                                       headers={"Authorization": "Bearer " + os.environ["QIMENG_E2E_TOKEN"],
-                                                "Upload-Offset": "0", "Content-Type": "application/octet-stream"})
-        with urllib.request.urlopen(chunk, timeout=15) as response:
-            self.assertEqual(json.load(response)["offset"], len(raw))
-        self.request("POST", "/uploads/" + upload["id"] + "/complete", key=name + "-complete")
+        for item, raw in media:
+            upload = self.request("POST", "/uploads", {"batchId": batch["id"], "inputId": item["id"],
+                                  "libraryId": self.library["id"], "mode": mode, "fileName": item["originalFileName"],
+                                  "size": len(raw), "mimeType": "image/png", "expectedHash": item["expectedHash"]}, key=item["id"] + "-upload")
+            url = os.environ["QIMENG_TEST_BASE"] + "/api/v1/uploads/" + upload["id"] + "/content"
+            chunk = urllib.request.Request(url, method="PUT", data=raw,
+                                           headers={"Authorization": "Bearer " + os.environ["QIMENG_E2E_TOKEN"],
+                                                    "Upload-Offset": "0", "Content-Type": "application/octet-stream"})
+            with urllib.request.urlopen(chunk, timeout=15) as response:
+                self.assertEqual(json.load(response)["offset"], len(raw))
+            self.request("POST", "/uploads/" + upload["id"] + "/complete", key=item["id"] + "-complete")
         self.host.batches[name] = batch["id"]
         return batch["id"]
 
@@ -156,6 +162,210 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                 process.wait()
         self.assertEqual(process.returncode, expected, stderr)
         return json.loads(stderr if expected else stdout)
+
+    def first_page(self):
+        message = self.host.requests[-1]["messages"][1]["content"]
+        return json.loads(message[message.index("{"):])
+
+    async def stop_after_prepare(self, batch):
+        self.host.behavior[batch] = "hold_after_plan"
+        worker = self.launch()
+        try:
+            self.assertTrue(await asyncio.to_thread(self.host.plan_ready.wait, 30))
+            report = self.request("GET", "/batches/" + batch)
+            self.assertEqual([plan["state"] for plan in report["plans"]], ["prepared"])
+            return report
+        finally:
+            worker.kill()
+            await asyncio.to_thread(worker.communicate)
+            self.host.behavior.pop(batch)
+            self.host.release.set()
+
+    async def test_fifty_inputs_and_restarted_plan_follow_every_page_to_one_commit(self):
+        batch = self.submit("worker-pages", count=50)
+        selected = []
+        reviewed = []
+
+        def prepare(results):
+            pages = [self.first_page(), *results]
+            last = pages[-1]
+            if "plan" in last:
+                return "plan_read", {"plan": last["plan"]}
+            if "nextOffset" in last:
+                return "task_context", {"offset": last["nextOffset"]}
+            selected.extend([row["input"] for row in page["inputs"]] for page in pages)
+            return "plan_prepare", {"items": [{"input": row["input"], "family": Path(row["name"]).stem}
+                                              for page in pages for row in page["inputs"]]}
+
+        self.host.scripts[batch] = prepare
+        saved, = (await self.stop_after_prepare(batch))["plans"]
+
+        def publish(results):
+            if not results:
+                return "plan_read", {"plan": self.first_page()["plans"][0]["plan"]}
+            page = results[-1]
+            reviewed.append([row["input"] for row in page["items"]])
+            if "nextOffset" in page:
+                return "plan_read", {"plan": page["plan"], "offset": page["nextOffset"]}
+            return "plan_commit", {"plan": page["plan"]}
+
+        self.host.scripts[batch] = publish
+        result, = (await self.worker())["batches"]
+        self.assertEqual(result["state"], "completed")
+        for pages in (selected, reviewed):
+            self.assertGreaterEqual(len(pages), 5)
+            self.assertTrue(all(0 < len(page) <= 10 for page in pages))
+            self.assertEqual(sorted(n for page in pages for n in page), list(range(1, 51)))
+        self.assertEqual(result["modelUsage"]["toolResults"], [{"tool": "plan.read", "code": "ok"}] * len(reviewed)
+                         + [{"tool": "plan.commit", "code": "ok"}])
+        final = self.request("GET", "/batches/" + batch)
+        self.assertEqual(final["plans"], [{**saved, "state": "completed"}])
+        self.assertEqual(len({item["assetId"] for item in final["inputs"]}), 50)
+        for item in final["inputs"]:
+            asset = self.request("GET", "/assets/" + item["assetId"])
+            self.assertEqual((item["state"], asset["hash"]), ("ingested", item["expectedHash"]))
+        self.assertEqual((await self.worker())["state"], "idle")
+
+    async def test_repeated_page_and_unissued_offsets_stop_at_the_unchanged_limit(self):
+        batch = self.submit("worker-repeated-page", count=11)
+        self.host.scripts[batch] = lambda results: ("task_context", {"offset": self.first_page()["nextOffset"]})
+        repeated, = (await self.worker())["batches"]
+        self.assertEqual(repeated["state"], "NO_PROGRESS")
+        self.assertEqual([r["code"] for r in repeated["modelUsage"]["toolResults"]], ["ok"] * 3 + ["NO_PROGRESS"])
+        offsets = [1, 11, 200, -1]
+        self.host.scripts[batch] = lambda results: ("task_context", {"offset": offsets[len(results)]})
+        invalid, = (await self.worker("--retry-batch", batch))["batches"]
+        self.assertEqual(invalid["state"], "NO_PROGRESS")
+        self.assertEqual([r["code"] for r in invalid["modelUsage"]["toolResults"]], ["INVALID_INPUT"] * 3 + ["NO_PROGRESS"])
+        self.assertEqual(self.request("GET", "/batches/" + batch)["plans"], [])
+
+    async def test_cached_worker_page_requires_the_live_task_lease(self):
+        batch = self.submit("worker-page-lease", count=11)
+        other = Runtime(Config.load({**self.env, "QIMENG_AI_STATE_DIR": str(self.root / "other")}))
+        self.addCleanup(other.close)
+
+        def rotate(results):
+            other.call("task.resume", {"id": batch, "operationId": "rotate-before-next-page"})
+            self.host.behavior[batch] = "wait"
+            return "task_context", {"offset": self.first_page()["nextOffset"]}
+
+        self.host.scripts[batch] = rotate
+        result, = (await self.worker())["batches"]
+        reply = json.loads(self.host.requests[-1]["messages"][-1]["content"])
+        self.assertEqual((reply["httpStatus"], reply["code"], result["state"]), (401, "unauthorized", "unauthorized"))
+        self.assertNotIn("inputs", reply)
+        self.assertEqual(self.request("GET", "/batches/" + batch)["plans"], [])
+
+    async def test_explicit_retry_on_new_host_finishes_original_plan_and_preserves_budget(self):
+        self.env["QIMENG_AI_WORKER_IMAGE_LOOKUP"] = "false"
+        batch = self.submit("worker-new-host")
+        prepared = await self.stop_after_prepare(batch)
+        saved, = prepared["plans"]
+        budget_path = "/ai/delegated-tasks/" + batch + "/budget"
+        before = self.request("GET", budget_path)
+        old = Runtime(Config.load(self.env))
+        self.addCleanup(old.close)
+        old.task_state(batch)
+        session_a = old.transport.call("getCurrentSession", {})
+        other = {**self.env, "QIMENG_AI_STATE_DIR": str(self.root / "replacement"), "QIMENG_AI_WORKER_IMAGE_LOOKUP": "true"}
+        missing = await self.worker("--retry-batch", batch, env=other, expected=2)
+        self.assertEqual(missing["code"], "TASK_NOT_BOUND")
+        async with Client(self.process(self.root, self.secret, "read,delegate,organize", other)) as client:
+            resumed = await client.call_tool("task.resume", {"id": batch, "operationId": "resume-prepared-on-new-host"})
+            self.assertFalse(resumed.is_error)
+            self.assertEqual(resumed.structured_content["taskId"], batch)
+        self.assertEqual((await self.worker(env=other))["state"], "idle")
+        self.assertEqual(self.request("GET", budget_path), before)
+        with self.assertRaises(ToolError) as stale:
+            old.transport.call("getPlan", {"id": batch, "planId": saved["id"]})
+        self.assertEqual(stale.exception.status, 401)
+        new = Runtime(Config.load(other))
+        self.addCleanup(new.close)
+        new.task_state(batch)
+        session_b = new.transport.call("getCurrentSession", {})
+        self.assertEqual((session_b["id"], session_b["batchId"], session_b["generation"]),
+                         (session_a["id"], batch, session_a["generation"] + 1))
+
+        def publish(results):
+            if not results:
+                return "worker_tools", {"group": "research"}
+            if len(results) == 1:
+                return "plan_read", {"plan": self.first_page()["plans"][0]["plan"]}
+            return "plan_commit", {"plan": results[-1]["plan"]}
+
+        self.host.scripts[batch] = publish
+        first_request = len(self.host.requests)
+        result = await self.worker("--retry-batch", batch, env=other)
+        done, = result["batches"]
+        self.assertEqual((result["admission"], done["batchId"], done["state"]), ("delegation_daily_limit", batch, "completed"))
+        self.assertEqual(done["modelUsage"]["toolResults"], [{"tool": tool, "code": "ok"} for tool in
+                         ("worker.tools", "plan.read", "plan.commit")])
+        expanded = self.host.requests[first_request + 1]["tools"]
+        self.assertNotIn("research_image_search", {tool["function"]["name"] for tool in expanded})
+        after = self.request("GET", budget_path)
+        self.assertEqual(after, {**before, "calls": before["calls"] + 3})
+        final = self.request("GET", "/batches/" + batch)
+        self.assertEqual(final["plans"], [{**saved, "state": "completed"}])
+        item, = final["inputs"]
+        asset = self.request("GET", "/assets/" + item["assetId"])
+        self.assertEqual((item["state"], asset["hash"]), ("ingested", self.source_sha))
+        actual, _ = new.transport.binary("getAssetContent", {"id": asset["id"], "version": asset["contentVersion"]}, maximum=1 << 20)
+        self.assertEqual(hashlib.sha256(actual).hexdigest(), self.source_sha)
+        settled, = (await self.worker("--retry-batch", batch, env=other))["batches"]
+        self.assertEqual((settled["state"], settled["modelUsage"]["turns"]), ("completed", 0))
+        self.assertEqual(self.request("GET", budget_path), after)
+        self.assertEqual((await self.worker(env=other))["state"], "idle")
+
+    async def test_worker_adoption_rejects_ordinary_and_revoked_tasks(self):
+        other = {**self.env, "QIMENG_AI_STATE_DIR": str(self.root / "replacement")}
+        new = Runtime(Config.load(other))
+        self.addCleanup(new.close)
+        ordinary = new.call("task.start", {"operationId": "ordinary-manual-intake", "body": {
+            "kind": "intake", "mode": "ordinary", "libraryId": self.library["id"], "label": "普通接收", "maxResearchCalls": 0}})
+        rejected = await self.worker("--retry-batch", ordinary["taskId"], env=other, expected=2)
+        self.assertEqual(rejected["code"], "batch_not_claimable")
+        batch = self.submit("worker-revoked-host")
+        await self.stop_after_prepare(batch)
+        new.call("task.resume", {"id": batch, "operationId": "resume-before-revocation"})
+        new.task_state(batch)
+        session = new.transport.call("getCurrentSession", {})
+        self.request("DELETE", "/credentials/" + session["id"])
+        denied = await self.worker("--retry-batch", batch, env=other, expected=2)
+        self.assertEqual(denied["httpStatus"], 401)
+        with self.assertRaises(ToolError) as stale:
+            new.call("task.resume", {"id": batch, "operationId": "resume-revoked-credential"})
+        self.assertEqual(stale.exception.code, "task_credential_revoked")
+        final = self.request("GET", "/batches/" + batch)
+        self.assertEqual(([p["state"] for p in final["plans"]], final["inputs"][0]["state"]), (["prepared"], "staged"))
+
+    async def test_new_host_reads_committed_intake_after_old_host_lost_reply(self):
+        batch = self.submit("worker-lost-commit")
+        old = Runtime(Config.load(self.env))
+        self.addCleanup(old.close)
+        send = old.transport.call
+
+        def lose_commit_reply(operation, arguments, **kwargs):
+            result = send(operation, arguments, **kwargs)
+            if operation == "commitPlan":
+                raise ToolError("NETWORK_ERROR", "合成测试中断已提交的响应", uncertain=True)
+            return result
+
+        with patch.object(old.transport, "call", side_effect=lose_commit_reply):
+            stopped, = run_worker(old, once=True, env=self.env)["batches"]
+        self.assertEqual(stopped["state"], "NETWORK_ERROR")
+        pending = old.call("platform.budget", {"taskId": batch})
+        self.assertEqual([row["tool"] for row in pending["local"]["pending"]], ["plan.commit"])
+        final = self.request("GET", "/batches/" + batch)
+        self.assertEqual([p["state"] for p in final["plans"]], ["completed"])
+        calls = len(self.host.requests)
+        other = {**self.env, "QIMENG_AI_STATE_DIR": str(self.root / "replacement")}
+        new = Runtime(Config.load(other))
+        self.addCleanup(new.close)
+        new.call("task.resume", {"id": batch, "operationId": "resume-after-commit"})
+        settled, = (await self.worker("--retry-batch", batch, env=other))["batches"]
+        self.assertEqual((settled["state"], len(self.host.requests)), ("completed", calls))
+        self.assertEqual(new.call("platform.budget", {"taskId": batch})["server"], pending["server"])
+        self.assertEqual(self.request("GET", "/batches/" + batch)["inputs"], final["inputs"])
 
     async def test_daily_control_recovers_parked_claim_without_renewing_owned_task(self):
         runtime = Runtime(Config.load({**self.env, "QIMENG_AI_MAX_CALLS": "2"}))

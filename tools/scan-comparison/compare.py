@@ -219,6 +219,30 @@ def snapshot(version, data, library_id, manifest, rewritten):
     return identities
 
 
+def next_manual_scan(api, library, phase):
+    job = api.call("POST", "/api/v1/libraries/" + library["id"] + "/scans",
+                   {"expectedRevision": library["revision"]}, key="scan-comparison-" + phase)
+    require(job["trigger"] == "manual", "manual scan joined an automatic run")
+    polls = 0
+
+    def finished():
+        nonlocal polls
+        polls += 1
+        item = api.call("GET", "/api/v1/scans/" + job["id"])
+        require(item["state"] in ("queued", "running", "completed"), f"Next scan ended in {item['state']}")
+        return item if item["state"] == "completed" else None
+
+    item = wait_for(finished, "manual scan did not finish")
+    return item, polls
+
+
+def check_next_counts(item, total, added, changed, moved):
+    require((item["processed"], item["added"], item["changed"], item["moved"], item["skipped"],
+             item["missing"], item["issueCount"]) ==
+            (total, added, changed, moved, total - added - changed - moved, 0, 0),
+            f"unexpected Next counters: {item}")
+
+
 def measure(api, version, library, phase, pid):
     path = "/api/v1/libraries/" + library["id"]
     written_before = proc_number(pid, "io", "write_bytes")
@@ -227,24 +251,18 @@ def measure(api, version, library, phase, pid):
     start = time.monotonic()
     if version == "installed":
         api.call("POST", path + "/scan")
-    else:
-        job = api.call("POST", path + "/scans", {"expectedRevision": library["revision"]},
-                       key="scan-comparison-" + phase)
-        require(job["trigger"] == "manual", "manual scan joined an automatic run")
-    polls = 0
+        polls = 0
 
-    def finished():
-        nonlocal polls
-        polls += 1
-        if version == "installed":
+        def finished():
+            nonlocal polls
+            polls += 1
             item, = api.call("GET", "/api/v1/libraries")
             require(item["scanState"] != "error", "installed scan failed")
             return item if item["scanState"] == "idle" else None
-        item = api.call("GET", "/api/v1/scans/" + job["id"])
-        require(item["state"] in ("queued", "running", "completed"), f"Next scan ended in {item['state']}")
-        return item if item["state"] == "completed" else None
 
-    item = wait_for(finished, "manual scan did not finish")
+        item = wait_for(finished, "manual scan did not finish")
+    else:
+        item, polls = next_manual_scan(api, library, phase)
     elapsed = (time.monotonic() - start) * 1000
     written = proc_number(pid, "io", "write_bytes") - written_before
     high_water = proc_number(pid, "status", "VmHWM")
@@ -252,10 +270,7 @@ def measure(api, version, library, phase, pid):
     added, updated, moved = {"first": (FILES, 0, 0), "unchanged": (0, 0, 0),
                              "sparse": (ADDITIONS, REWRITES, MOVES)}[phase]
     if version != "installed":
-        require((item["processed"], item["added"], item["changed"], item["moved"], item["skipped"],
-                 item["missing"], item["issueCount"]) ==
-                (total, added, updated, moved, total - added - updated - moved, 0, 0),
-                f"unexpected Next counters: {item}")
+        check_next_counts(item, total, added, updated, moved)
         def timestamp(field):
             return datetime.fromisoformat(item[field].replace("Z", "+00:00"))
         internal_ms = (timestamp("updatedAt") - timestamp("createdAt")).total_seconds() * 1000
@@ -324,6 +339,75 @@ def trial(version, binary, index, corpus, original, temp):
         return results
 
 
+def instrument_sparse_scan(db):
+    db.executescript("""
+        CREATE TABLE fixture_existing_assets(id TEXT PRIMARY KEY);
+        INSERT INTO fixture_existing_assets SELECT id FROM assets;
+        CREATE TABLE fixture_progress(job_id TEXT, state TEXT, published INTEGER, skipped INTEGER);
+        CREATE TRIGGER fixture_count_progress AFTER UPDATE ON scans BEGIN
+            INSERT INTO fixture_progress VALUES(NEW.id,NEW.state,
+                json_extract(NEW.data,'$.added')-json_extract(OLD.data,'$.added')
+                +json_extract(NEW.data,'$.changed')-json_extract(OLD.data,'$.changed')
+                +json_extract(NEW.data,'$.moved')-json_extract(OLD.data,'$.moved'),
+                json_extract(NEW.data,'$.skipped')-json_extract(OLD.data,'$.skipped'));
+        END;
+        CREATE TABLE fixture_relation_events(relation TEXT, event TEXT, existing_asset INTEGER);
+    """)
+    for table in ("asset_authors", "asset_tags"):
+        for timing, op in (("BEFORE", "INSERT"), ("AFTER", "INSERT"), ("AFTER", "UPDATE"), ("AFTER", "DELETE")):
+            source = "OLD" if op == "DELETE" else "NEW"
+            event = f"{timing}_{op}".lower()
+            db.execute(f"""CREATE TRIGGER fixture_{table}_{event} {timing} {op} ON {table} BEGIN
+                INSERT INTO fixture_relation_events VALUES('{table}','{event}',
+                    EXISTS(SELECT 1 FROM fixture_existing_assets WHERE id={source}.asset_id));
+                END""")
+
+
+def sample_sparse_writes(version, binary, corpus, original, temp):
+    # A separate process and database after all timing trials. Triggers observe
+    # committed job updates and row operations, including BEFORE INSERT on a no-op UPSERT.
+    with tempfile.TemporaryDirectory(dir=temp) as work:
+        data, media = Path(work) / "data", Path(work) / "storage" / "media"
+        data.mkdir()
+        media.mkdir(parents=True)
+        manifest = original.copy()
+        with server(binary, version, data, media) as (api, library, _, _):
+            shutil.copytree(corpus, media, dirs_exist_ok=True)
+            first, _ = next_manual_scan(api, library, "first")
+            check_next_counts(first, FILES, FILES, 0, 0)
+            repeat, _ = next_manual_scan(api, library, "unchanged")
+            check_next_counts(repeat, FILES, 0, 0, 0)
+            before = snapshot(version, data, library["id"], manifest, set())
+            moved = sparse_changes(media, manifest)
+            read_originals(media, manifest)
+            with contextlib.closing(sqlite3.connect(data / "qimeng.sqlite")) as db:
+                with db:
+                    instrument_sparse_scan(db)
+                job, _ = next_manual_scan(api, library, "sparse")
+                check_next_counts(job, FILES + ADDITIONS, ADDITIONS, REWRITES, MOVES)
+                progress = db.execute("SELECT state,published,skipped FROM fixture_progress WHERE job_id=? ORDER BY rowid",
+                                      (job["id"],)).fetchall()
+                relations = db.execute("""SELECT relation,event,existing_asset,count(*) FROM fixture_relation_events
+                                          GROUP BY relation,event,existing_asset ORDER BY relation,event,existing_asset""").fetchall()
+            published = [delta for state, items, delta in progress if state == "running" and items > 0]
+            separate = [delta for state, items, delta in progress if state == "running" and items == 0 and delta > 0]
+            terminal = sum(delta for state, _, delta in progress if state == "completed")
+            require(sum(published) + sum(separate) + terminal == job["skipped"], "progress samples lost skipped entries")
+            require(sum(items for _, items, _ in progress) == ADDITIONS + REWRITES + MOVES, "progress samples lost asset commits")
+            after = snapshot(version, data, library["id"], manifest, {filename(i) for i in range(REWRITES)})
+            for path, asset_id in before.items():
+                require(after[moved.get(path, path)] == asset_id, f"instrumented scan lost identity at {path}")
+            read_originals(media, manifest)
+            return {"job_updates": len(progress), "asset_commits": len(published),
+                    "asset_commits_with_skips": sum(delta > 0 for delta in published),
+                    "standalone_skip_commits": len(separate), "skips_in_asset_commits": sum(published),
+                    "skips_in_standalone_commits": sum(separate), "skips_at_terminal": terminal,
+                    "verified_originals_ids_and_versions": len(after),
+                    "relation_events": [{"table": table, "event": event, "existing_asset": bool(existing), "count": count}
+                                        for table, event, existing, count in relations],
+                    "progress_deltas": [{"state": state, "published": items, "skipped": delta} for state, items, delta in progress]}
+
+
 def report(evidence, metadata, rows):
     (evidence / "results.json").write_text(json.dumps({**metadata, "runs": rows}, indent=2) + "\n")
     lines = ["## 完整手动扫描", "", f"旧版 \x60{metadata['installed_sha']}\x60，Next \x60{metadata['next_sha']}\x60。",
@@ -352,6 +436,15 @@ def report(evidence, metadata, rows):
               "两版缩略图首次回填均在启动 30 秒后，计时结束核验仍在静默期且缓存中无产物。"
               "安装版启动时查找 ffmpeg/ffprobe 路径，准备环境和工具检测均在 POST 前。PNG 没有每文件外部探测，Next 的图片头校验和内容哈希计入扫描。",
               "旧版 README 的两万行基准分别测索引构建或 SQL 快照装载。本次测量涵盖遍历、变更处理、持久化和处理结果的 HTTP 观察。"]
+    lines += ["", "### 少量变动复扫的进度写入", "",
+              "三轮计时结束后，为每个 Next 版本另建数据库。下表按扫描任务行的已提交更新计数。"
+              "完整 JSON 保存了逐次进度差值，以及作者和标签关系的插入尝试与实际行变更次数。", "",
+              "| 版本 | 任务行更新 | 资产提交 | 合并跳过项的资产提交 | 独立跳过项提交 | 随资产结算的项数 | 独立结算的项数 | 终态结算的项数 |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    for version, s in metadata["sparse_write_samples"].items():
+        lines.append(f"| {version} | {s['job_updates']} | {s['asset_commits']} | {s['asset_commits_with_skips']} | "
+                     f"{s['standalone_skip_commits']} | {s['skips_in_asset_commits']} | {s['skips_in_standalone_commits']} | "
+                     f"{s['skips_at_terminal']} |")
     output = "\n".join(lines) + "\n"
     (evidence / "report.md").write_text(output)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -384,6 +477,12 @@ def main():
             offset = index % len(versions)
             for version, binary in versions[offset:] + versions[:offset]:
                 rows.extend(trial(version, binary, index + 1, corpus, manifest, temp))
+        metadata["sparse_write_samples"] = {}
+        for version, binary in versions:
+            if version != "installed":
+                sample = sample_sparse_writes(version, binary, corpus, manifest, temp)
+                metadata["sparse_write_samples"][version] = sample
+                print(json.dumps({"version": version, "sparse_write_sample": sample}), flush=True)
         report(evidence, metadata, rows)
 
 

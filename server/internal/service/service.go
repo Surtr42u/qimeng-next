@@ -79,6 +79,7 @@ type Service struct {
 	workers         sync.WaitGroup
 	activeScans     int
 	uploadVerify    chan struct{}
+	protectionRead  chan struct{}
 	scanWorkers     map[string]scanWorker
 	scanWake        chan struct{}
 	mirrorWake      chan struct{}
@@ -159,6 +160,7 @@ func New(config Config) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{DB: db, Root: root, Config: config, owner: owner, scanWake: make(chan struct{}), uploadVerify: make(chan struct{}, 1), password: password, loginLimit: loginBudget{slots: make(chan struct{}, 2)}}
+	s.protectionRead = make(chan struct{}, 1)
 	s.workCtx, s.stopWork = context.WithCancel(context.Background())
 	s.localSync = localSync
 	s.monitor = newLibraryMonitor(config.Scanner)

@@ -65,6 +65,10 @@ func preparedScanFixture(t *testing.T, names ...string) (*Service, *scanRun, str
 func TestScanBatchFailureRetainsOnlyFinishedAssetsAndTheirCounts(t *testing.T) {
 	ctx := context.Background()
 	s, run, _ := preparedScanFixture(t, "ready.png", "failure.png", "later.png")
+	run.lastFlush = time.Now()
+	if err := s.skipScannedEntry(ctx, run); err != nil {
+		t.Fatal(err)
+	}
 	// Fail after the asset insert, during relation persistence.
 	_, err := s.DB.DB.Exec(`CREATE TRIGGER scan_relation_fault BEFORE INSERT ON asset_authors
 		WHEN (SELECT file_name FROM assets WHERE id=NEW.asset_id)='failure.png'
@@ -76,7 +80,7 @@ func TestScanBatchFailureRetainsOnlyFinishedAssetsAndTheirCounts(t *testing.T) {
 		t.Fatal("relation persistence error was lost")
 	}
 	job, err := s.Scan(ctx, run.id)
-	if err != nil || job.Processed != 1 || job.Added != 1 {
+	if err != nil || job.Processed != 2 || job.Added != 1 || job.Skipped != 1 || run.skipped != 0 {
 		t.Fatal("partial completion counters", job, err)
 	}
 	var count, readyWithAuthor int
@@ -127,20 +131,66 @@ func TestScanBatchRechecksPhysicalReplacementAndPendingPublication(t *testing.T)
 func TestScanBatchCancellationDiscardsPreparedAssets(t *testing.T) {
 	ctx := context.Background()
 	s, run, _ := preparedScanFixture(t, "queued.png")
+	run.lastFlush = time.Now()
+	if err := s.skipScannedEntry(ctx, run); err != nil {
+		t.Fatal(err)
+	}
 	testMutation(t, s, "cancel-staged-scan", func(w *Write) (any, int, error) {
 		job, e := s.CancelScan(ctx, w, run.id)
 		return job, 200, e
 	})
-	if err := s.flushPreparedScans(ctx, run); !errors.Is(err, context.Canceled) {
+	err := s.flushPreparedScans(ctx, run)
+	if !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled batch attempted publication", err)
 	}
+	s.finishScan(run, err)
 	job, err := s.Scan(ctx, run.id)
-	if err != nil || job.State != "cancelled" || job.Added != 0 || job.Processed != 0 {
+	if err != nil || job.State != "cancelled" || job.Added != 0 || job.Processed != 1 || job.Skipped != 1 {
 		t.Fatal(job, err)
 	}
 	var count int
 	if err = s.DB.DB.QueryRow("SELECT count(*) FROM assets").Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
+	}
+}
+
+func TestScanBatchRolledBackProgressCountsOnlyConfirmedSkipsAtTermination(t *testing.T) {
+	for _, mode := range []string{"new batch", "changed original"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			s, run, root := preparedScanFixture(t)
+			existingScanOriginal(t, s, run, root, "known.png")
+			const candidate = "candidate.png"
+			if mode == "changed original" {
+				existingScanOriginal(t, s, run, root, candidate)
+			}
+			data := syntheticPNG(t, 91)
+			name := filepath.Join(root, candidate)
+			if err := os.WriteFile(name, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			stamp := time.Unix(1700000000, 0)
+			if err := os.Chtimes(name, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+			// Roll back the original and its progress together, after the asset writes.
+			_, err := s.DB.DB.Exec(`CREATE TRIGGER rollback_scan_progress AFTER UPDATE ON scans
+				WHEN NEW.state='running' AND json_extract(NEW.data,'$.added')+json_extract(NEW.data,'$.changed')>0
+				BEGIN SELECT RAISE(ROLLBACK,'synthetic scan progress fault'); END`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.scanLibrary(ctx, run.id, scanTargets{inventory: true})
+			job, err := s.Scan(ctx, run.id)
+			if err != nil || job.State != "failed" || job.Changed+job.Added != 0 || job.Processed != 1 || job.Skipped != 1 ||
+				len(job.Issues) != 1 || job.Issues[0].Code != "scan_io_failed" {
+				t.Fatal("terminal counts after rollback", job, err)
+			}
+			var published int
+			if err := s.DB.DB.QueryRow("SELECT count(*) FROM asset_content_versions WHERE hash=?", digest(data)).Scan(&published); err != nil || published != 0 {
+				t.Fatal("rolled-back content survived", published, err)
+			}
+		})
 	}
 }
 

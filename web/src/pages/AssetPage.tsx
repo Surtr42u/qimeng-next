@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, FolderInput, Pencil, Star, ThumbsUp, Trash2 } from "lucide-react";
 import { useAsset, useAssetActions, originalUrl, mediaCardDate, safeMediaUrl, useThumbnailURL } from "../data/media";
 import type { Asset } from "../data/media";
-import { useDetailSession } from "../data/detail-session";
+import { useDetailSession, usePlaybackResume } from "../data/detail-session";
 import { useTimeline } from "../data/catalog";
 import type { FileJob } from "../data/file-actions";
 import { ErrorNotice, Loading } from "../components/Feedback";
@@ -94,16 +94,7 @@ function AssetDetail({ asset, navigation, go, openViewer }: {
           <div className="asset-stage">
             {asset.mediaType === "video" ? (
               <Suspense fallback={<Loading text="正在加载播放器…" />}>
-                <VideoPlayer
-                  src={src}
-                  title={asset.fileName}
-                  poster={poster}
-                  highlights={marks}
-                  initialPosition={asset.positionMs}
-                  progressMatches={asset.positionContentVersion === asset.contentVersion}
-                  onPlay={event.play}
-                  onProgress={event.progress}
-                />
+                <AssetVideo asset={asset} src={src} poster={poster} marks={marks} event={event} />
               </Suspense>
             ) : <ImageStage src={src} title={asset.fileName} onOpen={openViewer} />}
           </div>
@@ -166,4 +157,13 @@ function AssetDetail({ asset, navigation, go, openViewer }: {
       )}
     </>
   );
+}
+
+function AssetVideo({ asset, src, poster, marks, event }: {
+  asset: Asset; src: string; poster?: string; marks: { time: number; text: string }[]; event: ReturnType<typeof useDetailSession>;
+}) {
+  const resume = usePlaybackResume(asset.id, asset.contentVersion, event.id);
+  return <VideoPlayer src={src} title={asset.fileName} poster={poster} highlights={marks}
+    initialPosition={resume?.positionMs ?? 0} progressMatches={resume?.positionContentVersion === asset.contentVersion}
+    onPlay={event.play} onProgress={event.progress} />;
 }

@@ -230,27 +230,29 @@ func (s *Service) scanLibrary(ctx context.Context, id string, targets scanTarget
 			}
 		}
 	}
+	s.finishScan(run, e)
+}
+
+func (s *Service) finishScan(run *scanRun, scanErr error) {
 	finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	j, readErr := s.Scan(finishCtx, id)
+	j, readErr := s.Scan(finishCtx, run.id)
 	if readErr != nil {
 		return
 	}
-	j.Skipped += run.skipped
-	j.Processed += run.skipped
 	if j.State == "cancelled" {
 		if run.skipped > 0 {
-			if err := saveScan(finishCtx, s.DB.DB, j); err != nil {
-				slog.Error("cancelled scan count persistence failed", "scanId", id)
+			if err := run.saveProgress(finishCtx, s.DB.DB, j); err != nil {
+				slog.Error("cancelled scan count persistence failed", "scanId", run.id)
 			}
 		}
 		return
 	}
-	if errors.Is(e, context.Canceled) {
+	if errors.Is(scanErr, context.Canceled) {
 		j.State = "interrupted"
-	} else if e != nil {
+	} else if scanErr != nil {
 		j.State = "failed"
 		scanIssue(&j, "", "scan_io_failed")
 	} else if j.IssueCount > 0 {
@@ -259,8 +261,8 @@ func (s *Service) scanLibrary(ctx context.Context, id string, targets scanTarget
 		j.State = "completed"
 	}
 	j.UpdatedAt = time.Now().UTC()
-	if e = saveScan(finishCtx, s.DB.DB, j); e != nil {
-		slog.Error("scan terminal persistence failed", "scanId", id)
+	if err := run.saveProgress(finishCtx, s.DB.DB, j); err != nil {
+		slog.Error("scan terminal persistence failed", "scanId", run.id)
 	}
 	if j.Added+j.Moved+j.Changed > 0 {
 		s.previews.changed(j.LibraryID, "")
@@ -495,10 +497,7 @@ func (s *Service) commitScannedFile(ctx context.Context, run *scanRun, file scan
 	if e = s.saveScannedFile(ctx, tx, library, file, a, isNew, moved, &j); e != nil {
 		return e
 	}
-	if e = saveScan(ctx, tx, j); e != nil {
-		return e
-	}
-	if e = tx.Commit(); e != nil {
+	if e = run.commitFileProgress(ctx, tx, j); e != nil {
 		return e
 	}
 	s.wakeAuthorMirror()
@@ -550,13 +549,16 @@ func (s *Service) saveScannedFile(ctx context.Context, tx *sql.Tx, library model
 			return e
 		}
 	}
-	if isNew {
+	switch {
+	case isNew:
 		e = store.InsertAsset(ctx, tx, a)
-	} else {
-		e = store.SaveAsset(ctx, tx, a)
+	case library.Kind == "regular":
+		e = store.UpdateScannedFile(ctx, tx, a)
 		if e == nil && taxonomyChanged {
 			e = store.SaveAssetTaxonomy(ctx, tx, a, store.CompleteTaxonomy(a))
 		}
+	default:
+		e = store.SaveAsset(ctx, tx, a)
 	}
 	if e != nil {
 		return e

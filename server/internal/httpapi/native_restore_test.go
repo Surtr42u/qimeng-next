@@ -49,7 +49,7 @@ func nativeVideoUpload(t *testing.T, f *fixture, name string, body []byte, previ
 	return upload
 }
 
-func nativeCheckpointCopy(t *testing.T, f *fixture, stage string) *fixture {
+func nativeCheckpointCopy(t *testing.T, f *fixture, stage string, assetCount int) *fixture {
 	t.Helper()
 	var b service.Backup
 	decode(t, f.json("POST", "/backups", "native-checkpoint-"+stage, struct{}{}, 201), &b)
@@ -63,7 +63,7 @@ func nativeCheckpointCopy(t *testing.T, f *fixture, stage string) *fixture {
 		ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext"), Destination: destination,
 		ExpectedSHA256: b.ArchiveHash, ReserveBytes: 1,
 	})
-	if err != nil || result.AssetCount != 2 || result.InstanceID == f.s.InstanceID || result.ArchiveHash != b.ArchiveHash {
+	if err != nil || result.AssetCount != assetCount || result.InstanceID == f.s.InstanceID || result.ArchiveHash != b.ArchiveHash {
 		t.Fatal("isolated restore", result, err)
 	}
 	restored, err := service.New(service.Config{DataDir: destination, AdminToken: testSecret, ReserveBytes: 1})
@@ -126,7 +126,7 @@ func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 	if a.ID != before || a.ContentVersion != 1 || a.RelativePath != moved || a.Hash != fmt.Sprintf("%x", sha256.Sum256(low)) {
 		t.Fatal("rename changed the content or identity", a.ID, a.ContentVersion, a.RelativePath)
 	}
-	firstCopy := nativeCheckpointCopy(t, f, "before")
+	firstCopy := nativeCheckpointCopy(t, f, "before", 2)
 	assertNativeOriginal(t, firstCopy, a.ID, 1, low)
 	assertNativeOriginal(t, firstCopy, control.ID, 1, controlBytes)
 	var first model.Asset
@@ -141,7 +141,7 @@ func TestNativeVideoRenameReplacementAndIsolatedRestore(t *testing.T) {
 		latest.Width != 1280 || latest.Height != 720 || latest.DurationMs < 1300 || latest.ProbeState != "ready" {
 		t.Fatal("high-resolution replacement/replay did not publish exactly v2")
 	}
-	secondCopy := nativeCheckpointCopy(t, f, "after")
+	secondCopy := nativeCheckpointCopy(t, f, "after", 2)
 	for _, instance := range []*fixture{f, secondCopy} {
 		var current model.Asset
 		decode(t, instance.json("GET", root, "", nil, 200), &current)

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	archive "qimeng.local/next/server/internal/backup"
@@ -262,39 +261,33 @@ func (s *Service) protectInputs(ctx context.Context, p BatchProtection) {
 		fail(e)
 		return
 	}
-	target, info, e := s.backupTarget(ctx, p.TargetID)
-	if e != nil {
-		fail(e)
-		return
-	}
-	if !info.DistinctVolume || target.FailureDomain != p.FailureDomain {
-		fail(Fail(409, "backup_target_changed", "独立备份目标配置或卷归属已变化。"))
-		return
-	}
-	root, e := os.OpenRoot(target.Path)
-	if e != nil {
-		fail(e)
-		return
-	}
-	defer root.Close()
-	sourceSnapshot := "backups/" + p.CheckpointID + "/snapshot.sqlite"
+	files := protectionFiles{service: s, proof: p}
+	defer files.close()
 	if !p.snapshotInputsVerified {
-		if e = s.verifyLegacyProtectionItems(ctx, p, p.Items, nil); e != nil {
+		if e := files.verifyLegacyProtectionItems(ctx, p.Items, nil); e != nil {
 			fail(e)
 			return
 		}
 	}
-	e = copyTargetObject(ctx, root, target.Path, "temporary/"+p.ID+"-snapshot.partial", protectionSnapshot(p), p.SnapshotHash, p.SnapshotBytes, s.Config.ReserveBytes, func() (io.ReadCloser, error) { return s.Root.Open(sourceSnapshot) })
+	root, e := files.openTarget(ctx)
 	if e != nil {
 		fail(e)
 		return
+	}
+	if !files.targetSnapshotVerified {
+		sourceSnapshot := "backups/" + p.CheckpointID + "/snapshot.sqlite"
+		e = copyTargetObject(ctx, root, "temporary/"+p.ID+"-snapshot.partial", protectionSnapshot(p), p.SnapshotHash, p.SnapshotBytes, s.Config.ReserveBytes, func() (io.ReadCloser, error) { return s.Root.Open(sourceSnapshot) })
+		if e != nil {
+			fail(e)
+			return
+		}
 	}
 	for index, item := range p.Items {
 		if item.State == "retained" {
 			continue
 		}
 		file := archive.File{Kind: "asset", ObjectID: item.AssetID, ContentVersion: item.ContentVersion, SHA256: item.Hash, Size: item.Size}
-		e = copyTargetObject(ctx, root, target.Path, "temporary/"+p.ID+"-"+item.InputID+".partial", protectionObject(item.Hash), item.Hash, item.Size, s.Config.ReserveBytes, func() (io.ReadCloser, error) { return s.backupSource(ctx, file) })
+		e = copyTargetObject(ctx, root, "temporary/"+p.ID+"-"+item.InputID+".partial", protectionObject(item.Hash), item.Hash, item.Size, s.Config.ReserveBytes, func() (io.ReadCloser, error) { return s.backupSource(ctx, file) })
 		if e != nil {
 			fail(e)
 			return
@@ -311,16 +304,12 @@ func (s *Service) protectInputs(ctx context.Context, p BatchProtection) {
 		return
 	}
 	p.ProofHash = digest(evidence)
-	e = copyTargetObject(ctx, root, target.Path, "temporary/"+p.ID+"-receipt.partial", protectionReceipt(p), p.ProofHash, int64(len(evidence)), s.Config.ReserveBytes, func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(evidence)), nil })
+	e = copyTargetObject(ctx, root, "temporary/"+p.ID+"-receipt.partial", protectionReceipt(p), p.ProofHash, int64(len(evidence)), s.Config.ReserveBytes, func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(evidence)), nil })
 	if e != nil {
 		fail(e)
 		return
 	}
-	_, info, e = s.backupTarget(ctx, p.TargetID)
-	if e != nil || !info.DistinctVolume {
-		if e == nil {
-			e = Fail(409, "backup_target_changed", "备份目标卷归属已变化。")
-		}
+	if _, e = s.protectionTarget(ctx, p); e != nil {
 		fail(e)
 		return
 	}
