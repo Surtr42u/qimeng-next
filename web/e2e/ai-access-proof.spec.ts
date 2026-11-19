@@ -23,29 +23,39 @@ async function connect(page: Page) {
   const history: Grant[] = [archived, { ...archived, id: 'sample-expired', state: 'expired',
     label: 'SyntheticPublicArchiveCatalogIllustrationBibliographyResearchWorkspaceForExhibit' }];
   const secret = crypto.randomUUID();
+  let creates = 0;
+  let dropReply = false;
   await page.route('**/api/v1/research/context', route => route.fulfill({ json: {
     enabled: true, allowedProviders: [], providers: [{ name: 'steam', operations: ['workshop'], evidenceKind: 'platform_record' }],
   } }));
   await page.route('**/api/v1/ai/delegations**', route => {
     if (route.request().method() === 'POST') {
       const policy = route.request().postDataJSON() as components['schemas']['AIDelegationPolicy'];
-      const entry: Grant = { ...policy, id: 'sample-active', state: 'active',
+      const entry: Grant = { ...policy, id: `sample-active-${++creates}`, state: 'active',
         createdAt: '2026-11-19T00:00:00Z', expiresAt: '2026-12-26T00:00:00Z' };
       history.unshift(entry);
+      if (dropReply) {
+        dropReply = false;
+        return route.abort('failed');
+      }
       return route.fulfill({ status: 201, json: { delegation: entry,
         credential: { id: entry.id, label: entry.label, scopes: ['read', 'delegate'], expiresAt: entry.expiresAt, token: secret } } });
     }
     const filter = new URL(route.request().url()).searchParams.get('state') ?? 'active';
     return route.fulfill({ json: { items: history.filter(entry => filter === 'all' || entry.state === filter) } });
   });
-  return secret;
+  return { secret, loseNextReply: () => { dropReply = true; }, get creates() { return creates; } };
 }
 
 async function layout(page: Page) {
   return page.locator('[data-scroll-root]').evaluate(main => {
     const box = main.getBoundingClientRect();
-    const left = box.left + main.clientLeft;
-    const right = left + main.clientWidth;
+    // DOMRect uses viewport pixels. The installed shell zooms its layout, while
+    // clientWidth and clientLeft still use the element's unzoomed layout units.
+    const xScale = box.width / main.offsetWidth;
+    const yScale = box.height / main.offsetHeight;
+    const left = box.left + main.clientLeft * xScale;
+    const right = left + main.clientWidth * xScale;
     const elementsOutside: string[] = [];
     const textClipped: string[] = [];
     const closedDetail = (element: Element) => {
@@ -81,8 +91,9 @@ async function layout(page: Page) {
         }
       }
     }
-    return { viewport: [innerWidth, innerHeight], mainLeft: left, mainTop: box.top, mainWidth: main.clientWidth,
-      mainHeight: main.clientHeight, scrollTop: main.scrollTop, scrollHeight: main.scrollHeight,
+    return { viewport: [innerWidth, innerHeight], mainLeft: left, mainTop: box.top, mainWidth: right - left,
+      mainHeight: main.clientHeight * yScale, layoutClientWidth: main.clientWidth, xScale, yScale,
+      scrollTop: main.scrollTop, scrollHeight: main.scrollHeight,
       mainHorizontalOverflow: main.scrollWidth - main.clientWidth,
       documentHorizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       elementsOutside: [...new Set(elementsOutside)], textClipped: [...new Set(textClipped)] };
@@ -114,7 +125,7 @@ for (const width of [1440, 390]) {
     const theme = width === 1440 ? 'light' : 'dark';
     const output = process.env.AI_LAYOUT_EVIDENCE ?? testInfo.outputDir;
     await mkdir(output, { recursive: true });
-    const secret = await connect(page);
+    const fixture = await connect(page);
     await page.setViewportSize({ width, height });
     await page.goto('/settings');
     await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
@@ -205,7 +216,7 @@ for (const width of [1440, 390]) {
 
     const credential = page.getByLabel('一次性显示的接入凭据');
     await expect(credential).toHaveAttribute('type', 'password');
-    expect(await credential.inputValue() === secret).toBe(true);
+    expect(await credential.inputValue() === fixture.secret).toBe(true);
     const result = page.getByRole('region', { name: '新接入凭据' });
     await expect(result.getByRole('heading')).toBeFocused();
     await capture('masked', result);
@@ -220,7 +231,7 @@ for (const width of [1440, 390]) {
     const row = page.getByRole('article').filter({ has: page.getByRole('heading', { name: archived.label, exact: true }) });
     await expect(row.getByText('已撤销', { exact: true })).toBeVisible();
     const longHeading = page.getByRole('heading', { name: /^SyntheticPublicArchive/ });
-    reports.longName = await longHeading.evaluate(el => {
+    const longName = await longHeading.evaluate(el => {
       const text = document.createRange();
       text.selectNodeContents(el);
       const outer = el.getBoundingClientRect();
@@ -228,6 +239,8 @@ for (const width of [1440, 390]) {
       return { characters: el.textContent?.length, renderedLines: new Set(fragments.map(box => box.top)).size,
         headingWidth: outer.width, headingHeight: outer.height, wrapsInsideHeading: fragments.every(box => box.left >= outer.left - 1 && box.right <= outer.right + 1 && box.top >= outer.top - 3 && box.bottom <= outer.bottom + 3) };
     });
+    reports.longName = longName;
+    expect.soft(longName.wrapsInsideHeading).toBe(true);
     await capture('records');
     const disclosure = row.locator('summary').filter({ hasText: '权限详情' });
     const provider = row.getByText('Steam 创意工坊', { exact: true });
@@ -242,6 +255,23 @@ for (const width of [1440, 390]) {
     await page.getByRole('link', { name: '返回设置' }).click();
     await expect(page).toHaveURL(/\/settings$/);
     reports.keyboard = 'opened wizard, advanced using Enter, canceled navigation while masked, returned focus after clear, opened and closed historical disclosure, returned to Settings';
+    await page.getByRole('link', { name: 'AI 接入', exact: true }).click();
+    await add.click();
+    const lostName = '合成授权回执核对';
+    await label.fill(lostName);
+    await next.click();
+    await next.click();
+    fixture.loseNextReply();
+    await create.click();
+    await expect(confirmation.getByRole('alert')).toBeVisible();
+    await page.getByLabel('接入状态').selectOption('all');
+    await page.getByRole('button', { name: '刷新接入记录' }).click();
+    const persisted = page.getByRole('article').filter({ has: page.getByRole('heading', { name: lostName, exact: true }) });
+    await expect(persisted.getByRole('button', { name: '撤销此接入' })).toBeVisible();
+    await expect(credential).toHaveCount(0);
+    expect(fixture.creates).toBe(2);
+    reports.lostReply = 'A persisted grant with a lost create response remained reachable by choosing all records and refreshing without resubmitting the draft.';
+    await capture('lost-reply', page.getByRole('region', { name: '接入记录' }));
     await writeReport();
   });
 }

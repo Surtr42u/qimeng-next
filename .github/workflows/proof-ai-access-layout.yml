@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: true
 env:
   APP_SHA: b3a6a5e5bb3178183c822a8e615d0fe1924598c3
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
 jobs:
   browser:
     name: ${{ matrix.os }} browser checks and layout
@@ -42,14 +43,28 @@ jobs:
           npm ci
           npm run generate:api
           npm run build
-      - name: Install Linux browsers and the reference CJK font
+      - name: Prepare the matching Playwright 1.65.1 Noble image and reference CJK font
         id: linux
         if: runner.os == 'Linux'
-        working-directory: web
         run: |
-          npx playwright install --with-deps chromium webkit
-          sudo apt-get -o Acquire::Retries=2 -y install fonts-noto-cjk
-          fc-match 'Noto Sans CJK SC:lang=zh-cn'
+          docker pull "$PLAYWRIGHT_IMAGE"
+          mkdir -p "$RUNNER_TEMP/ai-layout-fonts" "$GITHUB_WORKSPACE/evidence"
+          font="$RUNNER_TEMP/ai-layout-fonts/NotoSansCJKsc-Regular.otf"
+          curl --fail --location --silent --show-error --max-time 90 --retry 1 \
+            'https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' --output "$font"
+          test "$(git hash-object "$font")" = 'dc15562470b4f842321894787a0d066879ccff8b'
+          cat > "$RUNNER_TEMP/ai-layout-playwright" <<'SH'
+          #!/usr/bin/env bash
+          set -eu
+          docker run --rm --ipc=host -e CI -e GITHUB_SHA -e APP_SHA -e AI_LAYOUT_EVIDENCE=/workspace/evidence \
+            -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/ai-layout-fonts:/usr/local/share/fonts/ai-layout:ro" \
+            -w /workspace/web "$PLAYWRIGHT_IMAGE" bash -ec '
+              fc-cache /usr/local/share/fonts/ai-layout
+              fc-match "Noto Sans CJK SC:lang=zh-cn"
+              exec ./node_modules/.bin/playwright "$@"
+            ' _ "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/ai-layout-playwright"
       - name: Install Windows Chromium
         id: windows
         if: runner.os == 'Windows'
@@ -58,7 +73,7 @@ jobs:
       - name: Run access and settings regressions in desktop Chromium, mobile Chromium and WebKit
         if: runner.os == 'Linux'
         working-directory: web
-        run: npx playwright test e2e/ai-access.spec.ts e2e/settings-parity.spec.ts --project=chromium --project=mobile-chromium --project=webkit --reporter=list --retries=0
+        run: '"$RUNNER_TEMP/ai-layout-playwright" test e2e/ai-access.spec.ts e2e/settings-parity.spec.ts --project=chromium --project=mobile-chromium --project=webkit --reporter=list --retries=0'
       - name: Run access and settings regressions in Windows Chromium
         if: runner.os == 'Windows'
         working-directory: web
@@ -68,7 +83,12 @@ jobs:
         env:
           AI_LAYOUT_EVIDENCE: ${{ github.workspace }}/evidence
         working-directory: web
-        run: npx playwright test e2e/ai-access-proof.spec.ts --project=chromium --reporter=list --retries=0
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            "$RUNNER_TEMP/ai-layout-playwright" test e2e/ai-access-proof.spec.ts --project=chromium --reporter=list --retries=0
+          else
+            npx playwright test e2e/ai-access-proof.spec.ts --project=chromium --reporter=list --retries=0
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ !cancelled() && (steps.linux.outcome == 'success' || steps.windows.outcome == 'success') }}
         with:
