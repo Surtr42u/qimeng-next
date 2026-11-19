@@ -18,7 +18,7 @@ concurrency:
 jobs:
   compare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       REFERENCE_SHA: 745974081716a9d69a95002a41220e35e743d764
     steps:
@@ -31,6 +31,11 @@ jobs:
           repository: Surtr42u/qimeng-media
           ref: '745974081716a9d69a95002a41220e35e743d764'
           path: installed
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: b6b3a62b0ecc3049e27dc50e6ae9a663021d6e10
+          path: baseline
           persist-credentials: false
       - name: Verify source identity
         run: |
@@ -57,6 +62,13 @@ jobs:
           npm run generate:api
           npm run build
           npx playwright install --with-deps chromium
+      - name: Build the immediate Next baseline on the same runner
+        working-directory: baseline/web
+        run: |
+          test "$(git rev-parse HEAD)" = b6b3a62b0ecc3049e27dc50e6ae9a663021d6e10
+          npm ci
+          npm run generate:api
+          npm run build
       - name: Install the same reference font from Ubuntu
         run: |
           for attempt in 1 2; do
@@ -74,9 +86,20 @@ jobs:
           CANDIDATE_DIST: ${{ github.workspace }}/next/web/dist
           COMPARISON_DIR: ${{ github.workspace }}/evidence
         run: node tests/ui-reference.mjs
+      - name: Measure cold and repeat secondary navigation on the same Chromium
+        if: success() || failure()
+        working-directory: next/web
+        env:
+          REFERENCE_DIST: ${{ github.workspace }}/installed/web/dist
+          BASELINE_DIST: ${{ github.workspace }}/baseline/web/dist
+          CANDIDATE_DIST: ${{ github.workspace }}/next/web/dist
+          COMPARISON_DIR: ${{ github.workspace }}/evidence
+        run: node tests/route-loading-study.mjs
       - name: Publish measurements to run summary
         if: always()
-        run: if test -f evidence/report.md; then cat evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+        run: |
+          if test -f evidence/report.md; then cat evidence/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if test -f evidence/route-loading.md; then cat evidence/route-loading.md >> "$GITHUB_STEP_SUMMARY"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

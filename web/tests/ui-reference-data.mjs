@@ -107,6 +107,23 @@ export function adapter(side, inventory) {
     if (!legacy && path === "/settings") return response({ revision: 1, scan: { workers: 2, thumbEdge: 800 }, upload: { autoAccept: true }, effectiveScanWorkers: 2, maxChunkBytes: 8388608, maxActiveUploads: 4, maxBatchItems: 100, sourceCleanupEnabled: false });
     if (!legacy && path === `/authors/${authorId}`) return response({ id: authorId, name: authorName, kind: "regular", revision: 1, aliases: [], acquisitionSources: [], fileCount: total, following: false, placeholder: false, fieldStatus: {} });
     if (!legacy && path === `/authors/${authorId}/profile-summary`) return response({ authorId, xRevision: 0, biographyOriginal: "", biographyZh: "" });
+    if (!legacy && path === "/preferences/recommendation") {
+      const weights = { tagRelevance: 0.15, tagCollection: 0.15, engagement: 0.1, recency: 0.1,
+        likeScore: 0.1, discovery: 0.1, freshness: 0.1, browseDepth: 0.1, maxRandom: 0.1 };
+      return response({ revision: 1, weights, presets: { balanced: weights, familiar: weights, explore: weights, fresh: weights } });
+    }
+    if (!legacy && path === "/ai/delegations") return response({ items: [] });
+    if (!legacy && path.startsWith(`/authors/${authorId}/`)) {
+      const blocks = ["x", "basic", "accounts"].map(block => ({ authorId, block, revision: 1,
+        values: block === "basic" ? { summary: "合成资料" } : {}, evidence: [], source: "human", updatedAt: fixedTime }));
+      const archive = { id: "sample-archive", authorId, authorName, reason: "merge", createdAt: fixedTime,
+        blockCount: blocks.length, candidateCount: 0, conflicts: [] };
+      if (path.endsWith("/profile")) return response({ authorId, editable: true, blocks });
+      if (path.endsWith("/updates")) return response({ authorId, revision: 1, trackUpdates: false, feedUrl: "", items: [] });
+      if (path.endsWith("/candidates")) return response({ items: [] });
+      if (path.endsWith("/archives")) return response({ items: [archive] });
+      if (path.endsWith("/archives/sample-archive")) return response({ ...archive, blocks });
+    }
     const match = path.match(/^\/assets\/([\w-]+)(?:\/(timeline-tags))?$/);
     const item = match && rows.find(a => a.id === match[1]);
     if (item) {
