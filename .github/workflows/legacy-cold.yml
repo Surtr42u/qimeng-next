@@ -2,13 +2,31 @@ name: Offline PC v26 conversion and native restore
 on:
   workflow_dispatch:
   push:
-    branches: [codex/legacy-cold-archive, 'codex/legacy-cold-*-proof', main]
-    paths:
+    branches: [main]
+    paths: &archive_paths
       - '.github/workflows/legacy-cold.yml'
+      - 'docs/legacy-cold.md'
+      - 'tools/legacy-cold/**'
+      - 'server/cmd/qimeng-legacy-convert/**'
+      - 'server/cmd/qimeng-backup/**'
       - 'server/internal/legacycold/**'
       - 'server/internal/service/cold_catalog.go'
-      - 'server/cmd/qimeng-legacy-convert/**'
-      - 'tools/legacy-cold/**'
+      - 'server/internal/backup/**'
+      - 'server/internal/service/backup*.go'
+      - 'server/internal/service/files.go'
+      - 'server/internal/service/disk*.go'
+      - 'server/internal/storage/root.go'
+      - 'server/internal/storage/publish*.go'
+      - 'server/internal/store/migrations/**'
+      - 'server/internal/store/migrations*.go'
+      - 'server/internal/store/backup_validation*.go'
+      - 'server/internal/store/sqlite*.go'
+      - 'server/internal/store/store.go'
+      - 'server/internal/store/asset*.go'
+      - 'server/go.mod'
+      - 'server/go.sum'
+  pull_request:
+    paths: *archive_paths
 permissions: {contents: read}
 jobs:
   source-checks:
@@ -44,7 +62,6 @@ jobs:
         env: {QIMENG_COLD_SYNTHETIC_FIXTURE: '${{ runner.temp }}/cancellation-test'}
         run: go test -mod=readonly -count=1 ./internal/architecture ./internal/legacycold/...
   conversion:
-    if: github.ref_name != 'codex/legacy-cold-core-proof'
     strategy:
       fail-fast: false
       matrix:
