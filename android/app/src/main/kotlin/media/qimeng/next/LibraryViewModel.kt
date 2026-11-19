@@ -69,6 +69,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val asset = mutableAsset.asStateFlow()
     private val mutableAuthor = MutableStateFlow<Author?>(null)
     val author = mutableAuthor.asStateFlow()
+    private val mutableAuthorFollow = MutableStateFlow(LoadState<String>())
+    val authorFollow = mutableAuthorFollow.asStateFlow()
     private val mutableAssetAuthors = MutableStateFlow<List<Author>>(emptyList())
     val assetAuthors = mutableAssetAuthors.asStateFlow()
     private val mutableReport = MutableStateFlow<TaskReport?>(null)
@@ -125,7 +127,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 detailGeneration.next()
                 reactionRetries.clear()
                 lists.values.forEach { it.value = ListState() }
-                mutableAsset.value = null; mutableAuthor.value = null; mutableStats.value = null; mutableReport.value = null
+                mutableAsset.value = null; mutableAuthor.value = null; mutableAuthorFollow.value = LoadState()
+                mutableStats.value = null; mutableReport.value = null
                 discardForeignObjectRoutes(connection)
                 mutableAssetAuthors.value = emptyList()
                 tagReads.next()
@@ -434,7 +437,22 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         navigate("author:$id"); mutableAuthor.value = null
         action { val result = repository.author(id); if (route.value == "author:$id") mutableAuthor.value = result }
     }
-    fun followAuthor() = action { mutableAuthor.value?.let { mutableAuthor.value = repository.follow(it) } }
+    fun followAuthor(authorId: String) {
+        val current = mutableAuthor.value?.takeIf { it.id == authorId } ?: return
+        val target = session.value ?: return
+        action {
+            mutableAuthorFollow.value = LoadState(data = authorId, loading = true)
+            try {
+                val updated = repository.follow(current, target)
+                if (sameTarget(target, session.value) && mutableAuthor.value?.id == authorId) mutableAuthor.value = updated
+                if (sameTarget(target, session.value)) mutableAuthorFollow.value = LoadState()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (sameTarget(target, session.value)) mutableAuthorFollow.value = LoadState(data = authorId, error = explain(failure))
+            }
+        }
+    }
     fun followAssetAuthor(author: Author) = action {
         val updated = repository.follow(author)
         mutableAssetAuthors.value = mutableAssetAuthors.value.map { if (it.id == author.id) updated else it }

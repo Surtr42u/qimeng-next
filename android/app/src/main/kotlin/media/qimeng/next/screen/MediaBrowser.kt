@@ -233,7 +233,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
         sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId,
         history = true.takeIf { source == "history" }))
-    val group = if (albumTitle != null) controls.row else null
+    val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
     LaunchedEffect(key, query, group, publication) {
         model.browse(key, query)
@@ -256,7 +256,8 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             rows = values
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
             filters = { AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, values,
-                onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind) }
+                onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
+                loadFailed = state.error != null) }
             if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
@@ -266,13 +267,14 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             IconButton(onClick = { columns = if (columns == 5) 2 else columns + 1 }) { Icon(Icons.Outlined.GridView, "列数") }
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
-        state.error?.let { ErrorNotice(it) {
+        val retry: () -> Unit = {
             if (state.reloadFromStart) {
                 if (onRefresh != null) onRefresh() else {
                     scope.launch { grid.scrollToItem(0) }; model.browse(key, query, force = true)
                 }
             } else model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true)
-        } }
+        }
+        if (leading == null) state.error?.let { ErrorNotice(it, retry) }
         val entries = if (state.loadedQuery == query) state.items else emptyList()
         val sectionMode = when { source == "history" -> "history"; authorKind != null || favorite == true || caption -> "partitions"; else -> group }
         val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
@@ -281,14 +283,18 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         PullToRefreshBox(isRefreshing = state.loading && state.loaded && state.cursor == null,
             onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
-            if (!state.loaded && state.error == null) {
+            if (leading == null && !state.loaded && state.error == null) {
                 QimengSkeletonGrid(columns, columns * QIMENG_SKELETON_GRID_ROWS)
                 return@PullToRefreshBox
             }
-            if (state.loaded && entries.isEmpty() && !state.loading && key !in setOf("home:0", "home:1"))
+            if (leading == null && state.loaded && entries.isEmpty() && !state.loading && key !in setOf("home:0", "home:1"))
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (key == "home:2") "暂无数据" else "没有符合条件的媒体") }
             LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
-                contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = if (bottomDock) TabDockDefaults.bottomClearance() else 24.dp),
+                contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = when {
+                    bottomDock -> TabDockDefaults.bottomClearance()
+                    leading != null -> QimengDimens.ListBottomContentPadding
+                    else -> 24.dp
+                }),
                 modifier = Modifier.padding(top = QimengDimens.SpaceM).fillMaxSize().pointerInput(key, pinchEnabled) {
                     if (!pinchEnabled) return@pointerInput
                     awaitEachGesture {
@@ -305,7 +311,34 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                         } while (event.changes.any { it.pressed })
                     }
                 }) {
-                if (leading != null) item(key = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading(); filters?.invoke() }
+                if (leading != null) {
+                    item(key = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading() }
+                    filters?.let { authorFilters ->
+                        item(key = "author-filters", span = { GridItemSpan(maxLineSpan) }) { Column { authorFilters() } }
+                    }
+                    val message = state.error
+                    when {
+                        message != null -> {
+                            item(key = "author-error", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.padding(horizontal = QimengDimens.ScreenPaddingHorizontal, vertical = QimengDimens.SpaceM)) {
+                                    ErrorNotice(message, retry)
+                                }
+                            }
+                        }
+                        state.loadedQuery != query -> {
+                            item(key = "author-loading", span = { GridItemSpan(maxLineSpan) }) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp).testTag("author-media-loading"))
+                            }
+                        }
+                        entries.isEmpty() && !state.loading -> {
+                            item(key = "author-empty", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                                    Text("没有符合条件的媒体", style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                }
                 sections.forEach { section ->
                     section.header?.let { label -> item(key = "group:${section.key}", span = { GridItemSpan(maxLineSpan) }) {
                         Text(label, Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
