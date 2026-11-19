@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - &checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {persist-credentials: false}
-      - name: Record the machine and package installation state
+      - &platform
+        name: Record the machine and package installation state
         run: |
           source /etc/os-release
           echo "image=$ImageOS/$ImageVersion ubuntu=$VERSION_ID/$VERSION_CODENAME architecture=$(dpkg --print-architecture)"
@@ -35,7 +37,7 @@ jobs:
           test "$CACHE_HIT" != true
           cold=$(mktemp -d /var/tmp/ffmpeg-native.XXXXXXXX)
           chmod 755 "$cold"
-          time sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o "Dir::Cache::archives=$cold" -y --download-only --no-install-recommends --no-remove --reinstall install ffmpeg
+          time sudo apt-get -o "Dir::Etc::sourcelist=$APT_WORK/ubuntu.sources" -o Dir::Etc::sourceparts=- -o "Dir::Cache::archives=$cold" -y --download-only --no-install-recommends --no-remove --reinstall install ffmpeg
           (cd "$cold" && sha256sum -- *.deb | sort) | diff -u "$APT_WORK/SHA256SUMS" -
           mkdir "$RUNNER_TEMP/ubuntu-ffmpeg-debs"
           cp -- "$cold"/*.deb "$RUNNER_TEMP/ubuntu-ffmpeg-debs/"
@@ -100,3 +102,56 @@ jobs:
       - *smoke
       - name: Verify the existing tools through the workflow action
         uses: ./.github/actions/ubuntu-ffmpeg
+  normal-warm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - *checkout
+      - *platform
+      - name: Prepare FFmpeg via the production workflow action
+        uses: ./.github/actions/ubuntu-ffmpeg
+      - *smoke
+  repair-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - *checkout
+      - *platform
+      - name: Make the primary mirror file unavailable on this isolated runner
+        run: |
+          grep -Fq 'mirror+file:/etc/apt/apt-mirrors.txt' /etc/apt/sources.list.d/ubuntu.sources
+          sudo mv /etc/apt/apt-mirrors.txt "$RUNNER_TEMP/previous-ubuntu-mirrors"
+      - id: plan
+        run: bash .github/actions/ubuntu-ffmpeg/prepare.sh plan
+      - name: Confirm only the mirror URI changed in the copied sources
+        env: {APT_WORK: ${{ steps.plan.outputs.work }}}
+        run: |
+          sed 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources | diff -u - "$APT_WORK/ubuntu.sources"
+      - id: cache
+        name: Restore the existing branch cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/ubuntu-ffmpeg-debs/*.deb
+          key: ${{ steps.plan.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Reject the equal-length zero file and recover both incomplete entries
+        env:
+          APT_WORK: ${{ steps.plan.outputs.work }}
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          cache="$RUNNER_TEMP/ubuntu-ffmpeg-debs"
+          readarray -t names < <(awk '{print $2}' "$APT_WORK/SHA256SUMS")
+          first=${names[0]}
+          size=$(stat -c %s "$cache/$first")
+          truncate -s "$size" "$RUNNER_TEMP/blank-sample"
+          mv -- "$RUNNER_TEMP/blank-sample" "$cache/$first"
+          rm -- "$cache/${names[1]}"
+          touch "$cache/unselected-sample.deb"
+          printf 'Same length %s, %d bytes. Missing %s\n' "$first" "$size" "${names[1]}"
+          bash .github/actions/ubuntu-ffmpeg/prepare.sh install | tee "$RUNNER_TEMP/recovery.log"
+          grep -F "Discarding mismatched cached archive $first" "$RUNNER_TEMP/recovery.log"
+          grep -F "reused $((${#names[@]} - 2)) verified archives." "$RUNNER_TEMP/recovery.log"
+          test ! -e "$APT_WORK/archives/unselected-sample.deb"
+      - *smoke
