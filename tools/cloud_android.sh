@@ -114,7 +114,7 @@ gradle --no-daemon --continue -p android -Pqimeng.embedded=false :core:ui:connec
   -Pandroid.testInstrumentationRunnerArguments.qimengToken="$QIMENG_ADMIN_TOKEN" --stacktrace || checks=1
 prepare_transport app
 gradle --no-daemon -p android -Pqimeng.embedded=false :app:connectedClientDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest,media.qimeng.next.test.StatisticsAndHomeTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=media.qimeng.next.test.AndroidRealServerTest,media.qimeng.next.test.StatisticsAndHomeTest,media.qimeng.next.test.ThumbnailCacheScreenTest \
   -Pandroid.testInstrumentationRunnerArguments.qimengStatisticsUrl=http://127.0.0.1:18483/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceUrl=http://127.0.0.1:18482/ \
   -Pandroid.testInstrumentationRunnerArguments.qimengSourceToken="$source_token" \
