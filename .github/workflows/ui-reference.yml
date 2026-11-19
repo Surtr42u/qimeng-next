@@ -62,7 +62,7 @@ jobs:
           npm ci
           npm run generate:api
           npm run build
-          npx playwright install --with-deps chromium
+          npx playwright install --only-shell chromium
       - name: Build the immediate Next baseline on the same runner
         working-directory: baseline/web
         run: |
@@ -70,16 +70,6 @@ jobs:
           npm ci
           npm run generate:api
           npm run build
-      - name: Install the same reference font from Ubuntu
-        run: |
-          for attempt in 1 2; do
-            if sudo timeout --kill-after=5s 90s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 --download-only -y install fonts-noto-cjk; then
-              sudo apt-get --no-download -y install fonts-noto-cjk
-              exit 0
-            fi
-            echo "Ubuntu reference-font download attempt $attempt failed"
-          done
-          exit 1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: web-dist
@@ -94,6 +84,23 @@ jobs:
           CANDIDATE_DIST: ${{ github.workspace }}/next/web/dist
           COMPARISON_DIR: ${{ github.workspace }}/evidence
         run: node tests/route-offline-study.mjs
+      - name: Install the same Ubuntu reference font by its signed package digest
+        run: |
+          set -euo pipefail
+          pkg=$(apt-cache show fonts-noto-cjk)
+          file=$(awk '$1 == "Filename:" {print $2; exit}' <<< "$pkg")
+          digest=$(awk '$1 == "SHA256:" {print $2; exit}' <<< "$pkg")
+          test -n "$file" && test -n "$digest"
+          output="$RUNNER_TEMP/reference-cjk.deb"
+          for base in https://archive.ubuntu.com/ubuntu https://azure.archive.ubuntu.com/ubuntu https://security.ubuntu.com/ubuntu; do
+            if curl --fail --location --max-time 65 --silent --show-error "$base/$file" -o "$output" &&
+               echo "$digest  $output" | sha256sum --check --status; then
+              sudo dpkg -i "$output"
+              fc-match -f '%{family}\n' 'sans-serif:lang=zh-cn'
+              exit 0
+            fi
+          done
+          exit 1
       - name: Exercise both built entry points
         working-directory: next/web
         env:

@@ -92,8 +92,11 @@ async function runTrajectory(name, round, journey) {
       return { all: requests.length, js: js.length, bytes: js.reduce((n, r) => n + r.outBytes, 0),
         totalBytes: requests.reduce((n, r) => n + r.outBytes, 0) };
     };
-    const row = { name, round, journey, stage, ms, delta: sum(segment.requests),
-      cumulative: sum(traffic(server, start).requests), scripts: segment.requests.filter(r => r.path.endsWith(".js")).map(r => ({ path: r.path, bytes: r.outBytes })) };
+    const whole = traffic(server, start);
+    const row = { name, round, journey, stage, ms,
+      delta: { ...sum(segment.requests), wireOut: segment.wireOut, wireIn: segment.wireIn },
+      cumulative: { ...sum(whole.requests), wireOut: whole.wireOut, wireIn: whole.wireIn },
+      scripts: segment.requests.filter(r => r.path.endsWith(".js")).map(r => ({ path: r.path, bytes: r.outBytes })) };
     samples.push(row);
   }
   const link = title => () => page.getByRole("link", { name: title, exact: true }).click();

@@ -70,7 +70,10 @@ try {
             record.guarded = await guard.isVisible();
             if (record.guarded) await guard.getByRole("button", { name: "放弃并离开" }).click();
           } else await page.goBack();
-          await expect(link).toBeVisible();
+          const returnPath = scene === "profile" ? author : scene === "archives" ? profile : "/settings";
+          await expect(page).toHaveURL(server.origin + returnPath);
+          await expect(page.locator("[data-page-heading]").first()).toBeVisible();
+          record.returnControlVisible = await link.isVisible();
           record.returnFocus = await link.evaluate(e => e === document.activeElement);
           records.push(record);
           console.log(JSON.stringify(record));
