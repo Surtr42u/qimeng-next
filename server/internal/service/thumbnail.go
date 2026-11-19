@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"qimeng.local/next/server/internal/mediafile"
 	"qimeng.local/next/server/internal/model"
 )
 
@@ -57,25 +58,51 @@ func (w *boundedOutput) Write(b []byte) (int, error) {
 func builtinImage(mime string) bool {
 	return mime == "image/jpeg" || mime == "image/png" || mime == "image/gif"
 }
-func mediaDemuxer(mime string) string {
+func (s *Service) inputDemuxer(ctx context.Context, input mediaInput, mime string) (string, error) {
+	var declared string
 	switch mime {
 	case "image/png":
-		return "png_pipe"
+		return "png_pipe", nil
 	case "image/jpeg":
-		return "mjpeg"
+		return "mjpeg", nil
 	case "image/gif":
-		return "gif"
+		return "gif", nil
 	case "image/webp":
-		return "webp_pipe"
-	case "image/avif", "video/mp4", "video/quicktime":
-		return "mov"
+		return "webp_pipe", nil
+	case "image/avif":
+		return "mov", nil
+	case "video/mp4", "video/quicktime":
+		declared = "mov"
 	case "video/webm", "video/x-matroska":
-		return "matroska"
+		declared = "matroska"
 	case "video/x-msvideo":
-		return "avi"
+		declared = "avi"
+	default:
+		return "", nil
 	}
-	return ""
+	reader, err := input.reader(s)
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+	var head [mediafile.ContainerHeaderBytes]byte
+	n, err := io.ReadFull(scanReader{ctx: ctx, source: reader}, head[:])
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return "", err
+	}
+	switch mediafile.DetectVideoContainer(head[:n]) {
+	case mediafile.VideoISOBaseMedia:
+		return "mov", nil
+	case mediafile.VideoMatroska:
+		return "matroska", nil
+	case mediafile.VideoAVI:
+		return "avi", nil
+	}
+	// Early QuickTime files can lack ftyp. In the absence of a confident
+	// signature, retain the declared demuxer and keep autodetection disabled.
+	return declared, nil
 }
+
 func toolPath(env, name string) string {
 	if configured := os.Getenv(env); configured != "" {
 		return configured
@@ -132,12 +159,15 @@ func (s *Service) probeMedia(ctx context.Context, input mediaInput, a *model.Ass
 	if ffprobe == "" {
 		return nil
 	}
-	demuxer := mediaDemuxer(a.MimeType)
+	deadline, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	demuxer, e := s.inputDemuxer(deadline, input, a.MimeType)
+	if e != nil {
+		return e
+	}
 	if demuxer == "" {
 		return Fail(415, "media_unsupported", "此格式没有受限媒体探测通道。")
 	}
-	deadline, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	result, e := s.probeStreams(deadline, ffprobe, demuxer, input)
 	if e != nil {
 		if ctx.Err() != nil {
