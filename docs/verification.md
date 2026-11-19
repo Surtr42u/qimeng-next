@@ -20,9 +20,15 @@ Kotlin SDK 在生成期间从已校验的官方模板渲染 Retrofit `@Streaming
 
 ### Ubuntu 验证作业的媒体工具
 
-`server`、`live`、`mcp-compat`、`android-ui` 和 `android-local-ui` 共用[宿主 FFmpeg 安装步骤](../.github/actions/ubuntu-ffmpeg/action.yml)。运行器可执行 FFmpeg 和 FFprobe 时直接继续。需要安装时，APT 刷新运行器的 Ubuntu 签名索引，在空归档目录解析 `ffmpeg` 和必需依赖。缓存键包含 Ubuntu 版本、原生架构和本次全部归档名与 SHA-256 的摘要。每个归档名由 APT 按包名、版本和架构生成。[APT 归档身份与既有文件判定](https://github.com/Debian/apt/blob/2.7.14/apt-pkg/acquire-item.cc#L3274-L3325)
+`server`、`live`、`mcp-compat`、`android-ui` 和 `android-local-ui` 共用同一宿主安装步骤。运行器可执行 FFmpeg 和 FFprobe 时直接继续。需要安装时，APT 刷新运行器的 Ubuntu 签名索引，在空归档目录解析 `ffmpeg` 和必需依赖。缓存键包含 Ubuntu 版本、原生架构和本次全部归档名与 SHA-256 的摘要。每个归档名由 APT 按包名、版本和架构生成。[宿主 FFmpeg 安装步骤](../.github/actions/ubuntu-ffmpeg/action.yml) · [APT 归档身份与既有文件判定](https://github.com/Debian/apt/blob/2.7.14/apt-pkg/acquire-item.cc#L3274-L3325)
 
 缓存只保存这次解析到的 `.deb`。每次安装都将候选归档复制到新的临时目录，对照本次签名索引逐件计算 SHA-256。缓存服务不可用、缺件或摘要有异时，由 APT 下载所需归档。全部文件名、摘要与本次计划完全匹配后，APT 离线安装。首次并发的作业可以各自取包，安装成功后按同一键保存，后续作业可复用先保存的副本。缓存命中仍需更新索引和执行系统安装。[实现](../.github/actions/ubuntu-ffmpeg/prepare.sh) · [GitHub 缓存作用域与匹配规则](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+
+一台初始冷机在刷新索引时耗尽 25 分钟，还未取得包清单。现有步骤略过翻译，给镜像列表的索引请求共 2 分钟。使用该列表的 Noble 云镜像超时或报错后，在临时源配置中改用 Ubuntu 官方主归档，再给索引更新 4 分钟。两个来源都须通过 APT 正常签名验证，更新失败即结束该步骤。直接使用 Ubuntu Ports 的镜像沿用其原生来源。[发生超时的作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44475941377/job/135396382259) · [运行器的 Ubuntu 镜像和架构配置](https://github.com/actions/runner-images/pull/14643)
+
+同机测量使用 Ubuntu 24.04 Noble amd64 镜像 `20261111.127.1` 和 APT 2.8.4。签名索引更新 13.111 秒，解析 0.314 秒。两次取包共用这份索引，逐次核对已安装包状态文件的 SHA-256，直到暖取包结束才安装。冷阶段从 Ubuntu 下载全部 87 个归档（62,839,078 字节）用时 212.021 秒。将同批包保存到这次实验的独立 Actions 缓存键，移开本地副本后，真实恢复用时 1.037 秒。从开始恢复到全部归档可供安装约 1.7 秒，含逐件与整批校验，其中 APT 取包命令 0.340 秒、从 Ubuntu 下载 0 字节。离线安装用时 20.281 秒。[同机原始记录](https://github.com/Surtr42u/qimeng-next/actions/runs/44477145975/job/135400332257) · [固定提交的测量步骤](https://github.com/Surtr42u/qimeng-next/blob/48e9545474d135fe8de29368a7571f4b27931694/.github/workflows/ci-media-proof.yml)
+
+FFmpeg 和 FFprobe `6.1.1-3ubuntu5` 生成并读回同一份 32×24、2 帧的 FFV1 AVI（6,760 字节）。与直接用 Ubuntu 安装所得样本的 SHA-256 均为 `cbb01cd97ff0a98e25a7cdc27ae81d9bb1b2d404393e26f277c0baeb410d67bb`。同机移开 FFprobe 后，APT 只选择 1 个 1,878,920 字节的包。加入一个计划外空文件时安装前即停止，移开后离线重装成功，再次运行安装步骤走已可用分支。[原生安装与样本](https://github.com/Surtr42u/qimeng-next/actions/runs/44475020153/job/135393352479) · [单包修复与完整性核验](https://github.com/Surtr42u/qimeng-next/actions/runs/44477145975/job/135400332257)
 
 <a id="engineering-gates"></a>
 ## 代码与架构检查

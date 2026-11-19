@@ -11,17 +11,30 @@ if [[ $1 == plan ]]; then
   # APT's unprivileged downloader must be able to traverse this directory.
   chmod 755 "$APT_WORK"
   mkdir "$APT_WORK/archives"
+  cp -- /etc/apt/sources.list.d/ubuntu.sources "$APT_WORK/ubuntu.sources"
 fi
 archives="$APT_WORK/archives"
 checksums="$APT_WORK/SHA256SUMS"
-ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
-apt=(sudo apt-get -o "Dir::Etc::sourcelist=$ubuntu_sources" -o Dir::Etc::sourceparts=-
-     -o "Dir::Cache::archives=$archives")
+ubuntu_sources="$APT_WORK/ubuntu.sources"
+apt_options=(-o "Dir::Etc::sourcelist=$ubuntu_sources" -o Dir::Etc::sourceparts=-
+             -o "Dir::Cache::archives=$archives")
+apt=(sudo apt-get "${apt_options[@]}")
 install=(--no-install-recommends --no-remove --reinstall install ffmpeg)
 
 if [[ $1 == plan ]]; then
   test -s "$ubuntu_sources"
-  time "${apt[@]}" --error-on=any -o APT::Get::List-Cleanup=false update
+  refresh_indexes() {
+    time sudo timeout --kill-after=5s "$1" apt-get "${apt_options[@]}" \
+      --error-on=any -o APT::Get::List-Cleanup=false -o Acquire::Languages=none update
+  }
+  if ! refresh_indexes 2m; then
+    # The Noble x64 image lists Ubuntu's main archive as its alternate mirror.
+    mirror_list=mirror+file:/etc/apt/apt-mirrors.txt
+    grep -Fq "$mirror_list" "$ubuntu_sources" || exit 1
+    echo 'Retrying signed Ubuntu indexes directly from archive.ubuntu.com.'
+    sed -i 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu|g' "$ubuntu_sources"
+    refresh_indexes 4m
+  fi
   # The archives directory must be empty here. APT omits archives it finds there by size.
   time "${apt[@]}" -qq --print-uris -o Acquire::ForceHash=SHA256 "${install[@]}" > "$APT_WORK/uris"
   while read -r uri name size hash; do
