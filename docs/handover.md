@@ -2,6 +2,21 @@
 
 ## 本轮交接
 
+本轮产品提交锁定为 `36e65374302434c583e055267c80dd4224d42819`，已合入 #22（合并提交 `1006c371`）和 #19（合并提交 `36e6537`）。审查报告的 13 项修复均已合入；分支单独验收通过不替代合并后主线验收。
+
+| 合入范围 | 分支验收证据 |
+|---|---|
+| #19：手机与 Web 图标统一，Android 缓存、统计、作者、视频、浏览与管理界面 | HEAD `20ab31b3`，22/22 作业通过。[PR #19](https://github.com/Surtr42u/qimeng-next/pull/19) · [分支作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44624824414) |
+| #22：Web 维护目录暂存与两代恢复、AI 故障接续与长文本续读 | HEAD `6c096976`，22/22 作业通过。[PR #22](https://github.com/Surtr42u/qimeng-next/pull/22) · [分支作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44607892844) |
+
+合并后 [主线作业 44631802694](https://github.com/Surtr42u/qimeng-next/actions/runs/44631802694) 于 2026-11-20 07:19（北京时间）完成，来源为上述完整 SHA，**22/22 作业通过**。首轮 21/22，Android UI 模拟器断连；同一提交仅重跑失败作业，第二轮提交了完整的 18 项主要 Android UI 用例，作业通过。Android 内嵌运行、Windows 和 Web 作业首轮已通过。
+
+已核对本轮 Windows 服务包、可选桌面壳及 Android 两种 APK 制品的来源提交，精确编号见[取包步骤](#2-从主线取包并核对安装目标)。这些是云端合成验收与构建证据，不代表已安装到所有者 Windows 或手机。目标安装与升级仍需授权、包名和签名核对、在途上传/下载/事件队列检查，以及已验证的归档和回退点。旧应用、现有库和原件保持不变；未获准的重启、覆盖、卸载、屏显及真实数据验证继续待办。
+
+### 历史快照：2026-11-20 03:43（北京时间）
+
+以下保留当时的合入状态和失败排查入口，所称待验收 PR 已由本轮汇总取代，不作为当前下载或部署指令。
+
 截至 2026-11-20 03:43（北京时间），最新产品合入提交为 `4689de396cd53a57fd5709958872af7d9f24afcd`。#18 在 `8b2c415` 修复同名目录导致的缺件误判和 Web 事件队列阻塞。#21 在 `a98bb43` 同步了 18 份发布、迁移、后台预热与设备交接文档。#23 在 `3599fcb` 让历史视频缩略图按已核验的容器文件头生成。#20 在 `4689de3` 合入上传锁与路由、归档校验、包时区及热度同分排序修复，保留文件身份与回执。[PR #18](https://github.com/Surtr42u/qimeng-next/pull/18) · [PR #21](https://github.com/Surtr42u/qimeng-next/pull/21) · [PR #23](https://github.com/Surtr42u/qimeng-next/pull/23) · [PR #20](https://github.com/Surtr42u/qimeng-next/pull/20)
 
 正式产品包跟随 `4689de3` 的主线作业。前一轮 `3599fcb` 的主线作业因新主线取代而取消。按最终选定产品 SHA 对齐 Windows 和 Android 制品。[主线发布与验收](https://github.com/Surtr42u/qimeng-next/actions/runs/44601253846)
@@ -39,26 +54,41 @@ Android 分项 QA 使用独立提交和指定 API 35 云模拟器。本次核对
 在检出的 Next 仓库中执行。`gh` 命令查询公开源码和 Actions 元数据；每步把所选完整 SHA、运行编号、作业结论与产物对应起来。
 
 ```powershell
-gh pr view 17 --json state,headRefOid,mergeCommit,url
-gh pr checks 17
+gh pr view 19 --json state,headRefOid,mergeCommit,url
+gh pr view 22 --json state,headRefOid,mergeCommit,url
 gh api repos/Surtr42u/qimeng-next/commits/main --jq .sha
 ```
 
-1. 本次 PR 应显示 `MERGED`，`mergeCommit.oid` 为上列产品提交。保存该提交。若此后 `main` 有更新，查看该版本与产品提交的差异及对应的主线作业。不用重新打开或合并 #17。
+1. #19、#22 应显示 `MERGED`，合并提交分别为 `36e6537`、`1006c371`。本轮固定使用完整产品 SHA `36e65374302434c583e055267c80dd4224d42819`。若此后 `main` 有更新，先比较差异和对应作业，不自动改用最新包，也不重新打开或合并历史 PR。
 2. 找出含产品改动的主线提交和成功的 `Cloud verification`。用下列命令列出实际作业，确认 Windows 服务包、所需 Windows 桌面壳、Android 纯客户端与内嵌版。核对 artifact 未过期、下载包的 SHA-256 和适用作业。只有 Markdown 的后续提交可能跳过产品流水线，此时明确记载实际打包的主线 SHA。具体启动方式见[快速开始](quickstart.md)、[桌面](../desktop/README.md)和[Android](../android/README.md)。
 
 ```powershell
-$buildSha = gh pr view 17 --json mergeCommit --jq .mergeCommit.oid
+$buildSha = '36e65374302434c583e055267c80dd4224d42819'
 gh run list --branch main --workflow prepare.yml --commit $buildSha --json databaseId,headSha,event,status,conclusion,url
-$runId = 44556256306
-gh run view $runId --json headSha,jobs,conclusion
-gh api "repos/Surtr42u/qimeng-next/actions/runs/$runId/artifacts" --paginate --jq '.artifacts[] | [.name,.expired,.digest] | @tsv'
+$runId = 44631802694
+$run = gh run view $runId --json headSha,status,jobs,conclusion | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $run.headSha -ne $buildSha -or $run.status -ne 'completed' -or $run.conclusion -ne 'success') {
+    throw '主线来源或最终验收未核实成功，停止取发布包'
+}
+$run.jobs | Select-Object name,status,conclusion
+gh api "repos/Surtr42u/qimeng-next/actions/runs/$runId/artifacts" --paginate --jq '.artifacts[] | [.id,.name,.expired,.digest] | @tsv'
 $deliveryDir = Read-Host '输入仓库以外的新下载目录'
 gh run download $runId -n qimeng-next-package-windows-amd64 -D (Join-Path $deliveryDir 'windows-server')
-gh run download $runId -n windows-first-check -D (Join-Path $deliveryDir 'windows-desktop')
+# 仅需要 Windows 桌面壳时下载：
+# gh run download $runId -n windows-first-check -D (Join-Path $deliveryDir 'windows-desktop')
 gh run download $runId -n android-embedded-check -D (Join-Path $deliveryDir 'android-offline')
-gh run download $runId -n android-first-check -D (Join-Path $deliveryDir 'android-client')
+# 仅连接已运行的 PC/NAS、不需手机内嵌服务时下载纯客户端：
+# gh run download $runId -n android-first-check -D (Join-Path $deliveryDir 'android-client')
 ```
+
+本轮已核对的制品均来自上述完整 SHA 和运行编号；下载时再次核对未过期、名称、编号及摘要，不混用历史运行的同名包。若制品已过期，重新核对同提交的合规重建结果，不用旧版或不同提交的包代替。
+
+| 用途 | 制品名称 | Artifact ID |
+|---|---|---|
+| Windows Go 服务与 Web | `qimeng-next-package-windows-amd64` | `14581827034` |
+| 可选 Windows 桌面壳 | `windows-first-check` | `14582553313` |
+| Android 内嵌 Go APK | `android-embedded-check` | `14582269281` |
+| 可选 Android 纯客户端 APK | `android-first-check` | `14582792089` |
 
 3. Windows 服务 ZIP 与桌面壳用途不同。手机单机选内嵌版，连接已运行的 PC/NAS 可选纯客户端。Next Android 包名为 `media.qimeng.next`；旧版为 `media.qimeng.app`。只在所有者明确指定的物理设备和允许的后台时段操作，私下核对包名、签名、目标与已有数据。锁屏时保持原状，不自动唤醒、解锁、触发前台展示或采集真实界面。保留旧应用和旧库，已有 Next 的升级保留其数据。安装证据与启动、实际后台回读分别登记；证据不足就把对应步骤留待授权。[Next 构建声明](../android/app/build.gradle.kts) · [旧版构建声明](https://github.com/Surtr42u/qimeng-media/blob/745974081716a9d69a95002a41220e35e743d764/android/app/build.gradle.kts)
 
