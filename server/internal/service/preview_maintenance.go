@@ -17,6 +17,9 @@ var managedPreviewFile = regexp.MustCompile(`^v[1234]-[1-9][0-9]*-(256|512|1024)
 
 const previewVersionColumns = `json_extract(a.data,'$.contentVersion'),
 	EXISTS(SELECT 1 FROM selected_image_merge_members WHERE physical_asset_id=a.id)`
+const previewCandidatesFrom = ` FROM assets a JOIN libraries l ON l.id=a.library_id
+	 WHERE a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
+	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
 
 func (s *Service) previewWorker() {
 	defer s.workers.Done()
@@ -69,9 +72,7 @@ type previewIdentity struct {
 }
 
 func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
-	query := "SELECT a.id," + previewVersionColumns + ` FROM assets a JOIN libraries l ON l.id=a.library_id
-	 WHERE a.id>? AND a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
-	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
+	query := "SELECT a.id," + previewVersionColumns + previewCandidatesFrom + " AND a.id>?"
 	if scope.library != "" {
 		query += " AND a.library_id=?"
 	}

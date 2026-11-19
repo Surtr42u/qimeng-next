@@ -218,6 +218,10 @@ func (s *Service) currentThumbnailSource(a model.Asset) error {
 	return nil
 }
 func (s *Service) ThumbnailSize(ctx context.Context, id string, version int64, size string) (*os.File, model.Asset, error) {
+	return s.ThumbnailWithPriority(ctx, id, version, size, false)
+}
+
+func (s *Service) ThumbnailWithPriority(ctx context.Context, id string, version int64, size string, background bool) (*os.File, model.Asset, error) {
 	edge := 512
 	switch size {
 	case "", "md":
@@ -228,7 +232,7 @@ func (s *Service) ThumbnailSize(ctx context.Context, id string, version int64, s
 	default:
 		return nil, model.Asset{}, Fail(400, "invalid_thumbnail_size", "缩略图尺寸必须是sm、md或lg。")
 	}
-	return s.thumbnailFor(ctx, id, version, edge, false)
+	return s.thumbnailFor(ctx, id, version, edge, background)
 }
 func (s *Service) thumbnailFor(ctx context.Context, id string, version int64, edge int, background bool) (*os.File, model.Asset, error) {
 	cached, a, key, _, err := s.thumbnailSource(ctx, id, version, edge, false)
