@@ -23,7 +23,11 @@ def is_link(info):
 
 
 def file_state(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    # Windows path stat and handle fstat do not agree on the deprecated ctime
+    # field. Birth time is comparable across both. Compare change times separately
+    # between two observations of an open handle.
+    stable_time = info.st_birthtime_ns if os.name == "nt" else info.st_ctime_ns
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, stable_time)
 
 
 if os.name == "nt":
@@ -108,9 +112,12 @@ class Directory:
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(self.entry(name), flags, dir_fd=self.fd)
         with os.fdopen(fd, "rb") as handle:
-            require(file_state(before) == file_state(os.fstat(fd)), "file: changed before opening")
-            yield handle, before
-            require(file_state(before) == file_state(os.fstat(fd)) == file_state(self.stat(name)),
+            opened = os.fstat(fd)
+            require(file_state(before) == file_state(opened), "file: changed before opening")
+            yield handle, opened
+            after = os.fstat(fd)
+            require(opened.st_ctime_ns == after.st_ctime_ns and
+                    file_state(before) == file_state(after) == file_state(self.stat(name)),
                     "file: changed during reading")
 
     def bytes(self, name):
@@ -193,15 +200,17 @@ class Inventory:
                         physical = info.st_dev, info.st_ino
                         require(physical not in self.physical, f"{where}: multiple IDs refer to one physical file")
                         self.physical.add(physical)
-                        self.stamps[ordinal] = stamp
                         with directory.read(entry.name) as (source, opened):
                             require(file_state(opened) == stamp, f"{where}: original changed before hashing")
+                            self.stamps[ordinal] = stamp, opened.st_ctime_ns
                             digest = hashlib.file_digest(source, "sha256").hexdigest()
                         record = {key: row[key] for key in (
                             "assetId", "recordKey", "libraryName", "relPath", "sizeBytes", "modifiedAtMillis")}
                         self.manifest[ordinal] = {**record, "sha256": digest}
                     else:
-                        require(self.stamps[ordinal] == stamp, f"{where}: original changed after hashing")
+                        with directory.read(entry.name) as (_, opened):
+                            require(self.stamps[ordinal] == (stamp, opened.st_ctime_ns),
+                                    f"{where}: original changed after hashing")
 
         for library, root in roots.items():
             visit(library, root, "")
