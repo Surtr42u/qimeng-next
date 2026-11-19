@@ -18,6 +18,31 @@ import (
 	"qimeng.local/next/server/internal/model"
 )
 
+const previewFileAllowance = 4096
+
+type previewSpaceError struct {
+	required int64
+	problem  error
+}
+
+func (e *previewSpaceError) Error() string { return e.problem.Error() }
+func (e *previewSpaceError) Unwrap() error { return e.problem }
+
+func (s *Service) checkPreviewSpace(payload int64) error {
+	s.previews.mu.Lock()
+	available := s.previews.available
+	s.previews.mu.Unlock()
+	free, err := available(s.Config.DataDir)
+	if err != nil {
+		return err
+	}
+	margin := free - s.Config.ReserveBytes
+	if margin < previewFileAllowance || margin-previewFileAllowance < payload {
+		return &previewSpaceError{required: payload, problem: Fail(507, "thumbnail_space", "剩余空间须留给原件，暂缓写入缩略图。")}
+	}
+	return nil
+}
+
 type boundedOutput struct {
 	bytes.Buffer
 	limit int
@@ -189,6 +214,9 @@ func (s *Service) openThumbnailCache(ctx context.Context, id string, version int
 		return nil, a, cache, selected, nil
 	}
 	f, e := s.Root.Open(cache)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil, a, cache, selected, nil
+	}
 	return f, a, cache, selected, e
 }
 func (s *Service) thumbnailSource(ctx context.Context, id string, version int64, edge int, snapshotNeeded bool) (*os.File, model.Asset, string, mediaInput, error) {
@@ -198,13 +226,25 @@ func (s *Service) thumbnailSource(ctx context.Context, id string, version int64,
 		s.mu.Unlock()
 		return cached, a, cache, mediaInput{}, err
 	}
+	minimum := int64(1)
+	if selected {
+		minimum = a.Size
+	}
+	if err = s.checkPreviewSpace(minimum); err != nil {
+		s.mu.Unlock()
+		return nil, a, cache, mediaInput{}, err
+	}
 	if selected {
 		s.mu.Unlock()
 		file, _, err := s.snapshotSelectedImage(ctx, a.ID, a.ContentVersion, false)
 		if err != nil {
+			var problem *Error
+			if errors.As(err, &problem) && problem.Status == 507 {
+				err = &previewSpaceError{required: minimum, problem: err}
+			}
 			return nil, a, cache, mediaInput{}, err
 		}
-		input := mediaInput{name: file.name, file: file.File, size: a.Size, cleanup: file.Close}
+		input := mediaInput{name: file.name, file: file.File, size: a.Size, temporaryBytes: a.Size, cleanup: file.Close}
 		return nil, a, cache, input, nil
 	}
 	snapshot := "libraries/" + a.LibraryID + "/.qimeng-internal/cache-sources/" + ID() + path.Ext(a.FileName)
@@ -282,12 +322,12 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 	if e = ctx.Err(); e != nil {
 		return e
 	}
-	free, e := freeBytes(s.Config.DataDir)
-	if e != nil {
+	if e = s.checkPreviewSpace(int64(len(data))); e != nil {
+		var space *previewSpaceError
+		if errors.As(e, &space) {
+			space.required += source.temporaryBytes
+		}
 		return e
-	}
-	if free-int64(len(data))-4096 < s.Config.ReserveBytes {
-		return Fail(507, "thumbnail_space", "剩余空间须留给原件，暂缓写入缩略图。")
 	}
 	if e = s.ensureParent(cache); e != nil {
 		return e

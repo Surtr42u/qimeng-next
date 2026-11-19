@@ -22,6 +22,7 @@ type previewWork struct {
 	scopes            map[previewScope]bool
 	full              bool
 	progress          chan struct{}
+	available         func(string) (int64, error)
 }
 
 func (p *previewWork) init() {
@@ -31,6 +32,7 @@ func (p *previewWork) init() {
 	p.scopes = make(map[previewScope]bool)
 	p.full = true
 	p.progress = make(chan struct{}, 1)
+	p.available = freeBytes
 }
 func (p *previewWork) signal() {
 	if p.space != nil {
