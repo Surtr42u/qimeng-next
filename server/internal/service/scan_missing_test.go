@@ -40,13 +40,21 @@ func existingScanOriginal(t *testing.T, s *Service, run *scanRun, root, relative
 	return a
 }
 
-func TestScanMissingChecksUnwalkedSubtreesAndDeletionAfterTraversal(t *testing.T) {
+func TestScanMissingChecksUnwalkedSubtreesAndReplacedOrDeletedFiles(t *testing.T) {
 	ctx := context.Background()
 	s, run, root := preparedScanFixture(t)
 	var rootAsset, nested model.Asset
 	for i := range 6 {
 		rootAsset = existingScanOriginal(t, s, run, root, fmt.Sprintf("root-%d.png", i))
 		nested = existingScanOriginal(t, s, run, root, fmt.Sprintf("移出/子目录/%d.png", i))
+	}
+	replaced := existingScanOriginal(t, s, run, root, "replaced.png")
+	replacedPath := filepath.Join(root, replaced.RelativePath)
+	if err := os.Remove(replacedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(replacedPath, 0700); err != nil {
+		t.Fatal(err)
 	}
 	// This directory is entirely absent from the full walk.
 	if err := os.Rename(filepath.Join(root, "移出"), filepath.Join(t.TempDir(), "detached")); err != nil {
@@ -63,7 +71,7 @@ func TestScanMissingChecksUnwalkedSubtreesAndDeletionAfterTraversal(t *testing.T
 		t.Fatal(err)
 	}
 	job, err := s.Scan(ctx, run.id)
-	if err != nil || job.Missing != 7 || job.IssueCount != 7 || len(job.Issues) != 7 {
+	if err != nil || job.Missing != 8 || job.IssueCount != 8 || len(job.Issues) != 8 {
 		t.Fatal("missing originals were lost or counted twice", job, err)
 	}
 	reported := map[string]bool{}
@@ -73,7 +81,7 @@ func TestScanMissingChecksUnwalkedSubtreesAndDeletionAfterTraversal(t *testing.T
 		}
 		reported[issue.RelativePath] = true
 	}
-	for _, expected := range []model.Asset{rootAsset, nested} {
+	for _, expected := range []model.Asset{rootAsset, nested, replaced} {
 		a, err := s.Asset(ctx, expected.ID)
 		if !reported[expected.RelativePath] || err != nil || a.Revision != 7 || a.ContentVersion != 3 || a.Trashed ||
 			a.Note != "manual note" || len(a.Tags) != 1 || a.Tags[0] != "manual tag" {
