@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:allowBackup="false" />
+    <instrumentation android:name="media.qimeng.next.test.MigrationAcceptance"
+        android:targetPackage="media.qimeng.next" android:targetProcesses="media.qimeng.next" />
+</manifest>
