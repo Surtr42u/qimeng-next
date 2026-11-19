@@ -81,7 +81,7 @@ func proseLink(rest string) string {
 scan:
 	for n, r := range rest {
 		switch {
-		case unicode.IsSpace(r) || strings.ContainsRune("<>\"'\u0060，。；！？、（）《》【】「」", r):
+		case unicode.IsSpace(r) || unicode.In(r, unicode.Pi, unicode.Pf) || strings.ContainsRune("<>\"'\u0060，。；！？、（）《》【】「」", r):
 			end = n
 			break scan
 		case strings.ContainsRune("([{", r):
