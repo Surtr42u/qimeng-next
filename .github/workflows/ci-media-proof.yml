@@ -124,7 +124,8 @@ jobs:
       - id: plan
         run: bash .github/actions/ubuntu-ffmpeg/prepare.sh plan
       - name: Confirm only the mirror URI changed in the copied sources
-        env: {APT_WORK: ${{ steps.plan.outputs.work }}}
+        env:
+          APT_WORK: ${{ steps.plan.outputs.work }}
         run: |
           sed 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources | diff -u - "$APT_WORK/ubuntu.sources"
       - id: cache
