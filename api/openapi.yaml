@@ -458,7 +458,8 @@ paths:
         - {$ref: '#/components/parameters/ViewRange'}
         - {$ref: '#/components/parameters/PlayRange'}
         - {$ref: '#/components/parameters/SizeRange'}
-        - {name: dateCounts, in: query, schema: {type: boolean, default: false}, description: 'Compute exact file-date buckets only on the first page; omitted on continuation pages'}
+        - {name: dateCounts, in: query, schema: {type: boolean, default: false}, description: 'Compute exact local date buckets only on the first page. Continuations omit them.'}
+        - {name: dateCountsBy, in: query, schema: {type: string, enum: [fileDate, favoritedAt], default: fileDate}, description: 'Timestamp used for date buckets. favoritedAt requires favorite=true and uses the known time of the current favorite.'}
         - {$ref: '#/components/parameters/TZOffsetMinutes'}
         - {$ref: '#/components/parameters/AssetSort'}
         - {$ref: '#/components/parameters/AssetOrder'}
@@ -1884,7 +1885,7 @@ components:
     DirectoryFilter: {name: directory, in: query, schema: {type: string}, description: 'Exact library-relative directory; empty string is the root and omission disables this filter. Requires libraryId.'}
     RecursiveFilter: {name: recursive, in: query, schema: {type: boolean, default: false}, description: 'When directory is present include descendants; default returns only direct files'}
     IncludeDisabled: {name: includeDisabled, in: query, schema: {type: boolean, default: false}, description: 'Explicit management browsing of disabled libraries; ordinary browse/search hides them while statistics and direct details remain available'}
-    TZOffsetMinutes: {name: tzOffsetMinutes, in: query, schema: {type: integer, minimum: -840, maximum: 840, default: 0}, description: 'Client local offset east of UTC in minutes: UTC+8=480 and UTC-5=-300. Applies to file-date buckets and calendar filters.'}
+    TZOffsetMinutes: {name: tzOffsetMinutes, in: query, schema: {type: integer, minimum: -840, maximum: 840, default: 0}, description: 'Client local offset east of UTC in minutes (UTC+8=480 and UTC-5=-300). Applies to date buckets and calendar filters.'}
     ViewRange: {name: viewRange, in: query, schema: {type: string, enum: [all, none, low, mid, high], default: all}, description: 'none=0; low=1–5 inclusive; mid=5–20 inclusive; high>20'}
     PlayRange: {name: playRange, in: query, schema: {type: string, enum: [all, none, low, mid, high], default: all}, description: 'none=0; low=1–5 inclusive; mid=5–20 inclusive; high>20'}
     SizeRange: {name: sizeRange, in: query, schema: {type: string, enum: [all, lt1m, m1to10, m10to50, gt50m], default: all}, description: 'MB buckets use 1048576 bytes. <1 and >50 are exclusive; 1–10 and 10–50 are inclusive.'}
@@ -3838,7 +3839,7 @@ components:
     AssetPage:
       type: object
       required: [items, totalMatched]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/Asset'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}, dateCounts: {type: array, items: {$ref: '#/components/schemas/DateCountBucket'}}, unknownDateCount: {type: integer, format: int64, minimum: 0, description: Exact count without a known file date; emitted alongside first-page dateCounts}}
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Asset'}}, nextCursor: {type: string}, totalMatched: {type: integer, format: int64}, dateCounts: {type: array, items: {$ref: '#/components/schemas/DateCountBucket'}}, unknownDateCount: {type: integer, format: int64, minimum: 0, description: 'Exact count without a known date for dateCountsBy, emitted alongside first-page dateCounts.'}}
     ThumbnailCandidate:
       type: object
       required: [assetId, contentVersion]

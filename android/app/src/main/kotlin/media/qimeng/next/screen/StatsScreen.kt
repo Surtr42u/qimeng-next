@@ -71,7 +71,7 @@ fun StatisticsScreen(model: LibraryViewModel) {
                     report?.interests?.isEmpty() == true -> CompactStatText("暂无数据")
                     report != null -> report.interests.forEach { entry ->
                         Row(Modifier.fillMaxWidth().clickable {
-                            if (entry.kind == "author") model.openAuthor(entry.id) else model.navigate("tag:${entry.name}")
+                            if (entry.kind == "author") model.openAuthor(entry.id) else model.openTagSearch(entry.name)
                         }, horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(entry.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(entry.views.toDisplayText() + " 次", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)

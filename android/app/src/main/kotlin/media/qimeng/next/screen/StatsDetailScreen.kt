@@ -73,7 +73,7 @@ fun StatsDetailScreen(model: LibraryViewModel, mode: String, range: String) {
                             tags.firstOrNull()?.let { add("最常看标签「${it.name}」，浏览 ${it.views} 次") }
                         }) }
                         item { InterestRankingCard("常看作者", "按浏览聚合 · Top 15", "作者", authors) { model.openAuthor(it.id) } }
-                        item { InterestRankingCard("常看标签", "按浏览聚合 · Top 10", "标签", tags) { model.navigate("tag:${it.name}") } }
+                        item { InterestRankingCard("常看标签", "按浏览聚合 · Top 10", "标签", tags) { model.openTagSearch(it.name) } }
                     }
                 }
             }

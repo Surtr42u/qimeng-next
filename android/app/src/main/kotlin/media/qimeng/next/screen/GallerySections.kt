@@ -9,7 +9,7 @@ import java.util.TimeZone
 
 internal data class GallerySection(val key: String, val header: String?, val items: List<Asset>)
 
-/** Arrange visible rows using Go's facet identities, original dates and full-result counts. */
+/** Arrange visible rows using Go's facet identities, dates and full-result counts. */
 internal fun gallerySections(items: List<Asset>, mode: String?, options: List<FacetChoice>, dates: List<DateCount>, unknown: Long?): List<GallerySection> {
     if (mode == null) return listOf(GallerySection("", null, items))
     if (mode == "works" || mode == "roles") {
@@ -21,7 +21,14 @@ internal fun gallerySections(items: List<Asset>, mode: String?, options: List<Fa
     val offset = ZoneOffset.ofTotalSeconds(TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000)
     val today = LocalDate.now(offset)
     val counts = dates.associate { it.date to it.count }
-    val groups = items.groupBy { asset -> (if (mode == "history") asset.lastViewedAt else asset.fileDate)?.let { Instant.parse(it).atOffset(offset).toLocalDate() } }
+    val groups = items.groupBy { asset ->
+        val timestamp = when (mode) {
+            "history" -> asset.lastViewedAt
+            "favorite" -> asset.favoritedAt
+            else -> asset.fileDate
+        }
+        timestamp?.let { Instant.parse(it).atOffset(offset).toLocalDate() }
+    }
     return groups.entries.sortedBy { it.key == null }.map { (day, assets) ->
         val label = if (day == null) "未知日期" else when (ChronoUnit.DAYS.between(day, today)) {
             0L -> "今天"

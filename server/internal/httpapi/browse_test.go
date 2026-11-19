@@ -146,6 +146,74 @@ func TestDateCountsUseRequestedLocalDayAndExcludeCursorFromWholeCounts(t *testin
 	}
 }
 
+func TestFavoriteDateCountsSeparateOccurrenceFromFileAndStateDates(t *testing.T) {
+	f := setup(t)
+	fileDate := time.Date(2002, 2, 3, 10, 0, 0, 0, time.UTC)
+	ids := make([]string, 5)
+	for i := range ids {
+		u, _ := f.upload("old-photo-"+strconv.Itoa(i)+".png", uint8(149+i), map[string]any{"sourceMtime": fileDate})
+		ids[i] = f.complete(u).Asset.ID
+	}
+	var fresh model.Asset
+	decode(t, f.json("PUT", "/assets/"+ids[0]+"/favorite", "favorite-old-photo-today", map[string]bool{"favorite": true}, 200), &fresh)
+	if fresh.FavoritedAt == nil || fresh.FileDate == nil || !fresh.FileDate.Equal(fileDate) {
+		t.Fatal("favoriting a photo changed its file date or missed the favorite occurrence")
+	}
+	for i, stamp := range []any{
+		"2025-01-01T16:00:00.000000000Z",
+		"2025-01-01T15:59:59.999999999Z",
+		"2025-01-01T12:00:00.000000000Z",
+		nil,
+	} {
+		// The last row represents an imported favorite with only a state change timestamp.
+		_, err := f.s.DB.DB.Exec("UPDATE asset_records SET favorite=1,favorited_at=?,favorite_updated_at=? WHERE id=?",
+			stamp, fresh.FavoritedAt.Format(time.RFC3339Nano), ids[i+1])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := "?favorite=true&sort=favorited&dateCounts=true&tzOffsetMinutes=480&limit=2"
+	page := assetsAt(t, f, query+"&dateCountsBy=favoritedAt")
+	today := fresh.FavoritedAt.In(time.FixedZone("", 8*60*60)).Format(time.DateOnly)
+	want := []model.DateCountBucket{{Date: today, FileCount: 1}, {Date: "2025-01-02", FileCount: 1}, {Date: "2025-01-01", FileCount: 2}}
+	if *page.TotalMatched != 5 || page.UnknownDateCount == nil || *page.UnknownDateCount != 1 ||
+		page.DateCounts == nil || len(*page.DateCounts) != len(want) {
+		t.Fatalf("first page did not count the whole favorite subset: %+v", page)
+	}
+	for i, bucket := range *page.DateCounts {
+		if bucket != want[i] {
+			t.Fatalf("favorite date bucket %d = %+v, want %+v", i, bucket, want[i])
+		}
+	}
+	var ordered []string
+	for {
+		for _, asset := range page.Items {
+			ordered = append(ordered, asset.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		page = assetsAt(t, f, query+"&cursor="+page.NextCursor)
+		if page.DateCounts != nil || page.UnknownDateCount != nil || len(page.Items) == 0 {
+			t.Fatal("continuation recalculated buckets or lost the favorite cursor")
+		}
+	}
+	if len(ordered) != len(ids) {
+		t.Fatalf("favorite pagination returned %d items, want %d", len(ordered), len(ids))
+	}
+	for i, id := range ordered {
+		if id != ids[i] {
+			t.Fatalf("favorite item %d = %s, want %s", i, id, ids[i])
+		}
+	}
+	files := assetsAt(t, f, query)
+	if files.DateCounts == nil || len(*files.DateCounts) != 1 ||
+		(*files.DateCounts)[0] != (model.DateCountBucket{Date: "2002-02-03", FileCount: 5}) {
+		t.Fatal("default file date counts changed for existing consumers")
+	}
+	f.json("GET", "/assets?dateCounts=true&dateCountsBy=favoritedAt", "", nil, 400)
+}
+
 func TestDirectoryFilesAreExactAndDisabledLibrariesStayBrowsableOnlyExplicitly(t *testing.T) {
 	f := setup(t)
 	u, _ := f.upload("root-file.png", 124, nil)

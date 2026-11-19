@@ -58,6 +58,7 @@ data class Asset(
     val lastViewedAt: String? = null,
     val cosWorkName: String? = null,
     val sourceName: String? = null,
+    val favoritedAt: String? = null,
 )
 data class AssetGroup(val key: String, val name: String)
 data class AssetQuery(

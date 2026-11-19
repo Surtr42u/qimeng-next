@@ -89,11 +89,12 @@ fun AppRoot(model: LibraryViewModel) {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
                 val detailRoute = route.startsWith("asset:")
+                val searchRoute = route == "search" || route.startsWith("tag:")
                 val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage", "thumbnail-cache", "source-rules") || route.startsWith("author:") ||
                     route.startsWith("profile:") || route.startsWith("profile-archive:") || route.startsWith("asset-edit:")
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
-                        if (!detailRoute && !ownTopBar && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "search", "favorites", "history")) PageHeader(routeTitle(route), model::back)
+                        if (!detailRoute && !ownTopBar && !searchRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "favorites", "history")) PageHeader(routeTitle(route), model::back)
                         if (!detailRoute && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
@@ -123,9 +124,8 @@ fun AppRoot(model: LibraryViewModel) {
                                 route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
                                 route == "source-rules" -> session?.let { ExtractionVocabularyScreen(it, transportRevision, model::back) }
                                 route.startsWith("collection:") -> MediaBrowser(model, route, collectionId = route.substringAfter(':'))
-                                route.startsWith("tag:") -> MediaBrowser(model, route, initialTag = route.substringAfter(':'))
                                 route.startsWith("ranking:") -> ActivityRankingScreen(model, route.split(':')[1], route.split(':')[2])
-                                route == "search" -> SearchScreen(model)
+                                searchRoute -> SearchScreen(model, initialTag = route.substringAfter(':', "").takeIf(String::isNotEmpty))
                                 route == "favorites" -> MediaBrowser(model, "favorites", favorite = true, albumTitle = "收藏")
                                 route == "authors" -> AuthorDirectoryScreen(model)
                                 route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
@@ -190,7 +190,6 @@ private fun routeTitle(route: String) = when {
     route.startsWith("review:") -> "浏览回顾"
     route.startsWith("vocabulary:") -> vocabularyTitle(route.substringAfter(':'))
     route.startsWith("collection:") -> "同组作品"
-    route.startsWith("tag:") -> "标签：${route.substringAfter(':')}"
     route.startsWith("ranking:") -> "浏览统计详情"
     else -> mapOf("search" to "搜索", "favorites" to "收藏", "authors" to "作者", "history" to "浏览历史", "upload" to "上传",
         "reports" to "任务中心", "appearance" to "外观", "server" to "服务器", "libraries" to "库管理", "data-manage" to "数据管理", "vocabulary-manage" to "词表维护", "trash" to "回收站", "recommendation" to "推荐偏好")[route] ?: "绮梦影库"

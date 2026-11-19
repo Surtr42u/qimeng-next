@@ -374,6 +374,7 @@ func (a *API) ListAssets(w http.ResponseWriter, r *http.Request, params generate
 		if e != nil {
 			return nil, e
 		}
+		f.DateCountsBy = r.URL.Query().Get("dateCountsBy")
 		return a.s.Assets(r.Context(), f)
 	})
 }
