@@ -22,6 +22,7 @@ class GalleryBehaviorTest {
 
     @Test(timeout = 180_000)
     fun longPressBatchAppliesEachRevisionAndRetriesOnlyTheConflict() = isolatedBrowse { graph, model ->
+        graph.settings.saveAlbumColumns(3)
         val catalog = openAlbum(model)
         val first = catalog.getValue("album-first.png")
         val second = catalog.getValue("album-second.png")
@@ -106,9 +107,9 @@ class GalleryBehaviorTest {
 
     @Test(timeout = 150_000)
     fun dateBucketsAndSharedGridSettingsSurvivePagingAndReopening() = isolatedBrowse { graph, model ->
+        graph.settings.saveAlbumColumns(2)
         openAlbum(model)
-        val previous = graph.settings.albumColumns.value
-        val toggled = if (previous == 5) 2 else previous + 1
+        val toggled = 3
         compose.onNodeWithContentDescription("切换列数").performClick()
         awaitColumns("albums", toggled)
 
@@ -133,14 +134,12 @@ class GalleryBehaviorTest {
         compose.onNodeWithText("2024-03-04  1 项").assertIsDisplayed()
         grid("favorites").performScrollToIndex(0)
         compose.onNodeWithText("今天  51 项").assertIsDisplayed()
-        val next = if (toggled == 5) 4 else toggled + 1
-        val start = if (next > toggled) 0.24f else 0.18f
-        val end = if (next > toggled) 0.18f else 0.24f
+        val next = 4
         grid("favorites").performTouchInput {
             val x = center.x
             val y = center.y
-            pinch(Offset(x - width * start, y), Offset(x - width * end, y),
-                Offset(x + width * start, y), Offset(x + width * end, y))
+            pinch(Offset(x - width * 0.24f, y), Offset(x - width * 0.18f, y),
+                Offset(x + width * 0.24f, y), Offset(x + width * 0.18f, y))
         }
         compose.waitUntil(15_000) { graph.settings.albumColumns.value == next }
         awaitColumns("favorites", next)

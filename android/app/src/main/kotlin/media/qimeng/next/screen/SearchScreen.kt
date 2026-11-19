@@ -49,7 +49,11 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
     val field = remember { FocusRequester() }
     LaunchedEffect(initialTag) { model.open(initialTag) }
     LaunchedEffect(phase) { if (phase != "result") library.cancelBrowse("search") }
-    DisposableEffect(library) { onDispose { library.cancelBrowse("search") } }
+    DisposableEffect(library) {
+        onDispose {
+            if (!library.route.value.startsWith("asset:")) library.cancelBrowse("search")
+        }
+    }
     val back = {
         focus.clearFocus()
         keyboard?.hide()
