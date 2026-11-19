@@ -194,6 +194,14 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         cancelBrowse("search")
         assetState("search").value = ListState()
     }
+    fun refreshAfterAlbumBatch(target: Session) {
+        if (!sameTarget(target, session.value)) return
+        lists.forEach { (key, state) ->
+            cancelBrowse(key)
+            state.value = state.value.copy(loaded = false)
+        }
+        browse("albums", force = true)
+    }
     fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]

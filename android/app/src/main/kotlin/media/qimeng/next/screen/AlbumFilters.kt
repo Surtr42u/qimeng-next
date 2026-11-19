@@ -21,11 +21,11 @@ private val dimensions = listOf("partitions" to "分区", "works" to "作品", "
 @Composable
 internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls, rows: Map<String, FacetRowState>,
                           onBack: (() -> Unit)?, fetch: (String, Boolean) -> Unit, authorKind: String? = null, loadFailed: Boolean = false,
-                          columns: Int = controls.columns.intValue, onToggleColumns: (() -> Unit)? = null) {
+                          columns: Int = controls.columns.intValue, onToggleColumns: (() -> Unit)? = null, showTitle: Boolean = true) {
     if (authorKind != null) Text("本地作品 · ${total?.let { "筛选结果 $it 个文件" } ?: if (loadFailed) "读取失败" else "正在读取"}",
         Modifier.padding(horizontal = 16.dp).testTag("author-result-count"),
         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    else QimengTitleRow(title, total?.let { "$it 文件" }.orEmpty(), onBack = onBack,
+    else if (showTitle) QimengTitleRow(title, total?.let { "$it 文件" }.orEmpty(), onBack = onBack,
         titleStyle = if (onBack == null) MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
             else MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
         onFilterClick = if (onBack == null) ({ controls.showFilters.value = true }) else null, filterActive = controls.panel != FilterPanelDraft(),

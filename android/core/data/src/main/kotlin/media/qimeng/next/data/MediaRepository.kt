@@ -243,8 +243,9 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun updateAcquisitionSources(asset: Asset, sources: List<String>): Asset {
         val target = asset.target
-        return provider.api(target).updateAsset(id = asset.id, assetUpdate = AssetUpdate(expectedRevision = asset.revision,
-            acquisitionSources = sources)).bodyOrThrow().toModel(target)
+        val input = AssetUpdate(expectedRevision = asset.revision, acquisitionSources = sources)
+        val key = UUID.nameUUIDFromBytes(com.google.gson.Gson().toJson(listOf("asset-acquisition", target.instanceId, asset.id, input)).toByteArray()).toString()
+        return provider.api(target).updateAsset(id = asset.id, idempotencyKey = key, assetUpdate = input).bodyOrThrow().toModel(target)
     }
 
     suspend fun tags(cursor: String? = null): Page<String> = provider.api(target()).listTags(cursor = cursor, limit = 50).bodyOrThrow().let { Page(it.items, it.nextCursor) }
