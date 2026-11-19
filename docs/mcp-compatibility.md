@@ -49,6 +49,8 @@ mcp_servers:
 
 ## 证据与边界
 
+云端 `mcp-compat` 的“智能整理工具目录实测”摘要记录两个入口。标准 `qai mcp` 的 `tools/list` 返回长期凭据默认发现的完整清单。生产 `qai worker` 的脚本化宿主则记录智能批次的首轮请求，以及展开 `authors` 后收到的下一轮请求。每行给出工具数量和全部输入 Schema 组成的数组的 UTF-8 紧凑 JSON 字节数。worker 两行另计实际发送的完整工具数组，包含名称、说明和参数。该用例检查未获准的图片工具、维护操作及其他未展开域，独立从 Go 回读所选作者与原件摘要。宿主省略用量，token 和费用保留空值。这两种入口各有自己的任务范围，字节数仅用于核对各自呈现的目录。[云端用例](../ai/tests/test_live_worker.py)
+
 ### 标准 CPU 上的真实模型任务
 
 `289d173` 的 Pi 宿主使用 Qwen3‑4B 实际完成下表四场。每场模型只发起一次业务工具调用，并收到两轮推理应答。耗时和 token 只对应这台云机、这两项任务及该模型。[作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44399206761/job/135137285836) · [逐轮测量和 HTTP 观测](https://github.com/Surtr42u/qimeng-next/actions/runs/44399206761/artifacts/14473398185)

@@ -15,10 +15,13 @@ import unittest
 from unittest.mock import patch
 import urllib.request
 
+from mcp import Client
+
 from live_fixture import CloudGoFixture
 from qimeng_ai.config import Config
 from qimeng_ai.errors import ToolError
 from qimeng_ai.runtime import Runtime
+from qimeng_ai.state import encode
 from qimeng_ai.worker import run_worker
 
 
@@ -59,8 +62,9 @@ class ChatHost(BaseHTTPRequestHandler):
                 args = {"plan": preview["plan"]}
             calls = [{"id": "call_" + str(len(self.server.requests)), "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args)}}]
-        reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}],
-                 "usage": {"prompt_tokens": 17, "completion_tokens": 6}}
+        reply = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}}]}
+        if behavior != "without_usage":
+            reply["usage"] = {"prompt_tokens": 17, "completion_tokens": 6}
         raw = json.dumps(reply).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -412,6 +416,7 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_naming_and_evidenced_author_selection_use_distinct_worker_inputs(self):
         batch = self.submit("worker-optional-author", research_calls=1)
+        self.host.behavior[batch] = "without_usage"
         path = "/batches/" + batch
         detail = self.request("GET", path)
         upload = detail["items"][0]["upload"]
@@ -448,6 +453,39 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(actual["plans"]), 1)
         asset = self.request("GET", "/assets/" + actual["inputs"][0]["assetId"])
         self.assertEqual((asset["authorIds"], asset["hash"]), ([author["id"]], upload["hash"]))
+        self.assertIsNone(outcome["modelUsage"]["promptTokens"])
+        self.assertIsNone(outcome["modelUsage"]["completionTokens"])
+
+        stdio = self.process(self.root, self.secret, self.env["QIMENG_AI_PERMISSIONS"],
+                             {"QIMENG_AI_TASK_ID": "interactive", "QIMENG_AI_ALLOW_MEDIA_TO_MODEL": "false"})
+        async with Client(stdio) as client:
+            listed = (await client.list_tools()).tools
+        names = {tool.name for tool in listed}
+        self.assertEqual(len(names), len(listed))
+        self.assertTrue({"task.start", "task.resume", "source.recycle", "platform.artifact.read", "research.image.search"} <= names)
+
+        def schema_sample(schemas):
+            return {"toolCount": len(schemas), "inputSchemaBytes": len(encode(schemas).encode("utf-8"))}
+        samples = {"stdioDefault": schema_sample([tool.input_schema for tool in listed])}
+        for label, index in (("workerFirst", 0), ("workerAuthors", 2)):
+            sent = self.host.requests[index]["tools"]
+            names = {tool["function"]["name"] for tool in sent}
+            self.assertEqual("author_query" in names, label == "workerAuthors")
+            self.assertTrue(names.isdisjoint({"task_start", "task_resume", "author_profile_update", "source_recycle",
+                                              "research_image_search", "platform_artifact_read", "collection_query"}))
+            samples[label] = {**schema_sample([tool["function"]["parameters"] for tool in sent]),
+                              "sentToolsBytes": len(encode(sent).encode("utf-8"))}
+        self.assertLess(samples["workerFirst"]["toolCount"], samples["workerAuthors"]["toolCount"])
+        self.assertLess(samples["workerFirst"]["inputSchemaBytes"], samples["workerAuthors"]["inputSchemaBytes"])
+        evidence = {"toolMenus": samples, "verifiedAssetAuthorAndHash": True,
+                    "promptTokens": None, "completionTokens": None, "cost": None}
+        print("Intake tool measurements " + encode(evidence), flush=True)
+        if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(summary, "a", encoding="utf-8") as report:
+                report.write("\n### 智能整理工具目录实测\n\n| 入口 | 工具数 | 输入 Schema 字节 | Worker 工具数组字节 |\n|---|---:|---:|---:|\n")
+                for label, sample in samples.items():
+                    report.write(f"| {label} | {sample['toolCount']} | {sample['inputSchemaBytes']} | {sample.get('sentToolsBytes', '')} |\n")
+                report.write("\n按 UTF-8 紧凑 JSON 计数。脚本宿主完成作者选择，独立回读的资产作者和摘要一致。模型用量与费用未提供。\n")
 
     async def test_original_name_preview_and_mixed_intent_require_a_separate_plan_choice(self):
         batch = self.submit("worker-original-intents", mixed=True)
