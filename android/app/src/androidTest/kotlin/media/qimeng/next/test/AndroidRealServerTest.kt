@@ -314,7 +314,7 @@ class AndroidRealServerTest {
         var control: android.graphics.Rect? = null
         compose.waitUntil(15_000) {
             compose.activityRule.scenario.onActivity { activity ->
-                control = activity.findVideoControl(description)?.takeIf { it.isEnabled }?.screenBounds()
+                control = activity.videoControlTouchBounds(description)
             }
             control?.isEmpty == false
         }

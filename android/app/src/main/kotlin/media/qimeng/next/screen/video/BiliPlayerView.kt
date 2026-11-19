@@ -296,7 +296,9 @@ internal class BiliPlayerView(context: Context) : FrameLayout(context) {
         bottomBar.addView(buttonRow)
         addView(bottomBar)
         ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
-            applyInsets(insets)
+            // The Compose parent can consume insets before they reach this AndroidView.
+            // The controls cover the window and must still clear the system navigation area.
+            applyInsets(ViewCompat.getRootWindowInsets(this) ?: insets)
             insets
         }
     }
@@ -325,6 +327,7 @@ internal class BiliPlayerView(context: Context) : FrameLayout(context) {
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         if (playerView.player != null) observePlayer()
+        ViewCompat.getRootWindowInsets(this)?.let(::applyInsets)
         ViewCompat.requestApplyInsets(this)
     }
 

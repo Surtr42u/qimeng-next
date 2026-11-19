@@ -252,7 +252,7 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
     }
 
     private fun controlBounds(description: String, enabled: Boolean = true): Rect? = onActivity { activity ->
-        activity.findVideoControl(description)?.takeIf { it.isEnabled == enabled }?.screenBounds()?.takeUnless(Rect::isEmpty)
+        activity.videoControlTouchBounds(description, enabled)
     }
 
     private fun tapSurface(twice: Boolean = false) {
@@ -388,6 +388,17 @@ internal fun Activity.findVideoControl(description: String): View? {
     val views = arrayListOf<View>()
     window.decorView.findViewsWithText(views, description, View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
     return views.singleOrNull { it.isShown && it.contentDescription == description }
+}
+
+internal fun Activity.videoControlTouchBounds(description: String, enabled: Boolean = true): Rect? {
+    if (!hasWindowFocus()) return null
+    val control = findVideoControl(description)?.takeIf { it.isEnabled == enabled } ?: return null
+    val insets = ViewCompat.getRootWindowInsets(window.decorView) ?: return null
+    val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+    val safe = window.decorView.screenBounds().apply {
+        set(left + bars.left, top + bars.top, right - bars.right, bottom - bars.bottom)
+    }
+    return control.screenBounds().takeIf { !it.isEmpty && safe.contains(it.centerX(), it.centerY()) }
 }
 
 internal fun View.screenBounds(): Rect {
