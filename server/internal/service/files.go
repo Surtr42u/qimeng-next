@@ -94,12 +94,14 @@ func (s *Service) hashFileContext(ctx context.Context, name string) (string, int
 		return "", 0, e
 	}
 	defer f.Close()
-	var input io.Reader = f
+	return hashReaderContext(ctx, f, nil)
+}
+func hashReaderContext(ctx context.Context, input io.Reader, buffer []byte) (string, int64, error) {
 	if ctx.Done() != nil {
-		input = scanReader{ctx: ctx, source: f}
+		input = scanReader{ctx: ctx, source: input}
 	}
 	h := sha256.New()
-	n, e := io.Copy(h, input)
+	n, e := io.CopyBuffer(h, input, buffer)
 	if e != nil {
 		return "", n, e
 	}

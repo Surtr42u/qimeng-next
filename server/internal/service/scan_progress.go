@@ -64,6 +64,7 @@ type scanRun struct {
 	preparedAt time.Time
 	manualFull bool
 	targets    scanTargets
+	hashBuffer []byte
 }
 
 func (s *Service) skipScannedEntry(ctx context.Context, run *scanRun) error {

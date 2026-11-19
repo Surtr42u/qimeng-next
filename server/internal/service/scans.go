@@ -405,21 +405,21 @@ func (s *Service) scanFile(ctx context.Context, run *scanRun, relative string, p
 			return e
 		}
 	}
-	hash, size, e := s.hashFileContext(ctx, full)
-	if e != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return s.scanProgress(ctx, jobID, relative, "read_failed", true)
+	file := scannedFile{relative: relative, full: full, kind: kind, initial: initial, probe: model.Asset{ID: "scan", MimeType: mime}}
+	var skipHash string
+	if unchanged {
+		skipHash = previous.Hash
 	}
-	if unchanged && hash == previous.Hash {
+	issue := s.inspectScanOriginal(ctx, run, &file, skipHash)
+	if e = ctx.Err(); e != nil {
+		return e
+	}
+	if issue != "" {
+		return s.scanProgress(ctx, jobID, relative, issue, true)
+	}
+	if file.hash == skipHash {
 		return s.skipScannedEntry(ctx, run)
 	}
-	probe := model.Asset{ID: "scan", MimeType: mime}
-	if e = s.probe(ctx, full, &probe); e != nil {
-		return s.scanProgress(ctx, jobID, relative, "invalid_media", true)
-	}
-	file := scannedFile{relative: relative, full: full, kind: kind, hash: hash, size: size, initial: initial, probe: probe}
 	if !batchable {
 		return s.commitScannedFile(ctx, run, file)
 	}

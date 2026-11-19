@@ -77,8 +77,12 @@ func (s *Service) probeMedia(ctx context.Context, input mediaInput, a *model.Ass
 			return e
 		}
 		defer f.Close()
-		cfg, _, e := image.DecodeConfig(f)
+		reader := scanReader{ctx: ctx, source: f}
+		cfg, _, e := image.DecodeConfig(reader)
 		if e != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return Fail(415, "invalid_image", "文件不是可解码的图片。")
 		}
 		a.Width, a.Height = cfg.Width, cfg.Height
@@ -86,9 +90,12 @@ func (s *Service) probeMedia(ctx context.Context, input mediaInput, a *model.Ass
 			if _, e = f.Seek(0, io.SeekStart); e != nil {
 				return e
 			}
-			if jpegOrientation(f) >= 5 {
+			if jpegOrientation(reader) >= 5 {
 				a.Width, a.Height = a.Height, a.Width
 			}
+		}
+		if e = ctx.Err(); e != nil {
+			return e
 		}
 		a.ProbeState = "ready"
 		a.ThumbnailURL = "/api/v1/assets/" + a.ID + "/thumbnail"
