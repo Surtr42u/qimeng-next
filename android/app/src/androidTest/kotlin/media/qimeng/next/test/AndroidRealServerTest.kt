@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -219,6 +220,7 @@ class AndroidRealServerTest {
         compose.runOnIdle { model.selectTab(3) }
         compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
         compose.onNodeWithText("数据管理").performClick()
+        awaitDataManagementDestination(model)
         compose.onNodeWithText("词表维护").performScrollTo().performClick()
         compose.onNodeWithText("原名提取词表").performClick()
         val list = compose.onNodeWithTag("extraction-vocabulary-list")
@@ -311,6 +313,7 @@ class AndroidRealServerTest {
         compose.runOnIdle { model.selectTab(3) }
         compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
         compose.onNodeWithText("数据管理").performClick()
+        awaitDataManagementDestination(model)
         compose.onNodeWithText("上传文件").performClick()
         val list = compose.onNodeWithTag("upload-list")
         compose.waitUntil(30_000) { model.libraries.value.any { it.id == library.id } }
@@ -452,6 +455,9 @@ class AndroidRealServerTest {
     }
 
     private fun clickVideoControl(description: String) {
+        // Finish the old detail chrome fade before injecting a native PlayerView tap.
+        // A visible native control can still be covered by the outgoing Compose author button.
+        compose.waitForIdle()
         var control: android.graphics.Rect? = null
         compose.waitUntil(15_000) {
             compose.activityRule.scenario.onActivity { activity ->
@@ -663,6 +669,7 @@ class AndroidRealServerTest {
         compose.runOnIdle { model.selectTab(3) }
         compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
         compose.onNodeWithText("数据管理").performClick()
+        awaitDataManagementDestination(model)
         compose.onNodeWithText("资料备份与归档").performScrollTo().performClick()
         val list = compose.onNodeWithTag("maintenance-backup-list")
         list.performScrollToNode(hasText("查看待处理记录"))
@@ -689,13 +696,39 @@ class AndroidRealServerTest {
         assertTrue(graph.queue.state.value!!.events.contains(foreign))
     }
 
+    private fun awaitDataManagementDestination(model: media.qimeng.next.LibraryViewModel) {
+        val destinations = listOf("上传文件", "词表维护", "资料备份与归档")
+        try {
+            compose.waitUntil(15_000) {
+                model.route.value == "data-manage" && destinations.all { label ->
+                    compose.onAllNodes(hasText(label) and hasClickAction()).fetchSemanticsNodes().size == 1
+                }
+            }
+        } catch (failure: ComposeTimeoutException) {
+            // Report only navigation semantics, not connection details or the transfer journal.
+            val route = model.route.value
+            val tab = model.tab.value
+            val counts = destinations.associateWith { label ->
+                compose.onAllNodes(hasText(label) and hasClickAction()).fetchSemanticsNodes().size
+            }
+            val profileNodes = compose.onAllNodesWithTag("profile-settings-list").fetchSemanticsNodes().size
+            val entry = compose.onAllNodes(hasText("数据管理") and hasClickAction()).fetchSemanticsNodes()
+                .map { "bounds=${it.boundsInRoot}" }
+            runCatching { saveScreenshot("failed-data-management-navigation.png") }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw AssertionError("Data-management click did not reach its destination: route=$route tab=$tab " +
+                "profileNodes=$profileNodes entry=$entry destinationNodeCounts=$counts", failure)
+        }
+    }
+
     private fun editVisibleField(tag: String, text: String) {
         val field = hasTestTag(tag)
         compose.waitUntil(30_000) { compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(field).assertIsDisplayed().performClick()
         compose.waitUntil(30_000) { compose.onAllNodes(field and isFocused()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(field).performTextReplacement(text)
-        compose.onNode(field).assertTextEquals(text)
+        // Labels are merged into Text; verify only the editable value, without weakening equality.
+        compose.onNode(field).assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(text)))
     }
 
     private suspend fun isolatedServerGraph(): DataGraph {

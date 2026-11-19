@@ -150,12 +150,19 @@ class AuthorPresentationTest {
         val batch = key()
         val uri = Uri.parse("content://media.qimeng.next.test.fixture/android-synthetic.png")
         val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val red = if (width == 320) 83 else 38
+        val batchPixels = batch.replace("-", "")
         val inputs = (1..assetCount).map { index ->
+            val green = 63 + index * 8
             val bitmap = Bitmap.createBitmap(96, 64, Bitmap.Config.ARGB_8888)
             try {
                 Canvas(bitmap).apply {
-                    drawColor(Color.rgb(if (width == 320) 83 else 38, 63 + index * 8, 184))
+                    drawColor(Color.rgb(red, green, 184))
                     drawCircle(46f, 32f, index + 10f, Paint().apply { color = Color.rgb(249, 180, 89) })
+                }
+                // The Go server identifies originals by bytes, not by the test's unique names.
+                batchPixels.forEachIndexed { x, hex ->
+                    bitmap.setPixel(x, 0, Color.rgb(red, green, 176 + hex.digitToInt(16)))
                 }
                 requireNotNull(resolver.openOutputStream(uri)).use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
             } finally { bitmap.recycle() }
@@ -254,14 +261,18 @@ class AuthorPresentationTest {
         val translation = hasText("查看中文译文")
         overview.performScrollToNode(translation)
         compose.onNode(translation).performClick()
+        overview.performScrollToNode(hasText(chinese))
         compose.onNodeWithText(chinese).assertIsDisplayed()
         screenshot("overview-x")
+        overview.performScrollToNode(hasText("收起中文译文"))
         compose.onNodeWithText("收起中文译文").performClick()
         overview.performScrollToNode(hasText("作者清单第 ${author.txtOrder} 位"))
         compose.onNodeWithText("入库记录 ", substring = true).assertIsDisplayed()
         val complete = hasText("查看完整说明")
         overview.performScrollToNode(complete)
+        compose.onNodeWithText(summary).assertDoesNotExist()
         compose.onNode(complete).performClick()
+        overview.performScrollToNode(hasText(summary))
         compose.onNodeWithText(summary).assertIsDisplayed()
         overview.performScrollToNode(hasText("合成发布账号", substring = true))
         overview.performScrollToNode(hasText("编辑作品订阅"))

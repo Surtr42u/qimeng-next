@@ -26,6 +26,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.MainActivity
 import media.qimeng.next.R
@@ -57,12 +58,18 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
         waitForControls(visible = false)
         tapSurface()
         waitForControls(visible = true)
-        tapSurface(twice = true)
-        val paused = awaitPlayback { !it.requestedPlay && it.position > 0L }
-        awaitServer {
+        val (checkpoint, paused) = observePause(first.player) { tapSurface(twice = true) }
+        var readback = "no server response yet"
+        awaitServer(diagnostics = {
+            val pending = graph.queue.state.value?.events.orEmpty().filter { it.assetId == landscape.id }
+                .map { "${it.kind}:${it.positionMs}:${it.issue?.code ?: it.issue?.kind?.name ?: "pending"}" }
+            "Pause checkpoint: expected=${checkpoint}ms/v${landscape.version}, playerAfterPause=${paused.position}ms, " +
+                "expected plays=1 and versioned history=true; last server: $readback; queued=$pending"
+        }) {
             val stored = graph.media.asset(landscape.id)
-            stored.positionMs == paused.position && stored.playCount == 1L &&
-                graph.media.history().items.any { it.assetId == landscape.id }
+            val seen = graph.media.history().items.any { it.assetId == landscape.id && it.contentVersion == landscape.version }
+            readback = "position=${stored.positionMs}ms/v${stored.positionVersion}, plays=${stored.playCount}, history=$seen"
+            stored.positionMs == checkpoint && stored.positionVersion == landscape.version && stored.playCount == 1L && seen
         }
         val eventsBefore = runBlocking { graph.media.statistics().events }
         val canvas = onActivity { first.view.screenBounds() }
@@ -237,8 +244,33 @@ internal class VideoParityRoundTrip(private val compose: VideoTestRule, private 
         compose.onNodeWithContentDescription("视频播放区域").performTouchInput { click(center) }
     }
 
-    private fun awaitServer(condition: suspend () -> Boolean) = runBlocking {
-        withTimeout(25_000L) { while (!condition()) delay(250L) }
+    private fun observePause(player: ExoPlayer, gesture: () -> Unit): Pair<Long, VideoSample> {
+        // PlaybackHistory journals the play-intent callback. A later decoder read can include
+        // the playback thread's final position after acknowledging pause.
+        var checkpoint: Long? = null
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+                    checkpoint = player.currentPosition
+                }
+            }
+        }
+        onActivity { player.addListener(listener) }
+        try {
+            gesture()
+            val paused = awaitPlayback { it.player === player && !it.requestedPlay && it.position > 0L }
+            val recorded = onActivity { requireNotNull(checkpoint) { "No user pause callback on the active decoder" } }
+            assertTrue("The pause checkpoint must be after playback started", recorded > 0L)
+            return recorded to paused
+        } finally {
+            onActivity { player.removeListener(listener) }
+        }
+    }
+
+    private fun awaitServer(diagnostics: () -> String = { "Expected Go state was not observed" },
+                            condition: suspend () -> Boolean) = runBlocking {
+        val observed = withTimeoutOrNull(25_000L) { while (!condition()) delay(250L); true }
+        if (observed != true) fail(diagnostics())
     }
 
     private fun back() = onActivity { it.onBackPressedDispatcher.onBackPressed() }

@@ -121,7 +121,14 @@ class StatisticsAndHomeTest {
 
         openStatisticsCard("分类型趋势 ›")
         awaitText("类型浏览趋势 · 全部")
-        compose.onNodeWithContentDescription("浏览趋势", substring = true).assertIsDisplayed()
+        val periods = requireNotNull(model.analytics.value.data).trends.size
+        val chartList = compose.onNode(hasScrollToIndexAction())
+        for (title in listOf("类型浏览趋势", "来源浏览趋势")) {
+            val chart = hasContentDescription("$title，共 $periods 个时段")
+            chartList.performScrollToNode(chart)
+            compose.onNode(chart).assertIsDisplayed()
+        }
+        chartList.performScrollToIndex(0)
         captureLightPage("stats-source-trends.png", "类型浏览趋势 · 全部")
         compose.onNodeWithContentDescription("返回").performClick()
 

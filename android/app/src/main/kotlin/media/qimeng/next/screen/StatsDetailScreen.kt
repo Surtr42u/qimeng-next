@@ -154,7 +154,8 @@ private fun DetailTrendCard(title: String, dimensions: List<StatDimension>, poin
         if (points.isEmpty()) Text("暂无趋势数据", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         else QimengTrendLineChart(active.map { dimension -> QimengTrendSeries(points.map { point ->
             (point.mediaTypes + point.sources).first { it.key == dimension.key }.views }, dimension.label) },
-            active.map { it.color }, points.map { it.label }, Modifier.fillMaxWidth().padding(top = 8.dp).height(240.dp))
+            active.map { it.color }, points.map { it.label }, Modifier.fillMaxWidth().padding(top = 8.dp).height(240.dp),
+            chartTitle = title)
     }
 }
 
