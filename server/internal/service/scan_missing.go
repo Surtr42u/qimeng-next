@@ -146,7 +146,7 @@ func (s *Service) scanOriginalMissing(full string) (bool, error) {
 	if syncPathLink(info) {
 		return false, fs.ErrPermission
 	}
-	return false, nil
+	return !info.Mode().IsRegular(), nil
 }
 
 func (s *Service) reconcileScanDirectory(ctx context.Context, jobID, libraryID, parent string, through int64) error {
