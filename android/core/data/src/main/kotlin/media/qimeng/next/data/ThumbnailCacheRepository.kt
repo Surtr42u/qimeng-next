@@ -380,6 +380,5 @@ private fun unmeteredNetwork(context: Context): Flow<Boolean> = callbackFlow {
         }
     }
     manager.registerDefaultNetworkCallback(callback)
-    update()
     awaitClose { manager.unregisterNetworkCallback(callback) }
 }
