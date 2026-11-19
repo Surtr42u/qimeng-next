@@ -9,7 +9,6 @@ import (
 	"os"
 	"testing"
 
-	"golang.org/x/image/draw"
 	"qimeng.local/next/server/internal/model"
 )
 
@@ -77,7 +76,7 @@ func TestSelectedImageReadPreviewUsesCheckedDecoderInput(t *testing.T) {
 	if err = os.WriteFile(name, syntheticPNG(t, 21), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.scaledStill(source, a.MimeType, 512, 92, draw.CatmullRom)
+	got, err := s.scaledStill(ctx, source, a.MimeType, 512, displayStill)
 	if err != nil || !bytes.Equal(want, got) {
 		t.Fatal("the builtin decoder lost its selected input", err)
 	}

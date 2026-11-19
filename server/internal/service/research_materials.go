@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"time"
 
-	"golang.org/x/image/draw"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/store"
 )
@@ -298,7 +297,7 @@ func (s *Service) researchFrame(ctx context.Context, source mediaInput, mime str
 		return nil, Fail(422, "research_image_limit", "画面超过研究预览解码预算，原件仍可正常保留。")
 	}
 	if builtinImage(mime) {
-		return s.scaledStill(source, mime, 640, 85, draw.ApproxBiLinear)
+		return s.scaledStill(ctx, source, mime, 640, researchStill)
 	}
 	ffmpeg := toolPath("QIMENG_FFMPEG", "ffmpeg")
 	if ffmpeg == "" {

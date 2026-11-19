@@ -6,6 +6,8 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/hashicorp/mdns v1.0.7
+	github.com/m8rge/go-scaled-jpeg v1.2.0
+	github.com/m8rge/go-scaled-png v1.0.0
 	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/oapi-codegen/runtime v1.9.0
 	github.com/shirou/gopsutil/v4 v4.26.10
