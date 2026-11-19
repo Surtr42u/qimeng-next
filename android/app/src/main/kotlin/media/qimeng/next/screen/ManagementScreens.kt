@@ -112,7 +112,7 @@ fun DataManageScreen(model: LibraryViewModel) {
             QimengSettingsRow(Icons.Outlined.Assignment, "任务中心", "普通上传与智能整理的逐项结果", { model.navigate("reports") })
         }
         QimengSettingsGroup("词表与关联") {
-            QimengSettingsRow(VocabularyBookIcon, "词表维护", "编辑出处、角色与标签", { model.navigate("vocabulary-manage") })
+            QimengSettingsRow(VocabularyBookIcon, "词表维护", "编辑原名提取词表、出处、角色与标签", { model.navigate("vocabulary-manage") })
         }
         QimengSettingsGroup("备份与存储") {
             QimengSettingsRow(BackupRestoreIcon, "资料备份与归档", "一个目录管理作者TXT、备份与上传归档", { model.navigate("maintenance") })
@@ -127,6 +127,7 @@ fun DataManageScreen(model: LibraryViewModel) {
 fun VocabularyManageScreen(model: LibraryViewModel) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         QimengSettingsGroup("词表与关联") {
+            QimengSettingsRow(VocabularyBookIcon, "原名提取词表", "维护提取用出处组、角色别名与停用词", { model.navigate("source-rules") })
             QimengSettingsRow(LabelTagIcon, "标签", "维护词表与媒体关联", { model.navigate("vocabulary:tags") })
             QimengSettingsRow(VocabularyBookIcon, "原作 / 出处", "维护名称与别名", { model.navigate("vocabulary:sources") })
             QimengSettingsRow(AuthorPeopleIcon, "角色", "维护角色及所属出处", { model.navigate("vocabulary:characters") })

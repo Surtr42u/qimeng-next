@@ -16,6 +16,7 @@ class DataGraph private constructor(context: Context) {
     val thumbnails by lazy { ThumbnailCacheRepository(context, settings, provider) }
     val analytics = AnalyticsRepository(settings, provider)
     val management = ManagementRepository(settings, provider)
+    val extractionVocabulary = ExtractionVocabularyRepository(provider)
     val aiAccess = AIAccessRepository(settings, provider)
     val authorProfiles = AuthorProfileRepository(context, settings, provider)
     val naming = NamingRepository(settings, provider)
