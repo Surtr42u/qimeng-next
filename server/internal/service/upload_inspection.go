@@ -14,6 +14,7 @@ type uploadInspection struct {
 	file     *os.File
 	info     os.FileInfo
 	stamp    string
+	object   string
 	hash     string
 	metadata model.Asset
 	probed   bool
@@ -54,15 +55,23 @@ func (s *Service) RunUploadCompletion(ctx context.Context, p model.Principal, id
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(s.workCtx, cancel)
 	defer func() { stop(); cancel() }()
+	release, err := s.acquireUploadVerification(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
+	return s.completeInspectedUpload(ctx, p, id, operation, key, input)
+}
+
+func (s *Service) acquireUploadVerification(ctx context.Context) (func(), error) {
 	select {
 	case s.uploadVerify <- struct{}{}:
-		defer func() { <-s.uploadVerify }()
+		return func() { <-s.uploadVerify }, nil
 	case <-ctx.Done():
-		return Result{}, ctx.Err()
+		return nil, ctx.Err()
 	case <-s.workCtx.Done():
-		return Result{}, s.workCtx.Err()
+		return nil, s.workCtx.Err()
 	}
-	return s.completeInspectedUpload(ctx, p, id, operation, key, input)
 }
 
 func (s *Service) completeInspectedUpload(ctx context.Context, p model.Principal, id, operation, key string, input []byte) (Result, error) {
@@ -100,15 +109,19 @@ func (s *Service) prepareUploadInspection(ctx context.Context, p model.Principal
 	if err != nil || batch.State == "cancelled" {
 		return nil, err
 	}
-	name := uploadPath(id)
-	if err = s.safe(name); err != nil {
+	return s.openUploadInspection(ctx, u, u.Mode == "ordinary")
+}
+
+func (s *Service) openUploadInspection(ctx context.Context, u model.Upload, publish bool) (*uploadInspection, error) {
+	name := uploadPath(u.ID)
+	if err := s.safe(name); err != nil {
 		return nil, err
 	}
 	file, err := s.Root.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	evidence, err := s.inspectOpenedUpload(ctx, file, u)
+	evidence, err := s.inspectOpenedUpload(ctx, file, u, publish)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -116,7 +129,7 @@ func (s *Service) prepareUploadInspection(ctx context.Context, p model.Principal
 	return evidence, nil
 }
 
-func (s *Service) inspectOpenedUpload(ctx context.Context, file *os.File, u model.Upload) (*uploadInspection, error) {
+func (s *Service) inspectOpenedUpload(ctx context.Context, file *os.File, u model.Upload, publish bool) (*uploadInspection, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -129,14 +142,32 @@ func (s *Service) inspectOpenedUpload(ctx context.Context, file *os.File, u mode
 		return nil, err
 	}
 	checked := &uploadInspection{file: file, info: info, stamp: stamp}
-	checked.hash, err = inspectUploadContent(ctx, file, u)
+	if u.Mode == "intelligent" && publish {
+		// The staged transfer already passed the container check. Read every
+		// byte again against the digest accepted by the plan.
+		object, err := fileObjectIdentity(file, info)
+		if err != nil {
+			return nil, err
+		}
+		checked.object = digest([]byte(object))
+		var size int64
+		checked.hash, size, err = hashReaderContext(ctx, file, nil)
+		if err != nil {
+			return nil, err
+		}
+		if checked.hash != u.Hash || size != u.Size {
+			return nil, Fail(409, "content_mismatch", "暂存文件内容发生变化，已保留供恢复核对。")
+		}
+	} else {
+		checked.hash, err = inspectUploadContent(ctx, file, u)
+	}
 	if err != nil {
 		return nil, err
 	}
 	// Native image readers only need a section reader. On Linux and Android
 	// ffprobe receives this very file descriptor. A platform without inherited
 	// descriptors uses its existing protected path probe during publication.
-	if u.Mode == "ordinary" && (inheritedMediaFD || builtinImage(u.MimeType)) {
+	if publish && (inheritedMediaFD || builtinImage(u.MimeType)) {
 		checked.metadata = model.Asset{ID: "inspection", MimeType: u.MimeType}
 		if _, err = file.Seek(0, io.SeekStart); err != nil {
 			return nil, err
@@ -153,6 +184,9 @@ func (s *Service) inspectOpenedUpload(ctx context.Context, file *os.File, u mode
 // live pathname, inode and native change clock have all been rechecked. This
 // also detects equal-size rewrites whose modification time was restored.
 func (s *Service) checkUploadInspection(ctx context.Context, u model.Upload, checked *uploadInspection) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	name := uploadPath(u.ID)
 	if err := s.safe(name); err != nil {
 		return err

@@ -33,6 +33,8 @@ type Root struct {
 	libraries map[string]library
 	detached  map[string]library
 	uploads   map[string]string
+
+	findUploadLibrary func(string) (string, error)
 }
 
 func Open(dataDir string, configured map[string]string) (*Root, error) {
@@ -136,6 +138,31 @@ func (r *Root) RegisterUpload(id, libraryID string) {
 	defer r.mu.Unlock()
 	r.uploads[id] = libraryID
 }
+func (r *Root) UnregisterUpload(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.uploads, id)
+}
+
+// SetUploadLibraryLookup resolves durable routes after startup. Temporary
+// routes can take precedence until their catalog row is committed.
+func (r *Root) SetUploadLibraryLookup(lookup func(string) (string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.findUploadLibrary = lookup
+}
+
+func (r *Root) uploadLibrary(id string) (string, error) {
+	r.mu.RLock()
+	libraryID, lookup := r.uploads[id], r.findUploadLibrary
+	r.mu.RUnlock()
+	if libraryID != "" || lookup == nil {
+		return libraryID, nil
+	}
+	// The lookup may wait for a catalog write which will also use this root.
+	return lookup(id)
+}
+
 func (r *Root) UnregisterLibrary(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -171,13 +198,28 @@ func (r *Root) resolve(name string) (location, string, error) {
 	if !cleanRelative(name) {
 		return location{}, "", fs.ErrInvalid
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	local := r.locations["data"]
 	parts := strings.Split(name, "/")
+	staging := len(parts) == 2 && (parts[0] == "uploads" || parts[0] == "retired")
+	var uploadLibrary string
+	if staging {
+		// Preserve pre-storage-layout temporary paths during an upgrade/recovery.
+		if _, e := local.root.Lstat(name); e == nil {
+			return local, name, nil
+		} else if !errors.Is(e, os.ErrNotExist) {
+			return location{}, "", e
+		}
+		var err error
+		uploadLibrary, err = r.uploadLibrary(strings.TrimSuffix(parts[1], ".part"))
+		if err != nil {
+			return location{}, "", err
+		}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	route := func(id string, rest []string) (location, string, error) {
 		lib, ok := r.libraries[id]
-		if !ok && len(parts) == 2 && (parts[0] == "uploads" || parts[0] == "retired") {
+		if !ok && staging {
 			lib, ok = r.detached[id]
 		}
 		if !ok {
@@ -212,17 +254,8 @@ func (r *Root) resolve(name string) (location, string, error) {
 	if len(parts) >= 2 && parts[0] == "library-trash" {
 		return route(parts[1], append([]string{".qimeng-internal", "trash"}, parts[2:]...))
 	}
-	if len(parts) == 2 && (parts[0] == "uploads" || parts[0] == "retired") {
-		// Preserve pre-storage-layout temporary paths during an upgrade/recovery.
-		if _, e := local.root.Lstat(name); e == nil {
-			return local, name, nil
-		} else if !errors.Is(e, os.ErrNotExist) {
-			return location{}, "", e
-		}
-		id := strings.TrimSuffix(parts[1], ".part")
-		if libraryID, ok := r.uploads[id]; ok {
-			return route(libraryID, []string{".qimeng-internal", parts[0], parts[1]})
-		}
+	if uploadLibrary != "" {
+		return route(uploadLibrary, []string{".qimeng-internal", parts[0], parts[1]})
 	}
 	return local, name, nil
 }

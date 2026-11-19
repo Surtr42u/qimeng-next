@@ -78,7 +78,7 @@ func (s *Service) retireForCopy(from, to, object, hash string, size int64) error
 	return s.syncPublicationMove(from, to)
 }
 
-func (s *Service) copyTargetReady(j *fileIntent) (bool, error) {
+func (s *Service) copyTargetReady(ctx context.Context, j *fileIntent) (bool, error) {
 	if j.CopyObject == "" {
 		return false, nil
 	}
@@ -101,7 +101,7 @@ func (s *Service) copyTargetReady(j *fileIntent) (bool, error) {
 			return false, Fail(409, "publication_target_changed", "目标文件对象已变化，原件与目标均保留。")
 		}
 	}
-	return true, s.verify(j.Target, j.After.Hash, j.After.Size)
+	return true, s.verifyContext(ctx, j.Target, j.After.Hash, j.After.Size)
 }
 
 // The application owns a private copy on filesystems where it cannot create
@@ -206,7 +206,7 @@ func (s *Service) stagePublicationCopy(ctx context.Context, j *fileIntent, sourc
 }
 
 func (s *Service) applyCopiedFile(ctx context.Context, j *fileIntent) error {
-	ready, err := s.copyTargetReady(j)
+	ready, err := s.copyTargetReady(ctx, j)
 	if err != nil {
 		return err
 	}
@@ -246,6 +246,9 @@ func (s *Service) applyCopiedFile(ctx context.Context, j *fileIntent) error {
 	if err = s.stagePublicationCopy(ctx, j, source, stage); err != nil {
 		return publicationError("stage_copy", err)
 	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 	if replaceTarget {
 		if err = s.retireForCopy(j.Target, j.Retired, j.OldObject, j.Before.Hash, j.Before.Size); err != nil {
 			return publicationError("retain_original", err)
@@ -260,7 +263,7 @@ func (s *Service) applyCopiedFile(ctx context.Context, j *fileIntent) error {
 	if err = s.syncPublicationMove(stage, j.Target); err != nil {
 		return publicationError("sync_directories", err)
 	}
-	ready, err = s.copyTargetReady(j)
+	ready, err = s.copyTargetReady(ctx, j)
 	if err != nil {
 		return err
 	}

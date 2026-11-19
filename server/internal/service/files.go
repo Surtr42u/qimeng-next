@@ -272,10 +272,14 @@ func (s *Service) prepareFile(ctx context.Context, w *Write, j fileIntent) (file
 		}
 	}
 	if j.Source != "" {
-		j.SourceObject, e = s.managedFileIdentity(j.Source)
-		if e != nil {
-			return j, e
+		object, err := s.managedFileIdentity(j.Source)
+		if err != nil {
+			return j, err
 		}
+		if j.SourceObject != "" && j.SourceObject != object {
+			return j, Fail(409, "original_object_changed", "已核验的暂存对象发生变化，原件已保留。")
+		}
+		j.SourceObject = object
 	}
 	if j.Kind == "replace" && j.Before != nil {
 		j.OldObject, e = s.managedFileIdentity(assetPath(*j.Before))

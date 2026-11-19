@@ -62,7 +62,10 @@ func (s *Service) finishPlanAttempt(ctx context.Context, p model.Principal, batc
 	op := "commitPlan:" + plan.ID
 	hash := digest([]byte(plan.Fingerprint))
 	return s.Run(ctx, p, op, "", nil, func(w *Write) (any, int, error) {
-		detail, e := s.BatchDetail(ctx, p, batch)
+		if e := authorizePlanCommit(w.Principal, batch); e != nil {
+			return nil, 0, e
+		}
+		detail, e := s.BatchDetail(ctx, w.Principal, batch)
 		if e != nil {
 			return nil, 0, e
 		}
