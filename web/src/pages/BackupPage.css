@@ -1,0 +1,91 @@
+#page-maintenance-files-backup > .maintenance-tabs {
+  /* The workspace already separates adjacent cards by 24px. */
+  margin: 0 0 -12px;
+  gap: 6px;
+}
+
+#page-maintenance-files-backup .backup-recovery {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  overflow-wrap: anywhere;
+}
+
+#page-maintenance-files-backup .backup-intro {
+  display: grid;
+  gap: 4px;
+}
+
+#page-maintenance-files-backup .backup-recovery :is(.rank-head, .settings-actions) {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+#page-maintenance-files-backup .backup-recovery .rank-note {
+  line-height: 1.5;
+}
+
+#page-maintenance-files-backup .backup-disclosure {
+  min-width: 0;
+  padding-inline: 12px;
+  border: 1px solid var(--qm-border);
+  border-radius: var(--qm-radius);
+  background: var(--qm-surface-soft);
+}
+
+#page-maintenance-files-backup .backup-disclosure > summary {
+  padding-block: 10px;
+  font-size: 13px;
+  color: var(--qm-text-soft);
+}
+
+#page-maintenance-files-backup .backup-disclosure[open] {
+  padding-bottom: 12px;
+}
+
+#page-maintenance-files-backup .backup-disclosure > .form-stack {
+  gap: 12px;
+  margin-top: 10px;
+}
+
+#page-maintenance-files-backup .backup-disclosure .form-stack > :is(.save-btn, .pill) {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+#page-maintenance-files-backup .backup-disclosure .form-stack > details > summary {
+  font-size: 13px;
+  color: var(--qm-text-soft);
+}
+
+#page-maintenance-files-backup .backup-archives {
+  margin: 0;
+  padding: 0;
+}
+
+#page-maintenance-files-backup .backup-archives > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+#page-maintenance-files-backup .backup-archive-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  max-width: 100%;
+}
+
+#page-maintenance-files-backup .backup-archive-file code {
+  color: var(--qm-text-muted);
+}
+
+#page-maintenance-files-backup .backup-recovery .manage-notice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  background: var(--qm-surface-soft);
+}

@@ -37,10 +37,21 @@ func (s *Service) previewWorker() {
 				scopes = []previewScope{{}}
 			}
 			for _, scope := range scopes {
-				if err := s.warmPreviews(s.workCtx, scope); err != nil && s.workCtx.Err() == nil {
-					s.previews.changed(scope.library, scope.asset)
-					slog.Warn("thumbnail reconciliation will retry")
+				err := s.warmPreviews(s.workCtx, scope)
+				if err == nil {
+					continue
 				}
+				if s.workCtx.Err() != nil {
+					return
+				}
+				var problem *Error
+				if errors.As(err, &problem) && problem.Status == 507 {
+					s.previews.changed("", "")
+					slog.Warn("thumbnail reconciliation paused at storage reserve")
+					break
+				}
+				s.previews.changed(scope.library, scope.asset)
+				slog.Warn("thumbnail reconciliation will retry")
 			}
 			if full {
 				if err := s.prunePreviewDirectories(s.workCtx); err != nil && s.workCtx.Err() == nil {
@@ -51,8 +62,12 @@ func (s *Service) previewWorker() {
 	}
 }
 
-// Select keyset pages of inexpensive cache identities. Reading and decoding
-// originals is deferred until a current medium preview is actually missing.
+type previewIdentity struct {
+	id       string
+	version  int64
+	selected bool
+}
+
 func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
 	query := "SELECT a.id," + previewVersionColumns + ` FROM assets a JOIN libraries l ON l.id=a.library_id
 	 WHERE a.id>? AND a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
@@ -77,57 +92,23 @@ func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
 		if err != nil {
 			return err
 		}
-		type identity struct {
-			id       string
-			version  int64
-			selected bool
-		}
-		page := make([]identity, 0, 256)
+		page := make([]previewIdentity, 0, 256)
 		for rows.Next() {
-			var item identity
+			var item previewIdentity
 			if err = rows.Scan(&item.id, &item.version, &item.selected); err != nil {
 				rows.Close()
 				return err
 			}
 			page = append(page, item)
+			last = item.id
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
 			return err
 		}
-		for _, a := range page {
-			if err = ctx.Err(); err != nil {
-				return err
-			}
-			last = a.id
-			cache := previewPath(a.id, a.version, 512, a.selected)
-			info, err := s.Root.Lstat(cache)
-			if err == nil && info.Mode().IsRegular() {
-				continue
-			}
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			file, _, err := s.thumbnailFor(ctx, a.id, a.version, 512, true)
-			if file != nil {
-				closeErr := file.Close()
-				if err == nil {
-					err = closeErr
-				}
-			}
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				// A changed, offline or unsupported original must not starve
-				// independent works. Reconcile it again on its next change.
-				var problem *Error
-				if errors.Is(err, os.ErrNotExist) || errors.As(err, &problem) && (problem.Status == 404 || problem.Status == 409 || problem.Status == 415 || problem.Status == 422 || problem.Status == 501) {
-					continue
-				}
-				return err
-			}
+		if err = s.warmPreviewPage(ctx, page); err != nil {
+			return err
 		}
 		if len(page) < 256 {
 			break
@@ -137,6 +118,55 @@ func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
 		return s.prunePreviewAsset(ctx, scope.asset)
 	}
 	return nil
+}
+
+func (s *Service) warmPreviewPage(ctx context.Context, page []previewIdentity) error {
+	// Give the default gallery size priority across the page. Once an original
+	// is unavailable, skip its other sizes until the next reconciliation.
+	for _, edge := range [...]int{512, 256, 1024} {
+		available := page[:0]
+		for _, asset := range page {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			err := s.warmPreviewSize(ctx, asset, edge)
+			if err == nil {
+				available = append(available, asset)
+				continue
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
+			var problem *Error
+			if errors.As(err, &problem) {
+				switch problem.Status {
+				case 404, 409, 415, 422, 501:
+					continue
+				}
+			}
+			return err
+		}
+		page = available
+	}
+	return nil
+}
+
+func (s *Service) warmPreviewSize(ctx context.Context, asset previewIdentity, edge int) error {
+	info, err := s.Root.Lstat(previewPath(asset.id, asset.version, edge, asset.selected))
+	if err == nil && info.Mode().IsRegular() {
+		return nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	file, _, err := s.thumbnailFor(ctx, asset.id, asset.version, edge, true)
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func (s *Service) prunePreviewDirectories(ctx context.Context) error {

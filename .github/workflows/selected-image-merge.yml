@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths: &merge_paths
       - '.github/workflows/selected-image-merge.yml'
+      - 'deploy/third-party/preview-decoders/**'
+      - 'tools/preview_notices.py'
       - 'tools/selected-merge/**'
       - 'server/cmd/qimeng-merge-selected/**'
       - 'server/internal/assetmerge/**'
@@ -67,8 +69,9 @@ jobs:
         shell: bash
         run: |
           cp next/docs/selected-image-merge.md product/README.md
+          python next/tools/preview_notices.py product
           cd product
-          sha256sum "qimeng-merge-selected$SUFFIX" "qimeng-backup$SUFFIX" README.md cloud-receipt.json > SHA256SUMS
+          sha256sum "qimeng-merge-selected$SUFFIX" "qimeng-backup$SUFFIX" README.md cloud-receipt.json third-party/preview-decoders/* > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: qimeng-selected-image-merge-${{ matrix.platform }}

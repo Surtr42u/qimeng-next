@@ -1,0 +1,47 @@
+go-scaled-jpeg: huffman.go, idct_orig.go, reader.go
+go-scaled-png: reader.go
+// Copyright 2009 The Go Authors. All rights reserved.
+
+go-scaled-jpeg: scan.go
+go-scaled-png: paeth.go
+// Copyright 2012 The Go Authors. All rights reserved.
+
+go-scaled-jpeg: internal/imageutil/imageutil.go
+// Copyright 2015 The Go Authors. All rights reserved.
+
+go-scaled-jpeg: idct.go
+ * Copyright (C) 1991-1998, Thomas G. Lane.
+ * Modification developed 2002-2018 by Guido Vollbeding.
+ * This file is part of the Independent JPEG Group's software.
+ * For conditions of distribution and use, see the accompanying README file.
+
+go-scaled-jpeg: idct_orig.go
+/* Copyright (C) 1996, MPEG Software Simulation Group. All Rights Reserved. */
+
+/*
+ * Disclaimer of Warranty
+ *
+ * These software programs are available to the user without any license fee or
+ * royalty on an "as is" basis.  The MPEG Software Simulation Group disclaims
+ * any and all warranties, whether express, implied, or statuary, including any
+ * implied warranties or merchantability or of fitness for a particular
+ * purpose.  In no event shall the copyright-holder be liable for any
+ * incidental, punitive, or consequential damages of any kind whatsoever
+ * arising from the use of these programs.
+ *
+ * This disclaimer of warranty extends to the user of these programs and user's
+ * customers, employees, agents, transferees, successors, and assigns.
+ *
+ * The MPEG Software Simulation Group does not represent or warrant that the
+ * programs furnished hereunder are free of infringement of any third-party
+ * patents.
+ *
+ * Commercial implementations of MPEG-1 and MPEG-2 video, including shareware,
+ * are subject to royalty fees to patent holders.  Many of these patents are
+ * general enough such that they are unavoidable regardless of implementation
+ * design.
+ *
+ */
+
+go-scaled-png: filters.go
+// Copyright (c) 2012 Grigory Dryapak

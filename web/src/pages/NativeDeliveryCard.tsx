@@ -94,7 +94,13 @@ function TimelineChoices({ add }: { add: (item: Chosen) => void }) {
 export function NativeDeliveryCard() {
   const [open, setOpen] = useState(false);
   const [, instance, session] = useRemoteKey();
-  return <details onToggle={e => { if (e.currentTarget.open) setOpen(true); }}><summary>发送资料到另一台设备</summary>{open && <DeliveryForm key={instance + "/" + session} />}</details>;
+  return <details className="backup-disclosure" onToggle={e => { if (e.currentTarget.open) setOpen(true); }}>
+    <summary>发送资料到另一台设备</summary>
+    {open && <>
+      <p className="rank-note">向已有影库发送部分资料时，可在下方选择接收设备和具体条目。</p>
+      <DeliveryForm key={instance + "/" + session} />
+    </>}
+  </details>;
 }
 
 function DeliveryForm() {

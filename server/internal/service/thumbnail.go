@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"time"
 
-	"golang.org/x/image/draw"
 	"qimeng.local/next/server/internal/model"
 )
 
@@ -257,7 +256,7 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 	defer source.release(s)
 	var data []byte
 	if builtinImage(a.MimeType) {
-		data, e = s.scaledStill(source, a.MimeType, edge, 92, draw.CatmullRom)
+		data, e = s.scaledStill(ctx, source, a.MimeType, image.Pt(a.Width, a.Height), edge, displayStill)
 	} else {
 		data, e = s.externalPreview(ctx, source, a, edge)
 	}

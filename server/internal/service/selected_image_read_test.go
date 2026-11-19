@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"image"
 	"io"
 	"math"
 	"os"
 	"testing"
 
-	"golang.org/x/image/draw"
 	"qimeng.local/next/server/internal/model"
 )
 
@@ -77,7 +77,7 @@ func TestSelectedImageReadPreviewUsesCheckedDecoderInput(t *testing.T) {
 	if err = os.WriteFile(name, syntheticPNG(t, 21), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.scaledStill(source, a.MimeType, 512, 92, draw.CatmullRom)
+	got, err := s.scaledStill(ctx, source, a.MimeType, image.Pt(a.Width, a.Height), 512, displayStill)
 	if err != nil || !bytes.Equal(want, got) {
 		t.Fatal("the builtin decoder lost its selected input", err)
 	}
@@ -99,8 +99,13 @@ func TestSelectedImageReadPreviewUsesCheckedDecoderInput(t *testing.T) {
 	if err = s.warmPreviews(ctx, previewScope{asset: a.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Root.Stat(previewPath(a.ID, a.ContentVersion, 512, false)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("obsolete preview survived selected cache maintenance", err)
+	for _, edge := range []int{512, 256, 1024} {
+		if _, err = s.Root.Stat(previewPath(a.ID, a.ContentVersion, edge, false)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("obsolete size %d survived selected cache maintenance: %v", edge, err)
+		}
+		if info, err := s.Root.Stat(previewPath(a.ID, a.ContentVersion, edge, true)); err != nil || info.Size() == 0 {
+			t.Fatalf("checked selected original was missing size %d: %v", edge, err)
+		}
 	}
 	ready, _, err := s.Thumbnail(ctx, a.ID, a.ContentVersion)
 	if err != nil {

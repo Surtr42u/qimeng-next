@@ -6,6 +6,8 @@ on:
     paths: &archive_paths
       - '.github/workflows/legacy-cold.yml'
       - 'docs/legacy-cold.md'
+      - 'deploy/third-party/preview-decoders/**'
+      - 'tools/preview_notices.py'
       - 'tools/legacy-cold/**'
       - 'server/cmd/qimeng-legacy-convert/**'
       - 'server/cmd/qimeng-backup/**'
@@ -108,8 +110,9 @@ jobs:
         env: {SUFFIX: '${{ matrix.ext }}'}
         run: |
           cp next/docs/legacy-cold.md package/README.md
+          python next/tools/preview_notices.py package
           cd package
-          sha256sum "qimeng-legacy-convert$SUFFIX" "qimeng-backup$SUFFIX" > SHA256SUMS
+          sha256sum "qimeng-legacy-convert$SUFFIX" "qimeng-backup$SUFFIX" third-party/preview-decoders/* > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: qimeng-legacy-cold-${{ matrix.platform }}

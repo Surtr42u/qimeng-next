@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 
+import preview_notices
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCK_PATH = ROOT / "tools/android-native.lock.json"
@@ -185,8 +186,10 @@ def main() -> None:
         shutil.copy2(archive, dest / archive.name)
     sqlite = json.loads(output(["go", "list", "-m", "-json", "github.com/mattn/go-sqlite3"], cwd=ROOT / "server"))
     shutil.copy2(Path(sqlite["Dir"]) / "LICENSE", dest / "go-sqlite3-LICENSE.txt")
+    preview_notices.copy_to(dest)
     manifest = {"repositoryCommit": os.environ["GITHUB_SHA"], "abi": abi, "sourceLock": LOCK,
                 "sqlite": {"module": sqlite["Path"], "version": sqlite["Version"], "sum": sqlite["Sum"]},
+                "previewDecoderNotices": preview_notices.verify(dest),
                 "go": output(["go", "version"], cwd=ROOT), "files": records}
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 

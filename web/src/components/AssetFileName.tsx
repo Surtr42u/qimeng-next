@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import "./AssetFileName.css";
 
 // Pure display and clipboard behavior from the existing detail/AssetFileName.
 export function AssetFileName({ fileName }: { fileName: string }) {
@@ -17,7 +18,7 @@ export function AssetFileName({ fileName }: { fileName: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6, fontSize: 13, color: "var(--qm-text-muted)" }}>
       <span style={{ overflowWrap: "anywhere", wordBreak: "break-all" }}>{fileName}</span>
-      <button type="button" className="pill" onClick={copy} title="复制完整文件名">
+      <button type="button" className="pill asset-file-copy" onClick={copy} title="复制完整文件名">
         {copied ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}{copied ? "已复制" : "复制文件名"}
       </button>
       {error && <span role="alert">{error}</span>}
