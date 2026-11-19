@@ -49,7 +49,7 @@ for (const width of [1440, 390]) {
       await copy.evaluate(node => node.classList.add("asset-file-copy"));
       const after = await capture(`detail-outside-copy-${width}-candidate.png`);
       const current = await boxes();
-      await mask.evaluate(node => node.remove());
+      await mask.evaluate(node => { node.parentNode!.removeChild(node); });
       expect(current).toEqual(original);
       expect(after.equals(before), "pixels outside the copy button").toBe(true);
     }
