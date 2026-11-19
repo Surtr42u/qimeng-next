@@ -4,8 +4,14 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import media.qimeng.next.data.DataGraph
+import media.qimeng.next.model.Asset
 import media.qimeng.next.model.Session
+import media.qimeng.next.model.TransferState
+import media.qimeng.next.model.UploadMode
+import media.qimeng.next.model.UploadOptions
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -28,6 +34,23 @@ internal fun writeMetadataImage(suffix: String): Pair<Uri, ByteArray> {
     image.recycle()
     requireNotNull(resolver.openOutputStream(uri, "wt")).use { it.write(bytes) }
     return uri to bytes
+}
+
+internal suspend fun seedMetadataAsset(graph: DataGraph, target: Session, library: String, name: String, authorIds: List<String> = emptyList()): Asset {
+    val key = UUID.randomUUID().toString()
+    val (uri, _) = writeMetadataImage(name)
+    val id = graph.uploads.receive(listOf(uri), intakeGroup = key).single()
+    graph.uploads.renameDraft(id, name)
+    graph.uploads.enqueue(library, "", UploadMode.ORDINARY, UploadOptions(authorIds = authorIds), target, listOf(id), batchKey = key)
+    return withTimeout(60_000) {
+        var transfer = graph.queue.state.value!!.transfers.single { it.id == id }
+        while (transfer.state != TransferState.SUCCEEDED) {
+            check(transfer.state !in setOf(TransferState.FAILED, TransferState.REJECTED, TransferState.CANCELLED)) { transfer.message }
+            delay(200)
+            transfer = graph.queue.state.value!!.transfers.single { it.id == id }
+        }
+        graph.media.asset(requireNotNull(transfer.assetId), target)
+    }
 }
 
 internal fun setSyntheticAcquisitionOptions(graph: DataGraph, target: Session, first: String, second: String) {

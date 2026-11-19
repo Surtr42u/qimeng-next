@@ -19,13 +19,14 @@ import kotlinx.coroutines.withTimeout
 import media.qimeng.next.MainActivity
 import media.qimeng.next.data.DataGraph
 import media.qimeng.next.model.AssetQuery
+import media.qimeng.next.model.EventDeliveryKind
+import media.qimeng.next.model.PendingEvent
 import media.qimeng.next.model.TabBarMaterial
 import media.qimeng.next.model.TransferState
 import media.qimeng.next.model.UploadMode
 import media.qimeng.next.model.OriginalInput
 import media.qimeng.next.model.Transfer
 import media.qimeng.next.model.TransferBatch
-import media.qimeng.next.model.UploadOptions
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -301,17 +302,11 @@ class AndroidRealServerTest {
         val alias = "检索别名$suffix"
         val author = runBlocking { graph.media.createNamedAuthor(target, listOf("合成作者$suffix", alias), UUID.randomUUID().toString()) }
         setSyntheticAcquisitionOptions(graph, target, authorChannel, assetChannel)
-        val seedKey = UUID.randomUUID().toString()
-        val (source, _) = writeMetadataImage("seed-$suffix")
-        val seed = runBlocking {
+        runBlocking {
             graph.queue.state.value!!.drafts.filter { it.intakeGroup == null }.forEach { graph.uploads.discardDraft(it.id) }
-            val id = graph.uploads.receive(listOf(source), intakeGroup = seedKey).single()
-            graph.uploads.renameDraft(id, "$family 01.png")
-            graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, target = target, inputIds = listOf(id), batchKey = seedKey)
-            id
+            seedMetadataAsset(graph, target, library.id, "$family 01.png")
         }
-        await("ordinary-name-seed", graph) { graph.queue.state.value!!.transfers.single { it.id == seed }.state == TransferState.SUCCEEDED }
-        val (_, originalBytes) = writeMetadataImage("new-$suffix")
+        val (source, originalBytes) = writeMetadataImage("new-$suffix")
         val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
         compose.runOnIdle { model.selectTab(3) }
         compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
@@ -572,21 +567,10 @@ class AndroidRealServerTest {
         val library = runBlocking { graph.media.createLibrary("独立媒体编辑 $suffix", false) }
         val first = runBlocking { graph.media.createNamedAuthor(target, listOf("编辑作者甲$suffix"), UUID.randomUUID().toString()) }
         val second = runBlocking { graph.media.createNamedAuthor(target, listOf("编辑作者乙$suffix"), UUID.randomUUID().toString()) }
-        fun seed(name: String, authors: List<String>): media.qimeng.next.model.Asset {
-            val key = UUID.randomUUID().toString()
-            val (uri, _) = writeMetadataImage(name)
-            val id = runBlocking {
-                val input = graph.uploads.receive(listOf(uri), intakeGroup = key).single()
-                graph.uploads.renameDraft(input, name)
-                graph.uploads.enqueue(library.id, "", UploadMode.ORDINARY, UploadOptions(authorIds = authors), target, listOf(input), batchKey = key)
-                input
-            }
-            await("edit-seed", graph) { graph.queue.state.value!!.transfers.any { it.id == id && it.state == TransferState.SUCCEEDED } }
-            val transfer = graph.queue.state.value!!.transfers.single { it.id == id }
-            return runBlocking { graph.media.asset(requireNotNull(transfer.assetId), target) }
+        val before = runBlocking {
+            seedMetadataAsset(graph, target, library.id, "$family 01.png")
+            seedMetadataAsset(graph, target, library.id, "独立编辑原名-$suffix.png", listOf(first.id, second.id))
         }
-        seed("$family 01.png", emptyList())
-        val before = seed("独立编辑原名-$suffix.png", listOf(first.id, second.id))
         val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
         compose.runOnIdle { model.openAsset(before.id, target = target) }
         fun openEditor() {
@@ -647,6 +631,62 @@ class AndroidRealServerTest {
         assertEquals(listOf(first.id, second.id), result.authorIds)
         assertEquals(listOf("甲手工来源"), runBlocking { graph.media.author(first.id, target).acquisitionSources })
         assertEquals(listOf("乙确认来源"), runBlocking { graph.media.author(second.id, target).acquisitionSources })
+    }
+
+    @Test(timeout = 180_000)
+    fun syncsActivityFromMaintenanceAfterRestoreAndConfirmsOnlyOneRejectedRecord() {
+        val graph = runBlocking { isolatedServerGraph() }
+        val target = requireNotNull(graph.settings.session.value)
+        val suffix = UUID.randomUUID().toString()
+        val library = runBlocking { graph.media.createLibrary("补传验收", false) }
+        val asset = runBlocking { seedMetadataAsset(graph, target, library.id, "补传-${suffix.take(8)}.png") }
+        val waitingSession = "waiting-$suffix"
+        val missingSession = "missing-$suffix"
+        val absent = asset.copy(id = missingSession, name = "合成缺失原件")
+        val foreign = PendingEvent("foreign-$suffix", target.copy(instanceId = "foreign-$suffix", label = "合成其他实例"),
+            asset.id, "view", 0, asset.version, "foreign-session-$suffix", occurredAt = "2026-01-01T00:00:00Z",
+            failure = "旧版补传结果")
+        runBlocking {
+            graph.media.trash(asset)
+            graph.queue.update { it.copy(events = it.events + foreign) }
+        }
+        graph.recordEvent(asset, "view", waitingSession)
+        graph.recordEvent(absent, "view", missingSession)
+        fun event(session: String) = graph.queue.state.value?.events?.singleOrNull { it.sessionId == session }
+        await("maintenance-event-dispositions", graph) {
+            event(waitingSession)?.issue?.kind == EventDeliveryKind.WAITING &&
+                event(missingSession)?.issue?.kind == EventDeliveryKind.REJECTED
+        }
+        val rejected = requireNotNull(event(missingSession))
+        val waiting = requireNotNull(event(waitingSession))
+        val model = compose.runOnIdle { androidx.lifecycle.ViewModelProvider(compose.activity)[media.qimeng.next.LibraryViewModel::class.java] }
+        compose.runOnIdle { model.selectTab(3) }
+        compose.onNodeWithTag("profile-settings-list").performScrollToNode(hasText("数据管理"))
+        compose.onNodeWithText("数据管理").performClick()
+        compose.onNodeWithText("资料备份与归档").performScrollTo().performClick()
+        val list = compose.onNodeWithTag("maintenance-backup-list")
+        list.performScrollToNode(hasText("查看待处理记录"))
+        compose.onNodeWithText("等待恢复 1 条").assertExists()
+        screenshot("real-server-activity-event-maintenance.png")
+        compose.onNodeWithText("查看待处理记录").performClick()
+        val canClear = hasText("清理此条") and hasAnyAncestor(hasTestTag("activity-event:${rejected.id}"))
+        compose.onNode(canClear).performClick()
+        compose.onNodeWithText("取消").performClick()
+        assertEquals(rejected, event(missingSession))
+        compose.onNode(canClear).performClick()
+        compose.onNodeWithText("确认清理").performClick()
+        await("maintenance-event-acknowledged", graph) { event(missingSession) == null }
+        assertEquals(waiting, event(waitingSession))
+        assertTrue(graph.queue.state.value!!.events.contains(foreign))
+
+        val recoverable = runBlocking { graph.media.trashPage().items.single { it.id == asset.id } }
+        runBlocking { graph.media.restore(recoverable) }
+        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithText("立即补传").performClick()
+        await("maintenance-event-restored", graph) {
+            event(waitingSession) == null && graph.media.history().items.any { it.id == waiting.id && it.assetId == asset.id }
+        }
+        assertTrue(graph.queue.state.value!!.events.contains(foreign))
     }
 
     private fun editVisibleField(tag: String, text: String) {
