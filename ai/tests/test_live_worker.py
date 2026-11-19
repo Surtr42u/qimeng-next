@@ -1,5 +1,6 @@
 """An App submits real files. Only the local model is scripted in this integration."""
 import asyncio
+from datetime import date
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,9 +12,14 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.request
 
 from live_fixture import CloudGoFixture
+from qimeng_ai.config import Config
+from qimeng_ai.errors import ToolError
+from qimeng_ai.runtime import Runtime
+from qimeng_ai.worker import run_worker
 
 
 class ChatHost(BaseHTTPRequestHandler):
@@ -141,6 +147,79 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
                 process.wait()
         self.assertEqual(process.returncode, expected, stderr)
         return json.loads(stderr if expected else stdout)
+
+    async def test_daily_control_recovers_parked_claim_without_renewing_owned_task(self):
+        runtime = Runtime(Config.load({**self.env, "QIMENG_AI_MAX_CALLS": "2"}))
+        self.addCleanup(runtime.close)
+        owned = self.submit("worker-owned-ledger")
+        self.host.behavior[owned] = "offline"
+        def poll():
+            return {row["batchId"]: row["state"] for row in run_worker(runtime, once=True, env=self.env)["batches"]}
+
+        with patch("qimeng_ai.runtime.date") as calendar:
+            calendar.today.return_value = date(2026, 1, 1)
+            self.assertEqual(poll(), {owned: "WORKER_HOST_UNAVAILABLE"})
+            for _ in range(2):
+                runtime.call("platform.session", {"taskId": owned})
+            runtime.call("platform.session", {})
+            self.assertEqual(runtime.call("platform.budget", {})["calls"], 2)
+            new = self.submit("worker-next-day")
+            self.assertEqual(poll()[new], "TASK_BUDGET_EXHAUSTED")
+            with runtime.connect().transaction() as db:
+                row = db.execute("SELECT claim_key,paused,revision FROM worker_claims WHERE batch=?", (new,)).fetchone()
+            self.assertEqual((row["paused"], row["revision"]), ("TASK_BUDGET_EXHAUSTED", None))
+            await asyncio.sleep(1.1)
+            self.assertNotIn(new, poll())
+            calendar.today.return_value = date(2026, 1, 2)
+            self.assertEqual(poll(), {new: "completed"})
+            self.assertEqual(runtime.call("platform.budget", {"taskId": owned})["local"]["calls"], 2)
+            self.assertEqual(self.request("GET", "/batches/" + owned)["inputs"][0]["state"], "staged")
+            self.assertEqual(runtime.call("platform.budget", {})["calls"], 1)
+            receipt = runtime.transport.call("getOperation", {"key": row["claim_key"]})
+            self.assertEqual(receipt["response"]["taskId"], new)
+            item, = self.request("GET", "/batches/" + new)["inputs"]
+            self.assertEqual(self.request("GET", "/assets/" + item["assetId"])["hash"], self.source_sha)
+
+    async def test_interrupted_claim_keeps_original_key_across_elapsed_control_day(self):
+        runtime = Runtime(Config.load(self.env))
+        self.addCleanup(runtime.close)
+        original_call = runtime.transport.call
+        def drop_claim_reply(operation, arguments):
+            response = original_call(operation, arguments)
+            if operation == "startDelegatedTask":
+                raise ToolError("NETWORK_ERROR", "合成认领应答中断", uncertain=True)
+            return response
+
+        batch = self.submit("worker-claim-interrupted")
+        with patch("qimeng_ai.runtime.date") as calendar:
+            calendar.today.return_value = date(2026, 1, 1)
+            with patch.object(runtime.transport, "call", side_effect=drop_claim_reply):
+                failed, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual(failed["state"], "NETWORK_ERROR")
+            control = runtime.connect()
+            with control.transaction() as db:
+                row = db.execute("SELECT claim_key,body FROM worker_claims WHERE batch=?", (batch,)).fetchone()
+                db.execute("UPDATE tasks SET started=started-max_seconds WHERE id=?", (control.config.task_id,))
+            self.assertEqual(runtime.transport.call("listReadyIntakeBatches", {})["items"], [])
+            await asyncio.sleep(1.1)
+            expired, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual(expired["state"], "TASK_BUDGET_EXHAUSTED")
+            calendar.today.return_value = date(2026, 1, 2)
+            body = json.loads(row["body"])
+            for key, label in (("changed-operation-key", body["label"]), (row["claim_key"], "另一个请求")):
+                with self.assertRaises(ToolError) as blocked:
+                    runtime.call("task.start", {"operationId": key, "body": {**body, "label": label}})
+                self.assertEqual(blocked.exception.code, "WRITE_UNRESOLVED")
+            self.assertEqual([p["key"] for p in runtime.call("platform.budget", {})["pending"]], [row["claim_key"]])
+            await asyncio.sleep(1.1)
+            done, = run_worker(runtime, once=True, env=self.env)["batches"]
+            self.assertEqual((done["batchId"], done["state"]), (batch, "completed"))
+            self.assertEqual(runtime.call("platform.budget", {})["pending"], [])
+            receipt = runtime.transport.call("getOperation", {"key": row["claim_key"]})
+            self.assertEqual((receipt["response"]["taskId"], receipt["response"]["credential"]["generation"]), (batch, 1))
+            final = self.request("GET", "/batches/" + batch)
+            self.assertEqual([p["state"] for p in final["plans"]], ["completed"])
+            self.assertEqual(self.request("GET", "/assets/" + final["inputs"][0]["assetId"])["hash"], self.source_sha)
 
     async def test_app_receives_mixed_work_across_process_death_without_a_chat_prompt(self):
         self.submit("worker-ordinary", mode="ordinary")

@@ -34,7 +34,9 @@ class ClaimJournal:
         if allow_image_lookup and candidate["maxResearchCalls"] > 0:
             body["allowImageLookup"] = True
         with self.state.transaction() as db:
-            db.execute("INSERT OR IGNORE INTO worker_claims(batch,claim_key,body) VALUES(?,?,?)",
+            db.execute("""INSERT INTO worker_claims(batch,claim_key,body) VALUES(?,?,?)
+                       ON CONFLICT(batch) DO UPDATE SET paused=NULL,next_attempt=0
+                       WHERE worker_claims.paused='delegation_daily_limit'""",
                        (body["batchId"], "claim-" + secrets.token_urlsafe(24), encode(body)))
 
     def due(self):
@@ -42,8 +44,17 @@ class ClaimJournal:
             now = time.time()
             active = db.execute("SELECT * FROM worker_claims WHERE paused IS NULL AND next_attempt<=? "
                                 "ORDER BY next_attempt,rowid LIMIT 16", (now,)).fetchall()
-            parked = db.execute("SELECT * FROM worker_claims WHERE paused IS NOT NULL AND revision IS NOT NULL "
-                                "AND next_attempt<=? ORDER BY next_attempt,rowid LIMIT 8", (now,)).fetchall()
+            # Pre-claim failures have no batch revision. Revisit those old and new
+            # rows only when this control ledger can pay and the write is eligible.
+            pending = f"SELECT key FROM pending WHERE {self.state.pending_filter}"
+            parked = db.execute(f"""SELECT c.* FROM worker_claims c WHERE paused IS NOT NULL AND next_attempt<=?
+                AND (revision IS NOT NULL OR (
+                    paused IN ('TASK_BUDGET_EXHAUSTED','WRITE_UNRESOLVED')
+                    AND NOT EXISTS (SELECT 1 FROM task_credentials WHERE task=c.batch)
+                    AND EXISTS (SELECT 1 FROM tasks WHERE id=? AND calls<max_calls AND started+max_seconds>?)
+                    AND (NOT EXISTS ({pending}) OR c.claim_key IN ({pending}))
+                )) ORDER BY next_attempt,c.rowid LIMIT 8""",
+                (now, self.state.config.task_id, now, self.state.pending_scope, self.state.pending_scope)).fetchall()
             return active + parked
 
     def before_call(self, batch_id, name, args):

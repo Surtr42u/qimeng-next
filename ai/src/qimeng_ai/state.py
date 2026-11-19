@@ -14,6 +14,7 @@ from .errors import ToolError
 MAX_CACHE_BYTES = 256 * 1024 * 1024
 MAX_RESULT_BYTES = 32 * 1024 * 1024
 RESULT_TTL = 24 * 3600
+CONTROL_LEDGERS = "control:" + "[0-9]" * 4 + "-" + "[0-9]" * 2 + "-" + "[0-9]" * 2
 RESEARCH_QUERY_OPERATIONS = {
     "research.provider.query": "queryResearchProvider",
     "research.image.search": "lookupResearchImage",
@@ -35,8 +36,12 @@ def observation(value):
 
 
 class State:
-    def __init__(self, config: Config, instance_id: str, contract_sha: str):
+    def __init__(self, config: Config, instance_id: str, contract_sha: str, *, daily_control=False):
         self.config = config
+        # The call budget belongs to the day. Outstanding control writes, including
+        # those recorded by older executors, bind every day to the original request.
+        self.pending_filter = "task GLOB ?" if daily_control else "task=?"
+        self.pending_scope = CONTROL_LEDGERS if daily_control else config.task_id
         config.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if config.state_dir.is_symlink():
             raise ToolError("STATE_INVALID", "执行状态目录不能是符号链接")
@@ -114,7 +119,9 @@ class State:
             previous = db.execute("SELECT repeats FROM requests WHERE task=? AND request=?", (task, request)).fetchone()
             if previous and previous[0] >= self.config.max_unchanged:
                 raise ToolError("NO_PROGRESS", "相同请求反复没有新结果，停止重复调用")
-            pending = db.execute("SELECT key,tool,request FROM pending WHERE task=? LIMIT 1", (task,)).fetchone() if key else None
+            pending = db.execute(f"SELECT key,tool,request FROM pending WHERE {self.pending_filter} "
+                                 "ORDER BY (key=? AND tool=? AND request=?) DESC,created LIMIT 1",
+                                 (self.pending_scope, key, tool, request)).fetchone() if key else None
             if pending and (pending["key"] != key or pending["tool"] != tool or pending["request"] != request):
                 raise ToolError("WRITE_UNRESOLVED", "存在未决写入；只允许以完全相同参数和操作键恢复，或由可信端核销")
             db.execute("UPDATE tasks SET calls=calls+1 WHERE id=?", (task,))
@@ -130,18 +137,20 @@ class State:
             repeats = previous[1] + 1 if previous and previous[0] == digest else 1
             db.execute("INSERT OR REPLACE INTO requests VALUES(?,?,?,?)", (task, request, digest, repeats))
             if key:
+                match = f"WHERE {self.pending_filter} AND key=? AND request=?"
+                identity = (self.pending_scope, key, request)
                 if uncertain:
-                    db.execute("UPDATE pending SET unresolved=1 WHERE task=? AND key=?", (task, key))
+                    db.execute(f"UPDATE pending SET unresolved=1 {match}", identity)
                 elif completed:
-                    db.execute("DELETE FROM pending WHERE task=? AND key=?", (task, key))
+                    db.execute(f"DELETE FROM pending {match}", identity)
                 else:
-                    db.execute("DELETE FROM pending WHERE task=? AND key=? AND unresolved=0", (task, key))
+                    db.execute(f"DELETE FROM pending {match} AND unresolved=0", identity)
 
     def status(self) -> dict:
         with self.transaction() as db:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (self.config.task_id,)).fetchone()
-            pending = db.execute("SELECT key,tool,created FROM pending WHERE task=? ORDER BY created LIMIT 100",
-                                 (self.config.task_id,)).fetchall()
+            pending = db.execute(f"SELECT key,tool,created FROM pending WHERE {self.pending_filter} ORDER BY created LIMIT 100",
+                                 (self.pending_scope,)).fetchall()
             return {"taskId": row["id"], "calls": row["calls"], "maxCalls": row["max_calls"],
                     "seconds": round(time.time() - row["started"]), "maxSeconds": row["max_seconds"],
                     "pending": [dict(item) for item in pending]}
@@ -189,11 +198,15 @@ class State:
 
     def receipt_target(self, key: str) -> tuple[str, str | None]:
         with self.transaction() as db:
-            row = db.execute("SELECT tool FROM pending WHERE task=? AND key=?", (self.config.task_id, key)).fetchone()
-        if row is None:
+            rows = db.execute(f"SELECT DISTINCT tool,request FROM pending WHERE {self.pending_filter} AND key=? LIMIT 2",
+                              (self.pending_scope, key)).fetchall()
+        if not rows:
             raise ToolError("PENDING_NOT_FOUND", "没有该任务的未决操作")
-        suffix = {"upload.file": ":complete", "source.recycle": ":receipt"}.get(row["tool"], "")
-        return key + suffix, RESEARCH_QUERY_OPERATIONS.get(row["tool"])
+        if len(rows) > 1:
+            raise ToolError("STILL_UNCERTAIN", "多个历史未决请求使用了此键，请以各自的原参数恢复")
+        tool = rows[0]["tool"]
+        suffix = {"upload.file": ":complete", "source.recycle": ":receipt"}.get(tool, "")
+        return key + suffix, RESEARCH_QUERY_OPERATIONS.get(tool)
 
     def receipt_key(self, key: str) -> str:
         return self.receipt_target(key)[0]
@@ -209,7 +222,7 @@ class State:
                     or evidence.get("state") not in {"ok", "not_found", "blocked", "rate_limited", "unavailable", "interrupted"}):
                 raise ToolError("STILL_UNCERTAIN", "原查询尚无本任务可核对的终态回执")
         with self.transaction() as db:
-            db.execute("DELETE FROM pending WHERE task=? AND key=?", (self.config.task_id, key))
+            db.execute(f"DELETE FROM pending WHERE {self.pending_filter} AND key=?", (self.pending_scope, key))
         return {"status": "reconciled", "key": key, "state": authoritative["state"]}
 
     def renew(self, calls: int, seconds: int) -> None:
