@@ -22,6 +22,14 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
 
     init {
         if (runtime.available) scope.launch {
+            // 旧版本本机地址是 https://127.0.0.1:port/；升级到回环 HTTP 后自动迁移一次，
+            // 避免用户停留在“连接失败”而必须手动切一次本机模式。
+            val selected = graph.settings.session.value
+            if (runtime.shouldRestore && selected?.baseUrl?.startsWith("https://127.0.0.1:") == true) {
+                try { connect(forceLogin = true) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { mutableError.value = "本机连接地址升级未完成，请重试连接本机影库" }
+            }
             runtime.status.collect { status ->
                 if (status.phase == RuntimePhase.READY && runtime.shouldRestore && graph.settings.session.value?.baseUrl == runtime.baseUrl) {
                     try { connect(forceLogin = false) }
