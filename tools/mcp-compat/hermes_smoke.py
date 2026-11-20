@@ -61,7 +61,8 @@ def run():
                     "QIMENG_AI_PERMISSIONS": "read,organize",
                 },
             }
-            refusal = {"id": "synthetic-hermes-refusal", "Idempotency-Key": "synthetic-hermes-key",
+            refusal = {"id": "synthetic-hermes-refusal", "planId": "synthetic-hermes-plan-refusal",
+                       "Idempotency-Key": "synthetic-hermes-key",
                        "body": {"fingerprint": "synthetic"}}
             calls = zip(host_names, [{}, {}, refusal], strict=True)
             with provider(script(*calls)) as recorder:

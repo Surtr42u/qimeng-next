@@ -57,7 +57,7 @@ try {
       const picture = await call('platform.artifact.read', { artifactRef: probe.frameRefs[0].artifactRef });
       assert(picture.content.some(block => block.type === 'image' && block.mimeType === 'image/png'));
       if (implementation === 'pi') assert(toLlmContent(picture).some(block => block.type === 'image'));
-      const refusal = { id: 'synthetic-batch-refusal', 'Idempotency-Key': 'synthetic-refusal-key', body: { fingerprint: 'synthetic' } };
+      const refusal = { id: 'synthetic-batch-refusal', planId: 'synthetic-plan-refusal', 'Idempotency-Key': 'synthetic-refusal-key', body: { fingerprint: 'synthetic' } };
       const denied = implementation === 'pi' ? await client.callTool('plan.commit', refusal) : await client.callTool({ name: 'plan.commit', arguments: refusal });
       assert.equal(denied.isError, true);
       assert.equal(denied.structuredContent.code, 'scope_denied');

@@ -727,11 +727,9 @@ func (s *Service) Trash(ctx context.Context, w *Write, id string, rev int64) (mo
 	if a.Trashed {
 		return a, nil
 	}
-	q, e := w.Q()
-	if e != nil {
-		return a, e
-	}
-	if e = s.ensureAssetNotUnderProtection(ctx, q, a.ID); e != nil {
+	// Read outside w: opening the write transaction here would make prepareFile
+	// reject the intent, because a durable intent must precede that transaction.
+	if e = s.ensureAssetNotUnderProtection(ctx, a.ID); e != nil {
 		return a, e
 	}
 	old := a
@@ -744,9 +742,9 @@ func (s *Service) Trash(ctx context.Context, w *Write, id string, rev int64) (mo
 
 // ensureAssetNotUnderProtection keeps a pending independent backup report valid:
 // the app and AI paths both refuse to move its exact input into the trash.
-func (s *Service) ensureAssetNotUnderProtection(ctx context.Context, q store.Querier, assetID string) error {
+func (s *Service) ensureAssetNotUnderProtection(ctx context.Context, assetID string) error {
 	var active bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_protections p, json_each(json_extract(p.data,'$.items')) i
+	if err := s.DB.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_protections p, json_each(json_extract(p.data,'$.items')) i
  WHERE p.state IN ('queued','running') AND json_extract(i.value,'$.assetId')=?)`, assetID).Scan(&active); err != nil {
 		return err
 	}

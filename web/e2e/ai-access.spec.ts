@@ -107,6 +107,7 @@ test('a narrow history row keeps the entire grant name and opens its permissions
     libraryIds: ['synthetic-library'], authorIds: [], allAuthors: false, allowedFields: [], candidateBlocks: [],
     allowClear: false, canIngest: true, canResearch: true, canOrganize: false, canLookupImages: true,
     canResearchAssets: false, canRecycleSources: false,
+    canReplaceAssetMetadata: false, canManageAssetFiles: false, canMergeAuthors: false,
     maxResearchCalls: 2, maxUpdates: 1, maxTasksPerDay: 10, validDays: 30,
     maxCallsPerTask: 100, taskSeconds: 3600,
   };

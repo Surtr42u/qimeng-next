@@ -255,11 +255,9 @@ func (s *Service) TrashAssetForTask(ctx context.Context, w *Write, id string, in
 	if err = t.checkFileWrite(w.Principal, a, in.ExpectedRevision); err != nil {
 		return a, err
 	}
-	q, err := w.Q()
-	if err != nil {
-		return a, err
-	}
-	if err = s.ensureAssetNotUnderProtection(ctx, q, a.ID); err != nil {
+	// Read outside w: opening the write transaction here would make prepareFile
+	// reject the intent, because a durable intent must precede that transaction.
+	if err = s.ensureAssetNotUnderProtection(ctx, a.ID); err != nil {
 		return a, err
 	}
 	old := a
