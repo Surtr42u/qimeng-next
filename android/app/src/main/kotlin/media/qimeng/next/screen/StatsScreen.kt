@@ -9,6 +9,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -20,6 +22,8 @@ import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.chart.QimengTrendLineChart
 import media.qimeng.next.ui.chart.QimengTrendSeries
 import media.qimeng.next.ui.component.QimengSegmentedControl
+import media.qimeng.next.ui.icon.ChevronRightIcon
+import media.qimeng.next.ui.theme.isQimengDarkTheme
 import media.qimeng.next.ui.theme.softDaylightBackground
 import media.qimeng.next.ui.theme.softDaylightShadow
 
@@ -41,7 +45,7 @@ fun StatisticsScreen(model: LibraryViewModel) {
         state.error?.let { item { ErrorNotice(it) { model.loadAnalytics(range) } } }
         item { OverviewCards(report, loading) }
         item {
-            StatsCard(onClick = { model.navigate("stats-detail:trends:$range") }) {
+            StatsCard(onClick = { model.navigate("stats-detail:trends:$range") }, color = overviewCardColor()) {
                 StatsCardHeading("浏览趋势", "分类型趋势 ›")
                 when {
                     loading -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
@@ -52,7 +56,8 @@ fun StatisticsScreen(model: LibraryViewModel) {
             }
         }
         item {
-            StatsCard(onClick = { model.navigate("stats-detail:distribution:$range") }, padding = PaddingValues(horizontal = 12.dp, vertical = 14.dp)) {
+            StatsCard(onClick = { model.navigate("stats-detail:distribution:$range") },
+                padding = PaddingValues(horizontal = 12.dp, vertical = 14.dp), color = overviewCardColor()) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         StatsTitle("分布统计")
@@ -62,9 +67,9 @@ fun StatisticsScreen(model: LibraryViewModel) {
                 }
             }
         }
-        item { StatsCard(onClick = { model.navigate("review:$range") }) { StatsTitle("浏览回顾") } }
+        item { BrowsingReviewEntry { model.navigate("review:$range") } }
         item {
-            StatsCard(onClick = { model.navigate("stats-detail:interests:$range") }) {
+            StatsCard(onClick = { model.navigate("stats-detail:interests:$range") }, color = overviewCardColor()) {
                 StatsCardHeading("常看作者与标签", "查看全部 ›")
                 when {
                     loading -> CompactStatText("加载中…")
@@ -101,11 +106,12 @@ private fun OverviewCards(report: AnalyticsReport?, loading: Boolean) {
         "总文件数" to (o?.inventory?.assets?.let(::formatCountCompact) ?: placeholder),
         "总占用空间" to (o?.inventory?.bytes?.let(::statsBytes) ?: placeholder),
         "平均浏览次数" to (o?.averageViews?.let(::trimTrailingZero) ?: placeholder))
+    val cardColor = overviewCardColor()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         values.chunked(3).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             row.forEach { (title, value) ->
                 Surface(Modifier.weight(1f).softDaylightShadow(RoundedCornerShape(20.dp)),
-                    color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp)) {
+                    color = cardColor, contentColor = MaterialTheme.colorScheme.onSurface, shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(value, style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
                         Text(title, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -116,10 +122,34 @@ private fun OverviewCards(report: AnalyticsReport?, loading: Boolean) {
     }
 }
 
+/** Overview cards have a soft night surface and a white day surface in the installed app. */
 @Composable
-internal fun StatsCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, padding: PaddingValues = PaddingValues(12.dp), content: @Composable ColumnScope.() -> Unit) {
+private fun overviewCardColor() = if (isQimengDarkTheme()) MaterialTheme.colorScheme.surfaceVariant
+    else MaterialTheme.colorScheme.surfaceContainerLow
+
+@Composable
+private fun BrowsingReviewEntry(onOpen: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    Surface(color = MaterialTheme.colorScheme.surface, shape = shape,
+        modifier = Modifier.fillMaxWidth().softDaylightShadow(shape).clip(shape).clickable(onClick = onOpen)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("浏览回顾", style = MaterialTheme.typography.titleMedium)
+            Icon(ChevronRightIcon, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+internal fun StatsCard(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    padding: PaddingValues = PaddingValues(12.dp),
+    color: Color = MaterialTheme.colorScheme.surface,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Surface(modifier.fillMaxWidth().softDaylightShadow(RoundedCornerShape(20.dp)).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
+        shape = RoundedCornerShape(20.dp), color = color, contentColor = MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }

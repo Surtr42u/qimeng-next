@@ -1,6 +1,9 @@
 package media.qimeng.next.test
 
+import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -17,6 +20,7 @@ import media.qimeng.next.testsupport.captureCloudScreenshot
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import kotlin.math.abs
 
 /** Uses the disposable cloud catalog with activity today, 14 days ago and 60 days ago. */
 class StatisticsAndHomeTest {
@@ -120,7 +124,7 @@ class StatisticsAndHomeTest {
             assertMetric("总文件数", "53")
             assertMetric("总占用空间", "${report.overview.inventory.bytes}B")
             assertMetric("平均浏览次数", "1")
-            assertOverviewColorsAndGeometry(window.range)
+            assertOverviewColorsAndGeometry(window, report.trends.size, StatsPalette.DARK, "dark")
         }
 
         openStatisticsCard(model, "分类型趋势 ›", "stats-detail:trends:all")
@@ -133,7 +137,7 @@ class StatisticsAndHomeTest {
             compose.onNode(chart).assertIsDisplayed()
         }
         chartList.performScrollToIndex(0)
-        captureLightPage("stats-source-trends.png", "类型浏览趋势 · 全部")
+        captureStatisticsPage("stats-source-trends-dark.png", "类型浏览趋势 · 全部")
         compose.onNodeWithContentDescription("返回").performClick()
 
         openStatisticsCard(model, "分布统计", "stats-detail:distribution:all")
@@ -141,14 +145,14 @@ class StatisticsAndHomeTest {
         assertMetric("常规 / COS", "51 / 2")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("来源分布对比"))
         compose.onNodeWithText("来源分布对比").assertIsDisplayed()
-        captureLightPage("stats-partition-distribution.png", "分布统计")
+        captureStatisticsPage("stats-partition-distribution-dark.png", "分布统计")
         compose.onNodeWithContentDescription("返回").performClick()
 
         openStatisticsCard(model, "常看作者与标签", "stats-detail:interests:all")
         awaitText("常看作者与标签 · 全部")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("常看标签"))
         compose.onNodeWithText("合成标签").assertIsDisplayed()
-        captureLightPage("stats-interests.png", "常看作者与标签 · 全部")
+        captureStatisticsPage("stats-interests-dark.png", "常看作者与标签 · 全部")
         assertTagSearch(model, graph)
         compose.onNodeWithContentDescription("返回").performClick()
 
@@ -163,8 +167,9 @@ class StatisticsAndHomeTest {
             assertEquals(window.seconds, review.hours.sumOf { it.seconds })
             compose.onNodeWithContentDescription("24 小时图片、动图和视频停留构成").assertIsDisplayed()
         }
-        captureLightPage("stats-browsing-review.png", "浏览回顾")
+        captureStatisticsPage("stats-browsing-review-dark.png", "浏览回顾")
         compose.onNodeWithContentDescription("返回").performClick()
+        verifyOtherThemeChoices(model, graph, windows.last(), periods)
         compose.onNodeWithTag("navigation:home").performClick()
         assertEquals(ThemeChoice.DARK, graph.settings.preferences.value.theme)
         compose.waitUntil(10_000) {
@@ -258,26 +263,92 @@ class StatisticsAndHomeTest {
         compose.onNode(hasText(value) and hasAnySibling(hasText(label)), useUnmergedTree = true).assertIsDisplayed()
     }
 
-    private fun assertOverviewColorsAndGeometry(range: String) {
+    private fun verifyOtherThemeChoices(model: LibraryViewModel, graph: DataGraph, window: Window, periods: Int) {
+        val settings = graph.settings
+        val baseline = settings.preferences.value
+        val list = compose.onNode(hasScrollToIndexAction())
+        list.performScrollToIndex(0)
+        try {
+            settings.savePreferences(baseline.copy(theme = ThemeChoice.LIGHT))
+            assertOverviewColorsAndGeometry(window, periods, StatsPalette.LIGHT, "light")
+            openStatisticsCard(model, "分类型趋势 ›", "stats-detail:trends:all")
+            awaitText("类型浏览趋势 · 全部")
+            captureStatisticsPage("stats-source-trends-light.png", "类型浏览趋势 · 全部", StatsPalette.LIGHT)
+            compose.onNodeWithContentDescription("返回").performClick()
+            list.performScrollToIndex(0)
+
+            val systemDark = compose.runOnIdle {
+                compose.activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+            }
+            settings.savePreferences(baseline.copy(theme = ThemeChoice.SYSTEM))
+            assertOverviewColorsAndGeometry(window, periods,
+                if (systemDark) StatsPalette.DARK else StatsPalette.LIGHT, "system")
+        } finally {
+            settings.savePreferences(baseline)
+        }
+    }
+
+    private fun assertOverviewColorsAndGeometry(window: Window, periods: Int, palette: StatsPalette, evidence: String) {
         val labels = listOf("总浏览次数", "总播放次数", "总浏览时长", "总文件数", "总占用空间", "平均浏览次数")
         val bounds = labels.map { compose.onNodeWithText(it, useUnmergedTree = true).fetchSemanticsNode().boundsInWindow }
         val rows = bounds.chunked(3)
         assertTrue(rows[0].maxOf { it.bottom } < rows[1].minOf { it.top })
         rows.forEach { row -> assertTrue(row.zipWithNext().all { (left, right) -> left.right < right.left }) }
+
         val first = bounds.first()
+        val chart = compose.onNodeWithContentDescription("浏览趋势，共 $periods 个时段")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInWindow
+        val dates = Rect(chart.left, chart.bottom - chart.height / 8, chart.right, chart.bottom)
+        val selected = compose.onNodeWithText(window.label).assertIsSelected().fetchSemanticsNode().boundsInWindow
+        val otherLabel = if (window.label == "7天") "30天" else "7天"
+        val other = compose.onNodeWithText(otherLabel).assertIsNotSelected().fetchSemanticsNode().boundsInWindow
         compose.waitUntil(10_000) {
-            captureCloudScreenshot("stats-overview-$range.png") { screen ->
-                screen.getPixel(4, first.center.y.toInt()) == Color.rgb(241, 242, 244) &&
-                    screen.getPixel(first.center.x.toInt(), first.bottom.toInt() + 3) == Color.WHITE
+            captureCloudScreenshot("stats-overview-$evidence-" + window.range + ".png") { screen ->
+                screen.getPixel(4, first.center.y.toInt()) == palette.background &&
+                    screen.getPixel(first.center.x.toInt(), first.bottom.toInt() + 3) == palette.card &&
+                    screen.pillAt(selected) == palette.accent && screen.pillAt(other) == palette.track &&
+                    screen.hasColor(selected, palette.selectedText) && screen.hasColor(other, palette.secondaryText) &&
+                    screen.hasColor(chart, palette.accent) && screen.hasColor(chart, palette.plotFill) &&
+                    screen.hasColor(dates, palette.secondaryText)
             }
         }
     }
 
-    private fun captureLightPage(name: String, label: String) {
+    private fun captureStatisticsPage(name: String, label: String, palette: StatsPalette = StatsPalette.DARK) {
         val y = compose.onNodeWithText(label).fetchSemanticsNode().boundsInWindow.center.y.toInt()
         compose.waitUntil(10_000) {
-            captureCloudScreenshot(name) { screen -> screen.getPixel(4, y) == Color.rgb(241, 242, 244) }
+            captureCloudScreenshot(name) { screen -> screen.getPixel(4, y) == palette.background }
         }
+    }
+
+    // Take solid pill samples well left of the center-aligned label, inside the rounded ends.
+    private fun Bitmap.pillAt(bounds: Rect) =
+        getPixel((bounds.left + bounds.width / 5).toInt(), bounds.center.y.toInt())
+
+    private fun Bitmap.hasColor(bounds: Rect, color: Int): Boolean {
+        val left = bounds.left.toInt().coerceIn(0, width)
+        val right = bounds.right.toInt().coerceIn(left, width)
+        val top = bounds.top.toInt().coerceIn(0, height)
+        val bottom = bounds.bottom.toInt().coerceIn(top, height)
+        var hits = 0
+        for (y in top until bottom) for (x in left until right) {
+            val pixel = getPixel(x, y)
+            // Text and thin chart strokes include antialiasing, unlike the solid surfaces above.
+            if (abs(Color.red(pixel) - Color.red(color)) <= 7 &&
+                abs(Color.green(pixel) - Color.green(color)) <= 7 &&
+                abs(Color.blue(pixel) - Color.blue(color)) <= 7 && ++hits >= 8) return true
+        }
+        return false
+    }
+
+    private enum class StatsPalette(
+        val background: Int, val card: Int, val track: Int, val accent: Int,
+        val selectedText: Int, val secondaryText: Int, val plotFill: Int,
+    ) {
+        DARK(0xff141414.toInt(), 0xff2e2e2e.toInt(), 0xff2e2e2e.toInt(), 0xffc8c8c8.toInt(),
+            0xff141414.toInt(), 0xffa3a3a3.toInt(), 0xff464646.toInt()),
+        LIGHT(0xfff1f2f4.toInt(), Color.WHITE, 0xffeaebef.toInt(), 0xff3a3a3a.toInt(),
+            Color.WHITE, 0xff666666.toInt(), 0xffe0e0e0.toInt()),
     }
 
     private data class Window(val range: String, val label: String, val views: Long, val seconds: Long)

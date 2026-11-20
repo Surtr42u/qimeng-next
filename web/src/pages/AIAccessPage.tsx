@@ -37,7 +37,7 @@ const blockNames = {
   accounts: "账号与发布入口",
 };
 const initialPolicy: Policy = {
-  label: "",
+  label: "我的 AI 助手",
   libraryIds: [],
   authorIds: [],
   allAuthors: false,
@@ -70,7 +70,6 @@ const canGrantImageLookup = (policy: Policy) => policy.canResearch && policy.max
 const stateNames: Record<Delegation["state"], string> = {
   active: "授权有效", revoked: "已撤销", expired: "已到期",
 };
-const steps = ["选择动作", "范围与预算", "核对并建立"];
 
 export function AIAccessPage() {
   const [state, setState] = useState<Delegation["state"] | "all">("active");
@@ -259,208 +258,202 @@ function DelegationForm({ complete, cancel }: {
   cancel: () => void;
 }) {
   const [policy, setPolicy] = useState<Policy>(initialPolicy);
-  const [step, setStep] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [discard, setDiscard] = useState(false);
   const [authorNames, setAuthorNames] = useState<Record<string, string>>({});
   const nameField = useRef<HTMLInputElement>(null);
-  const stepHeading = useRef<HTMLHeadingElement>(null);
   const libraries = useLibraries();
-  const providers = useResearchProviderContext(policy.canResearch && step > 0);
+  const providers = useResearchProviderContext(policy.canResearch);
   const choices = providers.data?.enabled && !providers.isError
     ? providers.data.providers.filter(provider => Object.hasOwn(providerNames, provider.name))
     : [];
   const create = useCreateAIDelegation(complete);
 
   useEffect(() => { nameField.current?.focus(); }, []);
-  function goToStep(next: number) {
-    setStep(next);
-    requestAnimationFrame(() => stepHeading.current?.focus());
-  }
-
   function change(patch: Partial<Policy>) {
     setPolicy(current => {
       const next = { ...current, ...patch };
       if (!next.canIngest || !next.libraryIds.length) next.canRecycleSources = false;
       if (!next.canResearch || !next.libraryIds.length) next.canResearchAssets = false;
       if (!canGrantImageLookup(next)) next.canLookupImages = false;
-      if (!next.canResearch || next.maxResearchCalls <= 0) next.researchProviders = [];
+      if (!next.canResearch || !(next.maxResearchCalls > 0)) next.researchProviders = [];
       if (!next.libraryIds.length) next.assetFields = [];
+      if (!next.allowedFields.length) next.allowClear = false;
+      if (!next.allowedFields.length && !next.candidateBlocks.length) {
+        next.allAuthors = false;
+        next.authorIds = [];
+      }
       return next;
     });
   }
 
   const hasAuthorWrites = policy.allowedFields.length > 0 || policy.candidateBlocks.length > 0;
-  const needsLibrary = (policy.canIngest || policy.canOrganize) && !policy.libraryIds.length;
+  const showLibraries = detailsOpen || policy.canIngest || policy.canResearch || !!policy.assetFields?.length || !!policy.libraryIds.length;
+  const needsLibrary = (policy.canIngest || policy.canOrganize || policy.canResearchAssets || !!policy.assetFields?.length) && !policy.libraryIds.length;
   const needsAuthor = hasAuthorWrites && !policy.allAuthors && !policy.authorIds.length;
   const missingProvider = policy.researchProviders?.some(name => !choices.some(choice => choice.name === name));
-  const blocked = !policy.label.trim() || (step > 0 && (needsLibrary || needsAuthor || !!missingProvider)) || create.isPending;
+  const validName = !!policy.label.trim() && new TextEncoder().encode(policy.label.trim()).length <= 80;
+  const readOnly = !policy.canIngest && !policy.canResearch && !hasAuthorWrites && !policy.assetFields?.length;
+  const validBudget = (value: number | undefined, min: number, max: number) =>
+    value !== undefined && Number.isInteger(value) && value >= min && value <= max;
+  const validBudgets = validBudget(policy.validDays, 1, 365) && validBudget(policy.maxTasksPerDay, 1, 200) &&
+    validBudget(policy.maxCallsPerTask, 10, 10000) && validBudget(policy.taskSeconds, 60, 86400) &&
+    validBudget(policy.maxUpdates, 1, 10) && validBudget(policy.maxResearchCalls, 0, 100);
+  const blocked = !validBudgets || !validName || needsLibrary || needsAuthor || !!missingProvider || create.isPending;
   const dirty = JSON.stringify(policy) !== JSON.stringify(initialPolicy);
 
   return (
-    <form className="settings-card ai-card ai-wizard" aria-label="添加 AI 接入" onSubmit={event => {
+    <form noValidate className="settings-card ai-card ai-wizard" aria-label="添加 AI 接入" onSubmit={event => {
       event.preventDefault();
       if (blocked) return;
-      if (step < steps.length - 1) goToStep(step + 1);
-      else create.mutate(policy);
+      create.mutate({
+        ...policy, label: policy.label.trim(),
+        libraryIds: (policy.canIngest || policy.canResearch || policy.assetFields?.length) ? policy.libraryIds : [],
+        authorIds: policy.allAuthors ? [] : policy.authorIds,
+      });
     }}>
-      <ol role="list" className="ai-steps" aria-label="接入设置步骤">
-        {steps.map((title, index) => (
-          <li key={title} aria-current={index === step ? "step" : undefined}>
-            <span className="ai-step-index" aria-hidden="true">{index + 1}</span>
-            {index === step
-              ? <h3 ref={stepHeading} tabIndex={-1} aria-label={"第 " + (index + 1) + " 步，" + title}>{title}</h3>
-              : <span>{title}</span>}
-          </li>
-        ))}
-      </ol>
+      <fieldset className="ai-form-fields" disabled={create.isPending} aria-label="接入设置">
+        <label className="settings-field ai-name">
+          <span>接入名称</span>
+          <input ref={nameField} required aria-invalid={!validName} value={policy.label}
+            onChange={event => change({ label: event.target.value })} placeholder="例如我的 Codex 执行器" />
+        </label>
+        {!validName && <p className="ai-help" role="alert">请输入接入名称（不超过 80 字节）。</p>}
+        <fieldset className="ai-group">
+          <legend>执行动作</legend>
+          <p className="ai-help">默认仅全库读取。按需勾选要交给执行器的操作。</p>
+          <div className="ai-choices">
+            <Choice checked={policy.canIngest} onChange={checked => change({
+              canIngest: checked, canOrganize: checked && policy.canOrganize,
+            })}>接收入库文件</Choice>
+            <Choice checked={policy.canOrganize} disabled={!policy.canIngest}
+              onChange={checked => change({ canOrganize: checked })}>智能整理所选媒体库</Choice>
+            <Choice checked={policy.canResearch} onChange={checked => change({
+              canResearch: checked, maxResearchCalls: checked ? 8 : 0,
+              candidateBlocks: checked ? policy.candidateBlocks : [],
+            })}>研究未知身份与来源</Choice>
+          </div>
+        </fieldset>
+        {policy.canResearch && <fieldset className="ai-group">
+          <legend>允许提交的资料候选</legend>
+          <p className="ai-help">候选由你核对并保存后才会进入已确认资料。</p>
+          <div className="ai-choices">
+            {(Object.keys(blockNames) as Policy["candidateBlocks"]).map(block => (
+              <Choice key={block} checked={policy.candidateBlocks.includes(block)}
+                onChange={() => change({ candidateBlocks: toggle(policy.candidateBlocks, block) })}>{blockNames[block]}</Choice>
+            ))}
+          </div>
+        </fieldset>}
+        <details className="ai-direct-fields" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+          <summary className="ai-disclosure"><ChevronRight aria-hidden="true" />详细权限</summary>
+          <h4>直接维护基础作者字段</h4>
+          <p className="ai-help">所选字段可直接写入已确认资料。</p>
+          <div className="ai-choices">
+            {(Object.keys(fieldNames) as Policy["allowedFields"]).map(field => (
+              <Choice key={field} checked={policy.allowedFields.includes(field)}
+                onChange={() => change({ allowedFields: toggle(policy.allowedFields, field) })}>{fieldNames[field]}</Choice>
+            ))}
+          </div>
+          <Choice checked={policy.allowClear} disabled={!policy.allowedFields.length} onChange={checked => change({ allowClear: checked })}>
+            允许明确清空已授权基础字段
+          </Choice>
+        </details>
 
-      <fieldset className="ai-form-fields" disabled={create.isPending} aria-label={steps[step]}>
-        {step === 0 && <>
-          <label className="settings-field ai-name">
-            <span>接入名称</span>
-            <input ref={nameField} required maxLength={80} value={policy.label}
-              onChange={event => change({ label: event.target.value })} placeholder="例如我的 Codex 执行器" />
-          </label>
-          <fieldset className="ai-group">
-            <legend>执行动作</legend>
-            <p className="ai-help">默认仅全库读取。按需勾选要交给执行器的操作。</p>
+        {showLibraries && <fieldset className="ai-group">
+          <legend>允许写入的媒体库</legend>
+          <p className="ai-help">{policy.canIngest || policy.canOrganize
+            ? "接收或整理文件至少需要一个目标库。"
+            : "只需读取可跳过。选择库后可授权维护其中的已有作品。"}</p>
+          <FormReadError error={libraries.error} retry={() => void libraries.refetch()} />
+          {libraries.isPending ? <Loading text="正在读取媒体库…" /> : (
             <div className="ai-choices">
-              <Choice checked={policy.canIngest} onChange={checked => change({
-                canIngest: checked, canOrganize: checked && policy.canOrganize,
-              })}>接收入库文件</Choice>
-              <Choice checked={policy.canOrganize} disabled={!policy.canIngest}
-                onChange={checked => change({ canOrganize: checked })}>智能整理所选媒体库</Choice>
-              <Choice checked={policy.canResearch} onChange={checked => change({
-                canResearch: checked, maxResearchCalls: checked ? 8 : 0,
-                candidateBlocks: checked ? policy.candidateBlocks : [],
-              })}>研究未知身份与来源</Choice>
-            </div>
-          </fieldset>
-          <fieldset className="ai-group">
-            <legend>允许提交的资料候选</legend>
-            <p className="ai-help">{policy.canResearch ? "候选由你核对并保存后才会进入已确认资料。" : "开启研究后可选。候选需由你核对并保存。"}</p>
-            <div className="ai-choices">
-              {(Object.keys(blockNames) as Policy["candidateBlocks"]).map(block => (
-                <Choice key={block} disabled={!policy.canResearch} checked={policy.candidateBlocks.includes(block)}
-                  onChange={() => change({ candidateBlocks: toggle(policy.candidateBlocks, block) })}>{blockNames[block]}</Choice>
+              {libraries.data?.items.map(library => (
+                <Choice key={library.id} checked={policy.libraryIds.includes(library.id)}
+                  disabled={!policy.libraryIds.includes(library.id) && policy.libraryIds.length >= 100}
+                  onChange={() => change({ libraryIds: toggle(policy.libraryIds, library.id) })}>
+                  {library.name + (library.enabled ? "" : "（已停用）")}
+                </Choice>
               ))}
             </div>
-          </fieldset>
-          <details className="ai-direct-fields">
-            <summary className="ai-disclosure"><ChevronRight aria-hidden="true" />直接维护基础作者字段</summary>
-            <p className="ai-help">所选字段可直接写入已确认资料。</p>
-            <div className="ai-choices">
-              {(Object.keys(fieldNames) as Policy["allowedFields"]).map(field => (
-                <Choice key={field} checked={policy.allowedFields.includes(field)}
-                  onChange={() => change({ allowedFields: toggle(policy.allowedFields, field) })}>{fieldNames[field]}</Choice>
-              ))}
-            </div>
-            <Choice checked={policy.allowClear} onChange={checked => change({ allowClear: checked })}>
-              允许明确清空已授权基础字段
-            </Choice>
-          </details>
-        </>}
-
-        {step === 1 && <>
-          <fieldset className="ai-group">
-            <legend>允许写入的媒体库</legend>
-            <p className="ai-help">{policy.canIngest || policy.canOrganize
-              ? "接收或整理文件至少需要一个目标库。"
-              : "只需读取可跳过。选择库后可授权维护其中的已有作品。"}</p>
-            <FormReadError error={libraries.error} retry={() => void libraries.refetch()} />
-            {libraries.isPending ? <Loading text="正在读取媒体库…" /> : (
+          )}
+          {!libraries.isError && libraries.data?.items.length === 0 && <p className="ai-help">尚无可选媒体库。</p>}
+          <MoreLibraries query={libraries} />
+          {policy.libraryIds.length > 0 && <>
+            {policy.canIngest && <div className="ai-subgroup">
+              <Choice checked={policy.canRecycleSources ?? false} onChange={checked => change({ canRecycleSources: checked })}>
+                备份核验后允许回收来源
+              </Choice>
+              <p className="ai-help">核验独立备份与本批内容后，所选库的来源文件移入回收区。</p>
+            </div>}
+            {policy.canResearch && <Choice checked={!!policy.canResearchAssets}
+              onChange={checked => change({ canResearchAssets: checked })}>研究已入库作品的媒体预览</Choice>}
+            <fieldset className="ai-subgroup">
+              <legend>允许维护所选库中的作品字段</legend>
               <div className="ai-choices">
-                {libraries.data?.items.map(library => (
-                  <Choice key={library.id} checked={policy.libraryIds.includes(library.id)}
-                    disabled={!policy.libraryIds.includes(library.id) && policy.libraryIds.length >= 100}
-                    onChange={() => change({ libraryIds: toggle(policy.libraryIds, library.id) })}>
-                    {library.name + (library.enabled ? "" : "（已停用）")}
-                  </Choice>
+                {(Object.keys(assetFieldNames) as Schema<"AssetMaintenanceField">[]).map(field => (
+                  <Choice key={field} checked={!!policy.assetFields?.includes(field)}
+                    onChange={() => change({ assetFields: toggle(policy.assetFields ?? [], field) })}>{assetFieldNames[field]}</Choice>
                 ))}
               </div>
-            )}
-            {!libraries.isError && libraries.data?.items.length === 0 && <p className="ai-help">尚无可选媒体库。</p>}
-            <MoreLibraries query={libraries} />
-            {policy.libraryIds.length > 0 && <>
-              {policy.canIngest && <div className="ai-subgroup">
-                <Choice checked={policy.canRecycleSources ?? false} onChange={checked => change({ canRecycleSources: checked })}>
-                  备份核验后允许回收来源
-                </Choice>
-                <p className="ai-help">核验独立备份与本批内容后，所选库的来源文件移入回收区。</p>
-              </div>}
-              {policy.canResearch && <Choice checked={!!policy.canResearchAssets}
-                onChange={checked => change({ canResearchAssets: checked })}>研究已入库作品的媒体预览</Choice>}
-              <fieldset className="ai-subgroup">
-                <legend>允许维护所选库中的作品字段</legend>
-                <div className="ai-choices">
-                  {(Object.keys(assetFieldNames) as Schema<"AssetMaintenanceField">[]).map(field => (
-                    <Choice key={field} checked={!!policy.assetFields?.includes(field)}
-                      onChange={() => change({ assetFields: toggle(policy.assetFields ?? [], field) })}>{assetFieldNames[field]}</Choice>
-                  ))}
-                </div>
-              </fieldset>
-            </>}
-            {policy.canResearch && <div className="ai-subgroup">
-              <Choice checked={!!policy.canLookupImages} disabled={!canGrantImageLookup(policy)}
-                onChange={checked => change({ canLookupImages: checked })}>允许单帧识图</Choice>
-              <p className="ai-help">允许向已配置的识图服务发送一帧派生预览。需选择媒体库，授权接收文件或已有作品预览，并设置正数研究调用上限。</p>
-            </div>}
-          </fieldset>
-
-          {hasAuthorWrites && (
-            <AuthorScope policy={policy} change={change} names={authorNames}
-              remember={(id, name) => setAuthorNames(current => ({ ...current, [id]: name }))} />
-          )}
-
-          {policy.canResearch && (
-            <fieldset className="ai-group">
-              <legend>允许发送文字查询的公开来源</legend>
-              <p className="ai-help">执行器可向勾选的来源发送公开账号、作品编号、网址或检索词。</p>
-              <FormReadError error={providers.error} retry={() => void providers.refetch()} />
-              {providers.isPending ? <Loading text="正在读取研究来源…" /> : !providers.isError && (
-                choices.length > 0 ? <div className="ai-choices">
-                  {choices.map(({ name }) => (
-                    <Choice key={name} disabled={policy.maxResearchCalls <= 0} checked={!!policy.researchProviders?.includes(name)}
-                      onChange={() => change({ researchProviders: toggle(policy.researchProviders ?? [], name) })}>{providerNames[name]}</Choice>
-                  ))}
-                </div> : <p className="ai-help">当前服务器未开放公开来源查询。</p>
-              )}
-              {choices.length > 0 && policy.maxResearchCalls <= 0 && <p className="ai-help">在下方调高研究调用上限即可选择来源。</p>}
-              {missingProvider && providers.isSuccess && (
-                <button type="button" className="pill" onClick={() => change({
-                  researchProviders: policy.researchProviders?.filter(name => choices.some(choice => choice.name === name)),
-                })}>移除当前不可用的来源</button>
-              )}
             </fieldset>
-          )}
+          </>}
+          {policy.canResearch && <div className="ai-subgroup">
+            <Choice checked={!!policy.canLookupImages} disabled={!canGrantImageLookup(policy)}
+              onChange={checked => change({ canLookupImages: checked })}>允许单帧识图</Choice>
+            <p className="ai-help">允许向已配置的识图服务发送一帧派生预览。需选择媒体库，授权接收文件或已有作品预览，并设置正数研究调用上限。</p>
+          </div>}
+        </fieldset>}
 
-          <fieldset className="ai-group">
-            <legend>有效期与任务预算</legend>
-            <div className="settings-grid ai-budget">
-              <NumberField label="授权有效天数" value={policy.validDays} min={1} max={365} onChange={value => change({ validDays: value })} />
-              <NumberField label="每日最多任务" value={policy.maxTasksPerDay} min={1} max={200} onChange={value => change({ maxTasksPerDay: value })} />
-              <NumberField label="每任务调用上限" value={policy.maxCallsPerTask} min={10} max={10000} onChange={value => change({ maxCallsPerTask: value })} />
-              <NumberField label="每任务最长秒数" value={policy.taskSeconds} min={60} max={86400} onChange={value => change({ taskSeconds: value })} />
-              {policy.canResearch && <NumberField label="每任务研究调用上限" value={policy.maxResearchCalls} min={0} max={100} onChange={value => change({ maxResearchCalls: value })} />}
-              {hasAuthorWrites && <NumberField label="每任务资料提交上限" value={policy.maxUpdates} min={1} max={10} onChange={value => change({ maxUpdates: value })} />}
-            </div>
-            <p className="ai-help">预算按影库工具调用计算，接续任务时保留已用额度。模型平台费用由宿主计费。</p>
-          </fieldset>
-        </>}
-
-        {step === 2 && (
-          <div className="ai-review">
-            <h4>{policy.label}</h4>
-            <p className="ai-help">请核对以下权限。建立后将取得交给可信执行器的一次性凭据。</p>
-            <PolicySummary policy={policy} authorNames={authorNames}
-              libraryNames={Object.fromEntries((libraries.data?.items ?? []).map(library => [library.id, library.name]))} />
-          </div>
+        {hasAuthorWrites && (
+          <AuthorScope policy={policy} change={change} names={authorNames}
+            remember={(id, name) => setAuthorNames(current => ({ ...current, [id]: name }))} />
         )}
 
+        {policy.canResearch && (
+          <fieldset className="ai-group">
+            <legend>允许发送文字查询的公开来源</legend>
+            <NumberField label="每任务研究调用上限" value={policy.maxResearchCalls} min={0} max={100} onChange={value => change({ maxResearchCalls: value })} />
+            <p className="ai-help">执行器可向勾选的来源发送公开账号、作品编号、网址或检索词。</p>
+            <FormReadError error={providers.error} retry={() => void providers.refetch()} />
+            {providers.isPending ? <Loading text="正在读取研究来源…" /> : !providers.isError && (
+              choices.length > 0 ? <div className="ai-choices">
+                {choices.map(({ name }) => (
+                  <Choice key={name} disabled={policy.maxResearchCalls <= 0} checked={!!policy.researchProviders?.includes(name)}
+                    onChange={() => change({ researchProviders: toggle(policy.researchProviders ?? [], name) })}>{providerNames[name]}</Choice>
+                ))}
+              </div> : <p className="ai-help">当前服务器未开放公开来源查询。</p>
+            )}
+            {choices.length > 0 && policy.maxResearchCalls <= 0 && <p className="ai-help">调高研究调用上限即可选择来源。</p>}
+            {missingProvider && providers.isSuccess && (
+              <button type="button" className="pill" onClick={() => change({
+                researchProviders: policy.researchProviders?.filter(name => choices.some(choice => choice.name === name)),
+              })}>移除当前不可用的来源</button>
+            )}
+          </fieldset>
+        )}
+
+        <details className="ai-direct-fields">
+          <summary className="ai-disclosure"><ChevronRight aria-hidden="true" />有效期与任务预算</summary>
+          <div className="settings-grid ai-budget">
+            <NumberField label="授权有效天数" value={policy.validDays} min={1} max={365} onChange={value => change({ validDays: value })} />
+            <NumberField label="每日最多任务" value={policy.maxTasksPerDay} min={1} max={200} onChange={value => change({ maxTasksPerDay: value })} />
+            <NumberField label="每任务调用上限" value={policy.maxCallsPerTask} min={10} max={10000} onChange={value => change({ maxCallsPerTask: value })} />
+            <NumberField label="每任务最长秒数" value={policy.taskSeconds} min={60} max={86400} onChange={value => change({ taskSeconds: value })} />
+            {hasAuthorWrites && <NumberField label="每任务资料提交上限" value={policy.maxUpdates} min={1} max={10} onChange={value => change({ maxUpdates: value })} />}
+          </div>
+          <p className="ai-help">预算按影库工具调用计算，接续任务时保留已用额度。模型平台费用由宿主计费。</p>
+        </details>
+        <section className="ai-review" aria-labelledby="ai-current-policy">
+          <h4 id="ai-current-policy">本次授权</h4>
+          {readOnly
+            ? <p>仅全库读取，不允许写入或向外部研究服务发送资料。有效期 {policy.validDays} 天。</p>
+            : <PolicySummary policy={policy} authorNames={authorNames}
+                libraryNames={Object.fromEntries((libraries.data?.items ?? []).map(library => [library.id, library.name]))} />}
+        </section>
+        {!validBudgets && <p className="ai-help" role="alert">请核对有效期与任务预算。</p>}
         <div className="ai-form-actions">
-          {step > 0 && <button type="button" className="pill" onClick={() => goToStep(step - 1)}>上一步</button>}
           <button type="submit" className="save-btn" disabled={blocked}>
-            {step === 2 ? create.isPending ? "正在建立…" : "建立此范围的接入" : "下一步"}
+            {create.isPending ? "正在建立…" : "创建接入凭据"}
           </button>
           <button type="button" className="pill ai-cancel" onClick={() => dirty ? setDiscard(true) : cancel()}>取消</button>
         </div>
@@ -497,7 +490,7 @@ function NumberField({ label, value, min, max, onChange }: {
   return (
     <label className="settings-field">
       <span>{label}</span>
-      <input type="number" min={min} max={max} required value={value} onChange={event => onChange(Number(event.target.value))} />
+      <input type="number" min={min} max={max} required value={Number.isFinite(value) ? value : ""} onChange={event => onChange(event.target.valueAsNumber)} />
     </label>
   );
 }

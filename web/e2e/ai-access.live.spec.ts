@@ -23,8 +23,6 @@ test("browser grants single-frame research only after consent within the selecte
   await page.getByRole("button", { name: "添加 AI 接入" }).click();
   await page.getByLabel("接入名称").fill(label);
   await page.getByRole("checkbox", { name: "研究未知身份与来源" }).check();
-  const next = page.getByRole("button", { name: "下一步", exact: true });
-  await next.click();
   const externalFrame = page.getByRole("checkbox", { name: "允许单帧识图" });
   const libraryOption = page.getByRole("checkbox", { name: label, exact: true });
   const existingMedia = page.getByRole("checkbox", { name: "研究已入库作品的媒体预览" });
@@ -50,7 +48,6 @@ test("browser grants single-frame research only after consent within the selecte
   await existingMedia.check();
   await expect(externalFrame).not.toBeChecked();
   await externalFrame.check();
-  await next.click();
   const permissionText = "允许将派生的单帧预览发送至已配置的识图服务";
   await expect(page.getByText(permissionText, { exact: true })).toBeVisible();
 
@@ -58,7 +55,7 @@ test("browser grants single-frame research only after consent within the selecte
   try {
     const created = page.waitForResponse(response => response.request().method() === "POST" &&
       new URL(response.url()).pathname === "/api/v1/ai/delegations");
-    await page.getByRole("button", { name: "建立此范围的接入" }).click();
+    await page.getByRole("button", { name: "创建接入凭据" }).click();
     const response = await created;
     expect(response.status()).toBe(201);
     const { delegation } = (await response.json()) as { delegation: components["schemas"]["AIDelegation"] };

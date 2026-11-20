@@ -59,7 +59,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
                 Text("连接你使用的 AI 工具", style = MaterialTheme.typography.titleMedium)
                 Text("默认只读可查询全库。影库与作者选择限制写入范围，不限制读取。正常授权任务由工具自动接续，无需逐批复制任务凭据。")
                 Row {
-                    Button(onClick = { model.clearCreationError(); creating = true }, enabled = !busy && !reconcile) { Text("新增 AI 接入") }
+                    Button(onClick = { model.clearCreationError(); creating = true }, enabled = !busy && !reconcile) { Text("添加 AI 接入") }
                     TextButton(onClick = { model.refresh() }, enabled = !busy) { Text("刷新") }
                 }
                 TextButton(onClick = { showConfig = !showConfig }) { Text(if (showConfig) "收起执行器配置" else "核对执行器配置") }
@@ -167,164 +167,201 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     var assetFields by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var allowClear by rememberSaveable { mutableStateOf(false) }
     var days by rememberSaveable { mutableStateOf("30") }
-    var tasks by rememberSaveable { mutableStateOf("20") }
+    var tasks by rememberSaveable { mutableStateOf("10") }
     var updates by rememberSaveable { mutableStateOf("1") }
     var research by rememberSaveable { mutableStateOf("8") }
     var calls by rememberSaveable { mutableStateOf("100") }
-    var minutes by rememberSaveable { mutableStateOf("60") }
-    LaunchedEffect(Unit) { library.refreshConnection(); library.loadAuthors() }
+    var seconds by rememberSaveable { mutableStateOf("3600") }
+    var detailsOpen by rememberSaveable { mutableStateOf(false) }
+    var budgetsOpen by rememberSaveable { mutableStateOf(false) }
+    val needsAuthor = fields.isNotEmpty() || blocks.isNotEmpty()
+    val needsLibrary = canIngest || canOrganize || researchAssets || assetFields.isNotEmpty()
+    val showLibraries = detailsOpen || needsLibrary || canResearch || libraryIds.isNotEmpty()
+    LaunchedEffect(showLibraries) { if (showLibraries) library.loadLibraries() }
+    LaunchedEffect(needsAuthor) {
+        if (needsAuthor) library.loadAuthors()
+        else {
+            authorIds = emptyList()
+            allAuthors = false
+        }
+    }
     LaunchedEffect(canResearch) { if (canResearch) model.loadResearchSources() }
     val validDays = days.toIntOrNull()?.takeIf { it in 1..365 }
     val dailyTasks = tasks.toIntOrNull()?.takeIf { it in 1..200 }
     val maxUpdates = updates.toIntOrNull()?.takeIf { it in 1..10 }
     val maxResearch = if (canResearch) research.toIntOrNull()?.takeIf { it in 0..100 } else 0
     val maxCalls = calls.toIntOrNull()?.takeIf { it in 10..10000 }
-    val duration = minutes.toIntOrNull()?.takeIf { it in 1..1440 }
+    val duration = seconds.toIntOrNull()?.takeIf { it in 60..86400 }
     val imageLookupEligible = canGrantImageLookup(canResearch, maxResearch ?: 0, libraryIds, canIngest, researchAssets)
     LaunchedEffect(imageLookupEligible) { if (!imageLookupEligible) lookupImages = false }
-    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, lookupImages, researchProviders, canOrganize, canRecycle, researchAssets, assetFields, allowClear, days, tasks, updates, research, calls, minutes) {
+    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, lookupImages, researchProviders, canOrganize, canRecycle, researchAssets, assetFields, allowClear, days, tasks, updates, research, calls, seconds) {
         model.clearCreationError()
     }
-    var step by rememberSaveable { mutableIntStateOf(0) }
-    val needsLibrary = canIngest || canOrganize || researchAssets || assetFields.isNotEmpty()
-    val needsAuthor = fields.isNotEmpty() || blocks.isNotEmpty()
-    val showLibraries = needsLibrary || canResearch
     val nameValid = label.isNotBlank() && label.trim().encodeToByteArray().size <= 80
     val scopesValid = (!needsLibrary || libraryIds.isNotEmpty()) && (!needsAuthor || allAuthors || authorIds.isNotEmpty()) &&
         libraryIds.size <= 100 && authorIds.size <= 100 &&
-        (researchProviders.isEmpty() || sources.data?.providers?.containsAll(researchProviders) == true)
+        (researchProviders.isEmpty() || (sources.error == null && sources.data?.takeIf { it.enabled }?.providers?.containsAll(researchProviders) == true))
     val policy = if (nameValid && scopesValid && validDays != null && dailyTasks != null && maxUpdates != null &&
         maxResearch != null && maxCalls != null && duration != null) {
         AIAccessPolicy(
-            label = label.trim(), libraryIds = if (showLibraries) libraryIds else emptyList(),
+            label = label.trim(), libraryIds = if (needsLibrary || canResearch) libraryIds else emptyList(),
             authorIds = if (needsAuthor && !allAuthors) authorIds else emptyList(), allAuthors = needsAuthor && allAuthors,
             allowedFields = fields, candidateBlocks = blocks, allowClear = allowClear && fields.isNotEmpty(),
             canIngest = canIngest, canResearch = canResearch, canOrganize = canOrganize, canRecycleSources = canRecycle,
             canResearchAssets = researchAssets, canLookupImages = lookupImages && imageLookupEligible,
             assetFields = assetFields, researchProviders = researchProviders,
             maxResearchCalls = maxResearch, maxUpdates = maxUpdates, maxTasksPerDay = dailyTasks,
-            validDays = validDays, maxCallsPerTask = maxCalls, taskSeconds = duration * 60,
+            validDays = validDays, maxCallsPerTask = maxCalls, taskSeconds = duration,
         )
     } else null
     AlertDialog(
         onDismissRequest = { if (!busy) close() },
-        title = { Text("新增 AI 接入") },
+        title = { Text("添加 AI 接入") },
         text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(key(step) { rememberScrollState() }),
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("第 ${step + 1} 步 · ${listOf("选择动作", "范围与预算", "核对并建立")[step]}", style = MaterialTheme.typography.titleMedium)
-                when (step) {
-                    0 -> {
-                        OutlinedTextField(label, { label = it }, label = { Text("连接名称") }, enabled = !busy, isError = !nameValid)
-                        Text("默认仅可读取全库资料。请勾选执行器需要的动作。", style = MaterialTheme.typography.bodySmall)
-                        PermissionRow("新增媒体", canIngest, !busy) { canIngest = it; if (!it) canRecycle = false }
-                        PermissionRow("整理 / 命名", canOrganize, !busy) { canOrganize = it }
-                        PermissionRow("备份核验后回收来源", canRecycle, !busy && canIngest) { canRecycle = it }
-                        PermissionRow("研究", canResearch, !busy) { enabled ->
-                            canResearch = enabled
-                            if (!enabled) {
-                                lookupImages = false
-                                researchAssets = false
-                                researchProviders = emptyList()
-                                blocks = emptyList()
-                            }
+                OutlinedTextField(label, { label = it }, label = { Text("接入名称") }, enabled = !busy, isError = !nameValid,
+                    singleLine = true, modifier = Modifier.fillMaxWidth().testTag("ai-access-name"))
+                if (!nameValid) Text("请输入接入名称（不超过 80 字节）。", style = MaterialTheme.typography.bodySmall)
+                Text("执行动作", style = MaterialTheme.typography.titleSmall)
+                Text("默认仅全库读取。按需勾选要交给执行器的操作。", style = MaterialTheme.typography.bodySmall)
+                PermissionRow("接收入库文件", canIngest, !busy) {
+                    canIngest = it
+                    if (!it) { canOrganize = false; canRecycle = false }
+                }
+                PermissionRow("智能整理所选媒体库", canOrganize, !busy && canIngest) { canOrganize = it }
+                PermissionRow("研究未知身份与来源", canResearch, !busy) { enabled ->
+                    canResearch = enabled
+                    research = if (enabled) "8" else "0"
+                    if (!enabled) {
+                        lookupImages = false
+                        researchAssets = false
+                        researchProviders = emptyList()
+                        blocks = emptyList()
+                    }
+                }
+                if (canResearch) {
+                    Text("允许提交的资料候选", style = MaterialTheme.typography.titleSmall)
+                    Text("候选由你核对并保存后才会进入已确认资料。", style = MaterialTheme.typography.bodySmall)
+                    listOf("x", "basic", "accounts").forEach { block ->
+                        PermissionRow(fieldName(block), block in blocks, !busy) { checked ->
+                            blocks = if (checked) blocks + block else blocks - block
                         }
-                        Text("现有作品权限", style = MaterialTheme.typography.titleSmall)
-                        PermissionRow("研究现有作品", researchAssets, !busy && canResearch) { researchAssets = it }
+                    }
+                }
+                HorizontalDivider()
+                AIFormDisclosure("详细权限", detailsOpen, !busy) { detailsOpen = !detailsOpen }
+                if (detailsOpen) {
+                    Text("直接维护基础作者字段", style = MaterialTheme.typography.titleSmall)
+                    Text("所选字段可直接写入已确认资料。", style = MaterialTheme.typography.bodySmall)
+                    listOf("name", "biography", "homepage", "aliases").forEach { field ->
+                        PermissionRow(fieldName(field), field in fields, !busy) { checked ->
+                            fields = if (checked) fields + field else fields - field
+                            if (fields.isEmpty()) allowClear = false
+                        }
+                    }
+                    PermissionRow("允许明确清空已授权基础字段", allowClear, !busy && fields.isNotEmpty()) { allowClear = it }
+                }
+                if (showLibraries) {
+                    Text("允许写入的媒体库", style = MaterialTheme.typography.titleSmall)
+                    if (needsLibrary && libraryIds.isEmpty()) Text("请为所选动作指定至少一个影库。")
+                    libraries.forEach { item ->
+                        PermissionRow(item.name + if (item.enabled) "" else "（已停用）", item.id in libraryIds,
+                            !busy && (item.id in libraryIds || libraryIds.size < 100)) { checked ->
+                            libraryIds = if (checked) libraryIds + item.id else libraryIds - item.id
+                            if (libraryIds.isEmpty()) { canRecycle = false; researchAssets = false; assetFields = emptyList() }
+                        }
+                    }
+                    if (libraryPage.cursor != null) TextButton(onClick = { library.loadLibraries(next = true) }, enabled = !libraryPage.loading) { Text("更多媒体库") }
+                    libraryPage.error?.let { ErrorNotice(it) { library.loadLibraries(next = libraryPage.cursor != null) } }
+                    if (libraryIds.isNotEmpty()) {
+                        if (canIngest) {
+                            PermissionRow("备份核验后允许回收来源", canRecycle, !busy) { canRecycle = it }
+                            Text("核验独立备份与本批内容后，所选库的来源文件移入回收区。", style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (canResearch) PermissionRow("研究已入库作品的媒体预览", researchAssets, !busy) { researchAssets = it }
+                        Text("允许维护所选库中的作品字段", style = MaterialTheme.typography.titleSmall)
                         listOf("authors", "taxonomy", "tags", "rename").forEach { field ->
                             PermissionRow(assetFieldName(field), field in assetFields, !busy) { checked ->
                                 assetFields = if (checked) assetFields + field else assetFields - field
                             }
                         }
-                        Text("作者资料候选", style = MaterialTheme.typography.titleSmall)
-                        Text("开启研究后可提交候选。经你核对并保存后，候选才会进入已确认资料。", style = MaterialTheme.typography.bodySmall)
-                        listOf("x", "basic", "accounts").forEach { block ->
-                            PermissionRow("提交${fieldName(block)}候选", block in blocks, !busy && canResearch) { checked ->
-                                blocks = if (checked) blocks + block else blocks - block
-                            }
-                        }
-                        Text("直接维护作者字段", style = MaterialTheme.typography.titleSmall)
-                        listOf("name", "biography", "homepage", "aliases").forEach { field ->
-                            PermissionRow(fieldName(field), field in fields, !busy) { checked ->
-                                fields = if (checked) fields + field else fields - field
-                                if (fields.isEmpty()) allowClear = false
-                            }
-                        }
-                        PermissionRow("允许清空已授权字段", allowClear, !busy && fields.isNotEmpty()) { allowClear = it }
                     }
-                    1 -> {
-                        if (showLibraries) {
-                            Text("授权影库 · ${libraryIds.size}/100", style = MaterialTheme.typography.titleSmall)
-                            if (needsLibrary && libraryIds.isEmpty()) Text("请为所选动作指定至少一个影库。")
-                            libraries.forEach { item -> PermissionRow(item.name, item.id in libraryIds, !busy) { checked ->
-                                libraryIds = if (checked) libraryIds + item.id else libraryIds - item.id
-                            } }
-                            if (libraryPage.cursor != null) TextButton(onClick = { library.loadLibraries(next = true) }, enabled = !libraryPage.loading) { Text("更多媒体库") }
-                            libraryPage.error?.let { ErrorNotice(it) { library.loadLibraries(next = libraryPage.cursor != null) } }
-                        }
-                        if (needsAuthor) {
-                            PermissionRow("全部可维护作者", allAuthors, !busy) { allAuthors = it }
-                            if (!allAuthors) {
-                                Text("指定作者 · ${authorIds.size}/100")
-                                authors.items.filter { it.kind == "regular" }.forEach { author ->
-                                    PermissionRow(author.name, author.id in authorIds, !busy) { checked ->
-                                        authorIds = if (checked) authorIds + author.id else authorIds - author.id
-                                    }
-                                }
-                                if (authors.cursor != null) TextButton(onClick = { library.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") }
-                                authors.error?.let { ErrorNotice(it) { library.loadAuthors() } }
-                            }
-                        }
-                        if (canResearch) {
-                            PermissionRow("允许单帧识图", lookupImages && imageLookupEligible, !busy && imageLookupEligible) { lookupImages = it }
-                            Text("允许向已配置的识图服务发送一帧派生预览。需选择媒体库，授权接收文件或已有作品预览，并设置正数研究调用上限。",
-                                style = MaterialTheme.typography.bodySmall)
-                            Text("外部研究来源", style = MaterialTheme.typography.titleSmall)
-                            Text("所选来源可收到任务明确提交的公开标识或检索词。", style = MaterialTheme.typography.bodySmall)
-                            if (sources.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                            sources.error?.let { ErrorNotice(it, model::loadResearchSources) }
-                            if (sources.data?.enabled == false) Text("服务器当前已关闭外部查询。所选来源会在服务开启后生效。", style = MaterialTheme.typography.bodySmall)
-                            sources.data?.providers.orEmpty().forEach { name ->
-                                PermissionRow(researchSourceNames[name] ?: name, name in researchProviders, !busy && (maxResearch ?: 0) > 0) { checked ->
-                                    researchProviders = if (checked) researchProviders + name else researchProviders - name
-                                }
-                            }
-                        }
-                        OutlinedTextField(days, { days = it }, label = { Text("有效天数（1–365）") }, isError = validDays == null, enabled = !busy)
-                        OutlinedTextField(tasks, { tasks = it }, label = { Text("每日任务上限（1–200）") }, isError = dailyTasks == null, enabled = !busy)
-                        OutlinedTextField(updates, { updates = it }, label = { Text("每任务资料更新上限（1–10）") }, isError = maxUpdates == null, enabled = !busy)
-                        if (canResearch) OutlinedTextField(research, { research = it; if (it.toIntOrNull() == 0) researchProviders = emptyList() },
-                            modifier = Modifier.testTag("ai-access-research-budget"),
-                            label = { Text("每任务研究调用上限（0–100）") }, isError = maxResearch == null, enabled = !busy)
-                        OutlinedTextField(calls, { calls = it }, label = { Text("每任务工具调用上限（10–10000）") }, isError = maxCalls == null, enabled = !busy)
-                        OutlinedTextField(minutes, { minutes = it }, label = { Text("单任务有效分钟数（1–1440）") }, isError = duration == null, enabled = !busy)
-                    }
-                    else -> if (policy == null) {
-                        ErrorNotice("请返回上一步核对范围和预算。")
-                    } else {
-                        Text(policy.label, style = MaterialTheme.typography.titleSmall)
-                        PolicyDetails(policy, libraryNames = libraries.associate { it.id to it.name },
-                            authorNames = authors.items.associate { it.id to it.name })
+                    if (canResearch) {
+                        PermissionRow("允许单帧识图", lookupImages && imageLookupEligible, !busy && imageLookupEligible) { lookupImages = it }
+                        Text("允许向已配置的识图服务发送一帧派生预览。需选择媒体库，授权接收文件或已有作品预览，并设置正数研究调用上限。",
+                            style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                if (needsAuthor) {
+                    Text("允许维护的作者", style = MaterialTheme.typography.titleSmall)
+                    PermissionRow("所有作者（包括今后新增的作者）", allAuthors, !busy) { allAuthors = it }
+                    if (!allAuthors) {
+                        Text("指定作者 · ${authorIds.size}/100")
+                        authors.items.filter { it.kind == "regular" && it.id != "unknown" }.forEach { author ->
+                            PermissionRow(author.name, author.id in authorIds,
+                                !busy && (author.id in authorIds || authorIds.size < 100)) { checked ->
+                                authorIds = if (checked) authorIds + author.id else authorIds - author.id
+                            }
+                        }
+                        if (authors.cursor != null) TextButton(onClick = { library.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") }
+                        authors.error?.let { ErrorNotice(it) { library.loadAuthors() } }
+                    }
+                }
+                if (canResearch) {
+                    Text("允许发送文字查询的公开来源", style = MaterialTheme.typography.titleSmall)
+                    OutlinedTextField(research, { research = it; if ((it.toIntOrNull() ?: 0) <= 0) researchProviders = emptyList() },
+                        modifier = Modifier.testTag("ai-access-research-budget"),
+                        label = { Text("每任务研究调用上限") }, isError = maxResearch == null, enabled = !busy)
+                    Text("执行器可向勾选的来源发送公开账号、作品编号、网址或检索词。", style = MaterialTheme.typography.bodySmall)
+                    if (sources.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    sources.error?.let { ErrorNotice(it, model::loadResearchSources) }
+                    if (sources.data?.enabled == false) Text("当前服务器未开放公开来源查询。", style = MaterialTheme.typography.bodySmall)
+                    val availableProviders = sources.data?.takeIf { it.enabled && sources.error == null }?.providers.orEmpty()
+                    availableProviders.forEach { name ->
+                        PermissionRow(researchSourceNames[name] ?: name, name in researchProviders, !busy && (maxResearch ?: 0) > 0) { checked ->
+                            researchProviders = if (checked) researchProviders + name else researchProviders - name
+                        }
+                    }
+                    if (!sources.loading && sources.error == null && researchProviders.any { it !in availableProviders }) {
+                        TextButton(onClick = { researchProviders = researchProviders.filter { it in availableProviders } }, enabled = !busy) {
+                            Text("移除当前不可用的来源")
+                        }
+                    }
+                }
+                HorizontalDivider()
+                AIFormDisclosure("有效期与任务预算", budgetsOpen, !busy) { budgetsOpen = !budgetsOpen }
+                if (budgetsOpen) {
+                    OutlinedTextField(days, { days = it }, label = { Text("授权有效天数") }, isError = validDays == null, enabled = !busy)
+                    OutlinedTextField(tasks, { tasks = it }, label = { Text("每日最多任务") }, isError = dailyTasks == null, enabled = !busy)
+                    OutlinedTextField(calls, { calls = it }, label = { Text("每任务调用上限") }, isError = maxCalls == null, enabled = !busy)
+                    OutlinedTextField(seconds, { seconds = it }, label = { Text("每任务最长秒数") }, isError = duration == null, enabled = !busy)
+                    if (needsAuthor) OutlinedTextField(updates, { updates = it }, label = { Text("每任务资料提交上限") }, isError = maxUpdates == null, enabled = !busy)
+                }
+                Text("本次授权", style = MaterialTheme.typography.titleSmall)
+                if (policy != null) {
+                    if (policy.actions() == "仅全库读取") {
+                        Text("仅全库读取，不允许写入或向外部研究服务发送资料。有效期 ${policy.validDays} 天。",
+                            style = MaterialTheme.typography.bodySmall)
+                    } else PolicyDetails(policy, libraryNames = libraries.associate { it.id to it.name },
+                        authorNames = authors.items.associate { it.id to it.name })
+                } else Text("请核对接入名称、授权范围和预算。", style = MaterialTheme.typography.bodySmall)
                 error?.let { ErrorNotice(it) }
             }
         },
-        confirmButton = { TextButton(
-            onClick = { if (step < 2) step++ else if (policy != null) model.create(policy, close) },
-            enabled = !busy && if (step == 0) nameValid else policy != null && (step < 2 || error == null),
-        ) { Text(if (step < 2) "下一步" else "创建接入凭据") } },
-        dismissButton = {
-            Row {
-                if (step > 0) TextButton(onClick = { step-- }, enabled = !busy) { Text("上一步") }
-                TextButton(onClick = close, enabled = !busy) { Text("取消") }
-            }
-        },
+        confirmButton = { TextButton(onClick = { policy?.let { model.create(it, close) } },
+            enabled = !busy && policy != null && error == null) { Text("创建接入凭据") } },
+        dismissButton = { TextButton(onClick = close, enabled = !busy) { Text("取消") } },
     )
 }
 
-private val researchSourceNames = mapOf("fxtwitter" to "FxTwitter", "pixiv" to "Pixiv", "yandere" to "yande.re",
-    "e621" to "e621", "wayback" to "Wayback Machine", "steam" to "Steam", "bing" to "Bing")
+@Composable
+private fun AIFormDisclosure(title: String, open: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled) { Text(if (open) "收起$title" else title) }
+}
+
+private val researchSourceNames = mapOf("fxtwitter" to "FxTwitter（X 公开账号与帖子）", "pixiv" to "Pixiv", "yandere" to "yande.re",
+    "e621" to "e621", "wayback" to "Wayback Machine", "steam" to "Steam 创意工坊", "bing" to "Bing 搜索")
 
 @Composable
 private fun PermissionRow(label: String, selected: Boolean, enabled: Boolean, changed: (Boolean) -> Unit) {
@@ -360,9 +397,9 @@ private fun OneTimeCredential(token: String, close: () -> Unit) {
     }) { Text(if (copied) "已复制" else "复制凭据") } }, dismissButton = { TextButton(onClick = close) { Text("已保存，关闭") } })
 }
 
-private fun fieldName(value: String) = mapOf("name" to "名称", "biography" to "简介", "homepage" to "主页", "aliases" to "别名",
-    "x" to "X 资料", "basic" to "基本资料", "accounts" to "账号资料")[value] ?: value
+private fun fieldName(value: String) = mapOf("name" to "作者名称", "biography" to "简短介绍", "homepage" to "主主页", "aliases" to "别名",
+    "x" to "X 公开资料", "basic" to "整理简介与备注", "accounts" to "账号与发布入口")[value] ?: value
 
 private fun assetFieldName(value: String) = when (value) {
-    "authors" -> "修改作品作者"; "taxonomy" -> "修改作品出处与角色"; "tags" -> "修改作品标签"; "rename" -> "作品改名"; else -> value
+    "authors" -> "作者关联"; "taxonomy" -> "出处与角色"; "tags" -> "标签"; "rename" -> "文件名"; else -> value
 }

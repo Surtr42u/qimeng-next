@@ -51,11 +51,14 @@ fun AppRoot(model: LibraryViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     val queueError by model.queueError.collectAsStateWithLifecycle()
+    val admitted by model.admittedLocalSession.collectAsStateWithLifecycle()
+    val localStatus by model.localRuntimeStatus.collectAsStateWithLifecycle()
+    val localError by model.localConnectionError.collectAsStateWithLifecycle()
     val statistics = session != null && when {
         route == "main" -> tab == 2
         else -> route.startsWith("stats-detail:") || route.startsWith("review:") || route.startsWith("ranking:")
     }
-    val dark = !statistics && when (preferences.theme) {
+    val dark = when (preferences.theme) {
         ThemeChoice.SYSTEM -> isSystemInDarkTheme()
         ThemeChoice.LIGHT -> false
         ThemeChoice.DARK -> true
@@ -83,8 +86,29 @@ fun AppRoot(model: LibraryViewModel) {
             LocalReducedMotion provides (preferences.reducedMotion || !ValueAnimator.areAnimatorsEnabled()),
             LocalContentColor provides if (statistics) MaterialTheme.colorScheme.onBackground else LocalContentColor.current,
         ) {
-            if (session == null) {
+            val target = session
+            val waitingForLocal = target != null && model.ownsLocalSession(target) &&
+                (localStatus.phase != media.qimeng.next.runtime.RuntimePhase.READY || !media.qimeng.next.model.sameTarget(target, admitted))
+            if (target == null) {
                 LoginScreen(model)
+            } else if (waitingForLocal) {
+                // Observe admission and native status even when the saved Session compares equal.
+                if (route == "server") {
+                    BackHandler { model.back() }
+                    ServerSettingsScreen(model)
+                } else {
+                    val shouldRestore = model.localRuntimeShouldRestore
+                    val starting = shouldRestore && localError == null &&
+                        localStatus.phase != media.qimeng.next.runtime.RuntimePhase.FAILED
+                    Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),
+                        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (starting) CircularProgressIndicator()
+                        Text(localError ?: if (starting) "正在连接本机影库" else localStatus.message, Modifier.padding(vertical = 16.dp))
+                        if (shouldRestore && localError != null)
+                            TextButton(onClick = model::restoreLocalConnection) { Text("重试") }
+                        TextButton(onClick = { model.navigate("server") }) { Text("连接设置") }
+                    }
+                }
             } else {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null

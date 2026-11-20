@@ -45,7 +45,10 @@ class DataGraph private constructor(context: Context) {
     }
 
     private val recovery = scope.async {
-            try { queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule(); settings.session.value?.let { archives.resume(it); backups.resume(it) } }
+            try {
+                queue.load(); uploads.recoverInterruptedIntake(); uploads.schedule()
+                settings.session.value?.takeIf { transferConnectionReady(context, it) }?.let { archives.resume(it); backups.resume(it) }
+            }
             catch (failure: CancellationException) { throw failure }
             catch (failure: Exception) { queue.reportProblem(safeFailure(failure)) }
     }

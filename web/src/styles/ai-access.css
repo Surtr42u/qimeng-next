@@ -115,36 +115,6 @@
 .ai-access .ai-guide-fields { display: grid; gap: 8px; margin: 8px 0 12px; }
 .ai-access .ai-guide-fields dd, .ai-access .ai-facts dd, .ai-access .ai-server dd { margin: 0; }
 
-.ai-access .ai-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 0 14px;
-  margin: 0;
-  border-bottom: 1px solid var(--qm-border);
-  list-style: none;
-}
-.ai-access .ai-steps li {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--qm-text-muted);
-  font-size: 12px;
-}
-.ai-access .ai-steps h3 { font: inherit; }
-.ai-access .ai-step-index {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--qm-border);
-  border-radius: 50%;
-  font-variant-numeric: tabular-nums;
-}
-.ai-access .ai-steps [aria-current="step"] { color: var(--qm-primary-strong); font-weight: 600; }
-.ai-access .ai-steps [aria-current="step"] .ai-step-index { border-color: currentColor; background: var(--qm-primary-soft); }
-
 .ai-access .ai-form-fields, .ai-access .ai-group, .ai-access .ai-subgroup {
   min-inline-size: 0;
   margin: 0;
@@ -199,7 +169,12 @@
 .ai-access .ai-form-actions { padding-top: 14px; border-top: 1px solid var(--qm-border); }
 .ai-access .ai-cancel { margin-inline-start: auto; }
 .ai-access .ai-retry .pill { margin-top: 4px; }
-.ai-access .ai-review .ai-help { margin-top: 4px; }
+.ai-access .ai-review {
+  padding: 12px 14px;
+  border: 1px solid var(--qm-border);
+  border-radius: 10px;
+}
+.ai-access .ai-review > p { margin: 6px 0 0; }
 
 .ai-access .ai-facts { margin-top: 8px; }
 .ai-access .ai-facts > div {
@@ -225,7 +200,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .ai-access .ai-revoke { grid-area: auto; justify-self: start; }
-  .ai-access .ai-steps li { flex-direction: column; gap: 4px; text-align: center; }
   .ai-access .ai-cancel { margin-inline-start: 0; }
   .ai-access .ai-empty { padding: 20px 0 8px; }
 }

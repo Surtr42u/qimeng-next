@@ -87,6 +87,10 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
     suspend fun disconnect() = withContext(Dispatchers.IO) { synchronized(authenticationLock) { authenticationGeneration.incrementAndGet(); settings.clearSession() } }
 
+    suspend fun verifySession(target: Session) {
+        provider.api(target).getCurrentSession().bodyOrThrow()
+    }
+
     suspend fun capabilities(): ServerCapabilities {
         val target = target()
         val instance = provider.api(target).getInstance().bodyOrThrow()

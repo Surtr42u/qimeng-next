@@ -36,6 +36,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val recentServers = graph.settings.recentServers
     val transportRevision = graph.settings.transportRevision
     val localConnectionError = localConnection.error
+    val admittedLocalSession = localConnection.admitted
+    val localRuntimeShouldRestore get() = runtime.shouldRestore
+    fun ownsLocalSession(target: Session) = localConnection.owns(target)
+    fun awaitsLocalSession(target: Session): Boolean = localConnection.owns(target) && !localConnection.permits(target)
     private val repository = graph.media
     val session = repository.session
     val preferences = graph.settings.preferences
@@ -154,6 +158,16 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 if (connection != null) {
                     saved["loginEndpoint"] = null; saved["loginAddress"] = null; saved["loginLocalAddress"] = null
                     saved["uploadLibrary"] = graph.settings.uploadLibrary(connection).orEmpty()
+                    if (!ownsLocalSession(connection)) refreshConnection()
+                }
+            }
+        }
+        viewModelScope.launch {
+            // Manual sign-in can cancel the action that saved Session. The application-owned
+            // admission completes independently, even when saved and refreshed Session compare equal.
+            admittedLocalSession.collect { admitted ->
+                if (admitted != null && sameTarget(admitted, session.value) && !awaitsLocalSession(admitted)) {
+                    if (mutableMessage.value == "连接失败，请检查服务器后重试") mutableMessage.value = null
                     refreshConnection()
                 }
             }
@@ -318,12 +332,20 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun stopLocal() = action { runtime.stop() }
     fun restoreLocalConnection() {
         runtime.files.refreshAccess()
-        session.value?.let { graph.backups.resume(it) }
-        if (runtime.available && runtime.shouldRestore && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
+        val selected = session.value ?: return
+        if (!localConnection.owns(selected)) {
+            graph.backups.resume(selected)
+            return
+        }
+        if (!runtime.shouldRestore) return
+        viewModelScope.launch {
+            try { connectLocal(forceLogin = false) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* The coordinator exposes the actual startup failure. */ }
+        }
     }
     private suspend fun connectLocal(forceLogin: Boolean, password: String = "") {
         localConnection.connect(forceLogin, password)
-        refreshConnection()
     }
     fun logout() = action { repository.logout(); saved["route"] = "main" }
     fun disconnect() = action { repository.disconnect(); saved["route"] = "main" }

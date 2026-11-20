@@ -776,14 +776,17 @@ class AndroidRealServerTest {
         val graph = isolatedServerGraph()
         val label = "云端只读接入 ${UUID.randomUUID().toString().take(8)}"
         openAIAccessFromProfile()
-        compose.onNodeWithText("新增 AI 接入").performClick()
-        compose.onNode(hasSetTextAction()).performTextReplacement(label)
-        compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("添加 AI 接入").performClick()
+        compose.onNodeWithTag("ai-access-name").performTextReplacement(label)
         compose.onNodeWithText("允许单帧识图").assertDoesNotExist()
-        compose.onNodeWithText("下一步").performClick()
-        compose.onNodeWithText("执行动作 · 仅全库读取").assertExists()
-        compose.onNodeWithText("单帧识图 · 未授权").assertExists()
-        compose.onNodeWithText("授权有效期 · 30 天").assertExists()
+        compose.onNodeWithText("下一步").assertDoesNotExist()
+        compose.onNodeWithText("每日最多任务").assertDoesNotExist()
+        compose.onNodeWithText("仅全库读取，不允许写入或向外部研究服务发送资料。有效期 30 天。").assertExists()
+        val create = compose.onNodeWithText("创建接入凭据")
+        compose.onNodeWithTag("ai-access-name").performTextReplacement("字".repeat(27))
+        create.assertIsNotEnabled()
+        compose.onNodeWithTag("ai-access-name").performTextReplacement(label)
+        assertTrue(graph.aiAccess.list("active").items.none { it.policy.label == label })
         try {
             compose.onNodeWithText("创建接入凭据").performClick()
             compose.waitUntil(20_000) { compose.onAllNodesWithText("显示凭据").fetchSemanticsNodes().isNotEmpty() }
@@ -793,12 +796,17 @@ class AndroidRealServerTest {
             compose.onNodeWithText("已保存，关闭").performClick()
             val grant = graph.aiAccess.list("active").items.single { it.policy.label == label }
             assertFalse(grant.canLookupImages)
+            assertFalse(grant.policy.canIngest)
+            assertFalse(grant.policy.canOrganize)
+            assertFalse(grant.policy.canRecycleSources)
+            assertEquals(10, grant.policy.maxTasksPerDay)
+            assertEquals(30, grant.policy.validDays)
             assertEquals(0, grant.policy.maxResearchCalls)
             val record = hasTestTag("ai-grant:${grant.id}")
             compose.onNodeWithTag("ai-access-records").performScrollToNode(record)
             compose.onNode(hasText("权限详情") and hasAnyAncestor(record)).performClick()
             compose.onNodeWithText("单帧识图 · 未授权").assertExists()
-            compose.onNodeWithText("每日最多 20 个任务，每任务最多 100 次工具调用，有效 3600 秒").assertExists()
+            compose.onNodeWithText("每日最多 10 个任务，每任务最多 100 次工具调用，有效 3600 秒").assertExists()
         } finally {
             graph.aiAccess.list("active").items.filter { it.policy.label == label }.forEach { graph.aiAccess.revoke(it.id) }
         }
@@ -809,11 +817,13 @@ class AndroidRealServerTest {
         val label = "云端单帧接入 ${UUID.randomUUID().toString().take(8)}"
         val target = graph.media.createLibrary("$label 影库", false)
         openAIAccessFromProfile()
-        compose.onNodeWithText("新增 AI 接入").performClick()
-        compose.onNode(hasSetTextAction()).performTextReplacement(label)
-        compose.onNodeWithText("新增媒体").performScrollTo().performClick()
-        compose.onNodeWithText("研究").performScrollTo().performClick()
-        compose.onNodeWithText("下一步").performClick()
+        compose.onNodeWithText("添加 AI 接入").performClick()
+        compose.onNodeWithTag("ai-access-name").performTextReplacement(label)
+        val organize = compose.onNodeWithText("智能整理所选媒体库")
+        organize.assertIsNotEnabled().assertIsOff()
+        compose.onNodeWithText("接收入库文件").performScrollTo().performClick()
+        organize.assertIsEnabled().assertIsOff()
+        compose.onNodeWithText("研究未知身份与来源").performScrollTo().performClick()
         val imageLookup = compose.onNodeWithText("允许单帧识图")
         imageLookup.assertIsNotEnabled().assertIsOff()
         compose.waitUntil(20_000) { compose.onAllNodesWithText(target.name).fetchSemanticsNodes().isNotEmpty() }
@@ -826,7 +836,6 @@ class AndroidRealServerTest {
         imageLookup.assertIsNotEnabled().assertIsOff()
         budget.performTextReplacement("2")
         imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
-        compose.onNodeWithText("下一步").performClick()
         val permission = "单帧识图 · 允许向已配置的识图服务发送一帧派生预览"
         compose.onNodeWithText(permission).assertExists()
         try {

@@ -32,9 +32,13 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             if (graph.queue.state.value == null) graph.queue.load()
             val target = graph.settings.session.value ?: return@withContext Result.success()
             if (inputData.getString("targetKey") != transferTargetKey(target)) return@withContext Result.success()
+            // The journal is durable; an embedded startup deferral will be re-enqueued after admission.
+            if (!requireNotNull(graph.queue.state.value).hasReadyTransferWork(target) ||
+                !transferConnectionReady(applicationContext, target)) return@withContext Result.success()
             val api = graph.provider.api(target)
             val instance = api.getInstance().bodyOrThrow()
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
+            graph.queue.clearTransportProblem(target)
             val initial = requireNotNull(graph.queue.state.value)
             val withTransfers = initial.transfers.mapTo(mutableSetOf(), Transfer::batchKey)
             var retry = false
@@ -100,7 +104,9 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             throw cancelled
         } catch (failure: Exception) {
             // Durable records remain unchanged; never clear unsent events on a transport failure.
-            graph.queue.reportProblem(safeFailure(failure))
+            val active = graph.settings.session.value?.takeIf { inputData.getString("targetKey") == transferTargetKey(it) }
+            if (active != null && failure is IOException && failure !is ApiFailure) graph.queue.reportTransportProblem(active, safeFailure(failure))
+            else graph.queue.reportProblem(safeFailure(failure))
             if (failure is ApiFailure && failure.status in setOf(401, 403)) Result.success() else Result.retry()
         }
     }

@@ -101,7 +101,7 @@ worker 先把原选择序号、原名、人工选择、每项状态和已存在�
 
 需要公开文本查证时，先调用 `research.context`。实例须启用公开研究，首次授权须勾选所用来源，任务凭据须拥有 `research` 和可用研究额度。`research.provider.query` 接受来源、公开标识或词语、固定操作以及稳定的 `Idempotency-Key`。批次另传当前待整理上传的 ID 与 SHA-256。相同键可回读原结果。任务重启后可从 `research.context.queries` 找到回执，再以 `research.provider.result` 阅读。提交已经计费的候选时传 `providerQueryIds` 及 `callsUsed=0`。平台记录、存档和搜索结果仅提供证据，人工已确认的选择继续生效。
 
-单帧查证使用 `research.image.search`。实例管理员在 Go 服务配置 `QIMENG_RESEARCH_LENS_ENDPOINT` 和 `QIMENG_RESEARCH_SIDECAR_TOKEN`。Web 或 Android 新增接入时，在「范围与预算」显式勾选「允许单帧识图」以签发 `canLookupImages`。创建接收或已有作品任务时显式传 `allowImageLookup=true`。在 `research.context` 检查 `imageLookupEnabled`、`imageLookupAllowed` 和剩余额度。执行器只需 `research` 权限。将预览交给模型仍由执行器上的 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL` 单独授权。
+单帧查证使用 `research.image.search`。实例管理员在 Go 服务配置 `QIMENG_RESEARCH_LENS_ENDPOINT` 和 `QIMENG_RESEARCH_SIDECAR_TOKEN`。Web 或 Android 新增接入时，满足条件后显式开启「允许单帧识图」以签发 `canLookupImages`。创建接收或已有作品任务时显式传 `allowImageLookup=true`。在 `research.context` 检查 `imageLookupEnabled`、`imageLookupAllowed` 和剩余额度。执行器只需 `research` 权限。将预览交给模型仍由执行器上的 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL` 单独授权。
 
 1. 接收任务用 `research.materials` 指定上传和原件摘要，已有作品任务用 `asset.research.materials` 指定当前任务。从返回的 `artifacts` 中选一帧，取它的 `id` 和 `sha256`。同项的 `artifactRef` 用于获准的预览读取。
 2. MCP 调用 `research.image.search`，或使用 `qai call research.image.search` 从标准输入传入相同 JSON。顶层传 `taskId` 和稳定的 `Idempotency-Key`，在 `body` 传 `frameId`、`frameSha256`。接收任务同时传 `uploadId`、`expectedHash`，已有作品任务同时传 `assetId`、`contentVersion`。Go 核对对象、版本与帧摘要后，只向管理员配置的接收服务发送所选的派生 JPEG。执行器保管任务凭据，Go 使用独立的接收服务凭据，模型读取 JSON 回执。

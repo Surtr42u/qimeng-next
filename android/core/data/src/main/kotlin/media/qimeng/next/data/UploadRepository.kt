@@ -247,6 +247,7 @@ class UploadRepository internal constructor(private val context: Context, val qu
 
     fun schedule() {
         val target = settings.session.value ?: return
+        if (queue.state.value?.hasReadyTransferWork(target) != true || !transferConnectionReady(context, target)) return
         // Loopback transport (including tunnels) works with no external Android network.
         val loopback = target.baseUrl.toHttpUrl().host in setOf("127.0.0.1", "localhost", "::1")
         val targetKey = transferTargetKey(target)

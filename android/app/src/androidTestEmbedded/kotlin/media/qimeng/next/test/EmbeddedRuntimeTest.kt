@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import media.qimeng.next.MainActivity
@@ -64,14 +65,22 @@ class EmbeddedRuntimeTest {
             runtime.stop()
             assertEquals(RuntimePhase.STOPPED, runtime.status.value.phase)
             assertFalse(runtime.shouldRestore)
+            val savedLocal = requireNotNull(graph.settings.session.value)
+            assertFalse("Saved session must not bypass host readiness", application.transferConnectionReady(savedLocal))
+            assertTrue("Foreign loopback session is not gated as embedded",
+                application.transferConnectionReady(savedLocal.copy(instanceId = "different-instance")))
+            graph.uploads.schedule()
+            assertNull("An idle/stopped host must not masquerade as a failed transfer", graph.queue.error.value)
             application.localConnection.restoreSelected()
             assertEquals("Returning to the app must respect an explicit stop", RuntimePhase.STOPPED, runtime.status.value.phase)
             val second = runtime.start()
             assertEquals(first.instanceId, second.instanceId)
             assertNotEquals("Every native restart must replace its ephemeral certificate", first.certificateDerBase64, second.certificateDerBase64)
-            // Share the app coordinator with automatic pin refresh, so the test cannot race two logins.
-            application.localConnection.connect(forceLogin = false)
+            // A READY transition while the same Activity is alive must renew the cached pin without onStart.
+            withTimeout(15_000) { application.localConnection.admitted.first { it?.instanceId == first.instanceId } }
             assertEquals(second.certificateDerBase64, graph.settings.certificateFor(graph.settings.session.value!!))
+            assertTrue("Fresh pinned session reopens admission without replacing the saved library identity",
+                application.transferConnectionReady(savedLocal))
             assertTrue("Server persistence must survive process restart", graph.media.libraryPage().items.any { it.id == library.id })
             runtime.configureAddress("http://127.0.0.1:18432")
             application.localConnection.connect(forceLogin = true)

@@ -11,10 +11,12 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await mockLibrary(page);
   let record: Delegation | undefined;
   const syntheticSecret = crypto.randomUUID();
+  let posts = 0;
   await page.route('**/api/v1/ai/delegations**', async route => {
     const requestedState = new URL(route.request().url()).searchParams.get('state') ?? 'active';
     const method = route.request().method();
     if (method === 'POST') {
+      posts++;
       const policy = route.request().postDataJSON();
       record = { ...policy, id: 'synthetic-delegation', state: 'active', createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-02-01T00:00:00Z' };
       return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ delegation: record, credential: { id: record!.id, label: record!.label, scopes: ['read', 'delegate'], token: syntheticSecret, expiresAt: record!.expiresAt } }) });
@@ -31,14 +33,20 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await label.fill('合成执行器');
   await expect(page.getByLabel('接收入库文件')).not.toBeChecked();
   await expect(page.getByLabel('研究未知身份与来源')).not.toBeChecked();
-  await page.getByRole('button', { name: '下一步', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '第 2 步，范围与预算' })).toBeFocused();
-  await page.getByRole('button', { name: '下一步', exact: true }).click();
-  await page.getByRole('button', { name: '建立此范围的接入' }).click();
+  const create = page.getByRole('button', { name: '创建接入凭据' });
+  await expect(page.getByRole('region', { name: '本次授权' })).toContainText('仅全库读取，不允许写入或向外部研究服务发送资料。有效期 30 天。');
+  await expect(page.getByRole('button', { name: '下一步' })).toHaveCount(0);
+  await expect(page.getByLabel('每日最多任务')).not.toBeVisible();
+  await label.fill('字'.repeat(27));
+  await expect(create).toBeDisabled();
+  await label.fill('合成执行器');
+  expect(posts).toBe(0);
+  await create.click();
   const credential = page.getByLabel('一次性显示的接入凭据');
   await expect(credential).toHaveAttribute('type', 'password');
   expect(await credential.inputValue() === syntheticSecret).toBe(true);
-  expect(record?.canIngest).toBe(false);
+  expect(posts).toBe(1);
+  expect(record).toMatchObject({ canIngest: false, canOrganize: false, canRecycleSources: false, maxTasksPerDay: 10, validDays: 30 });
   expect(record?.canResearchAssets).toBe(false);
   expect(record?.canLookupImages).toBe(false);
   expect(record?.researchProviders).toEqual([]);
@@ -78,7 +86,6 @@ test('public research sends only explicitly checked deployed text sources with a
   await page.getByLabel('接入名称').fill('合成外部文字核验');
   await page.getByText('研究未知身份与来源', { exact: true }).click();
   await expect(page.getByLabel('研究未知身份与来源')).toBeChecked();
-  await page.getByRole('button', { name: '下一步' }).click();
   const sources = page.getByRole('group', { name: '允许发送文字查询的公开来源' });
   await expect(sources.getByRole('checkbox')).toHaveCount(2);
   const fx = sources.getByLabel('FxTwitter', { exact: false });
@@ -91,10 +98,9 @@ test('public research sends only explicitly checked deployed text sources with a
   await expect(steam).toBeDisabled();
   await page.getByLabel('每任务研究调用上限').fill('2');
   await fx.check();
-  await page.getByRole('button', { name: '下一步' }).click();
-  await expect(page.getByText('FxTwitter（X 公开账号与帖子）', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '本次授权' })).toContainText('FxTwitter（X 公开账号与帖子）');
   const submitted = page.waitForRequest(r => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/ai/delegations'));
-  await page.getByRole('button', { name: '建立此范围的接入' }).click();
+  await page.getByRole('button', { name: '创建接入凭据' }).click();
   expect((await submitted).postDataJSON()).toMatchObject({ canResearch: true, maxResearchCalls: 2, researchProviders: ['fxtwitter'] });
 });
 
