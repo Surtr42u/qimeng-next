@@ -186,7 +186,8 @@ class StatisticsAndHomeTest {
         val baseline = settings.preferences.value
         compose.runOnIdle { model.navigate("reports") }
         try {
-            val bounds = compose.onNodeWithText("任务中心", exact = true).assertIsDisplayed()
+            // onNodeWithText 默认就是全等匹配（substring = false），这里不需要额外的精确参数。
+            val bounds = compose.onNodeWithText("任务中心").assertIsDisplayed()
                 .fetchSemanticsNode().boundsInWindow
             // 截图是整块显示，bounds 却是窗口坐标：两者只在窗口铺满显示且原点为 (0,0) 时重合。
             // 窗口尺寸取一次用于核对，别盒、分屏或多显示时直接失败，而不是静默采到别处像素。
