@@ -55,10 +55,6 @@ fun AppRoot(model: LibraryViewModel) {
     val admitted by model.admittedLocalSession.collectAsStateWithLifecycle()
     val localStatus by model.localRuntimeStatus.collectAsStateWithLifecycle()
     val localError by model.localConnectionError.collectAsStateWithLifecycle()
-    val statistics = session != null && when {
-        route == "main" -> tab == 2
-        else -> route.startsWith("stats-detail:") || route.startsWith("review:") || route.startsWith("ranking:")
-    }
     val dark = when (preferences.theme) {
         ThemeChoice.SYSTEM -> isSystemInDarkTheme()
         ThemeChoice.LIGHT -> false
@@ -87,7 +83,7 @@ fun AppRoot(model: LibraryViewModel) {
         CompositionLocalProvider(
             LocalMediaImages provides imageLoader,
             LocalReducedMotion provides (preferences.reducedMotion || !ValueAnimator.areAnimatorsEnabled()),
-            LocalContentColor provides if (statistics) MaterialTheme.colorScheme.onBackground else LocalContentColor.current,
+            LocalContentColor provides MaterialTheme.colorScheme.onBackground,
         ) {
             val target = session
             val waitingForLocal = target != null && model.ownsLocalSession(target) &&

@@ -261,7 +261,36 @@ class StatisticsAndHomeTest {
         compose.waitUntil(10_000) {
             captureCloudScreenshot("stats-return-to-dark-home.png") { screen -> screen.getPixel(4, 32) == Color.rgb(20, 20, 20) }
         }
+        assertTaskCenterHeaderContrast(model, graph)
         assertManualSearch(model)
+    }
+
+    private fun assertTaskCenterHeaderContrast(model: LibraryViewModel, graph: DataGraph) {
+        val settings = graph.settings
+        val baseline = settings.preferences.value
+        compose.runOnIdle { model.navigate("reports") }
+        try {
+            val title = compose.onNodeWithText("任务中心", exact = true)
+            val bounds = title.assertIsDisplayed().fetchSemanticsNode().boundsInWindow
+            // This ordinary route has no Statistics provider or enclosing Surface.
+            // Sample the rendered title within its semantics bounds, not a fixed glyph position.
+            for ((theme, palette, filename) in listOf(
+                Triple(ThemeChoice.DARK, StatsPalette.DARK, "task-center-heading-dark.png"),
+                Triple(ThemeChoice.LIGHT, StatsPalette.LIGHT, "task-center-heading-light.png"),
+            )) {
+                settings.savePreferences(baseline.copy(theme = theme))
+                compose.waitUntil(10_000) {
+                    captureCloudScreenshot(filename) { screen ->
+                        screen.getPixel(4, bounds.center.y.toInt()) == palette.background &&
+                            screen.hasColor(bounds, palette.accent)
+                    }
+                }
+            }
+        } finally {
+            settings.savePreferences(baseline)
+        }
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("navigation:home").assertIsSelected()
     }
 
     private fun assertTagSearch(model: LibraryViewModel, graph: DataGraph) {
