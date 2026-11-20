@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,9 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,6 +34,8 @@ import media.qimeng.next.model.AIAccessPolicy
 import media.qimeng.next.model.canGrantImageLookup
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.component.QimengCapsuleTextField
+import media.qimeng.next.ui.component.QimengSegPill
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
@@ -143,6 +144,7 @@ private fun PolicyDetails(policy: AIAccessPolicy,
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, close: () -> Unit) {
     val libraries by library.libraries.collectAsStateWithLifecycle()
@@ -186,6 +188,8 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
         model.clearCreationError()
     }
     var step by rememberSaveable { mutableIntStateOf(0) }
+    var more by rememberSaveable { mutableStateOf(false) }
+    var budgets by rememberSaveable { mutableStateOf(false) }
     val needsLibrary = canIngest || canOrganize || researchAssets || assetFields.isNotEmpty()
     val needsAuthor = fields.isNotEmpty() || blocks.isNotEmpty()
     val showLibraries = needsLibrary || canResearch
@@ -206,136 +210,229 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
             validDays = validDays, maxCallsPerTask = maxCalls, taskSeconds = duration * 60,
         )
     } else null
-    AlertDialog(
-        onDismissRequest = { if (!busy) close() },
-        title = { Text("新增 AI 接入") },
-        text = {
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(key(step) { rememberScrollState() }),
-                verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("第 ${step + 1} 步 · ${listOf("选择动作", "范围与预算", "核对并建立")[step]}", style = MaterialTheme.typography.titleMedium)
-                when (step) {
-                    0 -> {
-                        OutlinedTextField(label, { label = it }, label = { Text("连接名称") }, enabled = !busy, isError = !nameValid)
-                        Text("默认仅可读取全库资料。请勾选执行器需要的动作。", style = MaterialTheme.typography.bodySmall)
-                        PermissionRow("新增媒体", canIngest, !busy) { canIngest = it; if (!it) canRecycle = false }
-                        PermissionRow("整理 / 命名", canOrganize, !busy) { canOrganize = it }
-                        PermissionRow("备份核验后回收来源", canRecycle, !busy && canIngest) { canRecycle = it }
-                        PermissionRow("研究", canResearch, !busy) { enabled ->
-                            canResearch = enabled
-                            if (!enabled) {
-                                lookupImages = false
-                                researchAssets = false
-                                researchProviders = emptyList()
-                                blocks = emptyList()
-                            }
-                        }
-                        Text("现有作品权限", style = MaterialTheme.typography.titleSmall)
-                        PermissionRow("研究现有作品", researchAssets, !busy && canResearch) { researchAssets = it }
-                        listOf("authors", "taxonomy", "tags", "rename").forEach { field ->
-                            PermissionRow(assetFieldName(field), field in assetFields, !busy) { checked ->
-                                assetFields = if (checked) assetFields + field else assetFields - field
-                            }
-                        }
-                        Text("作者资料候选", style = MaterialTheme.typography.titleSmall)
-                        Text("开启研究后可提交候选。经你核对并保存后，候选才会进入已确认资料。", style = MaterialTheme.typography.bodySmall)
-                        listOf("x", "basic", "accounts").forEach { block ->
-                            PermissionRow("提交${fieldName(block)}候选", block in blocks, !busy && canResearch) { checked ->
-                                blocks = if (checked) blocks + block else blocks - block
-                            }
-                        }
-                        Text("直接维护作者字段", style = MaterialTheme.typography.titleSmall)
-                        listOf("name", "biography", "homepage", "aliases").forEach { field ->
-                            PermissionRow(fieldName(field), field in fields, !busy) { checked ->
-                                fields = if (checked) fields + field else fields - field
-                                if (fields.isEmpty()) allowClear = false
-                            }
-                        }
-                        PermissionRow("允许清空已授权字段", allowClear, !busy && fields.isNotEmpty()) { allowClear = it }
+    val stepNames = listOf("选择动作", "范围与预算", "核对并建立")
+    val actionSummary = buildList {
+        if (canIngest) add("接收入库")
+        if (canOrganize) add("整理命名")
+        if (canResearch) add("研究")
+        if (canRecycle) add("来源回收")
+    }.joinToString("、").ifEmpty { "仅全库读取" }
+    BackHandler { if (step > 0) step-- else if (!busy) close() }
+    Dialog(onDismissRequest = { if (!busy) close() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("新增 AI 接入", style = MaterialTheme.typography.titleLarge)
+                        Text("第 ${step + 1}/3 步 · ${stepNames[step]}", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    1 -> {
-                        if (showLibraries) {
-                            Text("授权影库 · ${libraryIds.size}/100", style = MaterialTheme.typography.titleSmall)
-                            if (needsLibrary && libraryIds.isEmpty()) Text("请为所选动作指定至少一个影库。")
-                            libraries.forEach { item -> PermissionRow(item.name, item.id in libraryIds, !busy) { checked ->
-                                libraryIds = if (checked) libraryIds + item.id else libraryIds - item.id
-                            } }
-                            if (libraryPage.cursor != null) TextButton(onClick = { library.loadLibraries(next = true) }, enabled = !libraryPage.loading) { Text("更多媒体库") }
-                            libraryPage.error?.let { ErrorNotice(it) { library.loadLibraries(next = libraryPage.cursor != null) } }
-                        }
-                        if (needsAuthor) {
-                            PermissionRow("全部可维护作者", allAuthors, !busy) { allAuthors = it }
-                            if (!allAuthors) {
-                                Text("指定作者 · ${authorIds.size}/100")
-                                authors.items.filter { it.kind == "regular" }.forEach { author ->
-                                    PermissionRow(author.name, author.id in authorIds, !busy) { checked ->
-                                        authorIds = if (checked) authorIds + author.id else authorIds - author.id
-                                    }
-                                }
-                                if (authors.cursor != null) TextButton(onClick = { library.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") }
-                                authors.error?.let { ErrorNotice(it) { library.loadAuthors() } }
-                            }
-                        }
-                        if (canResearch) {
-                            PermissionRow("允许单帧识图", lookupImages && imageLookupEligible, !busy && imageLookupEligible) { lookupImages = it }
-                            Text("允许向已配置的识图服务发送一帧派生预览。需选择媒体库，授权接收文件或已有作品预览，并设置正数研究调用上限。",
-                                style = MaterialTheme.typography.bodySmall)
-                            Text("外部研究来源", style = MaterialTheme.typography.titleSmall)
-                            Text("所选来源可收到任务明确提交的公开标识或检索词。", style = MaterialTheme.typography.bodySmall)
-                            if (sources.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                            sources.error?.let { ErrorNotice(it, model::loadResearchSources) }
-                            if (sources.data?.enabled == false) Text("服务器当前已关闭外部查询。所选来源会在服务开启后生效。", style = MaterialTheme.typography.bodySmall)
-                            sources.data?.providers.orEmpty().forEach { name ->
-                                PermissionRow(researchSourceNames[name] ?: name, name in researchProviders, !busy && (maxResearch ?: 0) > 0) { checked ->
-                                    researchProviders = if (checked) researchProviders + name else researchProviders - name
-                                }
-                            }
-                        }
-                        OutlinedTextField(days, { days = it }, label = { Text("有效天数（1–365）") }, isError = validDays == null, enabled = !busy)
-                        OutlinedTextField(tasks, { tasks = it }, label = { Text("每日任务上限（1–200）") }, isError = dailyTasks == null, enabled = !busy)
-                        OutlinedTextField(updates, { updates = it }, label = { Text("每任务资料更新上限（1–10）") }, isError = maxUpdates == null, enabled = !busy)
-                        if (canResearch) OutlinedTextField(research, { research = it; if (it.toIntOrNull() == 0) researchProviders = emptyList() },
-                            modifier = Modifier.testTag("ai-access-research-budget"),
-                            label = { Text("每任务研究调用上限（0–100）") }, isError = maxResearch == null, enabled = !busy)
-                        OutlinedTextField(calls, { calls = it }, label = { Text("每任务工具调用上限（10–10000）") }, isError = maxCalls == null, enabled = !busy)
-                        OutlinedTextField(minutes, { minutes = it }, label = { Text("单任务有效分钟数（1–1440）") }, isError = duration == null, enabled = !busy)
-                    }
-                    else -> if (policy == null) {
-                        ErrorNotice("请返回上一步核对范围和预算。")
-                    } else {
-                        Text(policy.label, style = MaterialTheme.typography.titleSmall)
-                        PolicyDetails(policy, libraryNames = libraries.associate { it.id to it.name },
-                            authorNames = authors.items.associate { it.id to it.name })
+                    TextButton(onClick = close, enabled = !busy) { Text("关闭") }
+                }
+                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    stepNames.forEachIndexed { index, title ->
+                        QimengSegPill(text = "${index + 1} $title", selected = index == step,
+                            onClick = { if (index < step) step = index }, enabled = !busy)
                     }
                 }
-                error?.let { ErrorNotice(it) }
+                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    when (step) {
+                        0 -> {
+                            item {
+                                FormSection("连接名称", "给这次授权起个名字，方便以后核对或撤销。") {
+                                    QimengCapsuleTextField(label, { label = it }, Modifier.fillMaxWidth().testTag("ai-access-label"),
+                                        placeholder = "例如：我的 AI 助手", singleLine = true, enabled = !busy)
+                                    if (!nameValid) Text("名称不能为空，最多 80 字节。", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            item {
+                                FormSection("允许它做什么", "默认只读：可以查询全库资料。需要写入或研究时再打开。") {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        PermissionPill("新增媒体", canIngest, !busy) { enabled ->
+                                            canIngest = enabled
+                                            if (!enabled) canRecycle = false
+                                        }
+                                        PermissionPill("整理 / 命名", canOrganize, !busy) { canOrganize = it }
+                                        PermissionPill("研究", canResearch, !busy) { enabled ->
+                                            canResearch = enabled
+                                            if (!enabled) {
+                                                lookupImages = false
+                                                researchAssets = false
+                                                researchProviders = emptyList()
+                                                blocks = emptyList()
+                                            }
+                                        }
+                                    }
+                                    if (canIngest) PermissionPill("备份核验后回收来源", canRecycle, !busy) { canRecycle = it }
+                                    Text("当前授权 · $actionSummary", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            item {
+                                TextButton(onClick = { more = !more }, enabled = !busy) {
+                                    Text(if (more) "收起资料维护" else "资料维护（可选）")
+                                }
+                                if (more) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("研究现有作品", style = MaterialTheme.typography.titleSmall)
+                                    PermissionPill("研究已入库作品的媒体预览", researchAssets, !busy && canResearch) { researchAssets = it }
+                                    Text("作者资料候选", style = MaterialTheme.typography.titleSmall)
+                                    Text("候选经你核对并保存后才会进入已确认资料。", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("x", "basic", "accounts").forEach { block ->
+                                            PermissionPill("提交${fieldName(block)}候选", block in blocks, !busy && canResearch) { checked ->
+                                                blocks = if (checked) blocks + block else blocks - block
+                                            }
+                                        }
+                                    }
+                                    Text("直接维护作者字段", style = MaterialTheme.typography.titleSmall)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("name", "biography", "homepage", "aliases").forEach { field ->
+                                            PermissionPill(fieldName(field), field in fields, !busy) { checked ->
+                                                fields = if (checked) fields + field else fields - field
+                                                if (fields.isEmpty()) allowClear = false
+                                            }
+                                        }
+                                    }
+                                    if (fields.isNotEmpty()) PermissionPill("允许清空已授权字段", allowClear, !busy) { allowClear = it }
+                                    Text("作品维护", style = MaterialTheme.typography.titleSmall)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("authors", "taxonomy", "tags", "rename").forEach { field ->
+                                            PermissionPill(assetFieldName(field), field in assetFields, !busy) { checked ->
+                                                assetFields = if (checked) assetFields + field else assetFields - field
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        1 -> {
+                            if (showLibraries) item {
+                                FormSection("授权影库 · ${libraryIds.size}/100",
+                                    if (needsLibrary) "所选动作至少需要一个影库。" else "只读可跳过；选择后可维护库里的作品。") {
+                                    if (needsLibrary && libraryIds.isEmpty()) Text("请选择至少一个影库。",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        libraries.forEach { item ->
+                                            PermissionPill(item.name, item.id in libraryIds, !busy) { checked ->
+                                                libraryIds = if (checked) libraryIds + item.id else libraryIds - item.id
+                                            }
+                                        }
+                                    }
+                                    if (libraryPage.cursor != null) TextButton(onClick = { library.loadLibraries(next = true) }, enabled = !libraryPage.loading) { Text("更多媒体库") }
+                                    libraryPage.error?.let { ErrorNotice(it) { library.loadLibraries(next = libraryPage.cursor != null) } }
+                                }
+                            }
+                            if (needsAuthor) item {
+                                FormSection("作者范围", "指定作者时至少选择一位；也可直接授权全部可维护作者。") {
+                                    PermissionPill("全部可维护作者", allAuthors, !busy) { allAuthors = it }
+                                    if (!allAuthors) {
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            authors.items.filter { it.kind == "regular" }.forEach { author ->
+                                                PermissionPill(author.name, author.id in authorIds, !busy) { checked ->
+                                                    authorIds = if (checked) authorIds + author.id else authorIds - author.id
+                                                }
+                                            }
+                                        }
+                                        if (authors.cursor != null) TextButton(onClick = { library.loadAuthors(true) }, enabled = !authors.loading) { Text("更多作者") }
+                                        authors.error?.let { ErrorNotice(it) { library.loadAuthors() } }
+                                    }
+                                }
+                            }
+                            if (canResearch) item {
+                                FormSection("研究与识图", "公开来源只收到任务明确提交的公开标识或检索词。") {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        PermissionPill("允许单帧识图", lookupImages && imageLookupEligible, !busy && imageLookupEligible) { lookupImages = it }
+                                    }
+                                    Text("单帧识图会向已配置的识图服务发送一帧派生预览；需要选择影库、授权接收或已有作品预览，并保留正数研究额度。",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (sources.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                    sources.error?.let { ErrorNotice(it, model::loadResearchSources) }
+                                    if (sources.data?.enabled == false) Text("服务器当前已关闭外部查询。所选来源会在服务开启后生效。",
+                                        style = MaterialTheme.typography.bodySmall)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        sources.data?.providers.orEmpty().forEach { name ->
+                                            PermissionPill(researchSourceNames[name] ?: name, name in researchProviders,
+                                                !busy && (maxResearch ?: 0) > 0) { checked ->
+                                                researchProviders = if (checked) researchProviders + name else researchProviders - name
+                                            }
+                                        }
+                                    }
+                                    CapsuleNumberField("每任务研究调用上限（0–100）", research, {
+                                        research = it
+                                        if (it.toIntOrNull() == 0) researchProviders = emptyList()
+                                    }, maxResearch == null, Modifier.testTag("ai-access-research-budget"))
+                                }
+                            }
+                            item {
+                                TextButton(onClick = { budgets = !budgets }, enabled = !busy) {
+                                    Text(if (budgets) "收起预算与有效期" else "预算与有效期 · $days 天 / 每日 $tasks 个任务")
+                                }
+                                if (budgets) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    CapsuleNumberField("有效天数（1–365）", days, { days = it }, validDays == null)
+                                    CapsuleNumberField("每日任务上限（1–200）", tasks, { tasks = it }, dailyTasks == null)
+                                    CapsuleNumberField("每任务资料更新上限（1–10）", updates, { updates = it }, maxUpdates == null)
+                                    CapsuleNumberField("每任务工具调用上限（10–10000）", calls, { calls = it }, maxCalls == null)
+                                    CapsuleNumberField("单任务有效分钟数（1–1440）", minutes, { minutes = it }, duration == null)
+                                }
+                            }
+                        }
+                        else -> item {
+                            if (policy == null) {
+                                ErrorNotice("请返回上一步核对范围和预算。")
+                            } else {
+                                FormSection("核对授权", "创建后凭据只显示一次。") {
+                                    Text(policy.label, style = MaterialTheme.typography.titleMedium)
+                                    PolicyDetails(policy, libraryNames = libraries.associate { it.id to it.name },
+                                        authorNames = authors.items.associate { it.id to it.name })
+                                }
+                            }
+                        }
+                    }
+                    error?.let { item { ErrorNotice(it) } }
+                }
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (step > 0) TextButton(onClick = { step-- }, enabled = !busy) { Text("上一步") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = close, enabled = !busy) { Text("取消") }
+                    Button(onClick = { if (step < 2) step++ else if (policy != null) model.create(policy, close) },
+                        enabled = !busy && if (step == 0) nameValid else policy != null && (step < 2 || error == null)) {
+                        Text(if (step < 2) "下一步" else "创建接入凭据")
+                    }
+                }
             }
-        },
-        confirmButton = { TextButton(
-            onClick = { if (step < 2) step++ else if (policy != null) model.create(policy, close) },
-            enabled = !busy && if (step == 0) nameValid else policy != null && (step < 2 || error == null),
-        ) { Text(if (step < 2) "下一步" else "创建接入凭据") } },
-        dismissButton = {
-            Row {
-                if (step > 0) TextButton(onClick = { step-- }, enabled = !busy) { Text("上一步") }
-                TextButton(onClick = close, enabled = !busy) { Text("取消") }
-            }
-        },
-    )
+        }
+    }
 }
+
+@Composable
+private fun FormSection(title: String, hint: String? = null, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        content()
+    }
+}
+
+@Composable
+private fun PermissionPill(label: String, selected: Boolean, enabled: Boolean, changed: (Boolean) -> Unit) {
+    QimengSegPill(text = label, selected = selected, onClick = { changed(!selected) }, enabled = enabled, toggleable = true)
+}
+
+@Composable
+private fun CapsuleNumberField(label: String, value: String, changed: (String) -> Unit, invalid: Boolean = false, modifier: Modifier = Modifier) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium,
+            color = if (invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        QimengCapsuleTextField(value, changed, modifier.fillMaxWidth(), singleLine = true)
+    }
+}
+
 
 private val researchSourceNames = mapOf("fxtwitter" to "FxTwitter", "pixiv" to "Pixiv", "yandere" to "yande.re",
     "e621" to "e621", "wayback" to "Wayback Machine", "steam" to "Steam", "bing" to "Bing")
-
-@Composable
-private fun PermissionRow(label: String, selected: Boolean, enabled: Boolean, changed: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(
-        value = selected, enabled = enabled, role = Role.Checkbox, onValueChange = changed,
-    ),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Checkbox(selected, onCheckedChange = null, enabled = enabled)
-        Text(label, Modifier.weight(1f))
-    }
-}
 
 @Composable
 private fun OneTimeCredential(token: String, close: () -> Unit) {

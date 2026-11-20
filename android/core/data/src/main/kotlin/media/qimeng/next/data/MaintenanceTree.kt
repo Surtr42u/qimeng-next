@@ -36,6 +36,31 @@ private const val generationRecord = ".绮梦下一代清单.json"
 private const val reusableFolder = ".绮梦手机轮换空目录"
 internal const val mobileRotationMarker = ".绮梦手机轮换.json"
 internal const val webRotationMarker = ".绮梦下一代轮换.json"
+internal const val maintenanceReadmeName = "目录说明.md"
+
+/** 维护目录说明（与旧版同名同位置）；只描述用户可见的固定结构，不写本机路径。 */
+internal val maintenanceReadme = """# 影库资料维护
+
+这里统一保存作者资料、完整备份和上传归档。换设备时，先同步媒体，再用配套离线命令恢复完整备份。
+
+## 文件夹一览
+
+| 文件夹 | 你会用到的内容 | 日常操作 |
+| --- | --- | --- |
+| 当前/作者资料 | 作者总表.txt、作者资料.md、作者片段索引.json | TXT 维护作者与作品关联，Markdown 阅读简介、来源和作品清单 |
+| 当前/备份 | 影库备份.qnext 和同名 .sha256 | 完整资料快照，使用配套离线命令核验与恢复 |
+| 上次 | 上一代作者资料和完整备份 | 需要回退时按需复制，程序不会自动清理 |
+| 上传归档 | 按媒体库和目标目录保存的原件副本 | 查看已经上传成功的文件 |
+
+## 当前与上次两代
+
+- 内容变化时先把整个「当前」提交为「上次」，再写新的「当前」；内容没变时只刷新当前，不挤掉上次。
+- 每份备份、TXT 和索引都有同名 .sha256，复制时一起带走，不需要手动编辑。
+- 摘要不符、文件不可读或目录被外部改动时程序会停止覆盖并保留现场。
+- 完整 .qnext 包含业务资料与原件快照，请按服务端版本配套的离线命令恢复到新的空目录。
+- 以「.绮梦」开头的文件和暂存目录是程序内部状态，请勿编辑或删除；轮换结束后它们会自动清理。
+"""
+
 
 /** The granted provider owns all paths. Fixed child names and verified bytes are the only publication inputs. */
 internal class MaintenanceTree(private val resolver: ContentResolver, val tree: Uri) {
@@ -130,6 +155,20 @@ internal class MaintenanceTree(private val resolver: ContentResolver, val tree: 
     }
     suspend fun writeText(parent: Uri, name: String, text: String): String =
         ByteArrayInputStream(text.toByteArray(Charsets.UTF_8)).use { write(parent, name, it) }
+
+    /** 覆盖写短文本（目录说明等非断点续传文件）；写后按字节摘要核验。 */
+    suspend fun overwriteText(parent: Uri, name: String, text: String): String {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val expected = MessageDigest.getInstance("SHA-256").digest(bytes).hex()
+        val existing = find(parent, name)
+        check(existing?.directory != true) { "维护文件名已被文件夹占用" }
+        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.').lowercase())
+            ?: "application/octet-stream"
+        val file = existing?.uri ?: create(parent, name, mime)
+        resolver.openOutputStream(file, "wt")?.use { it.write(bytes) } ?: error("维护目录不能写入")
+        check(hash(file) == expected) { "维护文件写后核验失败，原内容保留" }
+        return expected
+    }
     suspend fun hash(uri: Uri): String {
         val digest = MessageDigest.getInstance("SHA-256")
         open(uri).use { stream ->
@@ -199,6 +238,39 @@ internal class MaintenanceTree(private val resolver: ContentResolver, val tree: 
         val mime = resolver.getType(uri)
         check(mime != null && mime != Document.MIME_TYPE_DIR) { "无法确认待清理的是普通维护文件" }
         check(DocumentsContract.deleteDocument(resolver, uri)) { "系统未确认维护文件清理" }
+    }
+
+    /**
+     * 放弃一次未完成的轮换：只清理本次 token 命名的暂存目录中的程序文件。
+     * 不触碰「当前 / 上次 / 上传归档」及用户自行放入的其他内容。
+     */
+    suspend fun discardStage(token: String) {
+        val name = ".绮梦手机暂存-$token"
+        val folder = find(root, name) ?: return
+        if (!folder.directory) return
+        for ((_, path) in maintenanceParts) {
+            val parent = find(folder.uri, path.first) ?: continue
+            if (!parent.directory) continue
+            find(parent.uri, path.second)?.let { if (!it.directory) remove(it.uri) }
+            find(parent.uri, "${path.second}.sha256")?.let { if (!it.directory) remove(it.uri) }
+        }
+        dropEmptyFolder(name)
+    }
+
+    /** 只删除程序自己建立且已空的暂存/空目录；有用户内容时原样保留。 */
+    fun dropEmptyFolder(name: String) {
+        val folder = find(root, name) ?: return
+        if (!folder.directory || !onlyEmptyManagedFolders(folder.uri)) return
+        children(folder.uri) { child -> if (child.directory) removeEmptyDirectory(child.uri) }
+        removeEmptyDirectory(folder.uri)
+    }
+
+    fun dropReusableFolder() = dropEmptyFolder(reusableFolder)
+
+    private fun removeEmptyDirectory(directory: Uri) {
+        var empty = true
+        children(directory) { empty = false }
+        if (empty) runCatching { DocumentsContract.deleteDocument(resolver, directory) }
     }
     // A DocumentsProvider may recursively delete a directory even if another app added a child after listing it.
     // Reuse the empty staging folder on the next rotation. Never request deletion of a directory.

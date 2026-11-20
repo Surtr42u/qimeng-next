@@ -2,6 +2,7 @@ package media.qimeng.next.screen
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -40,9 +41,14 @@ internal fun MaintenanceScreen(library: LibraryViewModel, back: () -> Unit, uplo
     val state by model.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var details by rememberSaveable { mutableStateOf(false) }
+    var pendingPick by remember { mutableStateOf<Pair<Uri, Int>?>(null) }
+    var abandoning by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
-        if (result.resultCode == Activity.RESULT_OK && data != null) data.data?.let { model.bind(it, data.flags) }
+        if (result.resultCode == Activity.RESULT_OK && data != null) data.data?.let { uri ->
+            if (state.folder.pending && state.folder.tree != uri.toString()) pendingPick = uri to data.flags
+            else model.bind(uri, data.flags)
+        }
     }
     val choose = { picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
         Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)) }
@@ -65,7 +71,10 @@ internal fun MaintenanceScreen(library: LibraryViewModel, back: () -> Unit, uplo
                 if (details && state.folder.tree != null) Row {
                     TextButton(onClick = choose, enabled = !state.busy) { Text("更换目录") }
                     TextButton(onClick = model::export, enabled = !state.busy) { Text("刷新目录") }
+                    if (state.folder.pending) TextButton(onClick = { abandoning = true }, enabled = !state.busy) { Text("放弃轮换") }
                 }
+                if (state.folder.pending) Text("上次轮换未完成：可继续导出，或放弃后更换目录。旧的两代资料与上传归档保留。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                 state.folder.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
                 state.error?.let { ErrorNotice(it) }
             }
@@ -108,6 +117,19 @@ internal fun MaintenanceScreen(library: LibraryViewModel, back: () -> Unit, uplo
             else -> device()
         }
     }
+    pendingPick?.let { (uri, flags) ->
+        AlertDialog(onDismissRequest = { pendingPick = null }, title = { Text("上次轮换未完成") },
+            text = { Text("当前维护目录还有一份未完成的备份轮换。继续完成需要等待服务器导出；也可以放弃这次轮换并更换目录。已有的「当前 / 上次」资料和上传归档不会被删除。") },
+            confirmButton = { TextButton(onClick = { model.replaceDirectory(uri, flags); pendingPick = null }, enabled = !state.busy) { Text("放弃并更换") } },
+            dismissButton = { Row {
+                TextButton(onClick = { model.export(); pendingPick = null }, enabled = !state.busy) { Text("继续完成") }
+                TextButton(onClick = { pendingPick = null }) { Text("取消") }
+            } })
+    }
+    if (abandoning) AlertDialog(onDismissRequest = { abandoning = false }, title = { Text("放弃未完成的轮换？") },
+        text = { Text("只清理本次未完成的暂存文件和轮换标记。已有的「当前 / 上次」资料、上传归档和服务器检查点保留，下次导出会重新开始。") },
+        confirmButton = { TextButton(onClick = { model.abandonRotation(); abandoning = false }, enabled = !state.busy) { Text("放弃轮换") } },
+        dismissButton = { TextButton(onClick = { abandoning = false }) { Text("取消") } })
 }
 
 @Composable

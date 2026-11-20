@@ -61,6 +61,7 @@ if ($env:QIMENG_RESEARCH_LENS_ENDPOINT) {
 $start.EnvironmentVariables['QIMENG_DATA_DIR'] = $data
 $start.EnvironmentVariables['QIMENG_STORAGE_ROOTS'] = (ConvertTo-Json @{media=$media} -Compress)
 $start.EnvironmentVariables['QIMENG_LISTEN'] = "127.0.0.1:$port"
+$start.EnvironmentVariables['QIMENG_LOCAL_WEB_NO_PASSWORD'] = 'true'
 $start.EnvironmentVariables['QIMENG_WEB_DIR'] = Join-Path $packageRoot 'web'
 $start.EnvironmentVariables['QIMENG_STARTUP_RECEIPT'] = $receipt
 $start.EnvironmentVariables['QIMENG_LAUNCH_ID'] = $launch

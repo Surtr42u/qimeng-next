@@ -9,10 +9,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
@@ -98,6 +100,22 @@ func originOK(r *http.Request, secureOrigin ...bool) bool {
 		scheme = "https"
 	}
 	return u.Scheme == scheme && u.Host == r.Host && u.User == nil
+}
+
+// localOwnerRequest 只接受直接来自本机回环的请求；带任何转发头的请求说明前面有代理，
+// 不能把远程访问误判成本机桌面。
+func localOwnerRequest(r *http.Request) bool {
+	for _, header := range []string{"Forwarded", "X-Forwarded-For", "X-Real-IP"} {
+		if r.Header.Get(header) != "" {
+			return false
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc { return a.authScope("read", next) }
 func (a *API) authScope(scope string, next http.HandlerFunc) http.HandlerFunc {
@@ -278,7 +296,7 @@ func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) GetInstance(w http.ResponseWriter, r *http.Request) {
-	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "recommendations": true, "rankings": true, "stats": true, "backups": true, "migration": true}})
+	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "localAutoLogin": a.s.Config.LocalAutoLogin, "recommendations": true, "rankings": true, "stats": true, "backups": true, "migration": true}})
 }
 
 func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -291,10 +309,15 @@ func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, e)
 		return
 	}
-	p, e := a.s.AuthenticateLogin(r.Context(), in)
-	if e != nil {
-		fail(w, e)
-		return
+	var p model.Principal
+	if a.s.Config.LocalAutoLogin && localOwnerRequest(r) && in.Token == "" && in.Password == "" {
+		p = model.Principal{ID: "owner", Label: "Owner", Scopes: []string{"admin"}, ExpiresAt: time.Now().UTC().Add(24 * time.Hour)}
+	} else {
+		p, e = a.s.AuthenticateLogin(r.Context(), in)
+		if e != nil {
+			fail(w, e)
+			return
+		}
 	}
 	out, e := a.s.Run(r.Context(), p, "createSession", "", nil, func(tx *service.Write) (any, int, error) {
 		v, e := a.s.CreateSession(r.Context(), tx, in.Label, "", nil)

@@ -38,19 +38,23 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
             .putString("${key(target)}-job", job?.let { gson.toJson(it) }).commit()) { "维护目录状态未能保存" }
         mutable.update { it + 1 }
     }
-    suspend fun bind(target: Session, uri: Uri, flags: Int) = withContext(Dispatchers.IO) {
+    suspend fun bind(target: Session, uri: Uri, flags: Int, abandonPrevious: Boolean = false) = withContext(Dispatchers.IO) {
         lock.withLock {
             require(uri.scheme == "content" && DocumentsContract.isTreeUri(uri)) { "请用系统目录选择器授权" }
             val access = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             require((flags and access) == access) { "维护目录需要读写授权" }
-            val previous = folder(target)
-            check(!previous.pending || previous.tree == uri.toString()) { "请先完成上次维护目录轮换" }
+            var binding = folder(target)
+            if (binding.pending && binding.tree != uri.toString()) {
+                check(abandonPrevious) { "请先完成上次维护目录轮换" }
+                binding = abandonLocked(target, binding)
+            }
             val tree = MaintenanceTree(context.contentResolver, uri)
             val current = tree.generation("当前")
             val older = tree.generation("上次")
             check(listOfNotNull(current, older).all { it.instanceId == target.instanceId }) { "该目录属于另一影库，请选择对应目录" }
             check(sameTarget(target, settings.session.value)) { "连接已改变，请重新选择维护目录" }
             val archive = tree.directory(tree.root, "上传归档")
+            runCatching { tree.overwriteText(tree.root, maintenanceReadmeName, maintenanceReadme) }
             val label = DocumentsContract.getTreeDocumentId(uri).substringAfterLast('/').substringAfterLast(':')
             check(sameTarget(target, settings.session.value)) { "连接已改变，请重新选择维护目录" }
             val resolver = context.contentResolver
@@ -59,14 +63,14 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
                 (if (held?.isWritePermission == true) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)).inv()
             resolver.takePersistableUriPermission(uri, access)
             try {
-                save(target, previous.copy(tree = uri.toString(), label = label, lastChecked = 0))
+                save(target, binding.copy(tree = uri.toString(), label = label, lastChecked = 0))
             } catch (failure: Exception) {
                 if (newlyGranted != 0) try { resolver.releasePersistableUriPermission(uri, newlyGranted) }
                 catch (release: SecurityException) { failure.addSuppressed(release) }
                 throw failure
             }
             archives.selectMaintenanceArchive(archive)
-            val previousTree = previous.tree
+            val previousTree = binding.tree
             if (previousTree != null && previousTree != uri.toString() && !referenced(previousTree) && !archives.store.needsGrant(previousTree)) {
                 val oldUri = Uri.parse(previousTree)
                 if (context.contentResolver.persistedUriPermissions.any { it.uri == oldUri }) context.contentResolver.releasePersistableUriPermission(oldUri, access)
@@ -74,6 +78,28 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
         }
         schedule(target, manual = true)
     }
+
+    /** 放弃当前实例未完成的轮换；只清理暂存与标记，保留已有「当前 / 上次」与上传归档。 */
+    suspend fun abandon(target: Session) = withContext(Dispatchers.IO) {
+        lock.withLock { abandonLocked(target, folder(target)) }
+    }
+
+    private suspend fun abandonLocked(target: Session, binding: MaintenanceFolder): MaintenanceFolder {
+        val work = job(target)
+        val raw = binding.tree
+        if (raw != null && work != null) {
+            val tree = MaintenanceTree(context.contentResolver, Uri.parse(raw))
+            val marker = org.json.JSONObject().put("instanceId", target.instanceId).put("token", work.token).toString()
+            tree.find(tree.root, mobileRotationMarker)?.let {
+                if (tree.smallText(it.uri) == marker) tree.remove(it.uri)
+            }
+            runCatching { tree.discardStage(work.token) }
+            tree.dropReusableFolder()
+        }
+        save(target, binding.copy(message = "已放弃上次未完成的轮换"), null)
+        return folder(target)
+    }
+
     internal fun referenced(raw: String): Boolean = storage.all.any { (key, value) -> key.startsWith("instance-") && !key.endsWith("-job") &&
         value is String && gson.fromJson(value, MaintenanceFolder::class.java).tree == raw }
     suspend fun automatic(target: Session, enabled: Boolean) = withContext(Dispatchers.IO) {
@@ -187,6 +213,8 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
         }
         active.older?.let { tree.removeExpired(retired, it) }
         tree.find(tree.root, mobileRotationMarker)?.let { check(tree.smallText(it.uri) == marker); tree.remove(it.uri) }
+        tree.dropReusableFolder()
+        runCatching { tree.overwriteText(tree.root, maintenanceReadmeName, maintenanceReadme) }
         save(target, binding.copy(lastChecked = System.currentTimeMillis(), message = "当前备份与作者资料已更新。"), null)
         true
     } }

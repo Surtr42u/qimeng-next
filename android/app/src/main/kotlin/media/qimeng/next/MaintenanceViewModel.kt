@@ -59,6 +59,9 @@ class MaintenanceViewModel(application: Application) : AndroidViewModel(applicat
     }
     fun refreshAuthors(more: Boolean = false) = act { readAuthors(it, more) }
     fun bind(uri: Uri, flags: Int) = act { graph.backups.bind(it, uri, flags) }
+    fun replaceDirectory(uri: Uri, flags: Int) = act { graph.backups.bind(it, uri, flags, abandonPrevious = true) }
+    fun abandonRotation() = act { graph.backups.abandon(it) }
+    fun clearError() { if (!mutable.value.busy) mutable.update { it.copy(error = null) } }
     fun export() = act { graph.backups.schedule(it, true) }
     fun automatic(on: Boolean) = act { graph.backups.automatic(it, on) }
     fun prepareAuthor(uri: Uri? = null) = act { target ->

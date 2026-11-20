@@ -80,7 +80,11 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
             DetailTopChrome(true, -1, 0, model::back, {})
             Column(Modifier.align(Alignment.Center).padding(16.dp)) {
                 message?.let { ErrorNotice(it) }
-                TextButton(onClick = { model.refreshAsset(id) }, enabled = !busy) { Text("正在读取详情 · 点击重试") }
+                if (message == null) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                } else {
+                    TextButton(onClick = { model.refreshAsset(id) }, enabled = !busy) { Text("点击重试") }
+                }
             }
         }
         return
@@ -185,6 +189,13 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
                 if (!transformed && kotlin.math.abs(horizontal) > size.width * 0.18f) onNavigate(if (horizontal < 0) 1 else -1)
             }
         }, contentAlignment = Alignment.Center) {
+        // 先用 512 缩略图占位，原图解码/下载完成后覆盖；点开立即有画面，不出现旧版没有的黑屏等待。
+        AsyncImage(model = remember(asset.thumbnailUrl, asset.version) {
+            ImageRequest.Builder(context).data(asset.thumbnailUrl)
+                .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail")
+                .build()
+        }, imageLoader = LocalMediaImages.current, contentDescription = null, contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize())
         AsyncImage(model = remember(asset.contentUrl, asset.version, retry) {
             ImageRequest.Builder(context).data(asset.contentUrl).size(Size.ORIGINAL)
                 .diskCachePolicy(CachePolicy.DISABLED).memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:original").build()

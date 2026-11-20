@@ -110,6 +110,15 @@ func run() error {
 	if address == "" {
 		address = "127.0.0.1:8421"
 	}
+	// 本机免密只对回环监听生效；远程、NAS 和反向代理仍必须使用密码或设备凭据。
+	localAutoLogin := os.Getenv("QIMENG_LOCAL_WEB_NO_PASSWORD") == "true"
+	if localAutoLogin {
+		host, _, splitErr := net.SplitHostPort(address)
+		ip := net.ParseIP(host)
+		if splitErr != nil || ip == nil || !ip.IsLoopback() {
+			return errors.New("QIMENG_LOCAL_WEB_NO_PASSWORD requires a numeric loopback listen address")
+		}
+	}
 	// Keep the actual listener through migration so a bind failure cannot leave
 	// an older installation with a database only the new binary can open.
 	listener, e := openStartupListener(address, os.Getenv("QIMENG_STARTUP_RECEIPT"), os.Getenv("QIMENG_LAUNCH_ID"), ephemeralTLS)
@@ -126,6 +135,7 @@ func run() error {
 		BackupTargets:        backupTargets,
 		DefaultBackupTarget:  os.Getenv("QIMENG_DEFAULT_BACKUP_TARGET"),
 		SecureCookies:        os.Getenv("QIMENG_SECURE_COOKIES") == "true" || ephemeralTLS,
+		LocalAutoLogin:       localAutoLogin,
 		ResearchEnabled:      researchEnabled,
 		ResearchLensEndpoint: os.Getenv("QIMENG_RESEARCH_LENS_ENDPOINT"),
 		ResearchSidecarToken: sidecarToken,

@@ -136,7 +136,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
       </div>
     );
   if (session.data === null)
-    return <LoginForm verify={session.refetch} connectionError={session.error} />;
+    return <LoginForm verify={session.refetch} connectionError={session.error}
+      auto={(instance.data.capabilities as Record<string, boolean | undefined>).localAutoLogin === true} />;
   if (!session.data) {
     return (
       <div className="connection-screen">
@@ -160,14 +161,16 @@ export function SessionGate({ children }: { children: ReactNode }) {
   );
 }
 
-function LoginForm({ verify, connectionError }: { verify: () => Promise<unknown>; connectionError: Error | null }) {
+function LoginForm({ verify, connectionError, auto }: { verify: () => Promise<unknown>; connectionError: Error | null; auto: boolean }) {
   const [password, setPassword] = useState("");
+  const [autoFailed, setAutoFailed] = useState(false);
+  const attempted = useRef(false);
   const login = useMutation({
     gcTime: 0,
-    mutationFn: async () => {
+    mutationFn: async (value: string) => {
       // The browser only needs the HttpOnly cookie. Do not put a returned token in mutation data.
       await read(
-        api.POST("/sessions", { body: { password, label: "Web 浏览器" } }),
+        api.POST("/sessions", { body: { password: value, label: "Web 浏览器" } }),
       );
     },
     onSuccess: async () => {
@@ -175,6 +178,15 @@ function LoginForm({ verify, connectionError }: { verify: () => Promise<unknown>
       await verify();
     },
   });
+  useEffect(() => {
+    // 桌面端回环服务已声明免密；只自动尝试一次，失败后回退到密码表单。
+    if (!auto || attempted.current) return;
+    attempted.current = true;
+    login.mutate("", { onError: () => setAutoFailed(true) });
+  }, [auto]);
+  if (auto && !autoFailed) {
+    return <div className="connection-screen"><Loading text="正在进入本机影库…" /></div>;
+  }
   return (
     <LegacyLogin
       password={password}
@@ -183,7 +195,7 @@ function LoginForm({ verify, connectionError }: { verify: () => Promise<unknown>
       error={login.error}
       connectionNotice={connectionError && <ErrorNotice error={connectionError} retry={() => void verify()} />}
       submit={() => {
-        if (!login.isPending && password) login.mutate();
+        if (!login.isPending && password) login.mutate(password);
       }}
     />
   );

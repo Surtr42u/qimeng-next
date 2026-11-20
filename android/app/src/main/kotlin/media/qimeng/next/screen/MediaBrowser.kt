@@ -399,7 +399,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     items(section.items, key = Asset::id) { asset ->
                         val selected = if (selecting) selection?.selected?.containsKey(asset.id) else null
                         MediaTile(asset, caption, selected, onLongClick = if (batch != null && !selecting) ({ batch.select(asset) }) else null) {
-                            if (selecting) batch?.select(asset) else model.openAsset(asset.id, key, asset.target)
+                            if (selecting) batch?.select(asset) else model.openAsset(asset.id, key, asset.target, seed = asset)
                         }
                     }
                 }

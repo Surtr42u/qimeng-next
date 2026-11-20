@@ -378,7 +378,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         if (pendingAssetTools.value == id) saved["pendingAssetTools"] = null
     }
 
-    fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value) {
+    fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value, seed: Asset? = null) {
         if (target == null || !bindObjectTarget(target)) return
         if (route.value != "asset:$id" || saved.get<String>("viewAsset") != id) {
             saved["viewSession"] = UUID.randomUUID().toString()
@@ -386,7 +386,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
         if (sourceKey != null) saved["detailListKey"] = sourceKey
         navigate("asset:$id")
-        mutableAsset.value = null
+        // 列表项已带本资产的身份和地址时先显示，详情请求随后静默覆盖；旧版同样是先出图再补数据。
+        if (seed != null && seed.id == id && sameTarget(seed.target, target)) {
+            mutableAsset.value = seed
+        } else if (mutableAsset.value?.id != id) {
+            mutableAsset.value = null
+        }
         mutableAssetAuthors.value = emptyList()
         detailJob?.cancel()
         val ticket = detailGeneration.next()
@@ -410,7 +415,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val next = source.getOrNull(index + direction) ?: return
         // A sibling replaces the detail scene, without growing its return stack.
         saved["route"] = "asset:${next.id}"
-        openAsset(next.id, target = next.target)
+        openAsset(next.id, target = next.target, seed = next)
     }
 
     fun detailPosition(id: String): Pair<Int, Int> {

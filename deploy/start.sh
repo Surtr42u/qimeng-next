@@ -71,6 +71,7 @@ QIMENG_ADMIN_PASSWORD=$(< "$secret")
 QIMENG_ADMIN_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 export QIMENG_ADMIN_PASSWORD QIMENG_ADMIN_TOKEN
 export QIMENG_LISTEN="127.0.0.1:$port" QIMENG_DATA_DIR="$data" QIMENG_WEB_DIR="$app/web"
+export QIMENG_LOCAL_WEB_NO_PASSWORD=true
 export QIMENG_STORAGE_ROOTS="{\"media\":\"$json_path\"}"
 echo "正在启动影库。成功后请在浏览器打开 http://127.0.0.1:$port/ ，此终端按 Ctrl+C 停止。"
 exec "$app/qimeng-next"

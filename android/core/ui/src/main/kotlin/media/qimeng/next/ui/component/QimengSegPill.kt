@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,6 +57,8 @@ private val SEG_PILL_LABEL_HORIZONTAL_PADDING = 14.dp
  * @param onClick 点按回调（分段切换语义，由调用方驱动状态）
  * @param enabled 可用态（默认 true；禁用降透明度且不响应点按，ADR-0035 方向胶囊
  *   忙态禁切引入，向后兼容缺省）
+ * @param toggleable 打开后语义为可勾选开关（ToggleableState），供权限多选胶囊使用；
+ *   默认 false 保持原有分段切换语义。
  */
 @Composable
 fun QimengSegPill(
@@ -64,6 +67,7 @@ fun QimengSegPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    toggleable: Boolean = false,
 ) {
     val interaction = rememberPressScaleSource()
     // 选中=低透主色染玻璃+primary 文字（坞选中胶囊同语言）；未选=素玻璃+onSurface；
@@ -84,11 +88,20 @@ fun QimengSegPill(
         modifier = modifier
             .height(SEG_PILL_HEIGHT)
             .pressScale(interaction, pressedScale = SEG_PILL_PRESSED_SCALE)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                enabled = enabled,
-                onClick = onClick,
+            .then(
+                if (toggleable) Modifier.toggleable(
+                    value = selected,
+                    enabled = enabled,
+                    role = Role.Checkbox,
+                    interactionSource = interaction,
+                    indication = null,
+                    onValueChange = { onClick() },
+                ) else Modifier.clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    enabled = enabled,
+                    onClick = onClick,
+                ),
             )
             .semanticsPillSelected(selected),
     ) {

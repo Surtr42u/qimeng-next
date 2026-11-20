@@ -57,6 +57,7 @@ type Config struct {
 	BackupTargets                                map[string]BackupTarget
 	DefaultBackupTarget                          string
 	SecureCookies, AIConfigured, ResearchEnabled bool
+	LocalAutoLogin                               bool
 	ReserveBytes                                 int64
 	LocalSync                                    LocalSyncConfig
 	Scanner                                      *LibraryMonitorConfig
