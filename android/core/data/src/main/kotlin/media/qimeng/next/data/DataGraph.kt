@@ -30,6 +30,26 @@ class DataGraph private constructor(context: Context) {
     val uploads = UploadRepository(context, queue, settings)
     val activityEvents = ActivityEventQueue(queue, settings, uploads::schedule)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var thumbnailPrefetchJob: Job? = null
+
+    /**
+     * Starts the single application-scoped thumbnail prefetch loop. Callers are idempotent:
+     * a second invocation reuses the active job instead of opening another loop.
+     */
+    fun startThumbnailPrefetch() {
+        synchronized(this) {
+            if (thumbnailPrefetchJob?.isActive == true) return
+            thumbnailPrefetchJob = scope.launch {
+                try {
+                    thumbnails.runPrefetchLoop()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    queue.reportProblem(safeFailure(failure))
+                }
+            }
+        }
+    }
 
     /** A normal activity exit must not cancel the final visible segment's journal commit. */
     fun recordEvent(asset: Asset, kind: String, sessionId: String, positionMs: Long = 0, seconds: Double = 0.0,

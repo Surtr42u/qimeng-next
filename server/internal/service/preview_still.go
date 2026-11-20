@@ -61,6 +61,45 @@ func jpegOrientation(source io.Reader) int {
 	}
 }
 
+// orientationFilterChain maps an EXIF Orientation value to the ffmpeg -vf
+// segment that normalizes the decoded frame. ffmpeg's implicit EXIF autorotate
+// differs between versions, so the still command disables it with
+// -noautorotate and treats this explicit chain as the only orientation
+// authority (same mapping as the legacy generator).
+func orientationFilterChain(orientation int) string {
+	switch orientation {
+	case 2:
+		return "hflip"
+	case 3:
+		return "hflip,vflip"
+	case 4:
+		return "vflip"
+	case 5:
+		return "transpose=0"
+	case 6:
+		return "transpose=1"
+	case 7:
+		return "transpose=3"
+	case 8:
+		return "transpose=2"
+	default:
+		// Orientation 1 and unknown values stay unrotated.
+		return ""
+	}
+}
+
+// jpegStillOrientation reads the bounded EXIF header from the pinned input.
+// A parse or read failure is not fatal for preview generation: the legacy
+// behavior is to keep the unrotated frame.
+func (s *Service) jpegStillOrientation(input mediaInput) int {
+	reader, err := input.reader(s)
+	if err != nil {
+		return 1
+	}
+	defer reader.Close()
+	return jpegOrientation(reader)
+}
+
 func tiffOrientation(data []byte) int {
 	if len(data) < 8 {
 		return 1

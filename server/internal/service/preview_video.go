@@ -9,8 +9,8 @@ import (
 	"image/jpeg"
 	"io"
 	"os/exec"
+	"runtime"
 	"strconv"
-	"time"
 
 	"qimeng.local/next/server/internal/model"
 )
@@ -116,12 +116,53 @@ func (s *Service) extractPreview(ctx context.Context, binary string, input media
 	return buffer.Bytes(), nil
 }
 
+// extractStillPreview decodes one still frame from the full original. On the
+// embedded Android server stills need a larger allocator and timeout than the
+// video pipe, and they carry an explicit EXIF orientation chain (with
+// -noautorotate disabling ffmpeg's version-dependent implicit rotation).
+// Desktop keeps the original video-style budget and implicit orientation.
+func (s *Service) extractStillPreview(ctx context.Context, binary string, input mediaInput, demuxer string, orientation, edge int) ([]byte, error) {
+	source, err := input.argument(s)
+	if err != nil {
+		return nil, err
+	}
+	filter := ""
+	if chain := orientationFilterChain(orientation); chain != "" {
+		filter = chain + ","
+	}
+	filter += "scale=" + strconv.Itoa(edge) + ":" + strconv.Itoa(edge) + ":force_original_aspect_ratio=decrease"
+	args := []string{"-nostdin", "-v", "error", "-threads", "2", "-max_alloc", strconv.Itoa(stillPreviewMaxAlloc),
+		"-protocol_whitelist", "file,pipe", "-f", demuxer, "-noautorotate", "-i", source,
+		"-map", "0:v:0", "-frames:v", "1", "-vf", filter, "-threads", "1", "-q:v", "2",
+		"-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"}
+	cmd := exec.CommandContext(ctx, binary, args...)
+	input.configure(cmd)
+	buffer := &boundedOutput{limit: 2 << 20}
+	cmd.Stdout, cmd.Stderr = buffer, io.Discard
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	if _, err := jpeg.DecodeConfig(bytes.NewReader(buffer.Bytes())); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
 func (s *Service) externalPreview(ctx context.Context, source mediaInput, a model.Asset, edge int) ([]byte, error) {
 	ffmpeg := toolPath("QIMENG_FFMPEG", "ffmpeg")
 	if ffmpeg == "" {
 		return nil, Fail(501, "media_tool_unavailable", "此格式需要配置 FFmpeg。")
 	}
-	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
+	still := a.MediaType != "video"
+	// Only the embedded phone pipeline takes the full-original still budget
+	// and explicit orientation. Desktop/NAS keep their existing ffmpeg limits
+	// and implicit rotation behavior.
+	androidStill := still && runtime.GOOS == "android"
+	timeout := videoPreviewTimeout
+	if androidStill {
+		timeout = stillPreviewTimeout
+	}
+	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	demuxer, err := s.inputDemuxer(deadline, source, a.MimeType)
 	if err != nil {
@@ -130,10 +171,27 @@ func (s *Service) externalPreview(ctx context.Context, source mediaInput, a mode
 	if demuxer == "" {
 		return nil, Fail(415, "media_unsupported", "此格式没有可用的预览通道。")
 	}
-	if a.MediaType != "video" {
-		data, err := s.extractPreview(deadline, ffmpeg, source, demuxer, "0:v:0", 0, edge)
+	if still {
+		if !androidStill {
+			data, err := s.extractPreview(deadline, ffmpeg, source, demuxer, "0:v:0", 0, edge)
+			if err != nil {
+				return nil, Fail(422, "thumbnail_decode_failed", "预览生成失败，原件保留。")
+			}
+			return data, nil
+		}
+		orientation := 1
+		if a.MimeType == "image/jpeg" {
+			orientation = s.jpegStillOrientation(source)
+		}
+		data, err := s.extractStillPreview(deadline, ffmpeg, source, demuxer, orientation, edge)
 		if err != nil {
-			return nil, Fail(422, "thumbnail_decode_failed", "预览生成失败，原件保留。")
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if deadline.Err() != nil {
+				return nil, Fail(422, "thumbnail_decode_failed", "FFmpeg 解码图片超时，原件保留。")
+			}
+			return nil, Fail(422, "thumbnail_decode_failed", "FFmpeg 无法解码此图片，原件保留。")
 		}
 		return data, nil
 	}

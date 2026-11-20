@@ -87,6 +87,10 @@ func TestThumbnailCandidatesPageAndCoverageTrackCurrentDiskFiles(t *testing.T) {
 	}
 	progress := func(covered, total int64) {
 		t.Helper()
+		// Generation and direct disk edits happen outside committed catalog
+		// changes, so a cached snapshot would hide them. Force the recount here;
+		// the 30-second TTL itself is covered by the service test.
+		f.s.InvalidateThumbnailProgressForTest()
 		var got service.ThumbnailProgress
 		decode(t, f.json("GET", "/thumbnails/progress", "", nil, 200), &got)
 		if got.InstanceID != f.s.InstanceID || got.ThumbsOnDisk != covered || got.TotalAssets != total {

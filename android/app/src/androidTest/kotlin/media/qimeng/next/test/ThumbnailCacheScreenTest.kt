@@ -76,4 +76,18 @@ class ThumbnailCacheScreenTest {
         compose.onAllNodesWithText("0 个").assertCountEquals(2)
         compose.onNodeWithText("已生成 7 / 9", substring = true).assertExists()
     }
+
+    @Test fun revisionSkipIsExplainedOnTheMatchingPoolCard() {
+        val local = ThumbnailCacheSelection(ThumbnailPool.LOCAL, "local-fixture")
+        compose.setContent {
+            QimengTheme(false) {
+                ThumbnailCacheContent(
+                    ThumbnailCachePage(local = ThumbnailPoolUsage(local, ThumbnailUsage(2, 2048))),
+                    ThumbnailPrefetch(local, ThumbnailPrefetchStatus.Skipped),
+                    onClear = {}, onBack = {},
+                )
+            }
+        }
+        compose.onNodeWithText("库未变化，已跳过本轮预取（缓存已是最新）").assertExists()
+    }
 }

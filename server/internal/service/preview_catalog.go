@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
+	"time"
 )
 
 type ThumbnailCandidate struct {
@@ -71,13 +74,86 @@ type ThumbnailProgress struct {
 	ThumbsOnDisk int64  `json:"thumbsOnDisk"`
 }
 
+// thumbnailProgressTTL keeps a poll burst from walking every candidate asset.
+// Generation, trash and library changes invalidate the entry immediately; a
+// stale snapshot is also returned while a cold scan is already running.
+const thumbnailProgressTTL = 30 * time.Second
+
+type thumbnailProgressSnapshot struct {
+	value ThumbnailProgress
+	at    time.Time
+}
+
+type thumbnailProgressSnapshots struct {
+	sync.Mutex
+	entries map[string]thumbnailProgressSnapshot
+}
+
+var thumbnailProgressCache = thumbnailProgressSnapshots{entries: map[string]thumbnailProgressSnapshot{}}
+
+func (s *Service) thumbnailProgressKey() string {
+	if s.Config.DataDir == "" && s.InstanceID == "" {
+		return fmt.Sprintf("%p", s)
+	}
+	return s.Config.DataDir + "\x00" + s.InstanceID
+}
+
+// cachedThumbnailProgress returns a stored snapshot. When fresh is false an
+// expired snapshot is still returned so concurrent polls do not repeat the
+// catalog walk; callers that need a new scan check freshness separately.
+func (s *Service) cachedThumbnailProgress(fresh bool) (ThumbnailProgress, bool) {
+	key := s.thumbnailProgressKey()
+	thumbnailProgressCache.Lock()
+	defer thumbnailProgressCache.Unlock()
+	snapshot, found := thumbnailProgressCache.entries[key]
+	if !found || fresh && time.Since(snapshot.at) >= thumbnailProgressTTL {
+		return ThumbnailProgress{}, false
+	}
+	return snapshot.value, true
+}
+
+func (s *Service) rememberThumbnailProgress(value ThumbnailProgress) {
+	thumbnailProgressCache.Lock()
+	thumbnailProgressCache.entries[s.thumbnailProgressKey()] = thumbnailProgressSnapshot{value: value, at: time.Now()}
+	thumbnailProgressCache.Unlock()
+}
+
+// invalidateThumbnailProgress makes the next poll rescan after a committed
+// asset or library change. It is safe to call while s.mu is held.
+func (s *Service) invalidateThumbnailProgress() {
+	thumbnailProgressCache.Lock()
+	delete(thumbnailProgressCache.entries, s.thumbnailProgressKey())
+	thumbnailProgressCache.Unlock()
+}
+
+// InvalidateThumbnailProgressForTest drops the cached progress snapshot so the
+// next poll recounts. Tests that generate, truncate or remove preview files
+// outside the service use it; production keeps the 30-second TTL and only
+// invalidates on committed asset or library changes.
+func (s *Service) InvalidateThumbnailProgressForTest() {
+	s.invalidateThumbnailProgress()
+}
+
 func (s *Service) ThumbnailProgress(ctx context.Context) (ThumbnailProgress, error) {
+	if value, ok := s.cachedThumbnailProgress(true); ok {
+		return value, nil
+	}
 	out := ThumbnailProgress{InstanceID: s.InstanceID}
 	select {
 	case s.previews.progress <- struct{}{}:
 		defer func() { <-s.previews.progress }()
+	case <-ctx.Done():
+		return out, ctx.Err()
 	default:
+		// Another request is already scanning: reuse its last result rather
+		// than walking the same catalog again.
+		if value, ok := s.cachedThumbnailProgress(false); ok {
+			return value, nil
+		}
 		return out, Fail(429, "thumbnail_progress_busy", "正在统计缩略图生成进度，请稍后刷新。")
+	}
+	if value, ok := s.cachedThumbnailProgress(true); ok {
+		return value, nil
 	}
 	rows, err := s.DB.DB.QueryContext(ctx, "SELECT a.id,"+previewVersionColumns+previewCandidatesFrom)
 	if err != nil {
@@ -101,5 +177,9 @@ func (s *Service) ThumbnailProgress(ctx context.Context) (ThumbnailProgress, err
 			out.ThumbsOnDisk++
 		}
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
+	s.rememberThumbnailProgress(out)
+	return out, nil
 }

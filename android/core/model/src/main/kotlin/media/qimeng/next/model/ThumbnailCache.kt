@@ -12,6 +12,10 @@ sealed interface ThumbnailPrefetchStatus {
     data object WaitingForNetwork : ThumbnailPrefetchStatus
     data class Running(val cached: Long, val total: Long) : ThumbnailPrefetchStatus
     data class Done(val cached: Long, val total: Long, val atCapacity: Boolean) : ThumbnailPrefetchStatus
+
+    /** The library revision and cached sample both matched, so this round did not list or download anything. */
+    data object Skipped : ThumbnailPrefetchStatus
+
     data class Failed(val message: String) : ThumbnailPrefetchStatus
 }
 

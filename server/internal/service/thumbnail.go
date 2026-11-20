@@ -194,14 +194,6 @@ func (s *Service) probeMedia(ctx context.Context, input mediaInput, a *model.Ass
 	a.ProbeState = "ready"
 	return nil
 }
-func previewPrefix(version int64, selected bool) string {
-	format := "v3-"
-	if selected {
-		// Earlier decodes could read from a changing original.
-		format = "v4-"
-	}
-	return format + strconv.FormatInt(version, 10) + "-"
-}
 func previewPath(id string, version int64, edge int, selected bool) string {
 	return "cache/" + id + "/" + previewPrefix(version, selected) + strconv.Itoa(edge) + ".jpg"
 }
@@ -341,9 +333,24 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 	}
 	defer source.release(s)
 	var data []byte
-	if builtinImage(a.MimeType) {
+	// Any still on the embedded Android server with ffmpeg configured decodes
+	// from the full original: built-in images take that path, and other still
+	// formats only have it. Both share the single large-still slot; video keeps
+	// its separate bounded pipeline.
+	mobileFFmpegStill := a.MediaType != "video" && s.mobileStillFFmpeg()
+	ffmpegStill := builtinImage(a.MimeType) && mobileFFmpegStill
+	if builtinImage(a.MimeType) && !ffmpegStill {
 		data, e = s.scaledStill(ctx, source, a.MimeType, image.Pt(a.Width, a.Height), edge, displayStill)
 	} else {
+		if mobileFFmpegStill && mobileLargeStill(a.Width, a.Height, a.Size) {
+			// The active preview slot is already held here, so the order is
+			// always slot -> large-still semaphore and cannot deadlock with join.
+			release, err := s.previews.acquireLargeStill(ctx)
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
 		data, e = s.externalPreview(ctx, source, a, edge)
 	}
 	if e != nil {

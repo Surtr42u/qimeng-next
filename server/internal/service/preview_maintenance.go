@@ -4,22 +4,47 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 var previewAssetDirectory = regexp.MustCompile(`^[0-9a-f]{32}$`)
-var managedPreviewFile = regexp.MustCompile(`^v[1234]-[1-9][0-9]*-(256|512|1024)\.jpg$`)
+
+// Managed previews carry the preview policy prefix (previewPolicyVersion or
+// its selected-image variant). Accept any positive policy generation so cleanup
+// does not need editing on each bump, while still rejecting temp files and
+// unrelated cache content.
+var managedPreviewFile = regexp.MustCompile(`^v[1-9][0-9]*-[1-9][0-9]*-(256|512|1024)\.jpg$`)
+
+const (
+	// A page is warmed by a small worker pool. Actual decoding stays bounded by
+	// previewWork.join, so this only hides SQL, stat and scheduling latency.
+	previewWarmWorkers = 4
+	// Keep aggregated failures bounded even when a whole page hits one problem.
+	previewWarmFailureLimit = 8
+)
 
 const previewVersionColumns = `json_extract(a.data,'$.contentVersion'),
 	EXISTS(SELECT 1 FROM selected_image_merge_members WHERE physical_asset_id=a.id)`
 const previewCandidatesFrom = ` FROM assets a JOIN libraries l ON l.id=a.library_id
 	 WHERE a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
 	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
+
+func previewWarmEdges() []int {
+	if runtime.GOOS == "android" {
+		// The phone client only reads the 512 grid size. Desktop and NAS keep
+		// all three representations for the web and large previews.
+		return []int{512}
+	}
+	return []int{512, 256, 1024}
+}
 
 func (s *Service) previewWorker() {
 	defer s.workers.Done()
@@ -144,35 +169,80 @@ func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
 func (s *Service) warmPreviewPage(ctx context.Context, page []previewIdentity) error {
 	// Give the default gallery size priority across the page. Once an original
 	// is unavailable, skip its other sizes until the next reconciliation.
-	for _, edge := range [...]int{512, 256, 1024} {
-		available := page[:0]
-		for _, asset := range page {
-			if err := ctx.Err(); err != nil {
-				return err
+	// Workers are bounded but a bad asset only removes itself: failures are
+	// aggregated so healthy assets on the page still warm every size.
+	var failures []error
+	failed := 0
+	for _, edge := range previewWarmEdges() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		results := make([]error, len(page))
+		jobs := make(chan int)
+		var group sync.WaitGroup
+		for range min(previewWarmWorkers, len(page)) {
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				for i := range jobs {
+					results[i] = s.warmPreviewSize(ctx, page[i], edge)
+				}
+			}()
+		}
+	feed:
+		for i := range page {
+			select {
+			case jobs <- i:
+			case <-ctx.Done():
+				break feed
 			}
-			err := s.warmPreviewSize(ctx, asset, edge)
+		}
+		close(jobs)
+		group.Wait()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		available := page[:0]
+		for i, asset := range page {
+			err := results[i]
 			if err == nil {
 				available = append(available, asset)
 				continue
 			}
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if errors.Is(err, os.ErrNotExist) || errors.Is(err, context.DeadlineExceeded) {
+			if previewWarmSkippable(err) {
 				continue
 			}
-			var problem *Error
-			if errors.As(err, &problem) {
-				switch problem.Status {
-				case 404, 409, 415, 422, 501:
-					continue
-				}
+			failed++
+			if len(failures) < previewWarmFailureLimit {
+				failures = append(failures, fmt.Errorf("asset %s edge %d: %w", asset.id, edge, err))
 			}
-			return err
 		}
 		page = available
+		if len(page) == 0 {
+			break
+		}
 	}
-	return nil
+	if failed > len(failures) {
+		failures = append(failures, fmt.Errorf("%d more preview failures", failed-len(failures)))
+	}
+	return errors.Join(failures...)
+}
+
+// previewWarmSkippable reports per-asset conditions: the original is gone,
+// the decode cannot fit the reservation or the asset rejects previews. These
+// only skip that asset/edge; the rest of the page continues.
+func previewWarmSkippable(err error) bool {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var problem *Error
+	if errors.As(err, &problem) {
+		switch problem.Status {
+		case 404, 409, 415, 422, 501:
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) warmPreviewSize(ctx context.Context, asset previewIdentity, edge int) error {
@@ -270,4 +340,61 @@ func (s *Service) removeOldPreviews(ctx context.Context, id, dirname string, ent
 		}
 	}
 	return nil
+}
+
+// discardDeletedAssetPreviews immediately drops every generated preview for an
+// asset whose catalog row is gone. Purge and library removal run in post-commit
+// callbacks while s.mu is held, so this path never queries the catalog and
+// never takes the write lock. Failures stay advisory: prunePreviewDirectories
+// retries the same directory on the next reconciliation pass.
+func (s *Service) discardDeletedAssetPreviews(id string) {
+	if err := s.removePreviewAssetCache(id); err != nil {
+		slog.Warn("deleted asset preview cleanup deferred", "assetId", id, "error", err)
+	}
+}
+
+// removePreviewAssetCache deletes managed preview files under cache/<assetId>.
+// Unmanaged files, temp files and the directory itself are left to the periodic
+// sweep when they cannot be removed yet.
+func (s *Service) removePreviewAssetCache(id string) error {
+	if !previewAssetDirectory.MatchString(id) {
+		return nil
+	}
+	dirname := "cache/" + id
+	if err := s.safe(dirname); err != nil {
+		return err
+	}
+	dir, err := s.Root.Open(dirname)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var removeErr error
+	for {
+		entries, readErr := dir.ReadDir(64)
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.Type().IsRegular() || !managedPreviewFile.MatchString(name) {
+				continue
+			}
+			if err := s.Root.Remove(dirname + "/" + name); err != nil && !errors.Is(err, os.ErrNotExist) && removeErr == nil {
+				removeErr = err
+			}
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) && removeErr == nil {
+				removeErr = readErr
+			}
+			break
+		}
+	}
+	if err := dir.Close(); err != nil && removeErr == nil {
+		removeErr = err
+	}
+	// Succeeds only when every file was managed; otherwise the directory stays
+	// for the sweep that also knows how to handle leftover files.
+	_ = s.Root.Remove(dirname)
+	return removeErr
 }

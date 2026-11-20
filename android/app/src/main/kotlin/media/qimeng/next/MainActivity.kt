@@ -8,10 +8,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.content.IntentCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.launch
 import media.qimeng.next.screen.AppRoot
 
 class MainActivity : ComponentActivity() {
@@ -21,11 +17,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { AppRoot(model) }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                (application as QimengApplication).graph.thumbnails.prefetchWhileStarted()
-            }
-        }
         if (savedInstanceState == null) receiveShare(intent)
     }
 

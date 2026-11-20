@@ -164,6 +164,7 @@ private fun PrefetchProgress(prefetch: ThumbnailPrefetchStatus) {
             prefetch.atCapacity -> "已缓存 ${prefetch.cached} / ${prefetch.total}，缓存空间已用完"
             else -> "本轮完成，已缓存 ${prefetch.cached} / ${prefetch.total}"
         }
+        ThumbnailPrefetchStatus.Skipped -> "库未变化，已跳过本轮预取（缓存已是最新）"
         is ThumbnailPrefetchStatus.Failed -> prefetch.message
     }
     CacheStatus(text, failed = prefetch is ThumbnailPrefetchStatus.Failed)

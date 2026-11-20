@@ -52,7 +52,7 @@ class ThumbnailCacheTest {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.getHeader("Authorization") != "Bearer $OWNER") return MockResponse().setResponseCode(401)
                     val url = requireNotNull(request.requestUrl)
-                    if (url.queryParameter("background") != "true" || url.queryParameter("size") != "md" ||
+                    if (url.queryParameter("background") != "true" || url.queryParameter("size") != ThumbnailCachePolicy.SIZE ||
                         url.queryParameter("version") != "7") return MockResponse().setResponseCode(400)
                     return when (url.encodedPath) {
                         "/api/v1/assets/nearby/thumbnail" -> fixture.jpegResponse("viewport", 1)
@@ -137,7 +137,7 @@ class ThumbnailCacheTest {
         }
         try {
             val session = fixture.select(server, "nas")
-            var job = launch { fixture.repository.prefetchWhileStarted() }
+            var job = launch { fixture.repository.runPrefetchLoop() }
             fixture.awaitStatus { it == ThumbnailPrefetchStatus.WaitingForNetwork }
             assertEquals(0, server.requestCount)
             fixture.unmetered.value = true
@@ -152,7 +152,7 @@ class ThumbnailCacheTest {
 
             job.cancelAndJoin()
             fixture.reopen()
-            job = launch { fixture.repository.prefetchWhileStarted() }
+            job = launch { fixture.repository.runPrefetchLoop() }
             fixture.awaitCached(2)
             assertEquals(4, catalogRequests.get())
             assertEquals("A cold process reused both files", 2, previewRequests.get())
@@ -161,11 +161,11 @@ class ThumbnailCacheTest {
 
             fixture.reopen(remove = {
                 val instance = requireNotNull(usage.selection).instanceKey
-                val entry = thumbnailHash("$instance:${thumbnailHash("z")}")
+                val entry = thumbnailHash("$instance:${thumbnailHash(ThumbnailCachePolicy.assetKey("z"))}")
                 assertTrue(File(fixture.directory, "nas/$entry.1").delete())
             })
             version.set(2)
-            job = launch { fixture.repository.prefetchWhileStarted() }
+            job = launch { fixture.repository.runPrefetchLoop() }
             fixture.awaitCached(2)
             assertEquals("The changed version and missing file were repaired", 4, previewRequests.get())
             assertEquals(DataSource.DISK, fixture.coil(asset(session, "a", 2)).dataSource)
@@ -207,7 +207,7 @@ class ThumbnailCacheTest {
             assertEquals(DataSource.NETWORK, fixture.coil(asset(second, "asset", 1)).dataSource)
             assertFalse(fixture.load(asset(first, "asset", 1)) is SuccessResult)
             assertTrue(runCatching { fixture.repository.clear(firstSelection) }.isFailure)
-            val job = launch { fixture.repository.prefetchWhileStarted() }
+            val job = launch { fixture.repository.runPrefetchLoop() }
             fixture.awaitStatus { it == ThumbnailPrefetchStatus.WaitingForNetwork }
 
             val pinned = Base64.getEncoder().encodeToString(cert.certificate.encoded)
@@ -285,6 +285,116 @@ class ThumbnailCacheTest {
         } finally {
             releaseFirst.countDown()
             releaseSecond.countDown()
+            server.shutdown()
+            fixture.close()
+        }
+    }
+
+    @Test fun unchangedRevisionSkipsListingUntilSampledEntriesDisappear() = runBlocking {
+        val fixture = Fixture()
+        val catalogRequests = AtomicInteger()
+        val previewRequests = AtomicInteger()
+        val revisionRequests = AtomicInteger()
+        val server = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.getHeader("Authorization") != "Bearer $OWNER") return MockResponse().setResponseCode(401)
+                    val url = requireNotNull(request.requestUrl)
+                    return when (url.encodedPath) {
+                        "/api/v1/library/revision" -> {
+                            revisionRequests.incrementAndGet()
+                            json("""{"instanceId":"nas","revision":9,"thumbnailVersion":"${ThumbnailCachePolicy.VERSION}"}""")
+                        }
+                        "/api/v1/thumbnails/candidates" -> {
+                            catalogRequests.incrementAndGet()
+                            catalog("nas", """{"assetId":"a","contentVersion":1},{"assetId":"z","contentVersion":1}""", 2)
+                        }
+                        else -> if (url.encodedPath.startsWith("/api/v1/assets/") && url.encodedPath.endsWith("/thumbnail")) {
+                            fixture.jpegResponse("nas", previewRequests.incrementAndGet())
+                        } else {
+                            MockResponse().setResponseCode(404)
+                        }
+                    }
+                }
+            }
+            start()
+        }
+        try {
+            fixture.select(server, "nas")
+            fixture.unmetered.value = true
+            var job = launch { fixture.repository.runPrefetchLoop() }
+            fixture.awaitCached(2)
+            assertEquals(1, catalogRequests.get())
+            assertEquals(2, previewRequests.get())
+            job.cancelAndJoin()
+
+            fixture.reopen()
+            job = launch { fixture.repository.runPrefetchLoop() }
+            fixture.awaitStatus { it == ThumbnailPrefetchStatus.Skipped }
+            assertEquals("A matching revision must not list candidates", 1, catalogRequests.get())
+            assertEquals("A matching revision must not fetch previews", 2, previewRequests.get())
+            job.cancelAndJoin()
+
+            val instance = requireNotNull(fixture.repository.usage(ThumbnailPool.NAS).selection).instanceKey
+            fixture.reopen(remove = {
+                listOf("a", "z").forEach { id ->
+                    val key = thumbnailHash("$instance:${thumbnailHash(ThumbnailCachePolicy.assetKey(id))}")
+                    assertTrue("Expected cached file for $id", File(fixture.directory, "nas/$key.1").delete())
+                }
+            })
+            job = launch { fixture.repository.runPrefetchLoop() }
+            fixture.awaitCached(2)
+            assertEquals("Missing sampled entries must force a full round", 2, catalogRequests.get())
+            assertEquals(4, previewRequests.get())
+            job.cancelAndJoin()
+            assertEquals(3, revisionRequests.get())
+        } finally {
+            server.shutdown()
+            fixture.close()
+        }
+    }
+
+    @Test fun revisionReportedForAnotherInstanceForcesFullRound() = runBlocking {
+        val fixture = Fixture()
+        val instanceId = java.util.concurrent.atomic.AtomicReference("nas")
+        val catalogRequests = AtomicInteger()
+        val server = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.getHeader("Authorization") != "Bearer $OWNER") return MockResponse().setResponseCode(401)
+                    val url = requireNotNull(request.requestUrl)
+                    return when (url.encodedPath) {
+                        "/api/v1/library/revision" ->
+                            json("""{"instanceId":"${instanceId.get()}","revision":9,"thumbnailVersion":"${ThumbnailCachePolicy.VERSION}"}""")
+                        "/api/v1/thumbnails/candidates" -> {
+                            catalogRequests.incrementAndGet()
+                            catalog("nas", """{"assetId":"a","contentVersion":1}""", 1)
+                        }
+                        else -> if (url.encodedPath == "/api/v1/assets/a/thumbnail") {
+                            fixture.jpegResponse("nas", 1)
+                        } else {
+                            MockResponse().setResponseCode(404)
+                        }
+                    }
+                }
+            }
+            start()
+        }
+        try {
+            fixture.select(server, "nas")
+            fixture.unmetered.value = true
+            var job = launch { fixture.repository.runPrefetchLoop() }
+            fixture.awaitCached(1)
+            assertEquals(1, catalogRequests.get())
+            job.cancelAndJoin()
+
+            instanceId.set("other")
+            fixture.reopen()
+            job = launch { fixture.repository.runPrefetchLoop() }
+            fixture.awaitCached(1)
+            assertEquals("A foreign instance revision must not authorize a skip", 2, catalogRequests.get())
+            job.cancelAndJoin()
+        } finally {
             server.shutdown()
             fixture.close()
         }

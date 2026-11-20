@@ -547,7 +547,14 @@ func (s *Service) finishFile(ctx context.Context, j fileIntent) error {
 	if e := s.saveIntent(ctx, j); e != nil {
 		return e
 	}
-	s.previews.changed(j.After.LibraryID, j.After.ID)
+	if j.Kind == "purge" {
+		// The catalog row is gone; drop its derived previews now instead of
+		// queuing a warm pass for an asset that no longer exists.
+		s.discardDeletedAssetPreviews(j.After.ID)
+	} else {
+		s.previews.changed(j.After.LibraryID, j.After.ID)
+	}
+	s.invalidateThumbnailProgress()
 	return nil
 }
 func (s *Service) runFile(ctx context.Context, w *Write, j fileIntent) (model.Asset, error) {

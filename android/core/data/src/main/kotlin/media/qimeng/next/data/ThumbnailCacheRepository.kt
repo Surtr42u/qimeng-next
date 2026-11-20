@@ -14,6 +14,7 @@ import coil3.key.Keyer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -26,9 +27,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.Session
@@ -49,21 +53,38 @@ import okio.Buffer
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+private const val PREFETCH_CONCURRENCY = 4
+
+/**
+ * Single source for the local preview namespace. [VERSION] must mirror the server's
+ * `PreviewPolicyVersion`; [SIZE] is the only size this client requests.
+ */
+internal object ThumbnailCachePolicy {
+    const val DIRECTORY = "thumbnail-previews-v2"
+    const val VERSION = "v5"
+    const val SIZE = "md"
+
+    /** Identity hashed into each disk key, so policy or size changes cannot reuse old bytes. */
+    fun assetKey(assetId: String): String = "$VERSION:$SIZE:$assetId"
+}
 
 class ThumbnailCacheRepository internal constructor(
     context: Context,
     private val settings: SecureSettings,
     private val provider: ApiProvider,
     private val unmetered: Flow<Boolean> = unmeteredNetwork(context),
-    directory: File = File(context.cacheDir, "thumbnail-previews-v1"),
+    directory: File = File(context.cacheDir, ThumbnailCachePolicy.DIRECTORY),
+    private val revisions: ThumbnailRevisionRepository = ThumbnailRevisionRepository(provider),
+    private val revisionStore: ThumbnailPrefetchRevisionStore = ThumbnailPrefetchRevisionStore(context),
 ) {
     private val selections = context.getSharedPreferences("thumbnail-instances", Context.MODE_PRIVATE)
     private val nas = ThumbnailDiskCache(File(directory, "nas"), 1024L * 1024 * 1024)
     private val local = ThumbnailDiskCache(File(directory, "local"), 512L * 1024 * 1024)
-    private val foreground = MutableStateFlow(0)
     private val clearSignal = MutableStateFlow(0L)
     private val prefetchLock = Mutex()
-    private val backgroundFetch = Mutex()
+    private val backgroundFetch = Semaphore(PREFETCH_CONCURRENCY)
     private val flights = ThumbnailFlights()
     private var capturedConnection: Connection? = null
     @Volatile private var clearedConnection: Connection? = null
@@ -75,11 +96,17 @@ class ThumbnailCacheRepository internal constructor(
     private data class Connection(val target: Session, val revision: Long, val selection: ThumbnailCacheSelection)
     private data class Round(val connection: Connection, val allowed: Boolean, val cleared: Boolean)
     private data class Preview(val assetId: String, val version: Long, val connection: Connection, val generation: Long) {
-        val key = "${connection.selection.instanceKey}:${thumbnailHash(assetId)}"
+        // The policy and size live inside the hashed key so early Go previews and future policy
+        // revisions can never collide with this cache generation.
+        val key = "${connection.selection.instanceKey}:${thumbnailHash(ThumbnailCachePolicy.assetKey(assetId))}"
         val flightKey = "$key:${connection.revision}:$generation"
     }
 
     private fun diskFor(pool: ThumbnailPool) = if (pool == ThumbnailPool.LOCAL) local else nas
+
+    /** Stable server identity matching the cache namespace: embedded restarts keep their key. */
+    private fun serverKey(connection: Connection): String =
+        "${connection.selection.pool.name}:${connection.selection.instanceKey}"
 
     private fun currentConnection(): Connection? = synchronized(settings) {
         val target = settings.session.value ?: return null
@@ -112,33 +139,27 @@ class ThumbnailCacheRepository internal constructor(
         })
     }
 
-    private suspend fun fetchVisible(preview: Preview): Pair<ByteArray, DataSource> {
-        foreground.update { it + 1 }
-        try {
-            return flights.run(preview.flightKey) {
+    private suspend fun fetchVisible(preview: Preview): Pair<ByteArray, DataSource> =
+        flights.run(preview.flightKey) {
+            requireCurrent(preview.connection)
+            val disk = diskFor(preview.connection.selection.pool)
+            val stored = disk.read(preview.key, preview.version)
+            if (stored != null) {
                 requireCurrent(preview.connection)
-                val disk = diskFor(preview.connection.selection.pool)
-                val stored = disk.read(preview.key, preview.version)
-                if (stored != null) {
-                    requireCurrent(preview.connection)
-                    return@run stored to DataSource.DISK
-                }
-                val payload = download(preview, background = false)
-                currentCoroutineContext().ensureActive()
-                requireCurrent(preview.connection)
-                if (payload.verified) {
-                    val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = false) {
-                        currentConnection() == preview.connection
-                    }
-                    if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
-                }
-                requireCurrent(preview.connection)
-                payload.bytes to DataSource.NETWORK
+                return@run stored to DataSource.DISK
             }
-        } finally {
-            foreground.update { it - 1 }
+            val payload = download(preview, background = false)
+            currentCoroutineContext().ensureActive()
+            requireCurrent(preview.connection)
+            if (payload.verified) {
+                val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = false) {
+                    currentConnection() == preview.connection
+                }
+                if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
+            }
+            requireCurrent(preview.connection)
+            payload.bytes to DataSource.NETWORK
         }
-    }
 
     private fun requireCurrent(connection: Connection) {
         if (currentConnection() != connection) throw CancellationException("缩略图所属连接已改变")
@@ -185,7 +206,12 @@ class ThumbnailCacheRepository internal constructor(
             clearSignal.update { it + 1 }
         }
         try {
-            diskFor(selection.pool).clear(selection.instanceKey)
+            try {
+                diskFor(selection.pool).clear(selection.instanceKey)
+            } finally {
+                // A retained revision record would make the next round skip an empty pool.
+                revisionStore.clear()
+            }
         } finally {
             diskChanges.update { it + 1 }
         }
@@ -199,8 +225,15 @@ class ThumbnailCacheRepository internal constructor(
         return connection.selection to ThumbnailCoverage(progress.thumbsOnDisk, progress.totalAssets)
     }
 
-    /** Called from the started activity lifecycle so opening the cache page is never required. */
-    suspend fun prefetchWhileStarted() = prefetchLock.withLock {
+    /**
+     * The one application-scoped prefetch loop. [DataGraph] starts it once from
+     * [QimengApplication]; it is not tied to any activity's STARTED state.
+     *
+     * The loop re-arms on transport changes (login, logout, server switch) and on cache clears.
+     * `collectLatest` cancels the previous round's listing and in-flight downloads when the
+     * connection changes, so logout and switching servers still stop the old work.
+     */
+    suspend fun runPrefetchLoop() = prefetchLock.withLock {
         withContext(Dispatchers.IO) {
             combine(settings.transportRevision, unmetered, clearSignal) { _, networkAllowed, _ ->
                 currentConnection()?.let {
@@ -238,17 +271,32 @@ class ThumbnailCacheRepository internal constructor(
     }
 
     private suspend fun fetchRound(connection: Connection) {
-        val api = provider.api(connection.target)
         val disk = diskFor(connection.selection.pool)
         val generation = disk.generation
+        val revision = readRevision(connection)
+        val serverKey = serverKey(connection)
+        if (revision != null && ThumbnailPrefetchGate.decide(
+                revision.revision, readLastDone(), serverKey, revision.thumbnailVersion,
+            ) == ThumbnailPrefetchDecision.SKIP
+        ) {
+            val sample = readStoredSample()
+            val missing = sample.count { disk.warmState(it.key, it.version) != ThumbnailDiskResult.READY }
+            if (!ThumbnailPrefetchSampleGate.shouldDowngradeToFull(sample.size, missing)) {
+                publish(connection, ThumbnailPrefetchStatus.Skipped)
+                return
+            }
+            Log.d("ThumbnailCache", "Revision sample missing $missing/${sample.size}; running a full prefetch round")
+        }
+        val api = provider.api(connection.target)
         var cursor: String? = null
         var lastId: String? = null
         var seen = 0L
         var total = 0L
         var cached = 0L
         var atCapacity = false
+        val progressLock = Mutex()
+        val samples = mutableListOf<ThumbnailPrefetchSample>()
         do {
-            foreground.first { it == 0 }
             requireCurrent(connection)
             val page = api.listThumbnailCandidates(cursor = cursor, limit = 100).bodyOrThrow()
             verifyInstance(connection, page.instanceId)
@@ -259,41 +307,98 @@ class ThumbnailCacheRepository internal constructor(
             if (page.items.size > 100 || (page.nextCursor != null && (page.nextCursor == cursor || page.items.isEmpty()))) {
                 throw IOException("预取清单游标无效")
             }
-            for (candidate in page.items) {
+            val previews = page.items.map { candidate ->
                 val nextId = candidate.assetId
                 val previousId = lastId
                 if (nextId.isEmpty() || (previousId != null && nextId <= previousId) || candidate.contentVersion < 1) {
                     throw IOException("预取清单版本或顺序无效")
                 }
                 lastId = nextId
-                currentCoroutineContext().ensureActive()
-                val preview = Preview(nextId, candidate.contentVersion, connection, generation)
-                val result = try {
-                    prefetchOne(preview, disk)
-                } catch (failure: ApiFailure) {
-                    if (!failure.isMissingThumbnail()) throw failure
-                    ThumbnailDiskResult.MISSING
+                Preview(nextId, candidate.contentVersion, connection, generation)
+            }
+            val next = AtomicInteger(0)
+            coroutineScope {
+                repeat(minOf(PREFETCH_CONCURRENCY, previews.size)) {
+                    launch {
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val index = next.getAndIncrement()
+                            if (index >= previews.size) break
+                            val preview = previews[index]
+                            val result = try {
+                                prefetchOne(preview, disk)
+                            } catch (failure: ApiFailure) {
+                                if (!failure.isMissingThumbnail()) throw failure
+                                ThumbnailDiskResult.MISSING
+                            }
+                            progressLock.withLock {
+                                when (result) {
+                                    ThumbnailDiskResult.READY -> {
+                                        cached++
+                                        samples += ThumbnailPrefetchSample(preview.key, preview.version)
+                                    }
+                                    ThumbnailDiskResult.FULL -> atCapacity = true
+                                    ThumbnailDiskResult.MISSING -> Unit
+                                }
+                                seen++
+                                total = maxOf(total, seen)
+                                publish(connection, ThumbnailPrefetchStatus.Running(cached, total))
+                            }
+                        }
+                    }
                 }
-                when (result) {
-                    ThumbnailDiskResult.READY -> cached++
-                    ThumbnailDiskResult.FULL -> atCapacity = true
-                    ThumbnailDiskResult.MISSING -> Unit
-                }
-                seen++
-                total = maxOf(total, seen)
-                publish(connection, ThumbnailPrefetchStatus.Running(cached, total))
             }
             cursor = page.nextCursor
         } while (cursor != null)
+        recordRound(revision, serverKey, samples)
         publish(connection, ThumbnailPrefetchStatus.Done(cached, total, atCapacity))
+    }
+
+    private suspend fun readRevision(connection: Connection): ThumbnailRevisionSnapshot? = try {
+        revisions.fetch(connection.target)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun readLastDone(): ThumbnailPrefetchRecord? = try {
+        revisionStore.lastDone()
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun readStoredSample(): Set<ThumbnailPrefetchSample> = try {
+        revisionStore.storedSample()
+    } catch (_: Exception) {
+        emptySet()
+    }
+
+    /**
+     * Writes the revision read at the start of this round together with a random sample of the
+     * entries verified during it. A null revision (old server or parse failure) keeps the old
+     * record, so the next round runs full again rather than skipping on stale evidence.
+     */
+    private fun recordRound(
+        revision: ThumbnailRevisionSnapshot?,
+        serverKey: String,
+        samples: List<ThumbnailPrefetchSample>,
+    ) {
+        if (revision == null) return
+        try {
+            revisionStore.setLastDone(
+                ThumbnailPrefetchRecord(serverKey, revision.revision, revision.thumbnailVersion),
+                ThumbnailPrefetchSampleGate.pickSample(samples),
+            )
+        } catch (_: Exception) {
+            Log.w("ThumbnailCache", "Prefetch revision record could not be saved; the next round will be full")
+        }
     }
 
     private suspend fun prefetchOne(preview: Preview, disk: ThumbnailDiskCache): ThumbnailDiskResult {
         val current = disk.warmState(preview.key, preview.version)
         if (current != ThumbnailDiskResult.MISSING) return current
-        delay(80)
-        return backgroundFetch.withLock {
-            foreground.first { it == 0 }
+        return backgroundFetch.withPermit {
             flights.run(preview.flightKey) {
                 requireCurrent(preview.connection)
                 if (disk.generation != preview.generation || clearedConnection == preview.connection) {
@@ -329,7 +434,7 @@ class ThumbnailCacheRepository internal constructor(
         val target = preview.connection.target
         val url = target.baseUrl.toHttpUrl().newBuilder()
             .addPathSegments("api/v1/assets").addPathSegment(preview.assetId).addPathSegment("thumbnail")
-            .addQueryParameter("version", preview.version.toString()).addQueryParameter("size", "md")
+            .addQueryParameter("version", preview.version.toString()).addQueryParameter("size", ThumbnailCachePolicy.SIZE)
             .apply { if (background) addQueryParameter("background", "true") }.build()
         val call = provider.client(target).newCall(Request.Builder().url(url).header("Accept", "image/jpeg").build())
         call.timeout().timeout(65, TimeUnit.SECONDS)

@@ -295,6 +295,13 @@ paths:
       responses:
         '200': {description: Registered location, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryLocation'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /library/revision:
+    get:
+      operationId: getLibraryRevision
+      description: Cheap thumbnail-relevant revision for device prefetch skipping. Requires read permission. Advances only for asset content, trash/library membership, library data or selected-image merge membership changes; ordinary browsing events and backup reads do not affect it.
+      responses:
+        '200': {description: Current instance and opaque preview revision with cache policy version, content: {application/json: {schema: {$ref: '#/components/schemas/LibraryRevision'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /libraries:
     get:
       operationId: listLibraries
@@ -3861,6 +3868,14 @@ components:
         instanceId: {type: string}
         totalAssets: {type: integer, format: int64, minimum: 0, description: Preview-eligible assets in enabled libraries}
         thumbsOnDisk: {type: integer, format: int64, minimum: 0, description: Eligible assets with a regular nonempty md file at the current preview path}
+    LibraryRevision:
+      type: object
+      required: [instanceId, revision, thumbnailVersion]
+      description: Snapshot identity for skipping device prefetch. The revision is instance-local and may be compared only after instanceId matches.
+      properties:
+        instanceId: {type: string}
+        revision: {type: integer, format: int64, minimum: 1, description: Opaque monotonic counter advanced only by thumbnail-affecting changes}
+        thumbnailVersion: {type: string, description: Server preview policy version; a mismatch requires regenerating cached previews}
     DateCountBucket:
       type: object
       required: [date, fileCount]

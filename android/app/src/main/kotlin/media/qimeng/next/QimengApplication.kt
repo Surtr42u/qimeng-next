@@ -21,6 +21,7 @@ class QimengApplication : Application(), LocalScanHost, media.qimeng.next.data.D
     override fun onCreate() {
         super.onCreate()
         if (runtime.available) localConnection
+        graph.startThumbnailPrefetch()
     }
 
     override suspend fun submitLocalScan(connection: LocalConnection, request: LocalScanRequest): String = try {

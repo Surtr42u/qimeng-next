@@ -101,6 +101,24 @@ func (s *Service) DeleteLibrary(ctx context.Context, w *Write, id string, revisi
 	}
 	// Raw events, ingestion receipts, historical permits and declared author work
 	// names remain. Asset-scoped display and statistical projections disappear.
+	assets, e := q.QueryContext(ctx, "SELECT asset_id FROM asset_locations WHERE library_id=?", id)
+	if e != nil {
+		return e
+	}
+	var assetIDs []string
+	for assets.Next() {
+		var assetID string
+		if e = assets.Scan(&assetID); e != nil {
+			assets.Close()
+			return e
+		}
+		assetIDs = append(assetIDs, assetID)
+	}
+	e = assets.Err()
+	assets.Close()
+	if e != nil {
+		return e
+	}
 	for _, table := range []string{"likes", "asset_daily_stats", "asset_hourly_stats", "event_sessions", "recommendation_shown"} {
 		if _, e = q.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id IN (SELECT id FROM assets WHERE library_id=?)", id); e != nil {
 			return e
@@ -119,6 +137,10 @@ func (s *Service) DeleteLibrary(ctx context.Context, w *Write, id string, revisi
 	}
 	w.after = append(w.after, func() error {
 		s.Root.DetachLibrary(id, retain)
+		for _, assetID := range assetIDs {
+			s.discardDeletedAssetPreviews(assetID)
+		}
+		s.invalidateThumbnailProgress()
 		s.previews.changed("", "")
 		s.wakeLibraryMonitor()
 		return nil

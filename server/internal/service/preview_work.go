@@ -17,6 +17,7 @@ type previewWork struct {
 	mu                sync.Mutex
 	active            map[string]*previewFlight
 	space             chan struct{}
+	largeStill        chan struct{}
 	closed            bool
 	parallel, waiting int
 	scopes            map[previewScope]bool
@@ -29,10 +30,29 @@ func (p *previewWork) init() {
 	p.active = make(map[string]*previewFlight)
 	p.space = make(chan struct{})
 	p.parallel = min(2, runtime.GOMAXPROCS(0))
+	if runtime.GOOS == "android" {
+		// The embedded phone server has no separate NAS service to protect and
+		// follows the old Android client's multi-worker thumbnail pipe.
+		p.parallel = min(4, runtime.GOMAXPROCS(0))
+	}
 	p.scopes = make(map[previewScope]bool)
 	p.full = true
 	p.progress = make(chan struct{}, 1)
+	p.largeStill = make(chan struct{}, mobileLargeStillSlots)
 	p.available = freeBytes
+}
+
+// acquireLargeStill admits at most one mobile full-resolution still decode at a
+// time. Callers already hold a previewWork active slot, so the lock order is
+// always active slot -> large-still semaphore and cannot deadlock with join.
+// The returned release must be called on every success path.
+func (p *previewWork) acquireLargeStill(ctx context.Context) (func(), error) {
+	select {
+	case p.largeStill <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return func() { <-p.largeStill }, nil
 }
 func (p *previewWork) signal() {
 	if p.space != nil {
@@ -78,7 +98,9 @@ func (p *previewWork) join(ctx context.Context, s *Service, key string, backgrou
 			}
 		}
 		limit := p.parallel
-		if background {
+		if background && runtime.GOOS != "android" {
+			// Desktop/NAS reserves one slot for foreground requests. The
+			// embedded phone server follows the old four-worker prefetch.
 			limit = max(1, limit-1)
 		}
 		if len(p.active) < limit && (!background || p.waiting == 0) {

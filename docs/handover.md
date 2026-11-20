@@ -99,7 +99,7 @@ Windows 做已授权的后台切换时，先核对启动配置指向已确认的
 ## 3. 验证后台确实写出了三种 JPEG
 
 1. 云端用普通上传加入一张合成图片和一段可解码视频；安装后的正常运行复核只在所有者指定的 Next 数据根，使用其允许的只读方式。保留授权时的磁盘余量、启用库、应有预览的当前资产和内容版本基线。后台约在启动 30 秒后开始，每页最多 256 项，先 512，再补 256 和 1024，每 10 分钟全库复核。先关闭会请求缩略图的视图，在取样结束前不访问缩略图接口。保留既有缓存。
-2. 读 `cache/<资产ID>/v3-<当前内容版本>-<边长>.jpg`，校对合并的成员使用 `v4`。以资产和当前版本分别统计 256、512、1024 三档的实有数、三档齐全数以及缺项。两次带时刻的私有计数可说明后台进度。按启用库中能生成预览的资产对账，单列原件缺失、编码/资源限制、空间暂停和过期缓存。公开的两件合成输入预期每档两件、共六件；真实总数与任何标识只留本机。
+2. 读 `cache/<资产ID>/v5-<当前内容版本>-<边长>.jpg`，校对合并的成员使用 `v6`。以资产和当前版本分别统计 256、512、1024 三档的实有数、三档齐全数以及缺项。两次带时刻的私有计数可说明后台进度。按启用库中能生成预览的资产对账，单列原件缺失、编码/资源限制、空间暂停和过期缓存。公开的两件合成输入预期每档两件、共六件；真实总数与任何标识只留本机。
 3. 核对 JPEG 签名 `FF D8 FF`，解出宽高，完整解码所选样本。内置图片管线按 EXIF 方向显示，长边为 `min(档位, 原长边)`，另一边按比例取整且至少 1。FFmpeg 帧按选中的视频流或内嵌封面缩放到该档方框内，单独核对宽高比例。缓存清点完成后，用 `/api/v1/assets/{id}/thumbnail?size=sm&version={version}`，依次替换 `sm`、`md`、`lg`，核对 HTTP 200、JPEG 和缓存字节，原件出口 SHA-256 与基线一致。连续缺档先查当前版本、格式、后台存活、存储余量和媒体工具。若观察前已经齐全，只能确认缓存覆盖；新合成输入在无人浏览时由缺到齐才证明本次后台生成。[正常入口合成用例](../server/internal/httpapi/thumbnail_warmup_test.go) · [格式和预算](api.md#展示缩略图与后台预热)
 
 下面示例供所有者明确授权的 Windows 环境使用，需要 PowerShell 和支持 JSON 输出的 SQLite 命令行。`$catalog` 是同一观察点的一致性 Next 数据库快照，`$cacheDir` 是相应实例的缓存目录。将变量指向私下确认的现有路径。示例按后台相同的条件读取应有条目，只输出当前版本的分档汇总。对无法解码的条目另记原因。
@@ -108,7 +108,7 @@ Windows 做已授权的后台切换时，先核对启动配置指向已确认的
 $sql = @'
 SELECT a.id, json_extract(a.data,'$.contentVersion') AS version,
        CASE WHEN EXISTS (SELECT 1 FROM selected_image_merge_members m WHERE m.physical_asset_id=a.id)
-            THEN 'v4' ELSE 'v3' END AS policy
+            THEN 'v6' ELSE 'v5' END AS policy
 FROM assets a JOIN libraries l ON l.id=a.library_id
 WHERE a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
   AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!='';

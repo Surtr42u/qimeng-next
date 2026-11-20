@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/model"
+	"qimeng.local/next/server/internal/service"
 )
 
 func TestBackgroundThumbnailSizesBeforeBrowsing(t *testing.T) {
@@ -75,7 +76,9 @@ func TestBackgroundThumbnailSizesBeforeBrowsing(t *testing.T) {
 		edge int
 	}{{"md", 512}, {"sm", 256}, {"lg", 1024}}
 	cache := func(a *model.Asset, edge int) string {
-		return fmt.Sprintf("cache/%s/v3-%d-%d.jpg", a.ID, a.ContentVersion, edge)
+		// The path encodes the service's preview policy; derive it from the
+		// exported version instead of duplicating the current literal.
+		return fmt.Sprintf("cache/%s/%s-%d-%d.jpg", a.ID, service.PreviewPolicyVersion(), a.ContentVersion, edge)
 	}
 	// Observe only the cache directory until the scheduled worker has written
 	// every size. Requesting a thumbnail here would generate it on demand.

@@ -37,6 +37,9 @@ func (s *Service) UpdateLibrary(ctx context.Context, w *Write, id string, in Lib
 				s.stopLibraryScans(id)
 				s.researchGateway.cancelSubject("", id)
 			}
+			// Enabling or disabling a library changes which assets are preview
+			// candidates, so the cached progress snapshot is no longer valid.
+			s.invalidateThumbnailProgress()
 			s.wakeLibraryMonitor()
 			s.wakeScans()
 			return nil
