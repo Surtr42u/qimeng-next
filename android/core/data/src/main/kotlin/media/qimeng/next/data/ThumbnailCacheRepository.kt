@@ -52,6 +52,7 @@ import okhttp3.Response
 import okio.Buffer
 import java.io.File
 import java.io.IOException
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -112,16 +113,19 @@ class ThumbnailCacheRepository internal constructor(
         val target = settings.session.value ?: return null
         val revision = settings.transportRevision.value
         capturedConnection?.takeIf { it.revision == revision && it.target == target }?.let { return it }
-        // Only the embedded runtime login carries the host-verified certificate. Its port and leaf
-        // change on some restarts, so the local namespace uses its stable instance identity.
-        val embedded = settings.certificateFor(target) != null
+        // 内嵌本机服务现在使用回环 HTTP，没有证书可作标记；回环地址仍归入独立的 local 池，
+        // 并沿用稳定的 instanceId 命名空间，升级前后缓存键保持一致。
+        val embedded = settings.certificateFor(target) != null || isLoopback(target.baseUrl)
         val kind = if (embedded) ThumbnailPool.LOCAL else ThumbnailPool.NAS
         val identity = if (embedded) target.instanceId else "${target.baseUrl}\n${target.instanceId}"
         Connection(target, revision, ThumbnailCacheSelection(kind, thumbnailHash(identity))).also { capturedConnection = it }
     }
 
-    private fun preview(asset: Asset): Preview? {
-        if (asset.thumbnailUrl.isBlank()) return null
+    private fun isLoopback(baseUrl: String): Boolean = try {
+        URI(baseUrl).host?.lowercase() in setOf("127.0.0.1", "localhost", "::1", "[::1]")
+    } catch (_: Exception) { false }
+
+    private fun preview(asset: Asset): Preview? {        if (asset.thumbnailUrl.isBlank()) return null
         val connection = currentConnection()?.takeIf { sameTarget(asset.target, it.target) } ?: return null
         return Preview(asset.id, asset.version, connection, diskFor(connection.selection.pool).generation)
     }

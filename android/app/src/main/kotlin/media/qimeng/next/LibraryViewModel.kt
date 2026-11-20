@@ -274,7 +274,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     if (attempt < 2) delay(600L * (attempt + 1))
                 }
             }
-            if (generation == connectionGeneration) mutableMessage.value = explain(failure ?: IllegalStateException("操作未完成"))
+            // 刷新连接属于后台维护：失败时由各页面自己的空状态/错误卡呈现，
+            // 不再往首页顶栏塞全局提示。
+            if (generation == connectionGeneration) mutableMessage.value = null
         }
     }
     suspend fun readServerVersion(target: Session, transport: Long): LoadState<String> = try {

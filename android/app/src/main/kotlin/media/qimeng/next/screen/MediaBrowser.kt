@@ -424,6 +424,17 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, o
     val radius = with(LocalDensity.current) { 24f.toDp() }
     // Existing AssetCard: 16:9 frame, 5dp outer spacing and a 24px corner; only search adds a caption.
     val animated = asset.mediaType == "animated_image"
+    var failed by remember(asset.id, asset.version) { mutableStateOf(false) }
+    var attempt by remember(asset.id, asset.version) { mutableIntStateOf(0) }
+    LaunchedEffect(asset.id, failed, attempt) {
+        // 个别预览在服务端刚生成或刚换缓存池时会失败一次；给两次短暂重试，失败再显示占位图标。
+        if (failed && attempt < 2) { kotlinx.coroutines.delay(1_200L); attempt++; failed = false }
+    }
+    val thumbModel = remember(asset, attempt) {
+        if (attempt == 0) asset else ImageRequest.Builder(context).data(asset)
+            .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:grid-retry-$attempt")
+            .build()
+    }
     val shape = RoundedCornerShape(radius)
     val click = if (onLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "选择媒体")
         else Modifier.clickable(onClick = onClick)
@@ -434,16 +445,22 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, o
                 contentDescription = asset.name
                 if (isSelected != null) selected = isSelected
             }) {
-            if (animated || asset.thumbnailUrl.isNotEmpty()) {
-                val request = if (animated) {
-                    ImageRequest.Builder(context).data(asset.contentUrl)
-                        .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:animated-grid")
-                        .diskCachePolicy(coil3.request.CachePolicy.DISABLED).build()
-                } else asset
-                AsyncImage(model = request, imageLoader = LocalMediaImages.current,
-                    contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            if (asset.thumbnailUrl.isNotEmpty()) {
+                // 网格优先用已缓存的 512 预览，动图也不再拉整份原件；否则大动图会长时间白框。
+                AsyncImage(model = thumbModel, imageLoader = LocalMediaImages.current,
+                    contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                    onError = { failed = true }, onSuccess = { failed = false })
+            } else if (animated) {
+                AsyncImage(model = ImageRequest.Builder(context).data(asset.contentUrl)
+                    .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:animated-grid")
+                    .diskCachePolicy(coil3.request.CachePolicy.DISABLED).build(),
+                    imageLoader = LocalMediaImages.current, contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                    onError = { failed = true }, onSuccess = { failed = false })
             }
             else Icon(Icons.Outlined.Image, "预览尚未生成", Modifier.align(Alignment.Center).size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (failed) Icon(Icons.Outlined.Image, "预览暂不可用", Modifier.align(Alignment.Center).size(28.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
             if (isSelected == true) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)))
             if (asset.mediaType == "video") detailDuration(asset.durationMs)?.let { badge ->
                 Text(badge,

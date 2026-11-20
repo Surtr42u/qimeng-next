@@ -352,6 +352,13 @@ func (s *Service) generatePreview(ctx context.Context, id string, version int64,
 			defer release()
 		}
 		data, e = s.externalPreview(ctx, source, a, edge)
+		if e != nil && ffmpegStill {
+			// ffmpeg 对少数 PNG/WebP 变体（16-bit、异常色彩配置等）会拒绝解码。
+			// 这些文件旧版本来就走 Go 解码；失败时回退到同一路径，避免留下永久白框。
+			if fallback, fallbackErr := s.scaledStill(ctx, source, a.MimeType, image.Pt(a.Width, a.Height), edge, displayStill); fallbackErr == nil {
+				data, e = fallback, nil
+			}
+		}
 	}
 	if e != nil {
 		return e

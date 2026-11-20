@@ -50,7 +50,6 @@ fun AppRoot(model: LibraryViewModel) {
     val tab by model.tab.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
-    val queueError by model.queueError.collectAsStateWithLifecycle()
     val statistics = session != null && when {
         route == "main" -> tab == 2
         else -> route.startsWith("stats-detail:") || route.startsWith("review:") || route.startsWith("ranking:")
@@ -95,15 +94,11 @@ fun AppRoot(model: LibraryViewModel) {
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
                     Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
                         if (!detailRoute && !ownTopBar && !searchRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "favorites", "history")) PageHeader(routeTitle(route), model::back)
-                        if (!detailRoute && route != "server" && message != null) {
+                        if (!detailRoute && route != "main" && route != "server" && message != null) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
                                 IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
                             }
-                        }
-                        if (!detailRoute && queueError != null && route !in setOf("upload", "server")) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(queueError!!, Modifier.weight(1f), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                            TextButton(onClick = { model.navigate("upload") }) { Text("查看传输") }
                         }
                         SingleSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) {
                             when {
