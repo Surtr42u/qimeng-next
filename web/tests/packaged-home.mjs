@@ -34,9 +34,18 @@ try {
     assert.equal(identity.headers()["content-encoding"], undefined);
     assert.deepEqual(await identity.body(), original);
   }
-  await page.getByLabel("管理密码", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByRole("heading", { name: "为你推荐", exact: true }).waitFor();
+  const home = page.getByRole("heading", { name: "为你推荐", exact: true });
+  const passwordField = page.getByLabel("管理密码", { exact: true });
+  // 本机桌面包默认免密自动进入；远程/NAS 包仍显示密码表单。
+  await Promise.race([
+    home.waitFor({ timeout: 20_000 }),
+    passwordField.waitFor({ timeout: 20_000 }),
+  ]);
+  if (await passwordField.isVisible().catch(() => false)) {
+    await passwordField.fill(password);
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+  }
+  await home.waitFor();
   await page.getByText("还没有内容——先到「维护 → 文件管理」注册一个媒体库并扫描。", { exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, target + "-" + mode + "-home.png") });
   const api = base + "/api/v1";
