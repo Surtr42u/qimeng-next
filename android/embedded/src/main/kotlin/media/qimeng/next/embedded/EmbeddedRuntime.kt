@@ -69,7 +69,7 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
         val instance = requireNotNull(ready.instanceId)
         val token = withContext(Dispatchers.IO) { secrets.token(allowCreate = false) }
         scans.resume()
-        return@withLock LocalConnection(requireNotNull(HostState.activeBaseUrl), instance, token, requireNotNull(HostState.certificateDerBase64) { "本机TLS启动凭据缺失" })
+        return@withLock LocalConnection(requireNotNull(HostState.activeBaseUrl), instance, token, HostState.certificateDerBase64)
         }
         error("本机权限或地址仍在变化，请稍后重新连接")
     }
@@ -102,4 +102,4 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     override fun ownedEndpoints(instanceId: String): Set<String> = if (secrets.confirmedInstance == instanceId) secrets.confirmedPorts().map(::addressForPort).toSet() else emptySet()
 }
 
-internal fun addressForPort(port: Int) = "https://127.0.0.1:$port/"
+internal fun addressForPort(port: Int) = "http://127.0.0.1:$port/"

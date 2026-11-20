@@ -41,7 +41,7 @@ class EmbeddedRuntimeTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test(timeout = 300_000)
-    fun realPackagedServerUsesPinnedTlsAndPreservesInstanceAcrossRestart() = runBlocking {
+    fun realPackagedServerUsesLoopbackHttpAndPreservesInstanceAcrossRestart() = runBlocking {
         require(InstrumentationRegistry.getArguments().getString("qimengEmbedded") == "true") { "Explicit embedded cloud runner argument required" }
         val application = compose.activity.application as QimengApplication
         val runtime = application.runtime
@@ -50,8 +50,8 @@ class EmbeddedRuntimeTest {
         EmbeddedDebugDiagnostics.enable()
         try {
             val first = runtime.start()
-            assertEquals("https://127.0.0.1:18431/", first.baseUrl)
-            assertTrue(first.certificateDerBase64.isNotBlank())
+            assertEquals("http://127.0.0.1:18431/", first.baseUrl)
+            assertNull(first.certificateDerBase64)
             application.localConnection.connect(forceLogin = true)
             // Use the same trusted spelling as the host. Android's public app-data alias can differ.
             val root = java.io.File(application.filesDir.canonicalFile, "embedded-v1/media/synthetic-registration")
@@ -68,14 +68,14 @@ class EmbeddedRuntimeTest {
             assertEquals("Returning to the app must respect an explicit stop", RuntimePhase.STOPPED, runtime.status.value.phase)
             val second = runtime.start()
             assertEquals(first.instanceId, second.instanceId)
-            assertNotEquals("Every native restart must replace its ephemeral certificate", first.certificateDerBase64, second.certificateDerBase64)
+            assertEquals("Loopback HTTP has no pinned certificate", first.certificateDerBase64, second.certificateDerBase64)
             // Share the app coordinator with automatic pin refresh, so the test cannot race two logins.
             application.localConnection.connect(forceLogin = false)
             assertEquals(second.certificateDerBase64, graph.settings.certificateFor(graph.settings.session.value!!))
             assertTrue("Server persistence must survive process restart", graph.media.libraryPage().items.any { it.id == library.id })
             runtime.configureAddress("http://127.0.0.1:18432")
             application.localConnection.connect(forceLogin = true)
-            assertEquals("https://127.0.0.1:18432/", graph.settings.session.value!!.baseUrl)
+            assertEquals("http://127.0.0.1:18432/", graph.settings.session.value!!.baseUrl)
             assertEquals(first.instanceId, graph.settings.session.value!!.instanceId)
             assertTrue("An owned port change preserves the same database", graph.media.libraryPage().items.any { it.id == library.id })
 
@@ -184,7 +184,7 @@ class EmbeddedRuntimeTest {
         } finally {
             shell("dumpsys battery reset")
             runtime.stop()
-            runtime.configureAddress("https://127.0.0.1:18431/")
+            runtime.configureAddress("http://127.0.0.1:18431/")
             EmbeddedDebugDiagnostics.disable()
         }
     }

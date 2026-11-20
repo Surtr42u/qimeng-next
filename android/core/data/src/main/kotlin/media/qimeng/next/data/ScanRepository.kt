@@ -13,7 +13,7 @@ class ScanRepository internal constructor(private val settings: SecureSettings, 
     suspend fun get(id: String): LibraryScan = api().getLibraryScan(id).bodyOrThrow().model()
 
     /** Explicit owned-process handoff; this independent connection never changes the selected server. */
-    suspend fun startOwned(baseUrl: String, instanceId: String, certificate: String, bootstrap: String,
+    suspend fun startOwned(baseUrl: String, instanceId: String, certificate: String?, bootstrap: String,
                            libraryId: String, revision: Long, operationId: String): String {
         val declared = provider.anonymous(baseUrl, certificate).getInstance().bodyOrThrow()
         check(declared.id == instanceId) { "本机实例核验失败，未提交扫描" }

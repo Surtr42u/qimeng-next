@@ -7,7 +7,7 @@ enum class RuntimePhase { STOPPED, STARTING, READY, STOPPING, FAILED }
 data class RuntimeStatus(val phase: RuntimePhase, val message: String, val instanceId: String? = null)
 
 /** A short-lived handoff to normal API session exchange; deliberately not a data class. */
-class LocalConnection(val baseUrl: String, val instanceId: String, val bootstrapToken: String, val certificateDerBase64: String) {
+class LocalConnection(val baseUrl: String, val instanceId: String, val bootstrapToken: String, val certificateDerBase64: String?) {
     override fun toString() = "LocalConnection(instance=$instanceId, credential=redacted)"
 }
 

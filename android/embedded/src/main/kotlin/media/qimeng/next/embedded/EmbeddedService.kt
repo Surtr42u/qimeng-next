@@ -108,7 +108,6 @@ class EmbeddedService : Service() {
                 put("QIMENG_FFPROBE", File(nativeRoot, "libffprobe_cli.so").absolutePath)
                 put("QIMENG_STARTUP_RECEIPT", receipt.absolutePath)
                 put("QIMENG_LAUNCH_ID", launchId)
-                put("QIMENG_EPHEMERAL_TLS", "true")
                 put("LD_LIBRARY_PATH", nativeRoot.absolutePath)
             }
             if (stopping.get()) return
@@ -131,12 +130,12 @@ class EmbeddedService : Service() {
                     val value = JSONObject(receipt.readText())
                     if (value.getString("launchId") != launchId || value.getString("listenAddress") != listen) fail("本机启动回执与本次进程不匹配")
                     val declared = value.getString("instanceId")
-                    val certificate = value.getString("certificateDerBase64")
+                    val certificate = value.optString("certificateDerBase64")
                     if (declared.isBlank() || (secrets.confirmedInstance != null && secrets.confirmedInstance != declared)) fail("本机实例身份已改变，请先核对数据恢复结果")
                     if (httpInstance(baseUrl, certificate) != declared || !child.isAlive) fail("本机服务身份核对未通过")
                     secrets.confirm(declared, port)
                     if (HostState.generation.get() == ticket) {
-                        HostState.certificateDerBase64 = certificate
+                        HostState.certificateDerBase64 = certificate.ifBlank { null }
                         HostState.storageRoots = storageRoots
                         HostState.activeBaseUrl = baseUrl
                     }
@@ -177,8 +176,10 @@ class EmbeddedService : Service() {
     }
 
     private fun httpInstance(baseUrl: String, certificate: String): String {
-        val connection = URL("${baseUrl}api/v1/instance").openConnection() as HttpsURLConnection
-        connection.sslSocketFactory = PinnedTls(certificate).socketFactory
+        val connection = URL("${baseUrl}api/v1/instance").openConnection() as HttpURLConnection
+        if (connection is HttpsURLConnection && certificate.isNotBlank()) {
+            connection.sslSocketFactory = PinnedTls(certificate).socketFactory
+        }
         connection.instanceFollowRedirects = false
         connection.connectTimeout = 1_500; connection.readTimeout = 1_500
         try {
