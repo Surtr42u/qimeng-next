@@ -16,7 +16,8 @@ import java.util.UUID
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
-    val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false, val publicationId: String? = null)
+    val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false, val publicationId: String? = null,
+    val userRefreshing: Boolean = false)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
 
@@ -76,6 +77,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val mutableAsset = MutableStateFlow<Asset?>(null)
     private val reactionRetries = mutableMapOf<String, Pair<ReactionIntent, String>>()
     val asset = mutableAsset.asStateFlow()
+    val detailChromeVisible = saved.getStateFlow("detailChromeVisible", true)
     private val mutableAuthor = MutableStateFlow<Author?>(null)
     val author = mutableAuthor.asStateFlow()
     private val mutableAuthorFollow = MutableStateFlow(LoadState<String>())
@@ -217,7 +219,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
         browse("albums", force = true)
     }
-    fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
+    fun refreshAlbum(query: AssetQuery) = browse("albums", query, force = true, userRefresh = true)
+
+    fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false,
+               userRefresh: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
         val publication = lastPublication.value?.takeIf { sameTarget(it.first, session.value) }?.second
@@ -230,7 +235,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val connection = connectionGeneration
         val old = state.value
         val keep = next || previous == query
-        state.value = if (keep) old.copy(loading = true, error = null, publicationId = publication) else ListState(loading = true, publicationId = publication)
+        // Pagination and a first-page pull can both retain a cursor; only the latter owns the indicator.
+        state.value = if (keep) old.copy(loading = true, error = null, publicationId = publication, userRefreshing = userRefresh)
+            else ListState(loading = true, publicationId = publication, userRefreshing = userRefresh)
         listJobs[key] = viewModelScope.launch {
             try {
                 val page = repository.assets(query, if (next) old.cursor else null)
@@ -243,7 +250,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (generation.isCurrent(ticket) && connection == connectionGeneration)
-                    state.value = state.value.copy(loading = false, error = explain(failure),
+                    state.value = state.value.copy(loading = false, error = explain(failure), userRefreshing = false,
                         reloadFromStart = next && failure is ApiFailure && failure.code == "recommendation_expired")
             }
         }
@@ -400,13 +407,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         if (pendingAssetTools.value == id) saved["pendingAssetTools"] = null
     }
 
-    fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value) {
+    fun openAsset(id: String, sourceKey: String? = null, target: Session? = session.value) =
+        openAsset(id, sourceKey, target, replaceSibling = false, initialChromeVisible = true)
+
+    private fun openAsset(id: String, sourceKey: String?, target: Session?, replaceSibling: Boolean, initialChromeVisible: Boolean) {
         if (target == null || !bindObjectTarget(target)) return
-        if (route.value != "asset:$id" || saved.get<String>("viewAsset") != id) {
+        if (replaceSibling || route.value != "asset:$id" || saved.get<String>("viewAsset") != id) {
             saved["viewSession"] = UUID.randomUUID().toString()
             saved["viewAsset"] = id
+            saved["detailChromeVisible"] = initialChromeVisible
         }
         if (sourceKey != null) saved["detailListKey"] = sourceKey
+        if (replaceSibling) saved["route"] = "asset:$id"
         navigate("asset:$id")
         mutableAsset.value = null
         mutableAssetAuthors.value = emptyList()
@@ -425,14 +437,20 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
+    fun setDetailChromeVisible(id: String, visible: Boolean) {
+        if (route.value == "asset:$id" && saved.get<String>("viewAsset") == id) saved["detailChromeVisible"] = visible
+    }
+
     fun adjacentAsset(direction: Int) {
-        val id = mutableAsset.value?.id ?: return
+        val current = mutableAsset.value ?: return
+        if (route.value != "asset:${current.id}") return
         val source = saved.get<String>("detailListKey")?.let { lists[it]?.value?.items }.orEmpty()
-        val index = source.indexOfFirst { it.id == id }
+        val index = source.indexOfFirst { it.id == current.id }
+        if (index < 0) return
         val next = source.getOrNull(index + direction) ?: return
-        // A sibling replaces the detail scene, without growing its return stack.
-        saved["route"] = "asset:${next.id}"
-        openAsset(next.id, target = next.target)
+        // Only an actual photo-to-photo swipe carries the chrome state. Video and fresh opens start normally.
+        val carryHidden = current.mediaType != "video" && next.mediaType != "video" && !detailChromeVisible.value
+        openAsset(next.id, null, next.target, replaceSibling = true, initialChromeVisible = !carryHidden)
     }
 
     fun detailPosition(id: String): Pair<Int, Int> {

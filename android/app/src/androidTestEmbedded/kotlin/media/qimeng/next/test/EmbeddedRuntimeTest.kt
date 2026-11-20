@@ -114,6 +114,27 @@ class EmbeddedRuntimeTest {
                 "listed=${page.items.size}; originalPresent=${java.io.File(root,asset.relativePath).isFile}",
                 asset.libraryId == library.id && receipt.assetId == assetId && page.items.any { it.id == assetId })
 
+            // The actual stopped host must preserve nonempty journal work and replay it only after re-admission.
+            val viewsBeforeStop = graph.analytics.report("7d").overview.totals.views
+            runtime.stop()
+            val visitSession = java.util.UUID.randomUUID().toString()
+            graph.recordEvent(asset, "view", visitSession)
+            val queuedVisit = withTimeout(10_000) {
+                graph.queue.state.first { it?.events?.any { event -> event.sessionId == visitSession } == true }!!
+                    .events.single { it.sessionId == visitSession }
+            }
+            assertFalse(application.transferConnectionReady(target))
+            assertNull(queuedVisit.issue)
+            assertNull(graph.queue.error.value)
+            val restarted = runtime.start()
+            assertEquals(target.instanceId, restarted.instanceId)
+            withTimeout(20_000) { application.localConnection.admitted.first { it?.baseUrl == target.baseUrl } }
+            withTimeout(30_000) { graph.queue.state.first { it != null && it.events.none { event -> event.id == queuedVisit.id } } }
+            assertTrue("Recovered browsing event reached the same physical library",
+                graph.media.assets(AssetQuery(source = "history")).items.any { it.id == assetId && it.lastViewedAt != null })
+            assertEquals("The pending visit was counted once", viewsBeforeStop + 1,
+                graph.analytics.report("7d").overview.totals.views)
+
             shell("dumpsys battery unplug")
             shell("dumpsys battery set status 3")
             awaitPower(plugged = false)

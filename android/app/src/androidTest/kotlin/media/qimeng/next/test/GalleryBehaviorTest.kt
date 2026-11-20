@@ -161,6 +161,65 @@ class GalleryBehaviorTest {
         awaitColumns("albums", next)
     }
 
+    @Test(timeout = 120_000)
+    fun albumRefreshKeepsTheIndicatorWithAnExistingNextPage() = isolatedBrowse { _, model ->
+        openAlbum(model)
+        val page = compose.runOnIdle { model.assets("albums") }
+        compose.runOnIdle {
+            val cursor = page.value.cursor
+            assertNotNull("This fixture needs a second page", cursor)
+            // The same action the real pull gesture invokes; check the state before the HTTP read can finish.
+            model.refreshAlbum(model.query("albums"))
+            assertTrue(page.value.loading && page.value.userRefreshing)
+            assertEquals(cursor, page.value.cursor)
+        }
+        compose.waitUntil(25_000) { !page.value.loading && !page.value.userRefreshing }
+        assertNull(page.value.error)
+        assertTrue(page.value.loaded)
+        assertNotNull(page.value.cursor)
+    }
+
+    @Test(timeout = 120_000)
+    fun swipeBetweenImagesKeepsChromeHiddenUntilANormalOpen() = isolatedBrowse { graph, model ->
+        graph.settings.saveAlbumColumns(2)
+        openAlbum(model)
+        val photos = compose.runOnIdle { model.assets("albums").value.items.take(2) }
+        assertEquals(2, photos.size)
+        assertTrue(photos.all { it.mediaType == "image" })
+        val (first, second) = photos
+        fun awaitImage(asset: Asset): SemanticsNodeInteraction {
+            compose.waitUntil(20_000) {
+                model.route.value == "asset:" + asset.id && model.asset.value?.id == asset.id &&
+                    compose.onAllNodesWithContentDescription(asset.name, useUnmergedTree = true).fetchSemanticsNodes().size == 1
+            }
+            return compose.onNodeWithContentDescription(asset.name, useUnmergedTree = true).assertIsDisplayed()
+        }
+        fun awaitChrome(visible: Boolean) {
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithContentDescription("信息").fetchSemanticsNodes().isNotEmpty() == visible
+            }
+        }
+        tile(first).performClick()
+        awaitImage(first)
+        awaitChrome(true)
+        awaitImage(first).performTouchInput { click(center) }
+        awaitChrome(false)
+        awaitImage(first).performTouchInput { swipeLeft(durationMillis = 330L) }
+        awaitImage(second)
+        awaitChrome(false)
+        compose.onNodeWithContentDescription("返回").assertDoesNotExist()
+        assertTrue(captureCloudScreenshot("album-image-swipe-immersive.png"))
+
+        // Reopen the same asset normally after returning through the restored chrome.
+        awaitImage(second).performTouchInput { click(center) }
+        awaitChrome(true)
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.waitUntil(15_000) { model.route.value == "main" && model.tab.value == 1 }
+        tile(second).performClick()
+        awaitImage(second)
+        awaitChrome(true)
+    }
+
     private fun isolatedBrowse(body: (DataGraph, LibraryViewModel) -> Unit) {
         val args = InstrumentationRegistry.getArguments()
         val endpoint = requireNotNull(args.getString("qimengBrowseUrl"))

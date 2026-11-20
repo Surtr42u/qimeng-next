@@ -76,13 +76,6 @@ class ActivityEventQueue internal constructor(
         check(sameTarget(target, settings.session.value)) { "服务器已改变，请回到该记录所属的服务器" }
     }
 
-    private fun PendingEvent.shouldSend(): Boolean = when (issue?.kind) {
-        EventDeliveryKind.REJECTED -> false
-        EventDeliveryKind.RETRYABLE -> true
-        EventDeliveryKind.WAITING, EventDeliveryKind.UNCONFIRMED -> retryRequested == true
-        null -> failure == null || retryRequested == true
-    }
-
     private suspend fun send(api: DefaultApi, event: PendingEvent): EventDeliveryIssue? {
         val kind = EventCreate.Kind.entries.firstOrNull { it.value == event.kind }
             ?: return EventDeliveryIssue(EventDeliveryKind.REJECTED, "本机保存的事件类型无效")
@@ -112,4 +105,11 @@ class ActivityEventQueue internal constructor(
             EventDeliveryIssue(EventDeliveryKind.RETRYABLE, failure.message)
         } else EventDeliveryIssue(EventDeliveryKind.UNCONFIRMED, failure.message)
     }
+}
+
+internal fun PendingEvent.shouldSend(): Boolean = when (issue?.kind) {
+    EventDeliveryKind.REJECTED -> false
+    EventDeliveryKind.RETRYABLE -> true
+    EventDeliveryKind.WAITING, EventDeliveryKind.UNCONFIRMED -> retryRequested == true
+    null -> failure == null || retryRequested == true
 }

@@ -154,7 +154,12 @@ class RecoveryBoundaryTest {
         val queue = QueueStore(context)
         try { queue.load(); fail("Corrupt journal accepted") } catch (_: Exception) { }
         assertNull(queue.state.value)
-        assertNotNull(queue.error.value)
+        val journalError = requireNotNull(queue.error.value)
+        val target = Session("https://127.0.0.1:18431/", "owned-instance", "Local")
+        queue.reportProblem("worker failure")
+        queue.reportTransportProblem(target, "temporarily disconnected")
+        queue.clearTransportProblem(target)
+        assertEquals(journalError, queue.error.value)
         assertEquals("{broken", file.readText())
     }
 

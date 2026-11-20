@@ -16,7 +16,7 @@ internal fun transferConnectionReady(context: Context, target: Session): Boolean
     (context.applicationContext as? LocalTransferHost)?.transferConnectionReady(target) ?: true
 
 internal fun QueueSnapshot.hasReadyTransferWork(target: Session): Boolean {
-    if (events.any { sameTarget(it.target, target) && it.failure == null }) return true
+    if (events.any { sameTarget(it.target, target) && it.shouldSend() }) return true
     if (transfers.any { sameTarget(it.target, target) &&
             (it.state in setOf(TransferState.QUEUED, TransferState.UPLOADING) ||
                 (it.state == TransferState.CANCELLED && !it.cancelConfirmed) ||

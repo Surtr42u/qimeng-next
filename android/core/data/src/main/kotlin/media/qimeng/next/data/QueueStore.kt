@@ -26,12 +26,18 @@ class QueueStore(context: Context) {
     val state = mutableState.asStateFlow()
     val error = mutableError.asStateFlow()
     private var problemTarget: Session? = null
-    @Synchronized private fun setProblem(message: String?, target: Session? = null) {
+    private var journalProblem = false
+    @Synchronized private fun setProblem(message: String?, target: Session? = null, journal: Boolean = false) {
         problemTarget = target
+        journalProblem = journal
         mutableError.value = message
     }
-    internal fun reportProblem(message: String) = setProblem(message)
-    internal fun reportTransportProblem(target: Session, message: String) = setProblem(message, target)
+    @Synchronized internal fun reportProblem(message: String) {
+        if (!journalProblem) setProblem(message)
+    }
+    @Synchronized internal fun reportTransportProblem(target: Session, message: String) {
+        if (!journalProblem) setProblem(message, target)
+    }
     @Synchronized fun clearTransportProblem(target: Session) {
         if (media.qimeng.next.model.sameTarget(target, problemTarget)) setProblem(null)
     }
@@ -62,7 +68,7 @@ class QueueStore(context: Context) {
                 mutableState.value = data
                 setProblem(null)
             } catch (failure: Exception) {
-                setProblem("传输记录读取失败，已停止发送。请重试读取。")
+                setProblem("传输记录读取失败，已停止发送。请重试读取。", journal = true)
                 throw failure
             }
         }
@@ -82,7 +88,7 @@ class QueueStore(context: Context) {
                 setProblem(null)
             } catch (failure: Exception) {
                 file.failWrite(stream)
-                setProblem("无法保存传输状态，已暂停发送。重试前将核对服务器结果。")
+                setProblem("无法保存传输状态，已暂停发送。重试前将核对服务器结果。", journal = true)
                 throw failure
             }
         }

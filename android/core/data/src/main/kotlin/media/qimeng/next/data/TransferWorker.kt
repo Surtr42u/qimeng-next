@@ -36,7 +36,12 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             if (!requireNotNull(graph.queue.state.value).hasReadyTransferWork(target) ||
                 !transferConnectionReady(applicationContext, target)) return@withContext Result.success()
             val api = graph.provider.api(target)
-            val instance = api.getInstance().bodyOrThrow()
+            val instance = try { api.getInstance().bodyOrThrow() }
+            catch (failure: IOException) {
+                if (failure is ApiFailure) throw failure
+                if (sameTarget(target, graph.settings.session.value)) graph.queue.reportTransportProblem(target, safeFailure(failure))
+                return@withContext Result.retry()
+            }
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
             graph.queue.clearTransportProblem(target)
             val initial = requireNotNull(graph.queue.state.value)
@@ -104,9 +109,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             throw cancelled
         } catch (failure: Exception) {
             // Durable records remain unchanged; never clear unsent events on a transport failure.
-            val active = graph.settings.session.value?.takeIf { inputData.getString("targetKey") == transferTargetKey(it) }
-            if (active != null && failure is IOException && failure !is ApiFailure) graph.queue.reportTransportProblem(active, safeFailure(failure))
-            else graph.queue.reportProblem(safeFailure(failure))
+            graph.queue.reportProblem(safeFailure(failure))
             if (failure is ApiFailure && failure.status in setOf(401, 403)) Result.success() else Result.retry()
         }
     }

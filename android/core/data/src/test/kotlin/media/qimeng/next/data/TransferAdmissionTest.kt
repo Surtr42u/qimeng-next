@@ -19,6 +19,18 @@ class TransferAdmissionTest {
         assertFalse(QueueSnapshot(events = listOf(event.copy(failure = "invalid"))).hasReadyTransferWork(target))
     }
 
+    @Test fun eventAdmissionUsesTheSameExplicitRetryRulesAsDelivery() {
+        fun admits(value: PendingEvent) = QueueSnapshot(events = listOf(value)).hasReadyTransferWork(target)
+        assertTrue(admits(event.copy(failure = "legacy failure", retryRequested = true)))
+        for (kind in listOf(EventDeliveryKind.WAITING, EventDeliveryKind.UNCONFIRMED)) {
+            val waiting = event.copy(issue = EventDeliveryIssue(kind, "paused"))
+            assertFalse(admits(waiting))
+            assertTrue(admits(waiting.copy(retryRequested = true)))
+        }
+        assertFalse(admits(event.copy(issue = EventDeliveryIssue(EventDeliveryKind.REJECTED, "terminal"), retryRequested = true)))
+        assertTrue(admits(event.copy(issue = EventDeliveryIssue(EventDeliveryKind.RETRYABLE, "transient"), failure = "legacy")))
+    }
+
     @Test fun retainEveryDurableReplayPath() {
         assertTrue(QueueSnapshot(transfers = listOf(upload)).hasReadyTransferWork(target))
         assertTrue(QueueSnapshot(transfers = listOf(upload.copy(state = TransferState.CANCELLED))).hasReadyTransferWork(target))

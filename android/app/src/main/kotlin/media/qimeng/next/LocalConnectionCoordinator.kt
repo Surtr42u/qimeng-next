@@ -106,5 +106,6 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
         mutableAdmitted.value = target
         graph.queue.clearTransportProblem(target)
         graph.uploads.schedule()
+        graph.resumeAdmittedLocalWork(target)
     }
 }

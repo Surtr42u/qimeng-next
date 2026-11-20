@@ -315,8 +315,14 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
         }
         if (sharedColumns && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
-        PullToRefreshBox(isRefreshing = state.loading && state.loaded && state.cursor == null,
-            onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
+        PullToRefreshBox(isRefreshing = if (key == "albums") state.userRefreshing else state.loading && state.loaded && state.cursor == null,
+            onRefresh = {
+                when {
+                    key == "albums" -> model.refreshAlbum(query)
+                    query.source == "recommendations" && onRefresh != null -> onRefresh()
+                    else -> model.browse(key, query, force = true)
+                }
+            },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
             if (leading == null && !state.loaded && state.error == null) {
                 QimengSkeletonGrid(columns, columns * QIMENG_SKELETON_GRID_ROWS)

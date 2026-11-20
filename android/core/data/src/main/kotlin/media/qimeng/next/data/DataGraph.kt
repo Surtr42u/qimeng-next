@@ -8,7 +8,7 @@ import java.time.Instant
 import java.util.UUID
 
 /** Application-scoped composition root shared by foreground UI and WorkManager. */
-class DataGraph private constructor(context: Context) {
+class DataGraph private constructor(private val context: Context) {
     val settings = SecureSettings(context)
     internal val provider = ApiProvider(settings)
     val queue = QueueStore(context)
@@ -53,6 +53,19 @@ class DataGraph private constructor(context: Context) {
             catch (failure: Exception) { queue.reportProblem(safeFailure(failure)) }
     }
     suspend fun awaitRecovery() { recovery.await(); if (queue.state.value == null) queue.load() }
+
+    /** The application calls after same-instance admission, independent of the active Activity. */
+    fun resumeAdmittedLocalWork(target: media.qimeng.next.model.Session) {
+        fun resume(block: suspend () -> Unit) = scope.launch {
+            if (!media.qimeng.next.model.sameTarget(target, settings.session.value) ||
+                !transferConnectionReady(context, target)) return@launch
+            try { block() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { queue.reportProblem(safeFailure(failure)) }
+        }
+        resume { archives.resume(target) }
+        resume { backups.resume(target) }
+    }
 
     companion object {
         @Volatile private var instance: DataGraph? = null

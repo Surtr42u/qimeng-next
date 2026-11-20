@@ -18,6 +18,8 @@ class MaintenanceBackupWorker(context: Context, params: WorkerParameters) : Coro
         val graph = DataGraph.get(applicationContext)
         val target = graph.settings.session.value ?: return@withContext Result.success()
         if (target.instanceId != inputData.getString("instance")) return@withContext Result.success()
+        // Already queued explicit backups retain their manual flag while local authentication is pending.
+        if (!transferConnectionReady(applicationContext, target)) return@withContext Result.retry()
         try {
             val manager = applicationContext.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel("maintenance-backup", "资料备份", NotificationManager.IMPORTANCE_LOW))

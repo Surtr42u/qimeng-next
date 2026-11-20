@@ -53,7 +53,7 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     val assetAuthors by model.assetAuthors.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
     val pendingTools by model.pendingAssetTools.collectAsStateWithLifecycle()
-    var chromeVisible by rememberSaveable(id) { mutableStateOf(true) }
+    val chromeVisible by model.detailChromeVisible.collectAsStateWithLifecycle()
     var zoomImmersive by rememberSaveable(id) { mutableStateOf(false) }
     var resetImage by rememberSaveable(id) { mutableIntStateOf(0) }
     var playerActive by remember(id) { mutableStateOf(false) }
@@ -76,6 +76,12 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     LaunchedEffect(id) { if (asset?.id != id) model.refreshAsset(id) }
     val item = asset?.takeIf { it.id == id && sameTarget(it.target, target) }
     if (item == null) {
+        // A successful immersive swipe should not flash the normal toolbar while its photo loads.
+        // Errors still use the original visible back and retry controls.
+        if (!chromeVisible && message == null) {
+            Box(Modifier.fillMaxSize().background(Color.Black))
+            return
+        }
         Box(Modifier.fillMaxSize()) {
             DetailTopChrome(true, -1, 0, model::back, {})
             Column(Modifier.align(Alignment.Center).padding(16.dp)) {
@@ -88,12 +94,16 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     TrackDwell(item, model)
     val visible = chromeVisible && !zoomImmersive && !playerActive
     DetailSystemBars(if (playerActive) playbackChrome else !zoomImmersive, lightIcons = playerActive || !visible, videoPlayback = playerActive)
-    BackHandler(item.mediaType != "video" && (!chromeVisible || zoomImmersive)) { resetImage++; chromeVisible = true }
+    BackHandler(item.mediaType != "video" && (!chromeVisible || zoomImmersive)) {
+        resetImage++
+        model.setDetailChromeVisible(id, true)
+    }
     val position = model.detailPosition(id)
     val backdrop = if (visible) MaterialTheme.colorScheme.background else Color.Black
     Box(Modifier.fillMaxSize().background(backdrop)) {
         if (item.mediaType == "video") VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
-        else ImageStage(item, model::adjacentAsset, { model.refreshAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
+        else ImageStage(item, model::adjacentAsset, { model.refreshAsset(item.id) }, Modifier.fillMaxSize(),
+            { if (!zoomImmersive) model.setDetailChromeVisible(id, !chromeVisible) }, { zoomImmersive = it }, resetImage)
         DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))
         DetailBottomChrome(visible, item, busy, busy, { model.setTodayLike(item, !item.liked) },
             { model.setFavorite(item, !item.favorite) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))

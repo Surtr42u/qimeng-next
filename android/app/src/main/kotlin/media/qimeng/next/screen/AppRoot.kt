@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +68,8 @@ fun AppRoot(model: LibraryViewModel) {
     val context = LocalContext.current
     val activity = LocalActivity.current
     val imageTarget = session
+    // A temporary local reconnect must not discard route drafts or scroll positions.
+    val sessionScenes = key(session?.instanceId) { rememberSaveableStateHolder() }
     SideEffect {
         activity?.window?.let { WindowCompat.getInsetsController(it, view).apply {
             isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark
@@ -109,7 +112,7 @@ fun AppRoot(model: LibraryViewModel) {
                         TextButton(onClick = { model.navigate("server") }) { Text("连接设置") }
                     }
                 }
-            } else {
+            } else sessionScenes.SaveableStateProvider("library-shell") {
                 BackHandler(route != "main") { model.back() }
                 val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
                 val detailRoute = route.startsWith("asset:")
