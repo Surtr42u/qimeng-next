@@ -19,6 +19,13 @@ data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = 
     val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false, val publicationId: String? = null,
     val userRefreshing: Boolean = false)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
+data class RecommendationSettingsState(
+    val data: RecommendationPreferences? = null,
+    val loading: Boolean = false,
+    val saving: Boolean = false,
+    val saved: Boolean = false,
+    val error: String? = null,
+)
 private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -92,8 +99,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val analytics = analyticsState.asStateFlow()
     private val reviewState = MutableStateFlow(LoadState<BrowsingReview>())
     val review = reviewState.asStateFlow()
-    private val recommendationState = MutableStateFlow<RecommendationPreferences?>(null)
+    private val recommendationState = MutableStateFlow(RecommendationSettingsState())
     val recommendationPreferences = recommendationState.asStateFlow()
+    private var recommendationJob: Job? = null
+    private var recommendationTarget: Session? = null
     private var analyticsJob: Job? = null
     private var reviewJob: Job? = null
     private var rankingJob: Job? = null
@@ -153,7 +162,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     saved["uploadDirectory"] = ""; saved["uploadNote"] = ""; saved["uploadAuthorSources"] = ""
                 }
                 saved["uploadInstance"] = connection?.instanceId
-                analyticsState.value = LoadState(); reviewState.value = LoadState(); recommendationState.value = null
+                analyticsState.value = LoadState(); reviewState.value = LoadState()
+                recommendationJob?.cancel()
+                recommendationTarget = null
+                recommendationState.value = RecommendationSettingsState()
                 authorState.value = ListState(); reportState.value = ListState()
                 authorTaskState.value = ListState()
                 trashState.value = ListState()
@@ -627,7 +639,6 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             catch (failure: Exception) { if (connection == connectionGeneration) reviewState.value = LoadState(error = explain(failure)) }
         }
     }
-    fun loadRecommendationPreferences() = action { recommendationState.value = graph.analytics.preferences() }
     fun loadRanking(kind: String, range: String, metric: String, next: Boolean = false) {
         val query = "$kind:$range:$metric"
         if (next && (rankingState.value.loading || rankingState.value.cursor == null || rankingQuery != query)) return
@@ -645,9 +656,41 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             catch (failure: Exception) { if (rankingQuery == query && connection == connectionGeneration) rankingState.value = previous.copy(error = explain(failure)) }
         }
     }
-    fun chooseRecommendationPreset(preset: RecommendationWeights) = action {
-        recommendationState.value?.let { recommendationState.value = graph.analytics.savePreferences(it, preset) }
-        lists.filterKeys { it.startsWith("home:") }.values.forEach { it.value = it.value.copy(loaded = false) }
+    fun loadRecommendationPreferences() {
+        val target = session.value ?: return
+        recommendationAction(target, saving = false) { graph.analytics.preferences(target) }
+    }
+
+    fun chooseRecommendationPreset(preset: RecommendationWeights) {
+        val target = recommendationTarget ?: return
+        val state = recommendationState.value
+        val current = state.data ?: return
+        if (target != session.value || state.error != null || current.weights == preset || preset !in current.presets.values) return
+        recommendationAction(target, saving = true) { graph.analytics.savePreferences(current, preset, target) }
+    }
+
+    // Inventory and preference reads start together on the Mine tab. Neither may
+    // block the other or report its result in the wrong sheet.
+    private fun recommendationAction(target: Session, saving: Boolean, request: suspend () -> RecommendationPreferences) {
+        val previous = recommendationState.value.takeIf { recommendationTarget == target } ?: RecommendationSettingsState()
+        if (previous.loading || previous.saving) return
+        recommendationJob?.cancel()
+        recommendationTarget = target
+        recommendationState.value = RecommendationSettingsState(previous.data, loading = !saving, saving = saving)
+        val generation = connectionGeneration
+        recommendationJob = viewModelScope.launch {
+            try {
+                val result = request()
+                if (generation == connectionGeneration && target == session.value) {
+                    if (saving) lists.filterKeys { it.startsWith("home:") }.values.forEach { it.value = it.value.copy(loaded = false) }
+                    recommendationState.value = RecommendationSettingsState(result, saved = saving)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (generation == connectionGeneration && target == session.value)
+                    recommendationState.value = RecommendationSettingsState(previous.data, error = explain(failure))
+            }
+        }
     }
 
     fun setUploadLibrary(id: String) = action(blocking = false) { persistUploadLibrary(id) }

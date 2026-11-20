@@ -33,6 +33,9 @@ class TransferAdmissionTest {
 
     @Test fun retainEveryDurableReplayPath() {
         assertTrue(QueueSnapshot(transfers = listOf(upload)).hasReadyTransferWork(target))
+        assertTrue(QueueSnapshot(transfers = listOf(upload.copy(state = TransferState.WAITING, message = TRANSFER_WRONG_INSTANCE))).hasReadyTransferWork(target))
+        assertFalse(QueueSnapshot(transfers = listOf(upload.copy(state = TransferState.WAITING, message = TRANSFER_WRONG_SELECTION, target = other))).hasReadyTransferWork(target))
+        assertFalse(QueueSnapshot(transfers = listOf(upload.copy(state = TransferState.WAITING, message = "deferred"))).hasReadyTransferWork(target))
         assertTrue(QueueSnapshot(transfers = listOf(upload.copy(state = TransferState.CANCELLED))).hasReadyTransferWork(target))
         assertTrue(QueueSnapshot(transfers = listOf(upload.copy(state = TransferState.SUCCEEDED, archiveSourceState = "pending"))).hasReadyTransferWork(target))
         assertTrue(QueueSnapshot(events = listOf(event)).hasReadyTransferWork(target))

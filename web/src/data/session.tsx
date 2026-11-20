@@ -164,6 +164,9 @@ function LoginForm({ verify, connectionError }: { verify: () => Promise<unknown>
   const [password, setPassword] = useState("");
   const login = useMutation({
     gcTime: 0,
+    // A loopback service can be reachable with the browser's offline flag set.
+    // Do not queue a password submission for an unrelated, later reconnect.
+    networkMode: "always",
     mutationFn: async () => {
       // The browser only needs the HttpOnly cookie. Do not put a returned token in mutation data.
       await read(
@@ -190,6 +193,7 @@ function LoginForm({ verify, connectionError }: { verify: () => Promise<unknown>
 }
 export function useLogout() {
   return useMutation({
+    networkMode: "always",
     mutationFn: () => read(api.DELETE("/sessions/current")),
     onSuccess: () => {
       queryClient.clear();

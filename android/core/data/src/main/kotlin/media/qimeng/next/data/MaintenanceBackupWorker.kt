@@ -25,7 +25,8 @@ class MaintenanceBackupWorker(context: Context, params: WorkerParameters) : Coro
             manager.createNotificationChannel(NotificationChannel("maintenance-backup", "资料备份", NotificationManager.IMPORTANCE_LOW))
             val notice = NotificationCompat.Builder(applicationContext, "maintenance-backup").setSmallIcon(android.R.drawable.stat_sys_upload)
                 .setContentTitle("绮梦资料备份").setContentText("正在读取检查点并核验维护目录").setOngoing(true).build()
-            setForeground(if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(7002, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(7002, notice))
+            // 7001 belongs to uploads and 7002 to the native host. WorkManager removes its own ID on completion.
+            setForeground(if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(7003, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(7003, notice))
             if (graph.backups.advance(target, inputData.getBoolean("manual", false))) Result.success() else Result.retry()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) {

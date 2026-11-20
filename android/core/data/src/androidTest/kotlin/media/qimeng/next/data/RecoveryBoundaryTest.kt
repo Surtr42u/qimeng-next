@@ -89,6 +89,23 @@ class RecoveryBoundaryTest {
         assertEquals(listOf(intelligent, published), entries.drop(1))
     }
 
+    @Test fun recoveredAddressRequeuesOnlyWaitingWorkForItsVerifiedInstance() = runBlocking {
+        val queue = QueueStore(isolatedContext())
+        queue.load()
+        val target = Session("https://127.0.0.1:18431/", "restored-instance", "Local")
+        val transfer = Transfer("resume", target, "lib", "resume.png", "image/png", 100, "spool",
+            UploadMode.ORDINARY, null, "batch", "Synthetic",
+            state = TransferState.WAITING, uploadId = "server-upload", offset = 27, message = TRANSFER_WRONG_INSTANCE)
+        val otherInstance = transfer.copy(id = "different-instance", target = target.copy(instanceId = "other"))
+        val failed = transfer.copy(id = "failed", state = TransferState.FAILED)
+        val deferred = transfer.copy(id = "deferred", message = "deferred")
+        queue.update { it.copy(transfers = listOf(transfer, otherInstance, failed, deferred)) }
+        queue.requeueWaitingAfterVerifiedInstance(target)
+        val rows = requireNotNull(queue.state.value).transfers
+        assertEquals(transfer.copy(state = TransferState.QUEUED, message = "等待核对服务器进度"), rows[0])
+        assertEquals(listOf(otherInstance, failed, deferred), rows.drop(1))
+    }
+
     @Test fun authenticatedEndpointMoveKeepsOperationIdentityAndDoesNotMergeAnotherAddress() = runBlocking {
         val queue = QueueStore(isolatedContext())
         queue.load()

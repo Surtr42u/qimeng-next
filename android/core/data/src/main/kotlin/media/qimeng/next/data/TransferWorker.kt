@@ -42,8 +42,14 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 if (sameTarget(target, graph.settings.session.value)) graph.queue.reportTransportProblem(target, safeFailure(failure))
                 return@withContext Result.retry()
             }
-            if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
+            if (instance.id != target.instanceId) return@withContext stopForTarget(TRANSFER_WRONG_INSTANCE)
+            if (!sameTarget(target, graph.settings.session.value)) return@withContext Result.success()
             graph.queue.clearTransportProblem(target)
+            if (graph.queue.state.value?.transfers?.any { sameTarget(target, it.target) && it.parkedForConnection() } == true) {
+                api.getCurrentSession().bodyOrThrow()
+                if (!sameTarget(target, graph.settings.session.value)) return@withContext Result.success()
+                graph.queue.requeueWaitingAfterVerifiedInstance(target)
+            }
             val initial = requireNotNull(graph.queue.state.value)
             val withTransfers = initial.transfers.mapTo(mutableSetOf(), Transfer::batchKey)
             var retry = false
@@ -84,7 +90,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 if (!sameTarget(task.target, graph.settings.session.value)) {
                     graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
                         if (it.id == task.id && !sameTarget(it.target, graph.settings.session.value) && it.state != TransferState.CANCELLED)
-                            it.copy(state = TransferState.WAITING, message = "请连接任务原来的服务器") else it
+                            it.copy(state = TransferState.WAITING, message = TRANSFER_WRONG_SELECTION) else it
                     }) }
                     return@forEach
                 }
@@ -176,9 +182,10 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             val created = api.createBatch(idempotencyKey = "batch-${batch.key}", batchCreate = BatchCreate(libraryId = batch.libraryId,
                 mode = BatchCreate.Mode.entries.first { it.value == batch.mode.name.lowercase() }, label = batch.label)).bodyOrThrow()
             graph.queue.update { snapshot -> snapshot.copy(
-                batches = snapshot.batches.map { if (it.key == batch.key) it.copy(serverId = created.id) else it },
-                transfers = snapshot.transfers.map { if (it.batchKey == batch.key) it.copy(batchId = created.id) else it }) }
+                batches = snapshot.batches.map { if (it.key == batch.key && ownsTarget(it.target)) it.copy(serverId = created.id) else it },
+                transfers = snapshot.transfers.map { if (it.batchKey == batch.key && ownsTarget(it.target)) it.copy(batchId = created.id) else it }) }
             batch = graph.queue.state.value!!.batches.first { it.key == batch.key }
+            if (!ownsTarget(batch.target)) throw CancellationException("任务已交给新端点连接")
         }
         if (batch.inputsChecked) return batch
         val serverId = requireNotNull(batch.serverId)
@@ -205,7 +212,8 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             },
             intakeFailures = snapshot.intakeFailures.map { failure ->
                 val reason = rejected[failure.id]
-                if (failure.batchKey == key && reason != null) failure.copy(message = reason) else failure
+                if (failure.batchKey == key && reason != null && snapshot.batches.any { it.key == key && ownsTarget(it.target) })
+                    failure.copy(message = reason) else failure
             }) }
         return graph.queue.state.value!!.batches.first { it.key == key }
     }
@@ -219,7 +227,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
                 idempotencyKey = "cancel-input-${task.id}", batchInputCancel = BatchInputCancel(requireNotNull(batch.manifestFingerprint))).bodyOrThrow()
             check(result.state.value == "cancelled") { "服务器尚未确认取消此输入" }
             graph.queue.update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
-                if (it.id == task.id && it.state == TransferState.CANCELLED) it.copy(cancelConfirmed = true, message = "已停止；原始输入清单保留取消记录，来源文件保留") else it
+                if (it.id == task.id && ownsTarget(it.target) && it.state == TransferState.CANCELLED) it.copy(cancelConfirmed = true, message = "已停止；原始输入清单保留取消记录，来源文件保留") else it
             }) }
         } catch (failure: ApiFailure) {
             if (failure.status == 409) {

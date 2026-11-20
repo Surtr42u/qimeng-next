@@ -94,6 +94,16 @@ class QueueStore(context: Context) {
         }
     }
 
+    /** The worker has freshly confirmed this address still serves the expected library instance. */
+    internal suspend fun requeueWaitingAfterVerifiedInstance(target: Session) {
+        if (state.value?.transfers?.none { sameTarget(target, it.target) && it.parkedForConnection() } != false) return
+        update { snapshot -> snapshot.copy(transfers = snapshot.transfers.map {
+            if (sameTarget(target, it.target) && it.parkedForConnection())
+                it.copy(state = TransferState.QUEUED, message = "等待核对服务器进度")
+            else it
+        }) }
+    }
+
     /** Explicit endpoint relocation after the caller has authenticated the same instance; no database merge. */
     suspend fun rebindEndpoint(target: Session, previousAddresses: Set<String>) {
         fun relocated(value: Session) = if (value.instanceId == target.instanceId && value.baseUrl in previousAddresses) target else value

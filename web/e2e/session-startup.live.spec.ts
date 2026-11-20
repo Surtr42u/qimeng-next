@@ -60,6 +60,30 @@ test("a background session check preserves the login field, its draft and its fo
   await submitLogin(page);
 });
 
+test("a reachable local service accepts an explicit login while Chromium reports offline", async ({ page, context }) => {
+  await page.goto("/");
+  await expect(page.getByLabel("管理密码", { exact: true })).toBeVisible();
+  const devtools = await context.newCDPSession(page);
+  await devtools.send("Network.enable");
+  try {
+    await devtools.send("Network.overrideNetworkState", {
+      offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+    });
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
+    let posts = 0;
+    page.on("request", request => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/sessions") posts++;
+    });
+    await submitLogin(page);
+    expect(posts).toBe(1);
+    expect(await page.evaluate(() => navigator.onLine)).toBe(false);
+  } finally {
+    await devtools.send("Network.overrideNetworkState", {
+      offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+    });
+  }
+});
+
 test("a controlled PWA reload offline offers a new probe and reconnects to the same Go session", async ({ page, context }) => {
   const id = await login(page);
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });

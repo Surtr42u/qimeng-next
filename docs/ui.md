@@ -6,7 +6,7 @@
 
 | 页面 / 流程 | 源码当前行为 | 主要验证 |
 |---|---|---|
-| Web 启动与登录 | 启动时依次读取实例和设备会话。本机服务可达时，浏览器报告离线也能确认会话。暂停或超时会显示原因和重试入口。登录页后台复查保留已输入的密码和焦点。 | 云端 Chromium、移动 Chromium 与 WebKit 验证 503 后断网和手动重试。桌面 Chromium 连真实 Go 验证同会话恢复、撤销后的 401、半响应超时和登录草稿。[未改基线](https://github.com/Surtr42u/qimeng-next/actions/runs/44493858101/job/135456894070) · [真实 Go 回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44493298105/job/135455275373) |
+| Web 启动与登录 | 启动时依次读取实例和设备会话。本机服务可达时，浏览器报告离线也能确认会话与主动登录；登录或退出只在点击后立即请求，不留到复网时自动提交。暂停或超时会显示原因和重试入口。登录页后台复查保留已输入的密码和焦点。 | 云端 Chromium、移动 Chromium 与 WebKit 验证 503 后断网和手动重试。桌面 Chromium 连真实 Go 验证同会话恢复、撤销后的 401、半响应超时和登录草稿。[未改基线](https://github.com/Surtr42u/qimeng-next/actions/runs/44493858101/job/135456894070) · [真实 Go 回读](https://github.com/Surtr42u/qimeng-next/actions/runs/44493298105/job/135455275373) |
 | 壳与导航 | 旧版四项72px侧栏；维护/设置与返回留在原位置，窄屏同样保留侧栏，无Web底栏；64px顶栏分类和居中搜索 | 连续快速切换单页面、aria-current、减少动效、浅深色。首页、相册和详情在桌面与窄屏的成对测量见[云端结果](#已观察的云端结果) |
 | Android 主导航 | 首页、相册、数据、我的保持原位置和配色。四种材质均用横向圆角背景包住选中的图标与文字。 | [Android 对照](../android/UI_PARITY.md) |
 | 浏览与搜索 | 恢复原四维胶囊/七行更多筛选；服务端opaque键、范围枚举、游标分页和精确日期计数；关键词/筛选进入URL，失败与真空分开 | 合成分页与搜索、失败恢复、返回位置 |
@@ -30,6 +30,8 @@
 Android 启动器、网站标签页、Apple 主屏幕、已安装 PWA 及桌面壳采用同一幅紫底月牙山形标识。桌面壳保存[原创 PNG 母图](../desktop/ui/app-icon.png)。[导出脚本](../tools/export_app_icons.py)从母图生成小尺寸、可遮罩版本和 Android 自适应图层。
 
 AI 接入子页沿用旧仓 `74597408` 的 `web/src/pages/SettingsPage.tsx` 设置卡与表单样式，以及 `web/src/components/manage/ManagePageHeader.tsx` 返回页头。Next 的[接入页](../web/src/pages/AIAccessPage.tsx)使用现有授权查询和操作。Android 的「我的 → AI 接入」采用同一填写顺序、默认值、条件权限与提交语义，凭据弹窗和历史权限详情见 [Android 使用说明](../android/README.md#当前源码行为)。
+
+签发不重放：如果创建请求未得到可确认的结果，先刷新当前有效接入并核对；如已建立但未取得一次性凭据，先撤销该记录。Web 授权与撤销不会排队等网络恢复再提交。
 
 2026-11-19 的 Web 维护改动中，原图详情的授权范围只到「复制完整文件名」按钮自身。浏览器用例检查图标与文字同行、剪贴板回读，以及按钮以外的布局与画面。备份页另外检查折叠、换行与操作可达性；AI 接入另有授权操作及宽窄布局的专项。候选 `3fc9507` 的浏览器作业通过 125 项、跳过 1 项。已有可见对照足以交付此次修改。[复制按钮用例](../web/e2e/detail-parity.spec.ts) · [备份页用例](../web/e2e/backup-parity.spec.ts) · [正式浏览器作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44553147191/job/135663162270) · [安装版可见对照](https://github.com/Surtr42u/qimeng-next/actions/runs/44553053027)
 

@@ -60,12 +60,19 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
             if (onlyIfUnadmitted && selected != null && permits(selected)) return@withLock
             if (forceLogin) mutableAdmitted.value = null
             mutableError.value = null
+            var expected = selected
+            var expectedTransport = graph.settings.transportRevision.value
             try {
-                connectLocked(forceLogin, password, selected)
+                connectLocked(forceLogin, password, selected, expectedTransport) { target ->
+                    expected = target
+                    expectedTransport = graph.settings.transportRevision.value
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                if (graph.settings.session.value == selected || forceLogin) {
+                // A successful pinned login may change the URL, label, and transport revision before
+                // the local journal handoff fails. Report that failure only to this attempt's target.
+                if (graph.settings.session.value == expected && graph.settings.transportRevision.value == expectedTransport) {
                     mutableAdmitted.value = null
                     mutableError.value = if (runtime.status.value.phase == RuntimePhase.FAILED) runtime.status.value.message
                         else "本机影库暂未连接。原数据和待传进度已保留，请重试。"
@@ -77,13 +84,17 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
 
     suspend fun restoreSelected() = connect(forceLogin = false)
 
-    private suspend fun connectLocked(forceLogin: Boolean, password: String, selectedBeforeStart: Session?) {
+    private suspend fun connectLocked(forceLogin: Boolean, password: String, selectedBeforeStart: Session?,
+                                      transportBeforeStart: Long, onAuthenticated: (Session) -> Unit) {
         val connection = runtime.start()
         val current = graph.settings.session.value
-        if (current != selectedBeforeStart) return
+        fun sameSelection() = graph.settings.session.value == selectedBeforeStart &&
+            graph.settings.transportRevision.value == transportBeforeStart && runtime.shouldRestore
+        if (!sameSelection()) return
         if (!forceLogin) check(current?.instanceId == connection.instanceId) { "本机实例身份已改变" }
 
         suspend fun login() {
+            if (!sameSelection()) return
             if (password.isEmpty()) graph.media.login(connection.baseUrl, connection.bootstrapToken, connection.certificateDerBase64, connection.instanceId,
                 loginEndpoint = if (forceLogin) "local" else null)
             else graph.media.loginWithPassword(connection.baseUrl, password, connection.certificateDerBase64, connection.instanceId, rememberAddress = false,
@@ -98,11 +109,14 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
         }
 
         val target = graph.settings.session.value ?: return
-        if (target.baseUrl != connection.baseUrl || target.instanceId != connection.instanceId) return
+        if (!runtime.shouldRestore || target.baseUrl != connection.baseUrl || target.instanceId != connection.instanceId) return
+        onAuthenticated(target)
+        val authenticatedTransport = graph.settings.transportRevision.value
         runtime.confirmInstance(connection.instanceId)
         if (graph.queue.state.value == null) graph.queue.load()
         graph.queue.rebindEndpoint(target, runtime.ownedEndpoints(connection.instanceId))
-        if (!sameTarget(target, graph.settings.session.value) || runtime.status.value.phase != RuntimePhase.READY) return
+        if (!sameTarget(target, graph.settings.session.value) || graph.settings.transportRevision.value != authenticatedTransport ||
+            !runtime.shouldRestore || runtime.status.value.phase != RuntimePhase.READY) return
         mutableAdmitted.value = target
         graph.queue.clearTransportProblem(target)
         graph.uploads.schedule()

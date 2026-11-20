@@ -53,10 +53,10 @@ class AnalyticsRepository internal constructor(private val settings: SecureSetti
             value.fromDay, value.toDay, value.previousFromDay, value.previousToDay, value.viewCount, value.previousViewCount,
             value.imageSeconds, value.animatedSeconds, value.videoSeconds)
     }
-    suspend fun preferences() = api().getRecommendationPreferences().bodyOrThrow().toModel()
-    suspend fun savePreferences(current: RecommendationPreferences, selected: RecommendationWeights): RecommendationPreferences {
+    suspend fun preferences(target: Session) = provider.api(target).getRecommendationPreferences().bodyOrThrow().toModel()
+    suspend fun savePreferences(current: RecommendationPreferences, selected: RecommendationWeights, target: Session): RecommendationPreferences {
         if (current.weights == selected) return current
-        return api().updateRecommendationPreferences(idempotencyKey = UUID.randomUUID().toString(),
+        return provider.api(target).updateRecommendationPreferences(idempotencyKey = UUID.randomUUID().toString(),
             recommendationPreferencesUpdate = RecommendationPreferencesUpdate(expectedRevision = current.revision, weights = selected.toApi())).bodyOrThrow().toModel()
     }
 }

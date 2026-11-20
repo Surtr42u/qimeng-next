@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
-import { api, read } from "./client";
+import { api, ApiError, read } from "./client";
 import type { Schema } from "./client";
 import { useRemoteKey } from "./session";
 import { queryClient } from "./query";
@@ -31,12 +31,21 @@ export function useAIDelegations(
   });
 }
 
+// Issuance is not replayable: a failed transport or missing 201 body can hide a committed grant.
+export function isAICreationUnconfirmed(error: unknown) {
+  return !(error instanceof ApiError) || error.status < 400 || error.status === 408 || error.status >= 500;
+}
+
 export function useCreateAIDelegation(
   receive: (delegation: Schema<"AIDelegation">, token: string) => void,
+  requireReconciliation: () => void,
 ) {
   const key = useRemoteKey();
   return useMutation({
     gcTime: 0,
+    // Try the selected endpoint immediately, including local services, but never queue issuance until reconnection.
+    networkMode: "always",
+    retry: false,
     mutationFn: async (body: Schema<"AIDelegationPolicy">) => {
       const result = await read(api.POST("/ai/delegations", { body }));
       const secret = result.credential.token;
@@ -48,6 +57,9 @@ export function useCreateAIDelegation(
       receive(result.delegation, secret);
       return result.delegation;
     },
+    onError: error => {
+      if (isAICreationUnconfirmed(error)) requireReconciliation();
+    },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: [...key, "ai-delegations"] }),
   });
@@ -56,6 +68,9 @@ export function useCreateAIDelegation(
 export function useRevokeAIDelegation() {
   const key = useRemoteKey();
   return useMutation({
+    // An explicit revocation is also scoped to this moment, not background reconnect.
+    networkMode: "always",
+    retry: false,
     mutationFn: (id: string) =>
       read(api.DELETE("/ai/delegations/{id}", { params: { path: { id } } })),
     onSuccess: () =>

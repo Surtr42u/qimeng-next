@@ -45,7 +45,10 @@ fun ProfileScreen(model: LibraryViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
     var showPreferences by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { model.loadStatistics(); if (recommendation == null) model.loadRecommendationPreferences() }
+    LaunchedEffect(Unit) {
+        model.loadStatistics()
+        if (recommendation.data == null && recommendation.error == null) model.loadRecommendationPreferences()
+    }
     // Presentation hierarchy and dimensions retained from the existing SettingsScreen.
     val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(scroll) { TabScrollController.events.collect { if (it == 3) scroll.scrollToItem(0) } }
@@ -70,8 +73,14 @@ fun ProfileScreen(model: LibraryViewModel) {
         } }
         item { QimengSettingsGroup("使用偏好") {
             QimengSettingsRow(PaletteColorIcon, "外观", "${themeName(preferences.theme)} · ${preferences.material.label}", { model.navigate("appearance") })
-            val preset = recommendation?.presets?.entries?.find { it.value == recommendation?.weights }?.key
-            QimengSettingsRow(TuneSlidersIcon, "推荐偏好", if (recommendation == null) "正在读取…" else mapOf("balanced" to "均衡", "familiar" to "熟悉内容", "explore" to "探索", "fresh" to "新鲜内容")[preset] ?: "自定义偏好", { showPreferences = true })
+            val current = recommendation.data
+            val preset = current?.let { data -> data.presets.entries.find { it.value == data.weights }?.key }
+            val subtitle = when {
+                current != null -> preset?.let(::recommendationPresetLabel) ?: "自定义偏好"
+                recommendation.error != null -> "读取失败 · 点击重试"
+                else -> "正在读取…"
+            }
+            QimengSettingsRow(TuneSlidersIcon, "推荐偏好", subtitle, { showPreferences = true })
             QimengSettingsRow(Icons.Outlined.Key, "AI 接入", "只读与写入权限、连接凭据和撤销", { model.navigate("ai-access") })
         } }
         item { QimengSettingsGroup("关于") { ServiceVersionRow(model) } }
@@ -83,7 +92,7 @@ fun ProfileScreen(model: LibraryViewModel) {
         text = { Text("退出后可重新连接服务器，未完成的传输记录会保留。") },
         confirmButton = { TextButton(onClick = { confirmLogout = false; model.logout() }, enabled = !busy) { Text("退出登录") } },
         dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("取消") } })
-    if (showPreferences) ModalBottomSheet(onDismissRequest = { if (!busy) showPreferences = false }) {
+    if (showPreferences) ModalBottomSheet(onDismissRequest = { if (!recommendation.saving) showPreferences = false }) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.8f)) { RecommendationSettings(model) }
     }
 }

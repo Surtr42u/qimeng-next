@@ -333,6 +333,15 @@ func (s *Service) AppendUpload(ctx context.Context, w *Write, id string, offset 
 		return u, e
 	}
 	defer f.Close()
+	info, e := f.Stat()
+	if e != nil {
+		return u, e
+	}
+	if info.Size() < u.Offset {
+		// Truncate would extend a missing acknowledged prefix with zeroes.
+		// Preserve both pieces of evidence instead of accepting more bytes.
+		return u, Fail(409, "upload_prefix_missing", "暂存文件短于已确认偏移。请保留现场并核对同一恢复点的暂存文件和数据库；无法找回时另建上传，不要从当前偏移继续。")
+	}
 	if offset < u.Offset {
 		if offset+int64(len(body)) > u.Offset {
 			return u, Fail(409, "offset_conflict", "请从服务端已保存偏移继续。")

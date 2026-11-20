@@ -69,7 +69,7 @@ class AIAccessViewModel(application: Application) : AndroidViewModel(application
         }
     }
     fun create(policy: AIAccessPolicy, onCreated: () -> Unit) {
-        if (mutableBusy.value) return
+        if (mutableBusy.value || mutableReconcileRequired.value) return
         work?.cancel(); read?.cancel(); mutableBusy.value = true; mutableCreationError.value = null
         val generation = connection
         work = viewModelScope.launch {
@@ -81,10 +81,14 @@ class AIAccessViewModel(application: Application) : AndroidViewModel(application
                 refreshAfter = true
                 onCreated()
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: ApiFailure) { mutableCreationError.value = failure.message }
-            catch (_: Exception) {
-                mutableReconcileRequired.value = true
-                mutableCreationError.value = "创建结果未获确认。请关闭表单并刷新连接列表核对，勿重复创建；无可用凭据的连接可先撤销。"
+            catch (failure: Exception) {
+                if (generation != connection) return@launch
+                if (failure is ApiFailure && failure.status in 400..499 && failure.status != 408)
+                    mutableCreationError.value = failure.message
+                else {
+                    mutableReconcileRequired.value = true
+                    mutableCreationError.value = "创建结果未获确认。请关闭表单并刷新有效连接核对，勿重复创建；无可用凭据的连接可先撤销。"
+                }
             }
             finally { if (generation == connection) { mutableBusy.value = false; mutableState.value = mutableState.value.copy(loading = false); if (refreshAfter) refresh(state = "active") } }
         }

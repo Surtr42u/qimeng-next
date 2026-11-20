@@ -77,11 +77,19 @@ export function AIAccessPage() {
   const items = query.data?.pages.flatMap(page => page.items) ?? [];
   const revoke = useRevokeAIDelegation();
   const [creating, setCreating] = useState(false);
+  const [reconcile, setReconcile] = useState(false);
   const [created, setCreated] = useState<{ delegation: Delegation; token: string }>();
   const [removing, setRemoving] = useState<Delegation>();
   const addButton = useRef<HTMLButtonElement>(null);
   const revokeButton = useRef<HTMLButtonElement>(null);
   const filter = useRef<HTMLSelectElement>(null);
+
+  async function refreshRecords() {
+    // A refresh started before issuance became uncertain cannot reconcile that issuance.
+    const reconciling = reconcile && state === "active";
+    const result = await query.refetch();
+    if (reconciling && result.isSuccess) setReconcile(false);
+  }
 
   function finish() {
     setCreating(false);
@@ -93,12 +101,12 @@ export function AIAccessPage() {
     <div className="page manage-workspace ai-access">
       <ManagePageHeader
         title="AI 接入"
-        description="所有接入都能读取全库资料。所选媒体库、作者和字段只限定写入范围。"
+        description="所有接入都能读取全库资料。所选媒体库、作者和字段限制任务范围；写入和对外查证须另行授权。"
         backTo="/settings"
         backLabel="返回设置"
         actions={
           <button ref={addButton} type="button" className="save-btn ai-action"
-            disabled={creating || !!created} onClick={() => setCreating(true)}>
+            disabled={creating || !!created || reconcile} onClick={() => setCreating(true)}>
             <Plus aria-hidden="true" size={16} />添加 AI 接入
           </button>
         }
@@ -112,6 +120,8 @@ export function AIAccessPage() {
                 setCreated({ delegation, token });
                 setCreating(false);
               }}
+              reconcile={reconcile}
+              requireReconciliation={() => { setReconcile(true); setState("active"); }}
               cancel={finish}
             />
           )}
@@ -132,12 +142,15 @@ export function AIAccessPage() {
                   </select>
                 </label>
                 <button type="button" className="pill ai-refresh" title="刷新接入记录" aria-label="刷新接入记录"
-                  disabled={query.isFetching} onClick={() => void query.refetch()}>
+                  disabled={query.isFetching} onClick={() => void refreshRecords()}>
                   <RefreshCw aria-hidden="true" size={15} />
                 </button>
               </div>
             </div>
-            <ErrorNotice error={query.error} stale={!!query.data} retry={() => void query.refetch()} />
+            {reconcile && (
+              <p className="ai-help" role="status">上次创建结果未确认。请刷新当前有效接入；若已建立但未取得凭据，可先撤销该接入。</p>
+            )}
+            <ErrorNotice error={query.error} stale={!!query.data} retry={() => void refreshRecords()} />
             {query.isPending ? <Loading text="正在读取接入记录…" /> : items.length > 0 ? (
               <div className="ai-records">
                 {items.map(item => (
@@ -253,9 +266,11 @@ function ExecutorGuide() {
 
 type PolicyEditor = { policy: Policy; change: (patch: Partial<Policy>) => void };
 
-function DelegationForm({ complete, cancel }: {
+function DelegationForm({ complete, cancel, reconcile, requireReconciliation }: {
   complete: (delegation: Delegation, token: string) => void;
   cancel: () => void;
+  reconcile: boolean;
+  requireReconciliation: () => void;
 }) {
   const [policy, setPolicy] = useState<Policy>(initialPolicy);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -267,7 +282,7 @@ function DelegationForm({ complete, cancel }: {
   const choices = providers.data?.enabled && !providers.isError
     ? providers.data.providers.filter(provider => Object.hasOwn(providerNames, provider.name))
     : [];
-  const create = useCreateAIDelegation(complete);
+  const create = useCreateAIDelegation(complete, requireReconciliation);
 
   useEffect(() => { nameField.current?.focus(); }, []);
   function change(patch: Partial<Policy>) {
@@ -299,7 +314,7 @@ function DelegationForm({ complete, cancel }: {
   const validBudgets = validBudget(policy.validDays, 1, 365) && validBudget(policy.maxTasksPerDay, 1, 200) &&
     validBudget(policy.maxCallsPerTask, 10, 10000) && validBudget(policy.taskSeconds, 60, 86400) &&
     validBudget(policy.maxUpdates, 1, 10) && validBudget(policy.maxResearchCalls, 0, 100);
-  const blocked = !validBudgets || !validName || needsLibrary || needsAuthor || !!missingProvider || create.isPending;
+  const blocked = !validBudgets || !validName || needsLibrary || needsAuthor || !!missingProvider || create.isPending || reconcile;
   const dirty = JSON.stringify(policy) !== JSON.stringify(initialPolicy);
 
   return (
@@ -460,10 +475,10 @@ function DelegationForm({ complete, cancel }: {
       </fieldset>
 
       <ErrorNotice error={create.error} />
-      {create.isError && (
-        <p className="ai-help">若提交时连接中断，请在下方接入记录选择「全部记录」并刷新。已建立却未取得凭据的接入可撤销后重建。</p>
+      {reconcile && (
+        <p className="ai-help">请在接入记录刷新当前有效接入，核对后再发起创建。本次设置仍保留在表单中。</p>
       )}
-      <UnsavedGuard dirty={dirty} />
+      <UnsavedGuard dirty={dirty || create.isPending || reconcile} />
       {discard && (
         <ConfirmDialog title="放弃未建立的接入设置？" onCancel={() => setDiscard(false)} onConfirm={cancel}>
           <p>当前范围草稿还没有提交。</p>

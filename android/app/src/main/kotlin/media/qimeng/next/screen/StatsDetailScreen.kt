@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -136,12 +138,13 @@ private fun DetailTrendCard(title: String, dimensions: List<StatDimension>, poin
         StatsTitle(title)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp).height(34.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             dimensions.forEach { dimension ->
-                val enabled = dimension.key in selected
+                val checked = dimension.key in selected
                 Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(100.dp))
-                    .background(if (enabled) MaterialTheme.colorScheme.primary else Color.Transparent).clickable {
-                        if (!enabled) selected = selected + dimension.key else if (selected.size > 1) selected = selected - dimension.key
+                    .background(if (checked) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    .toggleable(value = checked, enabled = !checked || selected.size > 1, role = Role.Checkbox) { show ->
+                        selected = if (show) selected + dimension.key else selected - dimension.key
                     }, contentAlignment = Alignment.Center) {
-                    Text(dimension.label, fontSize = 12.sp, color = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(dimension.label, fontSize = 12.sp, color = if (checked) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

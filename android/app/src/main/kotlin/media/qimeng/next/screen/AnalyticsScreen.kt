@@ -25,8 +25,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
@@ -147,29 +150,50 @@ private fun InterestCard(change: InterestChange) {
 @Composable
 fun RecommendationSettings(model: LibraryViewModel) {
     val state by model.recommendationPreferences.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
-    val message by model.message.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { if (state == null) model.loadRecommendationPreferences() }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LaunchedEffect(Unit) { model.loadRecommendationPreferences() }
+    val preferences = state.data
+    val canSelect = !state.loading && !state.saving && state.error == null
+    Column(Modifier.fillMaxSize().testTag("recommendation-settings").verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ContentCard {
             Text("推荐偏好", style = MaterialTheme.typography.titleLarge)
             Column(Modifier.selectableGroup()) {
-                state?.presets?.forEach { (key, weights) ->
-                    val selected = state?.weights == weights
-                    Row(Modifier.fillMaxWidth().selectable(selected, enabled = !busy, role = Role.RadioButton,
-                        onClick = { if (!selected) model.chooseRecommendationPreset(weights) }).padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected, null, enabled = !busy)
-                        Text(mapOf("balanced" to "均衡", "familiar" to "熟悉内容", "explore" to "探索", "fresh" to "新鲜内容")[key] ?: key, Modifier.padding(start = 12.dp))
+                preferences?.let { current ->
+                    current.presets.forEach { (key, weights) ->
+                        val selected = current.weights == weights
+                        Row(Modifier.fillMaxWidth().selectable(selected, enabled = canSelect, role = Role.RadioButton,
+                            onClick = { if (!selected) model.chooseRecommendationPreset(weights) }).padding(vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected, null, enabled = canSelect)
+                            Text(recommendationPresetLabel(key), Modifier.padding(start = 12.dp))
+                        }
                     }
                 }
             }
-            Box(Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                else if (message != null) ErrorNotice(message!!, model::loadRecommendationPreferences)
-                else Text(if (state == null) "正在读取偏好…" else "已保存到当前服务器", style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
+                when (val error = state.error) {
+                    null -> {
+                        Text(when {
+                            state.saving -> "正在保存推荐偏好…"
+                            state.loading || preferences == null -> "正在读取偏好…"
+                            state.saved -> "已保存到当前服务器"
+                            else -> "点选方案后自动保存"
+                        }, style = MaterialTheme.typography.bodySmall)
+                        if (state.loading || state.saving) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                    else -> ErrorNotice(error, model::loadRecommendationPreferences)
+                }
             }
         }
     }
+}
+
+internal fun recommendationPresetLabel(key: String): String = when (key) {
+    "balanced" -> "均衡"
+    "familiar" -> "熟悉内容"
+    "explore" -> "探索"
+    "fresh" -> "新鲜内容"
+    else -> key
 }
 
 private fun formatSeconds(value: Long): String = if (value >= 3600) "${value / 3600} 小时 ${value % 3600 / 60} 分" else "${value / 60} 分 ${value % 60} 秒"

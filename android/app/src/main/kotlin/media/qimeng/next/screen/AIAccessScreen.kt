@@ -57,7 +57,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
         LazyColumn(Modifier.testTag("ai-access-records"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { ContentCard {
                 Text("连接你使用的 AI 工具", style = MaterialTheme.typography.titleMedium)
-                Text("默认只读可查询全库。影库与作者选择限制写入范围，不限制读取。正常授权任务由工具自动接续，无需逐批复制任务凭据。")
+                Text("所有接入都能读取全库资料。所选媒体库、作者和字段限制任务范围；写入和对外查证须另行授权。正常授权任务由工具自动接续，无需逐批复制任务凭据。")
                 Row {
                     Button(onClick = { model.clearCreationError(); creating = true }, enabled = !busy && !reconcile) { Text("添加 AI 接入") }
                     TextButton(onClick = { model.refresh() }, enabled = !busy) { Text("刷新") }

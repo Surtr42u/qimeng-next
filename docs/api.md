@@ -182,7 +182,7 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 本人库管理界面的原有“根目录路径”输入框通过 `POST /storages/resolve-library-root` 解析，body 为 `{rootPath}`，返回 `{storageId,rootRelativePath,rootPath}`。它只读取和验证，不创建目录；必须落在已配置的媒体根内，拒绝控制目录、链接及越界。创建库仍使用现有逻辑位置字段。`GET /libraries/{id}/location` 给本人回显登记根；两个接口均要求 admin，不加入MCP工具映射，一般库列表不暴露本机绝对路径。
 
-先 `POST /uploads` 固定目标、原名、MIME、声明长度、模式、可用来源相对目录/时间与批次。`PUT /uploads/{id}/content` 传原始 bytes，头 `Upload-Offset`，每片最多 8 MiB。`GET /uploads/{id}` 是恢复时的权威偏移。重复分片须字节一致；已封存上传拒绝后续写入。声明总长度参与空间与并发资源预算，没有退回单文件业务大小上限。
+先 `POST /uploads` 固定目标、原名、MIME、声明长度、模式、可用来源相对目录/时间与批次。`PUT /uploads/{id}/content` 传原始 bytes，头 `Upload-Offset`，每片最多 8 MiB。`GET /uploads/{id}` 是恢复时的权威偏移。重复分片须字节一致；已封存上传拒绝后续写入。若暂存文件实际长度短于已确认偏移，服务返回 `409 upload_prefix_missing`，不补零、截断文件或推进偏移。保留当前状态，核对同一恢复点的暂存文件与数据库；不可恢复时另建上传。声明总长度参与空间与并发资源预算，没有退回单文件业务大小上限。
 
 客户端具备完整源快照时传 `expectedHash`（SHA-256），与创建操作身份绑定。服务端在 complete 封存和发布前复算，不匹配时返回 `source_hash_mismatch`，不新增资产。未提供该字段时，接收摘要只能证明服务收到的字节，不能证明断点恢复前后客户端源文件未变化。
 

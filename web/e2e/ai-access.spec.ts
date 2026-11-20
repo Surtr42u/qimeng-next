@@ -70,6 +70,52 @@ test('AI setup defaults to read only, shows the credential once and revokes the 
   await expect(page.getByRole('article').filter({ has: page.getByRole('heading', { name: '合成执行器', exact: true }) }).getByText('已撤销', { exact: true })).toBeVisible();
 });
 
+test('uncertain issuance is attempted now and locks the draft until records refresh', async ({ page }) => {
+  await mockLibrary(page);
+  const label = '未确认签发的合成执行器';
+  let posts = 0;
+  let rejectRefresh = true;
+  await page.route('**/api/v1/ai/delegations**', async route => {
+    if (route.request().method() === 'POST') {
+      posts++;
+      // The grant may exist even though the client never received its credential.
+      return route.fulfill({ status: 503, json: { code: 'unavailable', message: '未收到创建确认' } });
+    }
+    if (posts && rejectRefresh) return route.fulfill({ status: 503, json: { code: 'unavailable', message: '未能刷新接入记录' } });
+    return route.fulfill({ json: { items: posts ? [{
+      label, libraryIds: [], authorIds: [], allAuthors: false, allowedFields: [], candidateBlocks: [],
+      allowClear: false, canIngest: false, canResearch: false, canOrganize: false, maxResearchCalls: 0,
+      maxUpdates: 1, maxTasksPerDay: 10, validDays: 30,
+      id: 'synthetic-unconfirmed', state: 'active', createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-02-01T00:00:00Z',
+    }] : [] } });
+  });
+  await page.goto('/settings/ai');
+  await page.getByRole('heading', { name: '尚无有效 AI 接入' }).waitFor();
+  await page.getByRole('button', { name: '添加 AI 接入' }).click();
+  const input = page.getByLabel('接入名称');
+  await input.fill(label);
+  // Coarse browser network status must not queue a credential write for later.
+  // Intercepted endpoint stays reachable, as a loopback server can in practice.
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  const create = page.getByRole('button', { name: '创建接入凭据' });
+  await create.click();
+  await expect(page.getByText('上次创建结果未确认。', { exact: false })).toBeVisible();
+  await expect(create).toBeDisabled();
+  await expect(input).toHaveValue(label);
+  expect(posts).toBe(1);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+
+  const refresh = page.getByRole('button', { name: '刷新接入记录' });
+  await refresh.click();
+  await expect(page.getByText('未能刷新接入记录', { exact: true })).toBeVisible();
+  await expect(create).toBeDisabled();
+  rejectRefresh = false;
+  await refresh.click();
+  await expect(page.getByRole('article').getByRole('heading', { name: label })).toBeVisible();
+  await expect(create).toBeEnabled();
+  expect(posts).toBe(1);
+});
+
 test('public research sends only explicitly checked deployed text sources with a positive budget', async ({ page }) => {
   await mockLibrary(page);
   await page.route('**/api/v1/research/context', route => route.fulfill({ json: { enabled: true, allowedProviders: [], providers: [

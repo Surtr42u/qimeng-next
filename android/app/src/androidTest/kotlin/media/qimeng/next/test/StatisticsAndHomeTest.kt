@@ -3,8 +3,11 @@ package media.qimeng.next.test
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.view.KeyEvent
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -52,6 +55,72 @@ class StatisticsAndHomeTest {
             if (previous == null) runBlocking { graph.media.disconnect() }
             else settings.saveSession(previous, requireNotNull(previousToken))
             settings.savePreferences(preferences)
+        }
+    }
+
+    @Test(timeout = 90_000)
+    fun recommendationReadsIndependentlyAndOnlyAcknowledgesAnActualSave() {
+        val args = InstrumentationRegistry.getArguments()
+        val endpoint = requireNotNull(args.getString("qimengStatisticsUrl"))
+        require(endpoint == "http://127.0.0.1:18483/") { "Only the isolated statistics service is allowed" }
+        val token = requireNotNull(args.getString("qimengToken"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val graph = DataGraph.get(instrumentation.targetContext)
+        val previous = graph.settings.session.value
+        val previousToken = previous?.let(graph.settings::tokenFor)
+        try {
+            runBlocking { graph.media.login(endpoint, token) }
+            val target = requireNotNull(graph.settings.session.value)
+            val original = runBlocking { graph.analytics.preferences(target) }
+            try {
+                val model = compose.runOnIdle { ViewModelProvider(compose.activity)[LibraryViewModel::class.java] }
+                compose.onNodeWithTag("navigation:me").performClick()
+                val preferences = model.recommendationPreferences
+                // Both inventory and preference reads are launched by the cold Mine tab.
+                compose.waitUntil(20_000) { preferences.value.data != null || preferences.value.error != null }
+                assertNull(preferences.value.error)
+                assertEquals(original, preferences.value.data)
+
+                val entry = hasText("推荐偏好") and hasClickAction()
+                val sheet = hasAnyAncestor(hasTestTag("recommendation-settings"))
+                val neutral = hasText("点选方案后自动保存") and sheet
+                val saved = hasText("已保存到当前服务器") and sheet
+                fun await(matcher: SemanticsMatcher) {
+                    compose.waitUntil(20_000) { compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+                }
+                fun openSheet() {
+                    compose.onNodeWithTag("profile-settings-list").performScrollToNode(entry)
+                    // Invoke the actual row action without targeting the overlapping floating dock.
+                    compose.onNode(entry).performSemanticsAction(SemanticsActions.OnClick) { assertTrue(it()) }
+                    await(neutral)
+                    compose.onNode(saved).assertDoesNotExist()
+                }
+                openSheet()
+                val familiar = original.presets.getValue("familiar")
+                val (label, weights) = if (original.weights == familiar) "新鲜内容" to original.presets.getValue("fresh")
+                    else "熟悉内容" to familiar
+                val choice = hasText(label) and hasClickAction() and sheet
+                compose.onNode(choice).assertIsNotSelected().performClick()
+                await(saved)
+                compose.onNode(choice).assertIsSelected()
+                val actual = runBlocking { graph.analytics.preferences(target) }
+                assertEquals(original.revision + 1L, actual.revision)
+                assertEquals(weights, actual.weights)
+
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                compose.waitUntil(15_000) { compose.onAllNodesWithTag("recommendation-settings").fetchSemanticsNodes().isEmpty() }
+                openSheet()
+                compose.onNode(choice).assertIsSelected()
+                assertEquals(actual, runBlocking { graph.analytics.preferences(target) })
+            } finally {
+                runBlocking {
+                    val current = graph.analytics.preferences(target)
+                    if (current.weights != original.weights) graph.analytics.savePreferences(current, original.weights, target)
+                }
+            }
+        } finally {
+            if (previous == null) runBlocking { graph.media.disconnect() }
+            else graph.settings.saveSession(previous, requireNotNull(previousToken))
         }
     }
 
@@ -136,6 +205,23 @@ class StatisticsAndHomeTest {
             chartList.performScrollToNode(chart)
             compose.onNode(chart).assertIsDisplayed()
         }
+        val sourceChart = hasContentDescription("来源浏览趋势，共 $periods 个时段")
+        val checkbox = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
+        val cos = compose.onNode(hasText("COS") and checkbox)
+        val regular = compose.onNode(hasText("常规") and checkbox)
+        chartList.performScrollToNode(hasText("COS") and checkbox)
+        cos.assertIsOn().performClick().assertIsOff()
+        regular.assertIsOn().assertIsNotEnabled() // At least one series must remain.
+        chartList.performScrollToNode(sourceChart)
+        val source = compose.onNode(sourceChart)
+        val nextPoint = source.fetchSemanticsNode().config[SemanticsActions.CustomActions].single { it.label == "下一个数据点" }
+        compose.runOnIdle { assertTrue(nextPoint.action()) }
+        val onlyRegular = source.fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+        assertTrue(onlyRegular.contains("常规 "))
+        assertFalse(onlyRegular.contains("COS "))
+        chartList.performScrollToNode(hasText("COS") and checkbox)
+        cos.performClick().assertIsOn()
+        assertTrue(source.fetchSemanticsNode().config[SemanticsProperties.StateDescription].contains("COS "))
         chartList.performScrollToIndex(0)
         captureStatisticsPage("stats-source-trends-dark.png", "类型浏览趋势 · 全部")
         compose.onNodeWithContentDescription("返回").performClick()

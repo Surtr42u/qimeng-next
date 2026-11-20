@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.*
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.PendingEvent
+import media.qimeng.next.model.Session
+import media.qimeng.next.model.sameTarget
 import java.time.Instant
 import java.util.UUID
 
@@ -55,9 +57,9 @@ class DataGraph private constructor(private val context: Context) {
     suspend fun awaitRecovery() { recovery.await(); if (queue.state.value == null) queue.load() }
 
     /** The application calls after same-instance admission, independent of the active Activity. */
-    fun resumeAdmittedLocalWork(target: media.qimeng.next.model.Session) {
+    fun resumeAdmittedLocalWork(target: Session) {
         fun resume(block: suspend () -> Unit) = scope.launch {
-            if (!media.qimeng.next.model.sameTarget(target, settings.session.value) ||
+            if (!sameTarget(target, settings.session.value) ||
                 !transferConnectionReady(context, target)) return@launch
             try { block() }
             catch (cancelled: CancellationException) { throw cancelled }
