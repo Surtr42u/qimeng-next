@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import media.qimeng.next.model.QueueSnapshot
 import media.qimeng.next.model.Session
 import media.qimeng.next.model.TransferState
+import media.qimeng.next.model.sameTarget
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
@@ -39,7 +40,7 @@ class QueueStore(context: Context) {
         if (!journalProblem) setProblem(message, target)
     }
     @Synchronized fun clearTransportProblem(target: Session) {
-        if (media.qimeng.next.model.sameTarget(target, problemTarget)) setProblem(null)
+        if (sameTarget(target, problemTarget)) setProblem(null)
     }
 
     suspend fun load() = withContext(Dispatchers.IO) {
