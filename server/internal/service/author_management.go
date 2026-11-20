@@ -102,10 +102,33 @@ func (s *Service) DeleteAuthor(ctx context.Context, w *Write, id string, revisio
 	_, e = q.ExecContext(ctx, "DELETE FROM authors WHERE id=?", id)
 	return e
 }
+// delegateAuthorMerge is reachable only with the standing credential issued
+// with author.merge; task credentials and unrelated authors stay denied.
+func (s *Service) delegateAuthorMerge(ctx context.Context, p model.Principal, in AuthorMergeInput) error {
+	if !p.Has("author.merge") || p.ParentDelegationID == "" || p.BatchID != "" || p.AuthorTaskID != "" || p.AssetTaskID != "" {
+		return Fail(403, "author_merge_denied", "合并作者须由首次配置单独授权的长期凭据发起。")
+	}
+	if e := s.validateDelegation(ctx, p); e != nil {
+		return e
+	}
+	d, e := s.delegation(ctx, p.ParentDelegationID)
+	if e != nil {
+		return e
+	}
+	if !d.CanMergeAuthors {
+		return Fail(403, "author_merge_denied", "首次配置未授权合并作者。")
+	}
+	if !d.AllAuthors && (!containsString(d.AuthorIDs, in.SourceID) || !containsString(d.AuthorIDs, in.TargetID)) {
+		return Fail(403, "author_scope_denied", "源或目标作者不在首次授权的范围内。")
+	}
+	return nil
+}
 func (s *Service) MergeAuthors(ctx context.Context, w *Write, in AuthorMergeInput) (AuthorMergeResult, error) {
 	result := AuthorMergeResult{PreservedConflicts: []string{}}
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
-		return result, e
+		if e = s.delegateAuthorMerge(ctx, w.Principal, in); e != nil {
+			return result, e
+		}
 	}
 	if in.SourceID == in.TargetID {
 		return result, Fail(400, "same_author", "合并的源与目标必须不同。")

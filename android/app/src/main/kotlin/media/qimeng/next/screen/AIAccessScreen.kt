@@ -117,7 +117,11 @@ private fun AIAccessPolicy.actions() = buildList {
     if (canResearch || canResearchAssets || canLookupImages) add("研究")
     if (candidateBlocks.isNotEmpty()) add("提交候选")
     if (allowedFields.isNotEmpty()) add("维护作者")
-    if (assetFields.isNotEmpty()) add("维护作品")
+    if (assetFields.any { it != "rename" && !(it == "tags" && canReplaceAssetMetadata) }) add("补全作品空字段")
+    if ("rename" in assetFields) add("同目录改名")
+    if (canReplaceAssetMetadata) add("替换已有作品标签")
+    if (canManageAssetFiles) add("回收站与移动")
+    if (canMergeAuthors) add("合并作者")
 }.joinToString("、").ifEmpty { "仅全库读取" }
 
 @Composable
@@ -125,13 +129,21 @@ private fun PolicyDetails(policy: AIAccessPolicy,
     libraryNames: Map<String, String> = emptyMap(), authorNames: Map<String, String> = emptyMap()) {
     fun List<String>.names(names: Map<String, String>) = joinToString("、") { names[it] ?: it }.ifEmpty { "未选择" }
     val detail = MaterialTheme.typography.bodySmall
+    val assetRules = buildList {
+        if (policy.assetFields.any { it != "rename" && !(it == "tags" && policy.canReplaceAssetMetadata) }) add("只填空字段，不覆盖或清空已填内容")
+        if ("rename" in policy.assetFields) add("改名只限当前目录")
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("读取范围 · 全库资料", style = detail)
         Text("执行动作 · ${policy.actions()}", style = detail)
         Text("授权影库 · ${policy.libraryIds.names(libraryNames)}", style = detail)
         Text("研究 · ${if (policy.canResearch) "已授权" else "未授权"}", style = detail)
         Text("已有作品预览研究 · ${if (policy.canResearchAssets) "已授权" else "未授权"}", style = detail)
-        Text("作品维护 · ${policy.assetFields.joinToString("、", transform = ::assetFieldName).ifEmpty { "未授权" }}", style = detail)
+        Text("作品补全与改名 · ${policy.assetFields.joinToString("、", transform = ::assetFieldName).ifEmpty { "未授权" }}", style = detail)
+        if (assetRules.isNotEmpty()) Text("规则 · ${assetRules.joinToString("；")}", style = detail)
+        Text("替换已有作品标签 · ${if (policy.canReplaceAssetMetadata) "允许整体重写所选作品已填的标签" else "未授权"}", style = detail)
+        Text("回收站与移动 · ${if (policy.canManageAssetFiles) "允许移入回收站、恢复或同库移动" else "未授权"}", style = detail)
+        Text("合并作者 · ${if (policy.canMergeAuthors) "允许合并所选作者，源作者删除且不可撤销" else "未授权"}", style = detail)
         Text("公开文字查询来源 · ${policy.researchProviders.joinToString("、") { researchSourceNames[it] ?: it }.ifEmpty { "未授权" }}", style = detail)
         Text("单帧识图 · ${if (policy.canLookupImages) "允许向已配置的识图服务发送一帧派生预览" else "未授权"}", style = detail)
         Text("作者范围 · ${if (policy.allAuthors) "全部可维护作者（含今后新增）" else policy.authorIds.names(authorNames)}", style = detail)
@@ -167,6 +179,9 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     var canRecycle by rememberSaveable { mutableStateOf(false) }
     var researchAssets by rememberSaveable { mutableStateOf(false) }
     var assetFields by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var replaceMetadata by rememberSaveable { mutableStateOf(false) }
+    var manageFiles by rememberSaveable { mutableStateOf(false) }
+    var mergeAuthors by rememberSaveable { mutableStateOf(false) }
     var allowClear by rememberSaveable { mutableStateOf(false) }
     var days by rememberSaveable { mutableStateOf("30") }
     var tasks by rememberSaveable { mutableStateOf("20") }
@@ -178,20 +193,20 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
     LaunchedEffect(canResearch) { if (canResearch) model.loadResearchSources() }
     val validDays = days.toIntOrNull()?.takeIf { it in 1..365 }
     val dailyTasks = tasks.toIntOrNull()?.takeIf { it in 1..200 }
-    val maxUpdates = updates.toIntOrNull()?.takeIf { it in 1..10 }
+    val maxUpdates = updates.toIntOrNull()?.takeIf { it >= 1 }
     val maxResearch = if (canResearch) research.toIntOrNull()?.takeIf { it in 0..100 } else 0
-    val maxCalls = calls.toIntOrNull()?.takeIf { it in 10..10000 }
+    val maxCalls = calls.toIntOrNull()?.takeIf { it >= 10 }
     val duration = minutes.toIntOrNull()?.takeIf { it in 1..1440 }
     val imageLookupEligible = canGrantImageLookup(canResearch, maxResearch ?: 0, libraryIds, canIngest, researchAssets)
     LaunchedEffect(imageLookupEligible) { if (!imageLookupEligible) lookupImages = false }
-    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, lookupImages, researchProviders, canOrganize, canRecycle, researchAssets, assetFields, allowClear, days, tasks, updates, research, calls, minutes) {
+    LaunchedEffect(label, libraryIds, authorIds, allAuthors, fields, blocks, canIngest, canResearch, lookupImages, researchProviders, canOrganize, canRecycle, researchAssets, assetFields, replaceMetadata, manageFiles, mergeAuthors, allowClear, days, tasks, updates, research, calls, minutes) {
         model.clearCreationError()
     }
     var step by rememberSaveable { mutableIntStateOf(0) }
     var more by rememberSaveable { mutableStateOf(false) }
     var budgets by rememberSaveable { mutableStateOf(false) }
-    val needsLibrary = canIngest || canOrganize || researchAssets || assetFields.isNotEmpty()
-    val needsAuthor = fields.isNotEmpty() || blocks.isNotEmpty()
+    val needsLibrary = canIngest || canOrganize || researchAssets || assetFields.isNotEmpty() || manageFiles || replaceMetadata
+    val needsAuthor = fields.isNotEmpty() || blocks.isNotEmpty() || mergeAuthors
     val showLibraries = needsLibrary || canResearch
     val nameValid = label.isNotBlank() && label.trim().encodeToByteArray().size <= 80
     val scopesValid = (!needsLibrary || libraryIds.isNotEmpty()) && (!needsAuthor || allAuthors || authorIds.isNotEmpty()) &&
@@ -206,6 +221,9 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
             canIngest = canIngest, canResearch = canResearch, canOrganize = canOrganize, canRecycleSources = canRecycle,
             canResearchAssets = researchAssets, canLookupImages = lookupImages && imageLookupEligible,
             assetFields = assetFields, researchProviders = researchProviders,
+            canReplaceAssetMetadata = replaceMetadata && "tags" in assetFields && libraryIds.isNotEmpty(),
+            canManageAssetFiles = manageFiles && libraryIds.isNotEmpty(),
+            canMergeAuthors = mergeAuthors && (allAuthors || authorIds.isNotEmpty()),
             maxResearchCalls = maxResearch, maxUpdates = maxUpdates, maxTasksPerDay = dailyTasks,
             validDays = validDays, maxCallsPerTask = maxCalls, taskSeconds = duration * 60,
         )
@@ -296,21 +314,35 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
                                         }
                                     }
                                     if (fields.isNotEmpty()) PermissionPill("允许清空已授权字段", allowClear, !busy) { allowClear = it }
-                                    Text("作品维护", style = MaterialTheme.typography.titleSmall)
+                                    Text("作品补全与改名", style = MaterialTheme.typography.titleSmall)
+                                    Text("只补全空字段，不覆盖或清空已填内容；改名只限当前目录。", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         listOf("authors", "taxonomy", "tags", "rename").forEach { field ->
                                             PermissionPill(assetFieldName(field), field in assetFields, !busy) { checked ->
                                                 assetFields = if (checked) assetFields + field else assetFields - field
+                                                if ("tags" !in assetFields) replaceMetadata = false
                                             }
                                         }
                                     }
+                                    Text("替换与文件操作（默认关闭）", style = MaterialTheme.typography.titleSmall)
+                                    Text("整体重写已有标签会覆盖你已经填的内容；移入回收站会从影库隐藏作品，恢复或移动会改变文件路径。",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        PermissionPill("替换已有作品标签", replaceMetadata, !busy && "tags" in assetFields) { replaceMetadata = it }
+                                        PermissionPill("回收站与移动", manageFiles, !busy) { manageFiles = it }
+                                    }
+                                    Text("合并重复作者（默认关闭）", style = MaterialTheme.typography.titleSmall)
+                                    Text("把重复作者并入目标并删除源作者，无法撤销；每次仍需提供双方当前修订。",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    PermissionPill("合并重复作者", mergeAuthors, !busy) { mergeAuthors = it }
                                 }
                             }
                         }
                         1 -> {
                             if (showLibraries) item {
                                 FormSection("授权影库 · ${libraryIds.size}/100",
-                                    if (needsLibrary) "所选动作至少需要一个影库。" else "只读可跳过；选择后可维护库里的作品。") {
+                                    if (needsLibrary) "所选动作至少需要一个影库。" else "只读可跳过；选择后可补全库里作品的空字段。") {
                                     if (needsLibrary && libraryIds.isEmpty()) Text("请选择至少一个影库。",
                                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -372,8 +404,8 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
                                 if (budgets) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     CapsuleNumberField("有效天数（1–365）", days, { days = it }, validDays == null)
                                     CapsuleNumberField("每日任务上限（1–200）", tasks, { tasks = it }, dailyTasks == null)
-                                    CapsuleNumberField("每任务资料更新上限（1–10）", updates, { updates = it }, maxUpdates == null)
-                                    CapsuleNumberField("每任务工具调用上限（10–10000）", calls, { calls = it }, maxCalls == null)
+                                    CapsuleNumberField("每任务资料更新上限（至少 1，无上限）", updates, { updates = it }, maxUpdates == null)
+                                    CapsuleNumberField("每任务工具调用上限（至少 10，无上限）", calls, { calls = it }, maxCalls == null)
                                     CapsuleNumberField("单任务有效分钟数（1–1440）", minutes, { minutes = it }, duration == null)
                                 }
                             }
@@ -461,5 +493,5 @@ private fun fieldName(value: String) = mapOf("name" to "名称", "biography" to 
     "x" to "X 资料", "basic" to "基本资料", "accounts" to "账号资料")[value] ?: value
 
 private fun assetFieldName(value: String) = when (value) {
-    "authors" -> "修改作品作者"; "taxonomy" -> "修改作品出处与角色"; "tags" -> "修改作品标签"; "rename" -> "作品改名"; else -> value
+    "authors" -> "作者关联"; "taxonomy" -> "出处与角色"; "tags" -> "标签"; "rename" -> "同目录改名"; else -> value
 }

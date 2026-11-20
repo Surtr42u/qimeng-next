@@ -416,6 +416,7 @@ paths:
     post:
       operationId: startLibraryScan
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: 先用 library.query 读取库修订；202 只表示已持久受理，须用 library.scan.read 回读实际进度。长期凭据须获授权整理该库，派生任务凭据不能触发。
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RevisionRequest'}}}}
       responses:
         '202': {description: Persisted scan job; registration is not scan completion, content: {application/json: {schema: {$ref: '#/components/schemas/ScanJob'}}}}
@@ -435,6 +436,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
       operationId: getLibraryScan
+      description: 回读持久扫描任务的排队或运行状态、已索引数量与有界问题清单；不把 202 受理当作扫描完成。
       responses:
         '200': {description: Durable scan progress with bounded diagnostics, content: {application/json: {schema: {$ref: '#/components/schemas/ScanJob'}}}}
         default: {$ref: '#/components/responses/Error'}
@@ -931,6 +933,7 @@ paths:
     post:
       operationId: mergeAuthors
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: 先读取双方作者当前修订再提交；源作者删除且不可恢复。长期凭据须首次授权合并作者并包含双方范围。
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorMergeInput'}}}}
       responses:
         '200': {description: Explicit merge with target profile protection and archived source evidence, content: {application/json: {schema: {$ref: '#/components/schemas/AuthorMergeResult'}}}}
@@ -1117,6 +1120,7 @@ paths:
   /trash:
     get:
       operationId: listTrash
+      description: 分页列出可恢复作品，包含原路径、大小和修订；恢复前先在此确认目标仍在回收站。
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses:
         '200': {description: Recoverable assets, content: {application/json: {schema: {$ref: '#/components/schemas/AssetPage'}}}}
@@ -1838,6 +1842,55 @@ paths:
       responses:
         '200': {description: Renamed asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/tags:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    put:
+      operationId: replaceAssetTaskTags
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: >-
+        在该作品任务内整体替换标签集，每个字段附本次核对依据。默认只允许补全空标签；
+        只有长期授权另开“替换已有作品标签”时，才能覆盖已填或人工编辑过的标签。
+        空标签集不在此接口清空，须由本人在影库中处理。
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTaskTagReplace'}}}}
+      responses:
+        '200': {description: Applied tag set and task progress, content: {application/json: {schema: {$ref: '#/components/schemas/AssetMaintenanceTask'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/trash:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: trashAssetForTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: >-
+        把任务对应的作品移入回收站。须首次授权“回收站与移动”，且创建任务时传 manageFiles=true。
+        文件位置、回收站布局和待核验备份的保护规则与影库操作一致。
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTaskFileUpdate'}}}}
+      responses:
+        '200': {description: Trashed asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: restoreAssetForTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: >-
+        把任务对应的回收站作品恢复到影库认定的原路径；同名冲突按影库规则改名。
+        须首次授权“回收站与移动”，且创建任务时传 manageFiles=true。
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTaskFileUpdate'}}}}
+      responses:
+        '200': {description: Restored asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /asset-tasks/{id}/move:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: moveAssetForTask
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      description: >-
+        把作品移动到同一媒体库内的另一个相对路径。跨库、扩展名变化、目标占用和人工改名保护均由服务拒绝。
+        须首次授权“回收站与移动”，且创建任务时传 manageFiles=true。
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AssetTaskMove'}}}}
+      responses:
+        '200': {description: Moved asset, content: {application/json: {schema: {$ref: '#/components/schemas/Asset'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /uploads/{id}/research-materials:
     parameters: [{$ref: '#/components/parameters/Id'}]
     get:
@@ -2320,7 +2373,7 @@ components:
       type: object
       required: [maxCalls, expiresInSeconds]
       properties:
-        maxCalls: {type: integer, minimum: 10, maximum: 10000}
+        maxCalls: {type: integer, minimum: 10}
         expiresInSeconds: {type: integer, minimum: 60, maximum: 86400}
     DelegatedBudget:
       type: object
@@ -2348,11 +2401,14 @@ components:
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
         canOrganize: {type: boolean}
         canRecycleSources: {type: boolean, default: false, description: Separate opt-in to source recycling after independently verified backup; never permanent deletion. Requires an intake library scope.}
+        canReplaceAssetMetadata: {type: boolean, default: false, description: 'Separate opt-in to replace asset tags that already have values, including human-edited tags for the declared field. Without it a task may only fill empty fields.'}
+        canManageAssetFiles: {type: boolean, default: false, description: 'Separate opt-in to trash, restore or move assets inside the selected libraries. Every asset task must also request manageFiles; moves never cross libraries.'}
+        canMergeAuthors: {type: boolean, default: false, description: Separate opt-in to merge duplicate regular authors inside the selected author scope. Source authors are deleted and cannot be restored.}
         maxResearchCalls: {type: integer, minimum: 0, maximum: 100}
-        maxUpdates: {type: integer, minimum: 1, maximum: 10}
+        maxUpdates: {type: integer, minimum: 1}
         maxTasksPerDay: {type: integer, minimum: 1, maximum: 200}
         validDays: {type: integer, minimum: 1, maximum: 365}
-        maxCallsPerTask: {type: integer, minimum: 10, maximum: 10000, default: 100}
+        maxCallsPerTask: {type: integer, minimum: 10, default: 100}
         taskSeconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
     AIDelegation:
       allOf:
@@ -2399,6 +2455,7 @@ components:
         assetId: {type: string}
         expectedContentVersion: {type: integer, format: int64, minimum: 1}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
+        manageFiles: {type: boolean, default: false, description: 'Explicit per-task opt-in to trash, restore or move this one asset; the parent grant must also allow file management.'}
         batchId: {type: string}
         readyManifestFingerprint: {type: string, pattern: '^[0-9a-f]{64}$', description: For a queue claim use kind intake and mode intelligent with the returned batch and library IDs. Readiness is rechecked atomically. An idempotent replay returns the original task.}
         mode: {type: string, enum: [ordinary, intelligent]}
@@ -2410,7 +2467,7 @@ components:
         allowedFields: {type: array, items: {type: string, enum: [name, biography, homepage, aliases]}}
         candidateBlocks: {type: array, items: {type: string, enum: [x, basic, accounts]}}
         allowClear: {type: boolean}
-        maxUpdates: {type: integer, minimum: 1, maximum: 10}
+        maxUpdates: {type: integer, minimum: 1}
         credentialSecret: {type: string, writeOnly: true, minLength: 43, maxLength: 43, description: Trusted executor generates 32 random bytes encoded as unpadded base64url; never a model argument}
     DelegatedTaskResume:
       type: object
@@ -2447,6 +2504,8 @@ components:
         hash: {type: string}
         expectedRevision: {type: integer, format: int64}
         assetFields: {$ref: '#/components/schemas/AssetMaintenanceFields'}
+        manageFiles: {type: boolean, description: 'This task may trash, restore or move its one asset.'}
+        replaceExisting: {type: boolean, description: This task may rewrite existing values for its declared fields; false means fill empty fields only.}
         research: {type: boolean}
         createdAt: {type: string, format: date-time}
         usedUpdates: {type: integer}
@@ -2490,6 +2549,24 @@ components:
         namespaceFingerprint: {type: string}
         target: {type: string}
         preview: {$ref: '#/components/schemas/NamingPreviewInput'}
+    AssetTaskTagReplace:
+      type: object
+      required: [expectedRevision, tags, evidence]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        tags: {type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: {type: string, maxLength: 100}}
+        evidence: {type: array, minItems: 1, maxItems: 12, items: {$ref: '#/components/schemas/AssetMaintenanceEvidence'}}
+    AssetTaskFileUpdate:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+    AssetTaskMove:
+      type: object
+      required: [expectedRevision, relativePath]
+      properties:
+        expectedRevision: {type: integer, format: int64, minimum: 1}
+        relativePath: {type: string, minLength: 1, maxLength: 1024, description: Library-relative media path; the extension must not change.}
     ActivityRankingItem:
       type: object
       required: [id, name, views, plays, seconds, assets, value]
@@ -2525,7 +2602,7 @@ components:
         allowedFields: {type: array, maxItems: 4, uniqueItems: true, items: {type: string, enum: [name, biography, homepage, aliases]}}
         candidateBlocks: {type: array, maxItems: 3, uniqueItems: true, items: {type: string, enum: [x, basic, accounts]}}
         allowClear: {type: boolean}
-        maxUpdates: {type: integer, minimum: 1, maximum: 10, default: 1}
+        maxUpdates: {type: integer, minimum: 1, default: 1}
         expiresInSeconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
     AuthorTask:
       type: object
@@ -2730,6 +2807,7 @@ components:
             rankings: {type: boolean}
             stats: {type: boolean}
             backups: {type: boolean}
+            backupTargets: {type: boolean, description: At least one independent backup destination is configured. Executors use this only to hide tools that could not run.}
             migration: {type: boolean}
     SessionCreate:
       type: object
@@ -3507,9 +3585,12 @@ components:
       type: object
       required: [state, idempotencyKey]
       properties:
-        state: {type: string, enum: [not_recorded, committed]}
+        state: {type: string, enum: [not_recorded, committed, operation_mismatch]}
         idempotencyKey: {type: string}
         operation: {type: string}
+        requestedOperation: {type: string, description: Operation filter that did not match; candidates name the recorded operations for the same key.}
+        candidates: {type: array, items: {type: object, required: [operation, status], properties: {operation: {type: string}, status: {type: integer}}}}
+        hint: {type: string}
         status: {type: integer}
         response: {type: object, additionalProperties: true, description: Original bounded response. A missing receipt is not proof that no file intent exists; reissue the identical operation.}
     Backup:

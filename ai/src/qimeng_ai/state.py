@@ -8,7 +8,7 @@ import secrets
 import sqlite3
 import time
 
-from .config import Config
+from .config import Config, SQLITE_INTEGER_MAX
 from .errors import ToolError
 
 MAX_CACHE_BYTES = 256 * 1024 * 1024
@@ -228,7 +228,10 @@ class State:
     def renew(self, calls: int, seconds: int) -> None:
         with self.transaction() as db:
             row = db.execute("SELECT max_calls,max_seconds FROM tasks WHERE id=?", (self.config.task_id,)).fetchone()
-            if not row[0] <= calls <= 10000 or not row[1] <= seconds <= 86400:
+            if (not isinstance(calls, int) or isinstance(calls, bool)
+                    or not isinstance(seconds, int) or isinstance(seconds, bool)
+                    or not row[0] <= calls <= SQLITE_INTEGER_MAX
+                    or not row[1] <= seconds <= 86400):
                 raise ToolError("INVALID_BUDGET", "续期只允许提高既有上限，不能清零调用和开始时间")
             db.execute("UPDATE tasks SET max_calls=?,max_seconds=? WHERE id=?", (calls, seconds, self.config.task_id))
 

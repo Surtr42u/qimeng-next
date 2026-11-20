@@ -14,6 +14,41 @@ from .errors import ToolError
 
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
+# Stable business codes mapped to one-line, actionable hints. Hints never echo
+# server messages, field values, paths or identifiers supplied by the user.
+BUSINESS_HINTS = {
+    "asset_field_occupied": "该字段已有内容；本任务只补全空字段。需要整体替换时，请本人在 AI 授权中另开「替换已有作品标签」，并在任务中选择标签字段。",
+    "asset_scope_denied": "此作品任务超出首次授权的字段或文件范围；先读 platform.permissions，再按 assetFields 或 manageFiles 请求。",
+    "asset_task_scope_denied": "当前凭据未绑定这个作品任务；用 platform.session 核对 taskId。",
+    "asset_unavailable": "库已停用或作品已在回收站；先回读库与作品状态，不要换个任务ID重试。",
+    "asset_write_denied": "此凭据未获作品资料写入权限；由本人签发含 assetFields 的作品任务。",
+    "author_task_stale": "作者任务已完成、取消或到期；按当前作者修订建立新任务。",
+    "update_budget_denied": "本次请求超出任务的更新次数或授权上限；不要换键重试，先核对平台预算。",
+    "asset_tags_required": "替换标签须至少保留一个标签；清空标签请由本人在影库中操作。",
+    "human_field_protected": "该字段有本人修改或清空记录，工具不能覆盖；只有首次授权开启替换且任务声明该字段后才可改写。",
+    "asset_evidence_required": "每个要改的字段都要附自己的出处与观察；补齐 evidence 后沿原操作键重试。",
+    "asset_updates_exhausted": "此任务的修改次数已用完；由本人核对后建立新任务，不要换键重试。",
+    "asset_task_expired": "作品任务已到期；按当前修订与内容版本重新建立任务。",
+    "asset_task_revoked": "此作品任务的授权已撤销；历史证据仍可读，需本人重新授权。",
+    "asset_version_changed": "作品内容或元数据已变化；重新读取作品，再按新修订建立任务。",
+    "asset_files_denied": "此任务未获文件管理许可；由本人开启「回收站与移动」并在任务中申请文件管理。",
+    "asset_protection_pending": "该作品的独立备份核验尚未完成；先读取保护记录，完成后再处理回收站。",
+    "asset_not_trashed": "作品不在回收站，无需恢复；先读取作品当前状态。",
+    "library_scan_denied": "首次授权未包含整理所选媒体库；由本人调整授权后再触发扫描。",
+    "library_scope_denied": "目标不在首次授权的范围内；不要改用其他库或作者重试。",
+    "scan_already_queued": "该库已有扫描在执行；读取扫描状态，等完成或取消后再触发。",
+    "author_merge_denied": "合并作者需要首次配置单独授权，且只能由长期凭据发起。",
+    "author_scope_denied": "源或目标作者不在授权范围内；不要改用其他作者重试。",
+    "same_author": "源与目标必须是不同作者；重新选择后再提交。",
+    "merge_regular_only": "只有明确的常规作者身份可以合并；占位或 COS 身份保留原样。",
+    "revision_conflict": "对象已被修改；重新读取当前修订后再提交，不要复用旧修订。",
+    "delegation_inactive": "长期授权已撤销或到期；请本人在 AI 接入中重新授权。",
+    "idempotency_conflict": "同一操作键已用于不同输入；沿用原参数回读，或换新键重新开始。",
+    "naming_namespace_changed": "目录命名已变化；重新读取 Go 命名预览后再提交。",
+    "asset_rename_scope": "改名只能作用于当前作品与目录；跨目录请使用移动工具。",
+    "asset_rename_intent": "现有单项改名请选择规范续号或精确名称。",
+}
+
 
 def load_contract() -> dict:
     packaged = importlib.resources.files("qimeng_ai").joinpath("operations.json")
@@ -92,7 +127,7 @@ class Transport:
                     details = {}
                     if isinstance(result, dict) and isinstance(result.get("currentRevision"), int):
                         details["currentRevision"] = result["currentRevision"]
-                    message = "服务拒绝或未完成请求；按错误码处理并回读原操作"
+                    message = BUSINESS_HINTS.get(code, "服务拒绝或未完成请求；按错误码处理并回读原操作")
                     if operation_id == "updateAuthor" and code in {"scope_denied", "field_scope_denied", "clear_not_authorized", "author_task_stale", "revision_conflict"}:
                         details["nextTool"] = "platform.session"
                         if code == "scope_denied" and "acquisitionSources" in (arguments.get("body") or {}):

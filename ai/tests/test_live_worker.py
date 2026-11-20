@@ -746,7 +746,11 @@ class AppIntakeWorker(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
             listed = (await client.list_tools()).tools
         names = {tool.name for tool in listed}
         self.assertEqual(len(names), len(listed))
-        self.assertTrue({"task.start", "task.resume", "source.recycle", "platform.artifact.read", "research.image.search"} <= names)
+        self.assertTrue({"task.start", "task.resume", "research.image.search"} <= names)
+        # Conditional exposure: no media-to-model grant and no local recycle
+        # configuration, so these tools are absent instead of failing at call time.
+        self.assertNotIn("platform.artifact.read", names)
+        self.assertNotIn("source.recycle", names)
 
         def schema_sample(schemas):
             return {"toolCount": len(schemas), "inputSchemaBytes": len(encode(schemas).encode("utf-8"))}

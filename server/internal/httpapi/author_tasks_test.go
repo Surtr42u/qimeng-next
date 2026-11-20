@@ -51,6 +51,18 @@ func TestAuthorMaintenanceGrantCannotCrossAuthorFieldsOrClear(t *testing.T) {
 	}
 }
 
+func TestAuthorMaintenanceUpdateGrantAcceptsLargeValuesButNotNegative(t *testing.T) {
+	f := setup(t)
+	var author model.Author
+	decode(t, f.json("POST", "/authors", "author-create-unbounded-updates", map[string]any{"name": "Synthetic unbounded updates", "kind": "regular", "biography": "Original"}, 201), &author)
+	f.json("POST", "/author-tasks", "task-create-negative-updates", map[string]any{"authorId": author.ID, "expectedRevision": author.Revision, "allowedFields": []string{"biography"}, "allowClear": false, "maxUpdates": -1}, 400)
+	var task service.AuthorTask
+	decode(t, f.json("POST", "/author-tasks", "task-create-large-updates", map[string]any{"authorId": author.ID, "expectedRevision": author.Revision, "allowedFields": []string{"biography"}, "allowClear": false, "maxUpdates": 1000000}, 201), &task)
+	if task.MaxUpdates != 1000000 {
+		t.Fatalf("large update grant was clamped: %d", task.MaxUpdates)
+	}
+}
+
 func TestAuthorMaintenanceExplicitClearPreservesOtherFields(t *testing.T) {
 	f := setup(t)
 	var author model.Author

@@ -296,7 +296,7 @@ func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) GetInstance(w http.ResponseWriter, r *http.Request) {
-	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "localAutoLogin": a.s.Config.LocalAutoLogin, "recommendations": true, "rankings": true, "stats": true, "backups": true, "migration": true}})
+	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "localAutoLogin": a.s.Config.LocalAutoLogin, "recommendations": true, "rankings": true, "stats": true, "backups": true, "backupTargets": len(a.s.Config.BackupTargets) > 0, "migration": true}})
 }
 
 func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {

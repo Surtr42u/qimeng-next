@@ -42,7 +42,7 @@ python3.13 -m venv .venv
 | `QIMENG_API_TOKEN` | 首次配置的长期AI执行器凭据，或传统单任务/只读凭据；仅可信端持有 |
 | `QIMENG_AI_STATE_DIR` | 执行端私有绝对状态目录，必填 |
 | `QIMENG_AI_TASK_ID` | 传统单任务预算的稳定ID；默认interactive使用每日控制通道预算，新工作流按taskId另记业务预算 |
-| `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予delegate/ingest/research/organize/author.profile.write/local.read/local.research |
+| `QIMENG_AI_PERMISSIONS` | 默认read；按需明确授予delegate/ingest/research/organize/asset.metadata.write/source.cleanup/author.profile.write/local.read/local.research/local.recycle。回收站、恢复、同库移动与库扫描用`organize`；标签整体替换用`asset.metadata.write`；合并作者用`delegate` |
 | `QIMENG_AI_STORAGES` | JSON对象，逻辑名映射可信本地根；模型只看到逻辑名与相对路径 |
 | `QIMENG_AI_RECYCLE_STORAGES` | 允许移入回收站的逻辑来源名数组，默认空。每个名称必须已经出现在来源存储配置中 |
 | `QIMENG_AI_MAX_CALLS/MAX_SECONDS/MAX_UNCHANGED` | 默认100次/900秒/3次相同结果；预算持久保存 |
@@ -50,7 +50,7 @@ python3.13 -m venv .venv
 | `QIMENG_AI_TIMEOUT` | 单HTTP请求默认120秒；超时可能已有副作用，先回读 |
 | `QIMENG_AI_ALLOW_MEDIA_TO_MODEL` | 默认false；显式true才允许artifact以MCP image形式传给模型 |
 
-凭据不通过命令行参数输入、不进入仓库或报告。工具清单默认完整且稳定，兼容不刷新清单的宿主；任务实际上下文、规则和数据仍按需获取。可见工具不等于已获许可，服务端还会执行独立scope和批次限制。
+凭据不通过命令行参数输入、不进入仓库或报告。工具清单按当前执行器的真实配置裁剪：缺少所需权限、来源存储、ffprobe/ffmpeg、备份目标或向模型发送媒体的许可时，对应工具不出现；调整后重启执行器刷新。服务端仍执行独立 scope、对象修订与批次限制，可见工具不等于已获许可。
 
 ## 自动领取 App 智能整理
 
@@ -129,18 +129,21 @@ worker 先把原选择序号、原名、人工选择、每项状态和已存在�
 
 输入已由手机或其他设备上传时，使用`research.materials`，传uploadId与expectedHash。Go从核验的输入生成元信息和至多三张预览；`sa_`图片引用可由另一执行器在相同任务授权下读取，不需要原执行器的本地路径/缓存。预览注明原始SHA256和有效期，不代替作者证据。服务端研究缓存独立于业务数据库，最多256MiB/10000张、24小时有效，原件不转码；缓存缺失可从仍可用的原输入重建。输入已替换且无缓存时明确无法取得旧输入，不拿新版冒充。
 
-作者资料维护可以直接使用可信客户端签发的单任务凭据。先用 `platform.session` 读取 `authorTaskId`，再用 `author.task.context` 读取该任务的作者 ID、当前修订、允许字段与清空许可。`author.profile.update` 使用作者 ID 和 `expectedRevision`，只传本次受托修改的字段。相同写入沿用原幂等键，完毕后回读作者。授权范围外的字段（含获取渠道）会遭拒绝。AI 修改的资料标为候选。本人首次签发的是长期授权时，先读取 `platform.permissions`，按明确作者与字段通过 `task.start` 建立受限任务。
+作者资料维护可以直接使用可信客户端签发的单任务凭据。先用 `platform.session` 读取 `authorTaskId`，再用 `author.task.context` 读取该任务的作者 ID、当前修订、允许字段与清空许可。`author.profile.update` 使用作者 ID 和 `expectedRevision`，只传本次受托修改的字段。相同写入沿用原幂等键，完毕后回读作者。授权范围外的字段（含获取渠道）会遭拒绝。AI 修改的资料标为候选。本人首次签发的是长期授权时，先读取 `platform.permissions`，按明确作者与字段通过 `task.start` 建立受限任务。长期凭据在首次授权开启「合并重复作者」后可用 `author.merge` 合并所选范围内的两个常规作者；双方修订逐次核对，源作者删除且不可恢复。
 
 ## 整理已经在库里的作品
 
 第一次在 AI 授权页选择媒体库、是否允许研究已有作品，以及可补全的字段和是否允许改名。需要执行写入的宿主同时在 `QIMENG_AI_PERMISSIONS` 配置 `asset.metadata.write`。向模型发送预览图还需开启 `QIMENG_AI_ALLOW_MEDIA_TO_MODEL`。现有授权升级后按原来的权限继续工作。
 
+授权页另有三个缺省关闭的动作：「替换已有作品标签」允许整体重写已填或人工编辑过的标签（任务仍须选择标签字段并附证据；空集合不能借工具清空）；「回收站与移动」允许把作品移入回收站、从回收站恢复或移动到同库其他目录，每个作品任务还须 `manageFiles=true`，存在未完成的批次保护时拒绝移入回收站；「合并重复作者」按双方修订把源作者并入目标并删除源作者，不可撤销。执行器侧：标签替换用 `asset.metadata.write`，回收站/移动/扫描用 `organize`，合并用 `delegate`。`library.scan` 由长期凭据在同时获准接收与整理时触发所选库的扫描，`library.scan.read` 回读持久进度；派生任务凭据不能触发扫描或合并。
+
 例如，你可以在聊天里说「找出这个库里叫 source.png 的作品，查证作者，按这个目录现有格式接下一个编号」。执行器通过 `asset.query` 查找条目，用返回的修订号和内容版本创建 `kind=asset` 任务。从原生 `.qnext` 整库恢复、扫描发现和手工上传的作品使用同一流程。查询和回读沿用任务 ID，可在另一个宿主用 `task.resume` 接续。
 
 1. `asset.task.context` 返回这件作品被授权的字段。可以先用 `asset.evidence.query` 回读同一内容版本已经采用的证据。
 2. `asset.research.materials` 准备有界预览；通过 `platform.artifact.read` 将图送给已获授权的模型。无法核实时保留未知状态。
-3. `asset.metadata.apply` 只补全授权的缺失项。每个字段附自己的来源和观察，主动清空的标签与作者关系受保护。人工编辑使旧修订失效，需要重新核对。
+3. `asset.metadata.apply` 只补全授权的缺失项。每个字段附自己的来源和观察，主动清空的标签与作者关系受保护。人工编辑使旧修订失效，需要重新核对。获准「替换已有作品标签」时，`asset.tags.replace` 整体重写标签并仍提交本次证据。
 4. `naming.suggest`、`naming.preview` 由 Go 读当前目录计算续号。将同一计划、目标和目录指纹交给 `asset.rename.apply`；期间占号会返回冲突。文件身份、内容版本和作者关系随改名保留。
+5. 获准「回收站与移动」时，`asset.trash`、`asset.restore`、`asset.move` 仍绑定到单个作品任务；`trash.query` 分页列出可恢复作品。移动只在同一库内改相对路径，扩展名、目标占用和人工改名保护由 Go 拒绝。所有写入沿用操作键，结果用 `operation.read` 或 `asset.read` 回读。
 
 按用户提供的简称查资料时，`tag.vocabulary.query` 接受 `q`，返回标签的稳定 ID、正式名称、别名和修订。只需要名称的任务可继续使用 `tag.query`。`collection.query` 同时接受 `libraryId` 和 `q`。多个对象使用同一叫法时，读完需要的候选页，再用库、正式名称和用户给的线索确定对象。管理员清空别名后，下次查询立即采用新词表。三个查询均可用只读凭据执行。[接口与修订](../docs/api.md)
 

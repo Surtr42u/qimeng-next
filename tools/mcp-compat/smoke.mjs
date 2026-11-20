@@ -22,7 +22,7 @@ try {
       QIMENG_API_BASE: process.env.QIMENG_TEST_BASE,
       QIMENG_API_TOKEN: process.env.QIMENG_AI_TOKEN,
       QIMENG_AI_STATE_DIR: join(root, implementation), QIMENG_AI_TASK_ID: implementation,
-      QIMENG_AI_PERMISSIONS: 'read,local.read,local.research',
+      QIMENG_AI_PERMISSIONS: 'read,local.read,local.research,organize',
       QIMENG_AI_OUTPUT_BYTES: '2048', QIMENG_AI_STORAGES: JSON.stringify({ input }),
       QIMENG_AI_ALLOW_MEDIA_TO_MODEL: 'true',
     };
@@ -57,10 +57,11 @@ try {
       const picture = await call('platform.artifact.read', { artifactRef: probe.frameRefs[0].artifactRef });
       assert(picture.content.some(block => block.type === 'image' && block.mimeType === 'image/png'));
       if (implementation === 'pi') assert(toLlmContent(picture).some(block => block.type === 'image'));
-      const denied = implementation === 'pi' ? await client.callTool('plan.commit', {}) : await client.callTool({ name: 'plan.commit', arguments: {} });
+      const refusal = { id: 'synthetic-batch-refusal', 'Idempotency-Key': 'synthetic-refusal-key', body: { fingerprint: 'synthetic' } };
+      const denied = implementation === 'pi' ? await client.callTool('plan.commit', refusal) : await client.callTool({ name: 'plan.commit', arguments: refusal });
       assert.equal(denied.isError, true);
-      assert.equal(denied.structuredContent.code, 'PERMISSION_DENIED');
-      console.log(`${implementation}: discovery, text/structured results, bounded continuation, image forwarding and permission failure passed`);
+      assert.equal(denied.structuredContent.code, 'scope_denied');
+      console.log(`${implementation}: discovery, text/structured results, bounded continuation, image forwarding and server scope refusal passed`);
     } finally {
       await client.close();
     }

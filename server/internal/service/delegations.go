@@ -26,14 +26,28 @@ type DelegationPolicy struct {
 	ResearchProviders []string `json:"researchProviders,omitempty"`
 	CanResearchAssets bool     `json:"canResearchAssets,omitempty"`
 	AssetFields       []string `json:"assetFields,omitempty"`
-	CanOrganize       bool     `json:"canOrganize"`
-	CanRecycleSources bool     `json:"canRecycleSources"`
-	MaxResearchCalls  int      `json:"maxResearchCalls"`
-	MaxUpdates        int      `json:"maxUpdates"`
-	MaxTasksPerDay    int      `json:"maxTasksPerDay"`
-	ValidDays         int      `json:"validDays"`
-	MaxCallsPerTask   int      `json:"maxCallsPerTask"`
-	TaskSeconds       int      `json:"taskSeconds"`
+
+	// CanReplaceAssetMetadata permits rewriting values a human already filled in
+	// for fields this delegation lists. It is never implied by field selection.
+	CanReplaceAssetMetadata bool `json:"canReplaceAssetMetadata,omitempty"`
+
+	// CanManageAssetFiles permits trash, restore and cross-directory moves inside
+	// the selected libraries, always bound to a per-asset task.
+	CanManageAssetFiles bool `json:"canManageAssetFiles,omitempty"`
+
+	// CanMergeAuthors permits the irreversible author merge endpoint for authors
+	// inside the selected author scope.
+	CanMergeAuthors bool `json:"canMergeAuthors,omitempty"`
+
+	CanOrganize       bool `json:"canOrganize"`
+	CanRecycleSources bool `json:"canRecycleSources"`
+
+	MaxResearchCalls int `json:"maxResearchCalls"`
+	MaxUpdates       int `json:"maxUpdates"`
+	MaxTasksPerDay   int `json:"maxTasksPerDay"`
+	ValidDays        int `json:"validDays"`
+	MaxCallsPerTask  int `json:"maxCallsPerTask"`
+	TaskSeconds      int `json:"taskSeconds"`
 }
 type Delegation struct {
 	DelegationPolicy
@@ -60,6 +74,7 @@ type DelegatedTaskStart struct {
 	AssetID                  string   `json:"assetId"`
 	ExpectedContentVersion   int64    `json:"expectedContentVersion"`
 	AssetFields              []string `json:"assetFields"`
+	ManageFiles              bool     `json:"manageFiles,omitempty"`
 	ExpectedRevision         int64    `json:"expectedRevision"`
 	AllowedFields            []string `json:"allowedFields"`
 	CandidateBlocks          []string `json:"candidateBlocks"`
@@ -171,10 +186,10 @@ func (s *Service) CreateDelegation(ctx context.Context, w *Write, in DelegationP
 	if in.TaskSeconds == 0 {
 		in.TaskSeconds = 3600
 	}
-	if strings.TrimSpace(in.Label) == "" || len(in.Label) > 80 || in.MaxResearchCalls < 0 || in.MaxResearchCalls > 100 || in.MaxUpdates < 1 || in.MaxUpdates > 10 || in.MaxTasksPerDay < 1 || in.MaxTasksPerDay > 200 || in.ValidDays < 1 || in.ValidDays > 365 {
+	if strings.TrimSpace(in.Label) == "" || len(in.Label) > 80 || in.MaxResearchCalls < 0 || in.MaxResearchCalls > 100 || in.MaxUpdates < 1 || in.MaxTasksPerDay < 1 || in.MaxTasksPerDay > 200 || in.ValidDays < 1 || in.ValidDays > 365 {
 		return result, Fail(400, "invalid_delegation", "授权名称、预算或有效期无效。")
 	}
-	if in.MaxCallsPerTask < 10 || in.MaxCallsPerTask > 10000 || in.TaskSeconds < 60 || in.TaskSeconds > 86400 || !in.CanResearch && in.MaxResearchCalls != 0 {
+	if in.MaxCallsPerTask < 10 || in.TaskSeconds < 60 || in.TaskSeconds > 86400 || !in.CanResearch && in.MaxResearchCalls != 0 {
 		return result, Fail(400, "invalid_delegation_budget", "任务预算与授权动作不一致。")
 	}
 	var e error
@@ -201,6 +216,9 @@ func (s *Service) CreateDelegation(ctx context.Context, w *Write, in DelegationP
 	}
 	if e = validateAssetPolicy(&in); e != nil {
 		return result, e
+	}
+	if in.CanMergeAuthors && !in.AllAuthors && len(in.AuthorIDs) == 0 {
+		return result, Fail(400, "author_scope_required", "合并作者须指定作者或明确选择全部作者。")
 	}
 	if e = validateResearchProviders(in.ResearchProviders, in.CanResearch, in.MaxResearchCalls); e != nil {
 		return result, e
@@ -237,7 +255,13 @@ func (s *Service) CreateDelegation(ctx context.Context, w *Write, in DelegationP
 	}
 	now := time.Now().UTC()
 	d := Delegation{DelegationPolicy: in, ID: ID(), State: "active", CreatedAt: now, ExpiresAt: now.AddDate(0, 0, in.ValidDays)}
-	p := model.Principal{ID: d.ID, Label: in.Label, Scopes: []string{"read", "delegate"}, ParentDelegationID: d.ID, Generation: 1, ExpiresAt: d.ExpiresAt}
+	scopes := []string{"read", "delegate"}
+	if in.CanMergeAuthors {
+		// Only the standing executor credential may merge; derived task
+		// credentials are restricted to their own batch or author task.
+		scopes = append(scopes, "author.merge")
+	}
+	p := model.Principal{ID: d.ID, Label: in.Label, Scopes: scopes, ParentDelegationID: d.ID, Generation: 1, ExpiresAt: d.ExpiresAt}
 	secret := token()
 	raw, e := store.Encode(d)
 	if e != nil {
@@ -321,6 +345,9 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 		if in.Kind != "intake" || in.BatchID == "" || in.Mode != "intelligent" || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
 			return result, Fail(400, "invalid_queue_claim", "自动认领须明确指定已提交的智能批次与清单摘要。")
 		}
+	}
+	if in.ManageFiles && in.Kind != "asset" {
+		return result, Fail(400, "invalid_task_kind", "只有已有作品任务可以申请文件管理。")
 	}
 	result.Kind = in.Kind
 	providers := d.ResearchProviders
@@ -452,6 +479,12 @@ func (s *Service) StartDelegatedTask(ctx context.Context, w *Write, in Delegated
 		}
 		if len(task.AssetFields) > 0 {
 			p.Scopes = append(p.Scopes, "asset.metadata.write")
+		}
+		if task.ReplaceExisting && containsString(task.AssetFields, "tags") {
+			p.Scopes = append(p.Scopes, "asset.tags.replace")
+		}
+		if task.ManageFiles {
+			p.Scopes = append(p.Scopes, "asset.files.write")
 		}
 	default:
 		return result, Fail(400, "invalid_task_kind", "任务类别必须是 intake、author 或 asset。")
@@ -612,7 +645,7 @@ func (s *Service) RenewDelegatedBudget(ctx context.Context, w *Write, id string,
 		return budget, e
 	}
 	deadline := time.Now().UTC().Add(time.Duration(in.ExpiresInSeconds) * time.Second)
-	if in.MaxCalls < budget.MaxCalls || in.MaxCalls > 10000 || in.ExpiresInSeconds < 60 || in.ExpiresInSeconds > 86400 || deadline.Before(budget.Deadline) {
+	if in.MaxCalls < budget.MaxCalls || in.ExpiresInSeconds < 60 || in.ExpiresInSeconds > 86400 || deadline.Before(budget.Deadline) {
 		return budget, Fail(400, "invalid_budget", "续期只能提高上限及截止时间，不能清零已消费次数。")
 	}
 	q, e := w.Q()

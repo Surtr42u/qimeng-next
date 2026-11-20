@@ -11,12 +11,20 @@ from urllib.parse import urlsplit
 from .errors import ToolError
 
 
-def positive(env: dict, name: str, default: int, maximum: int) -> int:
+# SQLite stores task budgets as signed 64-bit INTEGER. This is the storage
+# representability limit, not an executor policy ceiling on task calls.
+SQLITE_INTEGER_MAX = 2**63 - 1
+
+
+def positive(env: dict, name: str, default: int, maximum: int | None = None) -> int:
+    raw = env.get(name, default)
+    if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+        raise ToolError("CONFIG_INVALID", f"{name} 必须是整数")
     try:
-        value = int(env.get(name, default))
-    except (ValueError, TypeError):
+        value = int(raw)
+    except (ValueError, TypeError, OverflowError):
         raise ToolError("CONFIG_INVALID", f"{name} 必须是整数") from None
-    if not 1 <= value <= maximum:
+    if value < 1 or (maximum is not None and value > maximum):
         raise ToolError("CONFIG_INVALID", f"{name} 超出允许范围")
     return value
 
@@ -105,7 +113,7 @@ class Config:
         if positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576) < 2048:
             raise ToolError("CONFIG_INVALID", "输出预算至少2048字节，以容纳执行结果和恢复引用")
         return cls(origin, token, directory, env.get("QIMENG_AI_TASK_ID", "interactive"), permissions,
-                   positive(env, "QIMENG_AI_MAX_CALLS", 100, 10000),
+                   positive(env, "QIMENG_AI_MAX_CALLS", 100, SQLITE_INTEGER_MAX),
                    positive(env, "QIMENG_AI_MAX_SECONDS", 900, 86400),
                    positive(env, "QIMENG_AI_MAX_UNCHANGED", 3, 100),
                    positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576),

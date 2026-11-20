@@ -71,7 +71,10 @@ func (s *Service) Operation(ctx context.Context, p model.Principal, key, operati
 		}
 		if providerOperation {
 			if research != nil && research.receiptOperation() != operation {
-				research = nil
+				return s.operationCandidates(ctx, p, key, operation, research)
+			}
+			if research == nil {
+				return s.operationCandidates(ctx, p, key, operation, nil)
 			}
 			return researchOperationResult(key, research)
 		}
@@ -98,6 +101,9 @@ func (s *Service) Operation(ctx context.Context, p model.Principal, key, operati
 		return nil, e
 	}
 	if len(items) == 0 {
+		if operation != "" {
+			return s.operationCandidates(ctx, p, key, operation, research)
+		}
 		return researchOperationResult(key, research)
 	}
 	if len(items) > 1 || research != nil {
@@ -111,4 +117,37 @@ func (s *Service) Operation(ctx context.Context, p model.Principal, key, operati
 		}
 	}
 	return map[string]any{"state": "committed", "operation": v.op, "idempotencyKey": key, "status": v.status, "response": body}, nil
+}
+
+// operationCandidates answers a wrong operation filter with the operations this
+// caller actually recorded under the same key. Returning not_recorded here would
+// tell an executor its write vanished when only the filter was wrong.
+func (s *Service) operationCandidates(ctx context.Context, p model.Principal, key, requested string, research *PublicResearchResult) (map[string]any, error) {
+	rows, e := s.DB.DB.QueryContext(ctx, "SELECT operation,status FROM idempotency WHERE principal_id=? AND key=? ORDER BY operation LIMIT 8", p.ID, key)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	candidates := []map[string]any{}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var name string
+		var status int
+		if e = rows.Scan(&name, &status); e != nil {
+			return nil, e
+		}
+		seen[name] = true
+		candidates = append(candidates, map[string]any{"operation": name, "status": status})
+	}
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	if research != nil && !seen[research.receiptOperation()] {
+		candidates = append(candidates, map[string]any{"operation": research.receiptOperation(), "status": 200})
+	}
+	if len(candidates) == 0 {
+		return researchOperationResult(key, nil)
+	}
+	return map[string]any{"state": "operation_mismatch", "idempotencyKey": key, "requestedOperation": requested,
+		"candidates": candidates, "hint": "同一幂等键记录了其他操作；请按候选中的 operation 重新回读。"}, nil
 }

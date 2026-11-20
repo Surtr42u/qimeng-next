@@ -203,8 +203,16 @@ func TestImageLookupUsesOnlyOneAuthorizedDerivedFrameAndReceipt(t *testing.T) {
 		t.Fatal("lost response could not be recovered")
 	}
 	f.request("GET", "/operations/"+key+"?operation=queryResearchProvider", token, "", nil).expect(t, 200, &recovered)
-	if recovered.State != "not_recorded" {
-		t.Fatal("text and image receipt operations were confused")
+	if recovered.State != "operation_mismatch" {
+		t.Fatal("text and image receipt operations were confused without naming the recorded candidate")
+	}
+	var candidates struct {
+		State      string
+		Candidates []struct{ Operation string }
+	}
+	f.request("GET", "/operations/"+key+"?operation=queryResearchProvider", token, "", nil).expect(t, 200, &candidates)
+	if len(candidates.Candidates) != 1 || candidates.Candidates[0].Operation != "lookupResearchImage" {
+		t.Fatal("wrong operation filter did not return the recorded candidate")
 	}
 	for i, want := range []string{"not_found", "unavailable", "unavailable"} {
 		key := fmt.Sprintf("finished-frame-%d", i)

@@ -21,7 +21,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -35,6 +34,7 @@ import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.*
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.theme.qimengStatsSeriesColors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -100,7 +100,8 @@ fun ReviewScreen(model: LibraryViewModel, initialRange: String) {
 @Composable
 private fun HourChart(hours: List<ReviewHour>) {
     var selected by rememberSaveable { mutableIntStateOf(0) }
-    val colors = listOf(Color(0xFF4D8DEE), Color(0xFFE8B24E), Color(0xFF52A87C))
+    val series = qimengStatsSeriesColors()
+    val colors = listOf(series.hourImage, series.hourAnimated, series.hourVideo)
     if (hours.isEmpty()) return
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { listOf("0", "6", "12", "18", "24 时").forEach { Text(it, style = MaterialTheme.typography.labelSmall) } }
     Canvas(Modifier.fillMaxWidth().height(144.dp).semantics { contentDescription = "24 小时图片、动图和视频停留构成" }

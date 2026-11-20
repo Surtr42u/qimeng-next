@@ -58,10 +58,12 @@ def run():
                 "env": {
                     "PYTHONPATH": str(workspace / "ai/src"), "QIMENG_API_BASE": origin,
                     "QIMENG_API_TOKEN": reader, "QIMENG_AI_STATE_DIR": str(root / "executor"),
-                    "QIMENG_AI_PERMISSIONS": "read",
+                    "QIMENG_AI_PERMISSIONS": "read,organize",
                 },
             }
-            calls = zip(host_names, [{}, {}, {}], strict=True)
+            refusal = {"id": "synthetic-hermes-refusal", "Idempotency-Key": "synthetic-hermes-key",
+                       "body": {"fingerprint": "synthetic"}}
+            calls = zip(host_names, [{}, {}, refusal], strict=True)
             with provider(script(*calls)) as recorder:
                 profile = build_home(root / "hermes", recorder.base_url, mcp_servers={"qimeng": server},
                                      extra={"tools": {"tool_search": {"enabled": "off"}}})
@@ -76,8 +78,8 @@ def run():
                 if not set(host_names) <= offered:
                     raise RuntimeError(f"Missing Hermes tools: {sorted(set(host_names) - offered)}")
                 results = tool_results(recorder)
-                if len(results) < 3 or instance_id not in results[0] or "items" not in results[1] or "PERMISSION_DENIED" not in results[2]:
-                    raise RuntimeError("Hermes did not deliver the instance, library list and permission refusal to the model")
+                if len(results) < 3 or instance_id not in results[0] or "items" not in results[1] or "scope_denied" not in results[2]:
+                    raise RuntimeError("Hermes did not deliver the instance, library list and server scope refusal to the model")
                 if cli.returncode or FINAL not in cli.stdout:
                     raise RuntimeError(f"Hermes did not complete its tool turn (exit {cli.returncode})")
         finally:

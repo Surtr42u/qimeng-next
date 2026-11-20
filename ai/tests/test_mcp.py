@@ -43,14 +43,15 @@ class MCPProtocolTest(unittest.IsolatedAsyncioTestCase):
                 tools = await client.list_tools()
                 names = {tool.name for tool in tools.tools}
                 self.assertIn("author.query", names)
-                self.assertIn("plan.commit", names)
+                self.assertNotIn("plan.commit", names)
+                self.assertNotIn("upload.prepare", names)
                 self.assertNotIn("createCredential", names)
                 query = await client.call_tool("author.query", {})
                 self.assertFalse(query.is_error)
                 self.assertEqual(query.structured_content["items"][0]["id"], "synthetic-author")
                 denied = await client.call_tool("plan.commit", {})
                 self.assertTrue(denied.is_error)
-                self.assertEqual(denied.structured_content["code"], "PERMISSION_DENIED")
+                self.assertEqual(denied.structured_content["code"], "TOOL_UNKNOWN")
                 self.assertNotIn("commitPlan", transport.calls)
 
     async def test_result_pages_at_minimum_budget_reconstruct_the_original_public_text(self):

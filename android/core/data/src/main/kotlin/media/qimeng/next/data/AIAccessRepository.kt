@@ -28,6 +28,11 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
         require(!policy.canRecycleSources || (policy.canIngest && policy.libraryIds.isNotEmpty())) { "回收来源需要新增媒体权限及明确影库范围" }
         require(!policy.canResearchAssets || (policy.canResearch && policy.libraryIds.isNotEmpty())) { "研究现有作品需要研究权限及明确影库范围" }
         require(policy.assetFields.isEmpty() || policy.libraryIds.isNotEmpty()) { "编辑现有作品需要明确影库范围" }
+        require(!policy.canReplaceAssetMetadata || (policy.libraryIds.isNotEmpty() && policy.assetFields.contains("tags"))) {
+            "替换已有作品标签需要明确影库范围并选择标签字段"
+        }
+        require(!policy.canManageAssetFiles || policy.libraryIds.isNotEmpty()) { "回收站与移动需要明确影库范围" }
+        require(!policy.canMergeAuthors || policy.allAuthors || policy.authorIds.isNotEmpty()) { "合并作者需要明确作者范围" }
         require(policy.researchProviders.isEmpty() || (policy.canResearch && policy.maxResearchCalls > 0)) { "选择外部来源需要研究权限和大于零的调用上限" }
         require(!policy.canLookupImages || canGrantImageLookup(policy.canResearch, policy.maxResearchCalls,
             policy.libraryIds, policy.canIngest, policy.canResearchAssets)) {
@@ -40,6 +45,9 @@ class AIAccessRepository internal constructor(private val settings: SecureSettin
             canRecycleSources = policy.canRecycleSources,
             canResearchAssets = policy.canResearchAssets,
             canLookupImages = policy.canLookupImages,
+            canReplaceAssetMetadata = policy.canReplaceAssetMetadata,
+            canManageAssetFiles = policy.canManageAssetFiles,
+            canMergeAuthors = policy.canMergeAuthors,
             researchProviders = policy.researchProviders.map { name -> ResearchProviderName.entries.first { it.value == name } }.toSet(),
             assetFields = policy.assetFields.map { field -> media.qimeng.next.sdk.model.AssetMaintenanceField.entries.first { it.value == field } }.toSet(),
             maxResearchCalls = policy.maxResearchCalls, maxUpdates = policy.maxUpdates, maxTasksPerDay = policy.maxTasksPerDay,
@@ -63,6 +71,9 @@ private fun AIDelegation.toModel() = AIAccessGrant(
         canIngest = canIngest, canResearch = canResearch, canOrganize = canOrganize, canRecycleSources = canRecycleSources == true,
         canResearchAssets = canResearchAssets == true, assetFields = assetFields.orEmpty().map { it.value },
         canLookupImages = canLookupImages == true,
+        canReplaceAssetMetadata = canReplaceAssetMetadata == true,
+        canManageAssetFiles = canManageAssetFiles == true,
+        canMergeAuthors = canMergeAuthors == true,
         researchProviders = researchProviders.orEmpty().map { it.value },
         maxResearchCalls = maxResearchCalls, maxUpdates = maxUpdates, maxTasksPerDay = maxTasksPerDay,
         validDays = validDays, maxCallsPerTask = maxCallsPerTask ?: 100, taskSeconds = taskSeconds ?: 3600,

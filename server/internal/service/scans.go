@@ -88,9 +88,34 @@ func (s *Service) Scans(ctx context.Context, libraryID, state, cursor string, li
 func (s *Service) StartScan(ctx context.Context, w *Write, libraryID string, revision int64) (ScanJob, error) {
 	return s.startScan(ctx, w, libraryID, revision, "manual", scanTargets{inventory: true})
 }
+
+// delegateLibraryScan lets a standing delegated executor trigger a scan of a
+// library it was granted organize rights for. Derived task credentials cannot:
+// the target library must stay inside the original grant.
+func (s *Service) delegateLibraryScan(ctx context.Context, p model.Principal, libraryID string) error {
+	if p.ParentDelegationID == "" || !p.Has("delegate") || p.BatchID != "" || p.AuthorTaskID != "" || p.AssetTaskID != "" {
+		return Fail(403, "library_scan_denied", "触发扫描须由首次配置授权整理权限的长期凭据发起。")
+	}
+	if e := s.validateDelegation(ctx, p); e != nil {
+		return e
+	}
+	d, e := s.delegation(ctx, p.ParentDelegationID)
+	if e != nil {
+		return e
+	}
+	if !d.CanOrganize || !d.CanIngest {
+		return Fail(403, "library_scan_denied", "首次配置未授权整理所选媒体库。")
+	}
+	if !containsString(d.LibraryIDs, libraryID) {
+		return Fail(403, "library_scope_denied", "首次配置未包含此库。")
+	}
+	return nil
+}
 func (s *Service) startScan(ctx context.Context, w *Write, libraryID string, revision int64, trigger string, targets scanTargets) (ScanJob, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {
-		return ScanJob{}, e
+		if e = s.delegateLibraryScan(ctx, w.Principal, libraryID); e != nil {
+			return ScanJob{}, e
+		}
 	}
 	l, e := s.library(ctx, libraryID)
 	if e != nil {

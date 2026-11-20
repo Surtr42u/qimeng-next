@@ -24,11 +24,14 @@ import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.chart.QimengTrendLineChart
 import media.qimeng.next.ui.chart.QimengTrendSeries
 import media.qimeng.next.ui.icon.BackIcon
+import media.qimeng.next.ui.theme.QimengStatsSeriesColors
+import media.qimeng.next.ui.theme.qimengStatsSeriesColors
 import media.qimeng.next.ui.theme.softDaylightShadow
 
 @Composable
 fun StatsDetailScreen(model: LibraryViewModel, mode: String, range: String) {
     val state by model.analytics.collectAsStateWithLifecycle()
+    val seriesColors = qimengStatsSeriesColors()
     LaunchedEffect(range) { if (state.data?.overview?.range != range) model.loadAnalytics(range) }
     val title = when (mode) { "trends" -> "类型浏览趋势"; "distribution" -> "分布统计"; else -> "常看作者与标签" }
     Column(Modifier.fillMaxSize()) {
@@ -40,8 +43,8 @@ fun StatsDetailScreen(model: LibraryViewModel, mode: String, range: String) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 when (mode) {
                     "trends" -> {
-                        item { DetailTrendCard("类型浏览趋势", typeDimensions, report.trends) }
-                        item { DetailTrendCard("来源浏览趋势", sourceDimensions, report.trends) }
+                        item { DetailTrendCard("类型浏览趋势", typeDimensions(seriesColors), report.trends) }
+                        item { DetailTrendCard("来源浏览趋势", sourceDimensions(seriesColors), report.trends) }
                     }
                     "distribution" -> {
                         val image = o.mediaTypes.first { it.key == "image" }
@@ -125,8 +128,18 @@ internal fun StatInsights(lines: List<String>) {
 }
 
 private data class StatDimension(val key: String, val label: String, val color: Color)
-private val typeDimensions = listOf(StatDimension("image", "图片", Color(0xFF4FC3F7)), StatDimension("video", "视频", Color(0xFFFF8A65)), StatDimension("animated_image", "动图", Color(0xFFAED581)))
-private val sourceDimensions = listOf(StatDimension("regular", "常规", Color(0xFF7986CB)), StatDimension("cos", "COS", Color(0xFFF06292)))
+
+/** 系列色由当前主题色板推导（浅/深自动切换），分类、顺序与文案不变。 */
+private fun typeDimensions(colors: QimengStatsSeriesColors) = listOf(
+    StatDimension("image", "图片", colors.image),
+    StatDimension("video", "视频", colors.video),
+    StatDimension("animated_image", "动图", colors.animated),
+)
+
+private fun sourceDimensions(colors: QimengStatsSeriesColors) = listOf(
+    StatDimension("regular", "常规", colors.regular),
+    StatDimension("cos", "COS", colors.cos),
+)
 
 @Composable
 private fun DetailTrendCard(title: String, dimensions: List<StatDimension>, points: List<TrendPoint>) {

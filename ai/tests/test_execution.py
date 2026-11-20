@@ -165,6 +165,22 @@ class BudgetAndReferences(unittest.TestCase):
                 state.reserve("query", {}, None)
             self.assertEqual(raised.exception.code, "NO_PROGRESS")
 
+    def test_large_call_budget_has_no_artificial_ceiling_and_rejects_invalid_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = State(config(directory, QIMENG_AI_TASK_ID="task-large-budget",
+                                 QIMENG_AI_MAX_CALLS="1000000000"), "instance-a", "contract-a")
+            self.assertEqual(state.status()["maxCalls"], 1_000_000_000)
+            state.renew(10_000_000_000, 1800)
+            self.assertEqual(state.status()["maxCalls"], 10_000_000_000)
+            for calls in (9_999_999_999, 20_000.5, "20000", 2**63):
+                with self.assertRaises(ToolError) as raised:
+                    state.renew(calls, 1800)
+                self.assertEqual(raised.exception.code, "INVALID_BUDGET")
+            for value in ("0", "-1", "1.5", "many", str(2**63), 10_000.5):
+                with self.assertRaises(ToolError) as raised:
+                    config(directory, QIMENG_AI_MAX_CALLS=value)
+                self.assertEqual(raised.exception.code, "CONFIG_INVALID")
+
     def test_default_permission_is_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(config(directory).permissions, {"read"})

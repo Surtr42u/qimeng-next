@@ -50,11 +50,9 @@ fun AppRoot(model: LibraryViewModel) {
     val tab by model.tab.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
-    val statistics = session != null && when {
-        route == "main" -> tab == 2
-        else -> route.startsWith("stats-detail:") || route.startsWith("review:") || route.startsWith("ranking:")
-    }
-    val dark = !statistics && when (preferences.theme) {
+    // 统计页（选项卡 2、统计详情、浏览回顾、榜单）不再固定浅色，统一跟随外观设置。
+    // 旧的固定浅色规则作废：用户要求夜间运行时统计页与其余页面一致。
+    val dark = when (preferences.theme) {
         ThemeChoice.SYSTEM -> isSystemInDarkTheme()
         ThemeChoice.LIGHT -> false
         ThemeChoice.DARK -> true

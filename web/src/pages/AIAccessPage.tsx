@@ -19,7 +19,7 @@ import "../styles/ai-access.css";
 type Delegation = Schema<"AIDelegation">;
 type Policy = Schema<"AIDelegationPolicy">;
 const assetFieldNames: Record<Schema<"AssetMaintenanceField">, string> = {
-  authors: "作者关联", taxonomy: "出处与角色", tags: "标签", rename: "文件名",
+  authors: "作者关联", taxonomy: "出处与角色", tags: "标签", rename: "同目录改名",
 };
 const providerNames: Record<Schema<"ResearchProviderName">, string> = {
   fxtwitter: "FxTwitter（X 公开账号与帖子）", pixiv: "Pixiv", yandere: "yande.re", e621: "e621",
@@ -52,6 +52,9 @@ const initialPolicy: Policy = {
   assetFields: [],
   canOrganize: false,
   canRecycleSources: false,
+  canReplaceAssetMetadata: false,
+  canManageAssetFiles: false,
+  canMergeAuthors: false,
   maxResearchCalls: 0,
   maxUpdates: 1,
   maxTasksPerDay: 10,
@@ -204,7 +207,11 @@ function GrantRow({ item, busy, onRevoke }: {
     (item.canResearch || item.canResearchAssets || item.canLookupImages) && "研究",
     item.candidateBlocks.length > 0 && "资料候选",
     item.allowedFields.length > 0 && "作者维护",
-    !!item.assetFields?.length && "作品维护",
+    !!item.assetFields?.some(field => field !== "rename" && !(field === "tags" && item.canReplaceAssetMetadata)) && "补全作品空字段",
+    !!item.assetFields?.includes("rename") && "同目录改名",
+    !!item.canReplaceAssetMetadata && "替换已有标签",
+    !!item.canManageAssetFiles && "回收站与移动",
+    !!item.canMergeAuthors && "合并作者",
   ].filter(Boolean);
 
   return (
@@ -284,13 +291,18 @@ function DelegationForm({ complete, cancel }: {
       if (!next.canResearch || !next.libraryIds.length) next.canResearchAssets = false;
       if (!canGrantImageLookup(next)) next.canLookupImages = false;
       if (!next.canResearch || next.maxResearchCalls <= 0) next.researchProviders = [];
-      if (!next.libraryIds.length) next.assetFields = [];
+      if (!next.libraryIds.length) {
+        next.assetFields = [];
+        next.canReplaceAssetMetadata = false;
+        next.canManageAssetFiles = false;
+      }
+      if (!(next.assetFields ?? []).includes("tags")) next.canReplaceAssetMetadata = false;
       return next;
     });
   }
 
-  const hasAuthorWrites = policy.allowedFields.length > 0 || policy.candidateBlocks.length > 0;
-  const needsLibrary = (policy.canIngest || policy.canOrganize) && !policy.libraryIds.length;
+  const hasAuthorWrites = policy.allowedFields.length > 0 || policy.candidateBlocks.length > 0 || !!policy.canMergeAuthors;
+  const needsLibrary = (policy.canIngest || policy.canOrganize || !!policy.canReplaceAssetMetadata || !!policy.canManageAssetFiles) && !policy.libraryIds.length;
   const needsAuthor = hasAuthorWrites && !policy.allAuthors && !policy.authorIds.length;
   const missingProvider = policy.researchProviders?.some(name => !choices.some(choice => choice.name === name));
   const blocked = !policy.label.trim() || (step > 0 && (needsLibrary || needsAuthor || !!missingProvider)) || create.isPending;
@@ -337,6 +349,15 @@ function DelegationForm({ complete, cancel }: {
             </div>
           </fieldset>
           <fieldset className="ai-group">
+            <legend>合并重复作者（默认关闭）</legend>
+            <p className="ai-help">合并会把源作者并入目标并删除源作者，无法撤销；每次仍需提供双方当前修订。</p>
+            <div className="ai-choices">
+              <Choice checked={!!policy.canMergeAuthors} onChange={checked => change({ canMergeAuthors: checked })}>
+                合并重复作者
+              </Choice>
+            </div>
+          </fieldset>
+          <fieldset className="ai-group">
             <legend>允许提交的资料候选</legend>
             <p className="ai-help">{policy.canResearch ? "候选由你核对并保存后才会进入已确认资料。" : "开启研究后可选。候选需由你核对并保存。"}</p>
             <div className="ai-choices">
@@ -366,7 +387,9 @@ function DelegationForm({ complete, cancel }: {
             <legend>允许写入的媒体库</legend>
             <p className="ai-help">{policy.canIngest || policy.canOrganize
               ? "接收或整理文件至少需要一个目标库。"
-              : "只需读取可跳过。选择库后可授权维护其中的已有作品。"}</p>
+              : policy.canManageAssetFiles
+                ? "回收站与移动需要一个目标库。"
+                : "只需读取可跳过。选择库后可授权补全其中的已有作品空字段。"}</p>
             <FormReadError error={libraries.error} retry={() => void libraries.refetch()} />
             {libraries.isPending ? <Loading text="正在读取媒体库…" /> : (
               <div className="ai-choices">
@@ -391,12 +414,23 @@ function DelegationForm({ complete, cancel }: {
               {policy.canResearch && <Choice checked={!!policy.canResearchAssets}
                 onChange={checked => change({ canResearchAssets: checked })}>研究已入库作品的媒体预览</Choice>}
               <fieldset className="ai-subgroup">
-                <legend>允许维护所选库中的作品字段</legend>
+                <legend>允许补全作品空字段或同目录改名</legend>
+                <p className="ai-help">只补全空字段，不覆盖或清空你已经填好的内容；改名只限当前目录。</p>
                 <div className="ai-choices">
                   {(Object.keys(assetFieldNames) as Schema<"AssetMaintenanceField">[]).map(field => (
                     <Choice key={field} checked={!!policy.assetFields?.includes(field)}
                       onChange={() => change({ assetFields: toggle(policy.assetFields ?? [], field) })}>{assetFieldNames[field]}</Choice>
                   ))}
+                </div>
+              </fieldset>
+              <fieldset className="ai-subgroup">
+                <legend>替换与文件操作（默认关闭）</legend>
+                <p className="ai-help">整体重写已有标签会覆盖你已经填的内容；移入回收站会从影库隐藏作品，恢复或移动会改变文件路径。替换需先选标签字段。</p>
+                <div className="ai-choices">
+                  <Choice checked={!!policy.canReplaceAssetMetadata} disabled={!policy.assetFields?.includes("tags")}
+                    onChange={checked => change({ canReplaceAssetMetadata: checked })}>替换已有作品标签</Choice>
+                  <Choice checked={!!policy.canManageAssetFiles}
+                    onChange={checked => change({ canManageAssetFiles: checked })}>回收站与移动</Choice>
                 </div>
               </fieldset>
             </>}
@@ -439,10 +473,10 @@ function DelegationForm({ complete, cancel }: {
             <div className="settings-grid ai-budget">
               <NumberField label="授权有效天数" value={policy.validDays} min={1} max={365} onChange={value => change({ validDays: value })} />
               <NumberField label="每日最多任务" value={policy.maxTasksPerDay} min={1} max={200} onChange={value => change({ maxTasksPerDay: value })} />
-              <NumberField label="每任务调用上限" value={policy.maxCallsPerTask} min={10} max={10000} onChange={value => change({ maxCallsPerTask: value })} />
+              <NumberField label="每任务调用上限" value={policy.maxCallsPerTask} min={10} onChange={value => change({ maxCallsPerTask: value })} />
               <NumberField label="每任务最长秒数" value={policy.taskSeconds} min={60} max={86400} onChange={value => change({ taskSeconds: value })} />
               {policy.canResearch && <NumberField label="每任务研究调用上限" value={policy.maxResearchCalls} min={0} max={100} onChange={value => change({ maxResearchCalls: value })} />}
-              {hasAuthorWrites && <NumberField label="每任务资料提交上限" value={policy.maxUpdates} min={1} max={10} onChange={value => change({ maxUpdates: value })} />}
+              {hasAuthorWrites && <NumberField label="每任务资料提交上限" value={policy.maxUpdates} min={1} onChange={value => change({ maxUpdates: value })} />}
             </div>
             <p className="ai-help">预算按影库工具调用计算，接续任务时保留已用额度。模型平台费用由宿主计费。</p>
           </fieldset>
@@ -492,7 +526,7 @@ function Choice({ children, checked, disabled, onChange }: {
 }
 
 function NumberField({ label, value, min, max, onChange }: {
-  label: string; value: number | undefined; min: number; max: number; onChange: (value: number) => void;
+  label: string; value: number | undefined; min: number; max?: number; onChange: (value: number) => void;
 }) {
   return (
     <label className="settings-field">
@@ -574,14 +608,25 @@ function PolicySummary({ policy, libraryNames, authorNames }: {
     policy.canOrganize && "智能整理",
     policy.canRecycleSources && "备份核验后可回收来源",
   ].filter(Boolean);
-  const fields = (policy.assetFields ?? []).map(field => assetFieldNames[field]);
+  const assetFields = policy.assetFields ?? [];
+  const fillFields = assetFields
+    .filter(field => field !== "rename" && !(field === "tags" && !!policy.canReplaceAssetMetadata))
+    .map(field => assetFieldNames[field]);
+  const assetActions = [
+    fillFields.length > 0 && "补全空字段：" + fillFields.join("、"),
+    !!policy.canReplaceAssetMetadata && "整体替换已有标签",
+    assetFields.includes("rename") && "同目录改名",
+  ].filter(Boolean).join("；");
 
   return (
     <dl className="ai-facts">
       <div><dt>读取</dt><dd>全库资料</dd></div>
       <div><dt>入库与整理</dt><dd>{intake.join("、") || "未授权"}</dd></div>
       <div><dt>授权媒体库</dt><dd>{scopedNames(policy.libraryIds, libraryNames)}</dd></div>
-      <div><dt>已有作品</dt><dd>{policy.canResearchAssets ? "可研究所选库的媒体预览" : "未授权研究媒体预览"} · {fields.join("、") || "未授权修改作品字段"}</dd></div>
+      <div><dt>已有作品</dt><dd>{policy.canResearchAssets ? "可研究所选库的媒体预览" : "未授权研究媒体预览"}</dd></div>
+      <div><dt>作品补全与改名</dt><dd>{assetActions || "未授权"}</dd></div>
+      <div><dt>回收站与移动</dt><dd>{policy.canManageAssetFiles ? "允许移入回收站、恢复或同库移动" : "未授权"}</dd></div>
+      <div><dt>合并作者</dt><dd>{policy.canMergeAuthors ? "允许合并所选作者，删除源作者且不可撤销" : "未授权"}</dd></div>
       <div><dt>研究</dt><dd>{policy.canResearch ? "允许，每任务最多 " + policy.maxResearchCalls + " 次" : "未授权"}</dd></div>
       {(policy.canResearch || !!policy.researchProviders?.length) && (
         <div><dt>允许发送文字查询的公开来源</dt><dd>{policy.researchProviders?.map(name => providerNames[name]).join("、") || "未授权"}</dd></div>

@@ -3,6 +3,7 @@ package media.qimeng.next.test
 import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -16,6 +17,7 @@ import media.qimeng.next.model.Asset
 import media.qimeng.next.model.TabBarMaterial
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.testsupport.captureCloudScreenshot
+import media.qimeng.next.ui.theme.QimengBrandColors
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -101,6 +103,9 @@ class StatisticsAndHomeTest {
         runBlocking { graph.media.login(endpoint, token) }
         compose.onNodeWithText("重试").performClick()
 
+        // 统计页跟随外观设置：整条用例在深色主题下运行，像素断言取当前主题的色板值。
+        val theme = graph.settings.preferences.value.theme
+        assertEquals(ThemeChoice.DARK, theme)
         val windows = listOf(Window("7d", "7天", 52, 8), Window("30d", "30天", 53, 17), Window("all", "全部", 54, 28))
         for ((index, window) in windows.withIndex()) {
             if (index != 0) compose.onNodeWithText(window.label).performClick()
@@ -122,8 +127,11 @@ class StatisticsAndHomeTest {
             assertMetric("总文件数", "53")
             assertMetric("总占用空间", "${report.overview.inventory.bytes}B")
             assertMetric("平均浏览次数", "1")
-            assertOverviewColorsAndGeometry(window.range)
+            assertOverviewColorsAndGeometry(window.range, theme)
         }
+
+        // 旧规则下统计页被固定成浅色；现在它必须和其余页面一起响应浅/深切换。
+        assertStatisticsFollowTheme(graph)
 
         openStatisticsCard(model, "分类型趋势 ›", "stats-detail:trends:all")
         awaitText("类型浏览趋势 · 全部")
@@ -135,7 +143,7 @@ class StatisticsAndHomeTest {
             compose.onNode(chart).assertIsDisplayed()
         }
         chartList.performScrollToIndex(0)
-        captureLightPage("stats-source-trends.png", "类型浏览趋势 · 全部")
+        captureThemedPage("stats-source-trends.png", "类型浏览趋势 · 全部", theme)
         compose.onNodeWithContentDescription("返回").performClick()
 
         openStatisticsCard(model, "分布统计", "stats-detail:distribution:all")
@@ -143,14 +151,14 @@ class StatisticsAndHomeTest {
         assertMetric("常规 / COS", "51 / 2")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("来源分布对比"))
         compose.onNodeWithText("来源分布对比").assertIsDisplayed()
-        captureLightPage("stats-partition-distribution.png", "分布统计")
+        captureThemedPage("stats-partition-distribution.png", "分布统计", theme)
         compose.onNodeWithContentDescription("返回").performClick()
 
         openStatisticsCard(model, "常看作者与标签", "stats-detail:interests:all")
         awaitText("常看作者与标签 · 全部")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("常看标签"))
         compose.onNodeWithText("合成标签").assertIsDisplayed()
-        captureLightPage("stats-interests.png", "常看作者与标签 · 全部")
+        captureThemedPage("stats-interests.png", "常看作者与标签 · 全部", theme)
         assertTagSearch(model, graph)
         compose.onNodeWithContentDescription("返回").performClick()
 
@@ -165,12 +173,14 @@ class StatisticsAndHomeTest {
             assertEquals(window.seconds, review.hours.sumOf { it.seconds })
             compose.onNodeWithContentDescription("24 小时图片、动图和视频停留构成").assertIsDisplayed()
         }
-        captureLightPage("stats-browsing-review.png", "浏览回顾")
+        captureThemedPage("stats-browsing-review.png", "浏览回顾", theme)
         compose.onNodeWithContentDescription("返回").performClick()
         compose.onNodeWithTag("navigation:home").performClick()
         assertEquals(ThemeChoice.DARK, graph.settings.preferences.value.theme)
+        // 统计页不再单独固定浅色，返回首页后两处共用同一个深色底色。
+        val (homeBackground, _) = expectedPageAndSurface(theme)
         compose.waitUntil(10_000) {
-            captureCloudScreenshot("stats-return-to-dark-home.png") { screen -> screen.getPixel(4, 32) == Color.rgb(20, 20, 20) }
+            captureCloudScreenshot("home-after-statistics.png") { screen -> screen.getPixel(4, 32) == homeBackground }
         }
         assertOrdinaryRouteHeadingFollowsTheme(model, graph)
         assertManualSearch(model)
@@ -329,25 +339,73 @@ class StatisticsAndHomeTest {
         compose.onNode(hasText(value) and hasAnySibling(hasText(label)), useUnmergedTree = true).assertIsDisplayed()
     }
 
-    private fun assertOverviewColorsAndGeometry(range: String) {
+    /** 当前主题的页面底色与卡片面；统计页此前写死浅色，现在只能命中主题对应值。 */
+    private fun expectedPageAndSurface(theme: ThemeChoice): Pair<Int, Int> = when (theme) {
+        ThemeChoice.DARK -> QimengBrandColors.BgDark.toArgb() to QimengBrandColors.SurfaceDark.toArgb()
+        ThemeChoice.LIGHT -> QimengBrandColors.BgLight.toArgb() to QimengBrandColors.SurfaceLight.toArgb()
+        ThemeChoice.SYSTEM -> error("统计像素断言需要显式的浅色或深色主题，当前为跟随系统")
+    }
+
+    private fun assertOverviewColorsAndGeometry(range: String, theme: ThemeChoice) {
         val labels = listOf("总浏览次数", "总播放次数", "总浏览时长", "总文件数", "总占用空间", "平均浏览次数")
         val bounds = labels.map { compose.onNodeWithText(it, useUnmergedTree = true).fetchSemanticsNode().boundsInWindow }
         val rows = bounds.chunked(3)
         assertTrue(rows[0].maxOf { it.bottom } < rows[1].minOf { it.top })
         rows.forEach { row -> assertTrue(row.zipWithNext().all { (left, right) -> left.right < right.left }) }
+        val (page, surface) = expectedPageAndSurface(theme)
         val first = bounds.first()
         compose.waitUntil(10_000) {
             captureCloudScreenshot("stats-overview-$range.png") { screen ->
-                screen.getPixel(4, first.center.y.toInt()) == Color.rgb(241, 242, 244) &&
-                    screen.getPixel(first.center.x.toInt(), first.bottom.toInt() + 3) == Color.WHITE
+                screen.getPixel(4, first.center.y.toInt()) == page &&
+                    screen.getPixel(first.center.x.toInt(), first.bottom.toInt() + 3) == surface
             }
         }
     }
 
-    private fun captureLightPage(name: String, label: String) {
+    /**
+     * 统计主页此前被固定在浅色。现在它跟随外观设置：同一页面切到浅色再切回深色，
+     * 页面底色和卡片面都必须命中该主题的色板，标题在最亮/最深笔画上仍可读。
+     * 切回深色后与用例基线一致，后续截图继续按深色采样。
+     */
+    private fun assertStatisticsFollowTheme(graph: DataGraph) {
+        val settings = graph.settings
+        val baseline = settings.preferences.value
+        val first = compose.onNodeWithText("总浏览次数", useUnmergedTree = true).fetchSemanticsNode().boundsInWindow
+        // onNodeWithText 默认全等匹配，不需要额外参数。
+        val heading = compose.onNodeWithText("数据统计").assertIsDisplayed().fetchSemanticsNode().boundsInWindow
+        val (windowWidth, windowHeight) = compose.runOnIdle {
+            compose.activity.window.decorView.let { it.width to it.height }
+        }
+        val pageX = 4
+        val pageY = first.center.y.toInt()
+        val cardX = first.center.x.toInt()
+        val cardY = first.bottom.toInt() + 3
+        try {
+            // 深色放最后，循环结束时已回到用例要验证的基线主题。
+            for (theme in listOf(ThemeChoice.LIGHT, ThemeChoice.DARK)) {
+                val (page, surface) = expectedPageAndSurface(theme)
+                settings.savePreferences(baseline.copy(theme = theme))
+                compose.waitUntil(10_000) {
+                    captureCloudScreenshot("statistics-theme-${theme.name.lowercase()}.png") { screen ->
+                        screen.getPixel(pageX, pageY) == page &&
+                            screen.getPixel(cardX, cardY) == surface &&
+                            screen.headingContrastOk(heading, theme == ThemeChoice.DARK, windowWidth, windowHeight)
+                    }
+                }
+            }
+        } finally {
+            settings.savePreferences(baseline)
+        }
+        compose.waitForIdle()
+        assertEquals(baseline.theme, settings.preferences.value.theme)
+    }
+
+    /** 统计详情与浏览回顾共用应用主题，页面左侧取样点应等于当前主题的页面底色。 */
+    private fun captureThemedPage(name: String, label: String, theme: ThemeChoice) {
+        val (page, _) = expectedPageAndSurface(theme)
         val y = compose.onNodeWithText(label).fetchSemanticsNode().boundsInWindow.center.y.toInt()
         compose.waitUntil(10_000) {
-            captureCloudScreenshot(name) { screen -> screen.getPixel(4, y) == Color.rgb(241, 242, 244) }
+            captureCloudScreenshot(name) { screen -> screen.getPixel(4, y) == page }
         }
     }
 

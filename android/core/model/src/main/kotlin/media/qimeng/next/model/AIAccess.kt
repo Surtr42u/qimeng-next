@@ -24,6 +24,9 @@ data class AIAccessPolicy(
     val assetFields: List<String> = emptyList(),
     val researchProviders: List<String> = emptyList(),
     val canLookupImages: Boolean = false,
+    val canReplaceAssetMetadata: Boolean = false,
+    val canManageAssetFiles: Boolean = false,
+    val canMergeAuthors: Boolean = false,
 )
 
 fun canGrantImageLookup(

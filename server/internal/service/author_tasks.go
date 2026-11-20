@@ -110,7 +110,7 @@ func (s *Service) prepareAuthorTask(ctx context.Context, id string, in AuthorTas
 	if in.ExpiresInSeconds == 0 {
 		in.ExpiresInSeconds = 3600
 	}
-	if in.MaxUpdates < 1 || in.MaxUpdates > 10 || in.ExpiresInSeconds < 60 || in.ExpiresInSeconds > 86400 {
+	if in.MaxUpdates < 1 || in.ExpiresInSeconds < 60 || in.ExpiresInSeconds > 86400 {
 		return result, Fail(400, "invalid_budget", "维护次数或有效期超出允许范围。")
 	}
 	now := time.Now().UTC()

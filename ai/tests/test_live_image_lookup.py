@@ -173,8 +173,10 @@ class ImageLookupStdio(CloudGoFixture, unittest.IsolatedAsyncioTestCase):
             context = await self.call(client, "research.context", task)
             self.assertTrue(context["imageLookupEnabled"] and context["imageLookupAllowed"])
             self.assertEqual(context["remainingResearchCalls"], 1)
-            await self.denied(client, "platform.artifact.read", {**task, "artifactRef": frame["artifactRef"]},
-                              "MEDIA_TRANSFER_NOT_AUTHORIZED")
+            # Media cannot reach the model without the explicit executor switch,
+            # so the artifact reader is not offered at all.
+            listed = {tool.name for tool in (await client.list_tools()).tools}
+            self.assertNotIn("platform.artifact.read", listed)
             budget = (await self.call(client, "platform.budget", task))["server"]["calls"]
             await self.denied(client, "research.image.search", {**args, "body": {**args["body"], "frameSha256": "0" * 64}},
                               "research_frame_mismatch")

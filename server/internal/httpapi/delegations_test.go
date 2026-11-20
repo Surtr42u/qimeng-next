@@ -88,6 +88,53 @@ func TestDelegationScopesLeaseRotationAndDurableBudget(t *testing.T) {
 	request("POST", "/ai/delegated-tasks", "revoked-delegation-task", grant.Credential.Token, input, 401)
 }
 
+func TestDelegationCallBudgetAcceptsLargeValuesButNotBelowMinimum(t *testing.T) {
+	f := setup(t)
+	policy := service.DelegationPolicy{Label: "Synthetic unbounded calls", LibraryIDs: []string{f.library}, AuthorIDs: []string{}, AllowedFields: []string{}, CandidateBlocks: []string{}, CanIngest: true, CanResearch: true, CanOrganize: true, MaxResearchCalls: 2, MaxUpdates: 1, MaxTasksPerDay: 2, ValidDays: 7, MaxCallsPerTask: 1000000000, TaskSeconds: 3600}
+	var grant service.DelegationCreated
+	decode(t, f.json("POST", "/ai/delegations", "", policy, 201), &grant)
+	if grant.Delegation.MaxCallsPerTask != 1000000000 {
+		t.Fatalf("large call grant was clamped: %d", grant.Delegation.MaxCallsPerTask)
+	}
+	secret := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32)))
+	body, e := json.Marshal(map[string]any{"kind": "intake", "label": "Synthetic large call budget", "libraryId": f.library, "mode": "ordinary", "credentialSecret": secret})
+	if e != nil {
+		t.Fatal(e)
+	}
+	response := f.request("POST", "/ai/delegated-tasks", "unbounded-calls-task", grant.Credential.Token, body, nil)
+	if response.Code != 201 {
+		t.Fatalf("task start: %d %s", response.Code, response.Body.String())
+	}
+	var task service.DelegatedTask
+	decode(t, response, &task)
+	var budget service.DelegatedBudget
+	decode(t, f.json("GET", "/ai/delegated-tasks/"+task.TaskID+"/budget", "", nil, 200), &budget)
+	if budget.MaxCalls != 1000000000 {
+		t.Fatalf("task call budget was clamped: %d", budget.MaxCalls)
+	}
+	renewed := service.DelegatedBudgetUpdate{MaxCalls: 2000000000, ExpiresInSeconds: 86400}
+	decode(t, f.json("PUT", "/ai/delegated-tasks/"+task.TaskID+"/budget", "unbounded-calls-renew", renewed, 200), &budget)
+	if budget.MaxCalls != 2000000000 {
+		t.Fatalf("renewed call budget was clamped: %d", budget.MaxCalls)
+	}
+	policy.MaxCallsPerTask = 9
+	f.json("POST", "/ai/delegations", "", policy, 400)
+}
+
+func TestDelegationUpdateCeilingAcceptsLargeValuesButNotNonPositive(t *testing.T) {
+	f := setup(t)
+	policy := service.DelegationPolicy{Label: "Synthetic unbounded updates", LibraryIDs: []string{f.library}, AuthorIDs: []string{}, AllowedFields: []string{}, CandidateBlocks: []string{}, CanIngest: true, CanResearch: true, CanOrganize: true, MaxResearchCalls: 2, MaxUpdates: 1000000, MaxTasksPerDay: 2, ValidDays: 7, MaxCallsPerTask: 10, TaskSeconds: 3600}
+	var grant service.DelegationCreated
+	decode(t, f.json("POST", "/ai/delegations", "", policy, 201), &grant)
+	if grant.Delegation.MaxUpdates != 1000000 {
+		t.Fatalf("large update grant was clamped: %d", grant.Delegation.MaxUpdates)
+	}
+	policy.MaxUpdates = 0
+	f.json("POST", "/ai/delegations", "", policy, 400)
+	policy.MaxUpdates = -1
+	f.json("POST", "/ai/delegations", "", policy, 400)
+}
+
 func TestSourceRecyclingRequiresSeparateLibraryBoundOptIn(t *testing.T) {
 	f := setup(t)
 	policy := service.DelegationPolicy{Label: "Synthetic source recycling", LibraryIDs: []string{f.library}, AuthorIDs: []string{}, AllowedFields: []string{}, CandidateBlocks: []string{}, CanRecycleSources: true, MaxUpdates: 1, MaxTasksPerDay: 1, ValidDays: 1}

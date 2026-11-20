@@ -134,7 +134,7 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 `/stats/top-interests`专门给原Android混合Top3卡提供作者/标签结果，Go按views降序、同分作者在前、再按稳定身份升序选出最多三项。多作者/标签各自完整计数，客户端只展示与跳转，不自行拼接截断榜单。
 
-创建、文件动作、上传完成和 AI 提交使用稳定 `Idempotency-Key`（8–128 字符）。同凭据、同操作、同键且输入不变回放原响应；输入改变返回冲突。业务数据与回执同事务保存。`GET /operations/{key}` 只读取当前凭据的回执；键用于多个操作时加 `operation`。`not_recorded` 不证明文件副作用从未开始，应使用原输入与原键重试或读取上传/资产状态。
+创建、文件动作、上传完成和 AI 提交使用稳定 `Idempotency-Key`（8–128 字符）。同凭据、同操作、同键且输入不变回放原响应；输入改变返回冲突。业务数据与回执同事务保存。`GET /operations/{key}` 只读取当前凭据的回执；键用于多个操作时加 `operation`。若 `operation` 与记录不符，返回 `operation_mismatch` 及该键实际记录的 `candidates`，不再误报 `not_recorded`。`not_recorded` 不证明文件副作用从未开始，应使用原输入与原键重试或读取上传/资产状态。
 
 普通元数据使用 `expectedRevision`。标签集合写入使用 `Asset.tagsRevision`，空数组是明确清空。作者编辑集合为 `authorIds`，可以附带 `expectedAuthorsRevision`。Go 保留 COS 固定目录作者，并在关联真实作者时解除未知占位。
 
@@ -202,7 +202,9 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 已索引作品使用 `POST /ai/delegated-tasks` 的 `kind=asset`，请求指定作品 ID、当前修订与内容版本。任务可申请长期授权列出的 `assetFields`，管理员单独选择是否提供研究预览。每个任务只覆盖一个作品。可在 `/asset-tasks/{id}` 回读任务，在 `/materials` 读取当前内容版本的帧，在 `/evidence` 分页查看已采用的来源。研究缓存有同一套大小、时限和版本校验，命名使用普通客户端的 Go 规则。
 
-调用 `PATCH /asset-tasks/{id}/metadata` 时，显式字段分别附出处和观察。来源和角色通过现有词表 ID 解析。Go 检查作品版本、库是否仍可用、长期授权、任务写入预算与人工保护记录。作品改名另走 `POST /asset-tasks/{id}/rename`，在同一发布意图中保存任务进度、幂等回执与实际目录项。
+调用 `PATCH /asset-tasks/{id}/metadata` 时，显式字段分别附出处和观察。来源和角色通过现有词表 ID 解析。Go 检查作品版本、库是否仍可用、长期授权、任务写入预算与人工保护记录。作品改名另走 `POST /asset-tasks/{id}/rename`，在同一发布意图中保存任务进度、幂等回执与实际目录项。整体替换标签使用 `PUT /asset-tasks/{id}/tags`：默认只允许补空标签，`canReplaceAssetMetadata` 才允许覆盖已填或人工编辑过的标签；仍须任务选择 `tags` 字段并附本次证据，空数组不能借该接口清空。
+
+已有作品的回收站、恢复与移动使用 `POST /asset-tasks/{id}/trash|restore|move`。首次授权须开启 `canManageAssetFiles`，每个任务还须显式 `manageFiles=true`；移动只在任务所属库内改相对路径，恢复沿用影库的原路径与同名规避规则，存在未完成的批次保护记录时拒绝移入回收站。`canMergeAuthors` 缺省关闭，只允许长期凭据把授权范围内的常规作者合并到目标并删除源作者，两端修订逐次校验且不可撤销。`canOrganize` 还允许长期凭据对所选库触发 `POST /libraries/{id}/scans`（须同时具备 `canIngest`）；派生任务凭据不能触发扫描或合并。
 
 浏览器两代资料目录以 `GET /backups/change-state` 返回的实例身份与 `businessRevision` 判断是否有新业务内容。版本为十进制字符串，创建快照、导出和下载可反复执行。备份记录中的同名版本读取自该份快照，保存成功时应记录此值，避免覆盖快照之后发生的更改。`GET /backups/{id}/author-documents` 从该快照一次导出 UTF-8 的《作者资料.md》，包括作者、简介原文/译文、来源、核实状态与关联作品，供维护目录直接保存。
 

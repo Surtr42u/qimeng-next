@@ -15,6 +15,14 @@ def present_batch_actions(runtime, context, tools):
     def page_inputs(state):
         return [row["id"] for row in context["inputs"] if row["state"] == state]
 
+    def required_local(name, scope):
+        local = {scope}
+        if name in {"intake.register", "upload.file", "source.recycle"}:
+            local.add("local.read")
+        if name == "source.recycle":
+            local.add("local.recycle")
+        return local
+
     session = None
     if hints:
         try:
@@ -34,17 +42,30 @@ def present_batch_actions(runtime, context, tools):
         name = runtime.contract["operations"].get(hint, {}).get("tool") or hint
         tool = visible.get(name)
         if tool is None:
+            # A tool hidden by this executor's permissions or configuration is
+            # still a concrete answer, not an unknown operation. Do not call it.
+            definition = runtime.tool_definition(name)
+            if definition is not None:
+                missing = sorted(required_local(name, definition["scope"]) - runtime.config.permissions)
+                if missing:
+                    wait("permission_required", tool=name, missingLocalScopes=missing,
+                         missingServerScopes=[], requiresBatchBinding=False)
+                    continue
+                if name in {"intake.register", "upload.file"} and not runtime.config.storages:
+                    wait("original_sender_selection", inputIds=page_inputs("pending"))
+                    continue
+                if name == "source.recycle" and not runtime.config.recycle_storages:
+                    wait("source_recycle_not_configured")
+                    continue
+                if name in {"backup.protect", "backup.protection.retry"} and runtime._capability("backupTargets") is False:
+                    wait("backup_target_missing")
+                    continue
             wait("unavailable_tool", operation=hint)
             continue
         if session is None:
             continue
         scope = tool["scope"]
-        local = {scope}
-        if name in {"intake.register", "upload.file", "source.recycle"}:
-            local.add("local.read")
-        if name == "source.recycle":
-            local.add("local.recycle")
-        missing = sorted(local - runtime.config.permissions)
+        missing = sorted(required_local(name, scope) - runtime.config.permissions)
         scopes = session["scopes"]
         allowed = "admin" in scopes or scope in scopes
         bound = "admin" in scopes or scope == "read" or session.get("batchId") == context["batch"]["id"]

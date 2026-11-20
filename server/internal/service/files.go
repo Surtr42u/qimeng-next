@@ -430,13 +430,15 @@ func (s *Service) commitFile(ctx context.Context, q store.Querier, j *fileIntent
 			return e
 		}
 	}
-	if j.Kind == "move" {
+	if j.Kind == "move" || j.Kind == "trash" || j.Kind == "restore" {
 		if j.MaintenanceTask != nil {
 			if e := saveAssetMaintenance(ctx, q, *j.MaintenanceTask); e != nil {
 				return e
 			}
-		} else if e := protectHumanField(ctx, q, j.After.ID, "rename"); e != nil {
-			return e
+		} else if j.Kind == "move" {
+			if e := protectHumanField(ctx, q, j.After.ID, "rename"); e != nil {
+				return e
+			}
 		}
 	}
 	if j.Kind != "purge" {
@@ -725,12 +727,33 @@ func (s *Service) Trash(ctx context.Context, w *Write, id string, rev int64) (mo
 	if a.Trashed {
 		return a, nil
 	}
+	q, e := w.Q()
+	if e != nil {
+		return a, e
+	}
+	if e = s.ensureAssetNotUnderProtection(ctx, q, a.ID); e != nil {
+		return a, e
+	}
 	old := a
 	a.Trashed = true
 	a.StorageLayoutVersion = 2
 	a.Revision++
 	a.UpdatedAt = time.Now().UTC()
 	return s.runFile(ctx, w, fileIntent{ID: w.ID("file"), Kind: "trash", Source: assetPath(old), Target: assetPath(a), Before: &old, After: a})
+}
+
+// ensureAssetNotUnderProtection keeps a pending independent backup report valid:
+// the app and AI paths both refuse to move its exact input into the trash.
+func (s *Service) ensureAssetNotUnderProtection(ctx context.Context, q store.Querier, assetID string) error {
+	var active bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_protections p, json_each(json_extract(p.data,'$.items')) i
+ WHERE p.state IN ('queued','running') AND json_extract(i.value,'$.assetId')=?)`, assetID).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return Fail(409, "asset_protection_pending", "该作品的独立备份核验尚未完成，暂不能移入回收站。")
+	}
+	return nil
 }
 func (s *Service) Restore(ctx context.Context, w *Write, id string, rev int64) (model.Asset, error) {
 	if e := Authorize(w.Principal, "admin", ""); e != nil {

@@ -88,6 +88,34 @@ func (a *API) RenameAssetForTask(w http.ResponseWriter, r *http.Request, id gene
 	})
 }
 
+func (a *API) ReplaceAssetTaskTags(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ReplaceAssetTaskTagsParams) {
+	write[service.AssetTaskTagsUpdate](a, w, r, true, func(r *http.Request, w *service.Write, in service.AssetTaskTagsUpdate) (any, int, error) {
+		v, e := a.s.ReplaceAssetTaskTags(r.Context(), w, id, in)
+		return v, 200, e
+	})
+}
+
+func (a *API) TrashAssetForTask(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.TrashAssetForTaskParams) {
+	write[service.AssetTaskFileUpdate](a, w, r, true, func(r *http.Request, w *service.Write, in service.AssetTaskFileUpdate) (any, int, error) {
+		v, e := a.s.TrashAssetForTask(r.Context(), w, id, in)
+		return v, 200, e
+	})
+}
+
+func (a *API) RestoreAssetForTask(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.RestoreAssetForTaskParams) {
+	write[service.AssetTaskFileUpdate](a, w, r, true, func(r *http.Request, w *service.Write, in service.AssetTaskFileUpdate) (any, int, error) {
+		v, e := a.s.RestoreAssetForTask(r.Context(), w, id, in)
+		return v, 200, e
+	})
+}
+
+func (a *API) MoveAssetForTask(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.MoveAssetForTaskParams) {
+	write[service.AssetTaskFileUpdate](a, w, r, true, func(r *http.Request, w *service.Write, in service.AssetTaskFileUpdate) (any, int, error) {
+		v, e := a.s.MoveAssetForTask(r.Context(), w, id, in.RelativePath, in.ExpectedRevision)
+		return v, 200, e
+	})
+}
+
 func (a *API) GetUploadResearchMaterials(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.GetUploadResearchMaterialsParams) {
 	a.readJSON(w, r, func(r *http.Request) (any, error) {
 		return a.s.UploadResearchMaterials(r.Context(), principal(r), id, r.URL.Query().Get("expectedHash"))
