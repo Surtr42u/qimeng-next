@@ -120,7 +120,7 @@ Next 每轮分 17 页读取签名，累计中位 25.50 ms，安装版一次装�
 
 每轮八次移动的不可变版本 UPSERT 均返回零行。八次合计中位 0.657 ms（范围 0.634–0.676，MAD 0.012）。预设门槛要求能定位可消除的同一项工作，至少四对同向，中位额外耗时超过 10 ms 且大于两倍配对 MAD。发布阶段的总差额包含不同的身份与持久化工作，这次可单独量出的零行语句低于门槛。二十个库均回读 2,052 份原件并保留原有 ID，Next 另核对所有内容版本，独立移动用例回读了人工标签和收藏。本场只覆盖热缓存小 PNG，历史慢轮缺少阶段时间戳，手机和 NAS 待实机测量。
 
-可用 `gh workflow run scan-comparison.yml --ref codex/scan-sparse-timing-study` 复跑。工件含每轮 GET、嵌套调用的单调时间戳、配对差值、二进制摘要和身份回读。[固定版本工作流](https://github.com/Surtr42u/qimeng-next/blob/ab1fc3f52a1b633c1a4a45d4c8a0a40d63b351e4/.github/workflows/scan-comparison.yml) · [原始工件](https://github.com/Surtr42u/qimeng-next/actions/runs/44484716169/artifacts/14510870764)
+可用 `gh workflow run scan-comparison.yml --ref codex/tooling-consolidation` 复跑。工件含每轮 GET、嵌套调用的单调时间戳、配对差值、二进制摘要和身份回读。[固定版本工作流](https://github.com/Surtr42u/qimeng-next/blob/ab1fc3f52a1b633c1a4a45d4c8a0a40d63b351e4/.github/workflows/scan-comparison.yml) · [原始工件](https://github.com/Surtr42u/qimeng-next/actions/runs/44484716169/artifacts/14510870764)
 
 #### 内容版本分表与早期测量
 
