@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -51,15 +52,21 @@ fun BackdropGlassPanel(
         GlassSurface(shape = shape, modifier = modifier, content = content)
         return
     }
-    Box(
-        modifier = modifier.drawBackdrop(
+    val surface: DrawScope.() -> Unit = remember(scrim, glass) { { capsuleSurface(scrim, glass) } }
+    // drawBackdrop 每次调用都会新建 ShapeProvider，元素按引用比较永不相等；只有把整条修饰链
+    // 按参数记住、复用同一元素实例，头部玻璃重组（首页翻页/切列）时才不会让背板绘制节点反复失效。
+    val drawModifier = remember(backdrop.backdrop, shape, surface) {
+        Modifier.drawBackdrop(
             backdrop = backdrop.backdrop,
             shape = { shape },
-            effects = capsuleEffects(),
-            highlight = { null },
-            shadow = { Shadow(alpha = 0f) },
-            onDrawSurface = { capsuleSurface(scrim, glass) },
-        ),
+            effects = CapsuleEffects,
+            highlight = NoHighlight,
+            shadow = NoShadow,
+            onDrawSurface = surface,
+        )
+    }
+    Box(
+        modifier = modifier.then(drawModifier),
         content = content,
     )
 }
@@ -96,10 +103,14 @@ fun BackdropGlassIconButton(
     }
 }
 
-private fun capsuleEffects(): BackdropEffectScope.() -> Unit = {
+private val CapsuleEffects: BackdropEffectScope.() -> Unit = {
     vibrancy()
     blur(CAPSULE_BLUR_RADIUS.toPx())
 }
+
+private val NoHighlight = { null }
+
+private val NoShadow = { Shadow(alpha = 0f) }
 
 private fun DrawScope.capsuleSurface(scrim: Color, glass: GlassColors) {
     drawRect(scrim)

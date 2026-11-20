@@ -34,20 +34,28 @@ internal fun PrefetchGalleryViewport(
     }
     LaunchedEffect(lifecycleOwner, grid, tiles, columns, transportRevision) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // 只观察轻量的窗口下标 + 滚动标志：原实现在 snapshotFlow 里逐帧构造 Asset 列表，
+            // 每帧都要做一次深比较；这里由 snapshotFlow 自己按值去重，滚动中转场不会反复重建列表。
             snapshotFlow {
                 val items = grid.layoutInfo.visibleItemsInfo
-                val before = items.firstOrNull()?.index ?: return@snapshotFlow emptyList()
-                val after = items.last().index + 1
-                adjacentThumbnails(tiles, before, after, columns * 2)
-            }.collectLatest { nearby ->
-                if (nearby.isNotEmpty()) {
-                    delay(120)
-                    model.prefetchNearbyThumbnails(nearby)
-                }
+                VisibleWindow(
+                    first = items.firstOrNull()?.index ?: -1,
+                    last = items.lastOrNull()?.index ?: -1,
+                    scrolling = grid.isScrollInProgress,
+                )
+            }.collectLatest { window ->
+                // 滚动中不预取：预取下载/解码会和可见项的加载抢带宽与 CPU，先保证跟手度。
+                if (window.scrolling || window.first < 0) return@collectLatest
+                delay(120)
+                val nearby = adjacentThumbnails(tiles, window.first, window.last + 1, columns * 2)
+                if (nearby.isNotEmpty()) model.prefetchNearbyThumbnails(nearby)
             }
         }
     }
 }
+
+/** 可见窗口的最小快照：只在首尾下标或滚动标志变化时重新触发预取。 */
+private data class VisibleWindow(val first: Int, val last: Int, val scrolling: Boolean)
 
 private fun adjacentThumbnails(tiles: List<Asset?>, before: Int, after: Int, limit: Int): List<Asset> {
     val start = before.coerceAtMost(tiles.size)

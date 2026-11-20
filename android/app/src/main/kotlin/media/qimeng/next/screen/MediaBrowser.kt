@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -26,13 +27,16 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -46,9 +50,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import media.qimeng.next.AlbumBatchViewModel
+import media.qimeng.next.AlbumSelectionState
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.AssetQuery
+import media.qimeng.next.model.Session
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.TabScrollController
@@ -63,6 +69,16 @@ import media.qimeng.next.ui.theme.QimengShapes
 import media.qimeng.next.ui.theme.softDaylightShadow
 import kotlinx.coroutines.launch
 
+/** 首页顶部固定文案：提到文件级常量，滚动/翻页重组时不再重复分配列表。 */
+private val HOME_TABS = listOf("推荐", "COS", "排行榜")
+
+private val HOME_PERIODS = listOf("day" to "日", "week" to "周", "month" to "月", "year" to "年")
+
+/** 网格 item 的 key/contentType 提到文件级：分页/加载重组时不再重建这两个 lambda。 */
+private val ASSET_KEY: (Asset) -> Any = { it.id }
+
+private val ASSET_CONTENT_TYPE: (Asset) -> Any? = { "asset" }
+
 @Composable
 fun HomeScreen(model: LibraryViewModel) {
     var period by rememberSaveable { mutableStateOf("day") }
@@ -74,25 +90,23 @@ fun HomeScreen(model: LibraryViewModel) {
     val regular = rememberBrowserControls("home:0", columns = 2)
     val cos = rememberBrowserControls("home:1", "cos", columns = 2)
     val rank = rememberBrowserControls("home:2", columns = 2)
-    val controls = listOf(regular, cos, rank)
-    val mode = pager.targetPage
-    val current = controls[mode]
+    val controls = remember(regular, cos, rank) { listOf(regular, cos, rank) }
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
+    // 固定回调只在依赖变化时重建，避免每次重组都让 HomeTopRow 失去跳过资格。
+    val openSearch = remember(model) { { model.navigate("search") } }
+    val openFilter = remember(cos) { { cos.showFilters.value = true } }
+    // 翻页手势只经这一条 lambda 触发，胶囊栏重组不受影响。
+    val selectPage: (Int) -> Unit = remember(scope, pager) { { page -> scope.launch { pager.scrollToPage(page) } } }
     Column(Modifier.fillMaxSize()) {
-        HomeTopRow(current.columns.intValue, homeBackdrop, { model.navigate("search") }, { cos.showFilters.value = true }) {
-            val next = if (current.columns.intValue == 2) 1 else 2
-            controls.forEach { it.columns.intValue = next }
-        }
-        QimengChipRow(listOf("推荐", "COS", "排行榜").mapIndexed { index, label -> QimengPill(label, mode == index) },
-            onPillClick = { page -> scope.launch {
-                pager.scrollToPage(page)
-            } }, pillModifier = Modifier.softDaylightShadow(QimengShapes.pill), modifier = Modifier.padding(horizontal = 16.dp))
-        if (mode == 2) {
-            Spacer(Modifier.height(4.dp))
-            val periods = listOf("day" to "日", "week" to "周", "month" to "月", "year" to "年")
-            QimengChipRow(periods.map { QimengPill(it.second, period == it.first) }, { period = periods[it].first }, modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        HorizontalPager(pager, modifier = Modifier.weight(1f).then(if (homeBackdrop != null) Modifier.qimengBackdropSource(homeBackdrop) else Modifier), key = { "home:$it" }) { page ->
+        HomeTopRow(controls, pager, homeBackdrop, openSearch, openFilter)
+        HomeChips(period, pager, selectPage, onPeriodChange = { period = it })
+        // 首页顶栏玻璃位于 pager 上方，其采样窗与 pager 区域不重叠（BackdropGlassPanel 只在本节点
+        // 边界内采样），因此这层 backdrop 从未画出任何像素，只是每帧把整个网格再录一遍。
+        // 去掉录制后像素不变，滚动时少了一次全网格离屏拷贝。
+        HorizontalPager(pager, modifier = Modifier.weight(1f), key = { "home:$it" }) { page ->
+            // targetPage 在 pager 内容里读取：翻页只重组已组合的页面，不再带上整个首页。
+            val active = pager.targetPage
+            val current = controls[active]
             if (capabilities == null) QimengSkeletonGrid(current.columns.intValue, current.columns.intValue * QIMENG_SKELETON_GRID_ROWS)
             else if ((page != 2 && capabilities?.recommendations == false) || (page == 2 && capabilities?.rankings == false)) {
                 ContentCard(Modifier.padding(16.dp)) {
@@ -103,21 +117,44 @@ fun HomeScreen(model: LibraryViewModel) {
                 MediaBrowser(model, "home:$page", kind = if (page == 1) "cos" else "regular", bottomDock = true,
                     source = if (page == 2) "rankings" else "recommendations", seed = seeds.getOrElse(page) { 1L }, period = period,
                     onRefresh = if (page != 2) ({ seeds = seeds.mapIndexed { index, value -> if (index == page) kotlin.random.Random.nextLong(1, Long.MAX_VALUE) else value } }) else null,
-                    controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == mode })
+                    controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == active })
             }
         }
     }
     BrowserFilterSheet(cos)
 }
 
+/** 首页胶囊栏：只在这一条栏里读 targetPage，翻页时不再重组整页。 */
+@Composable
+private fun HomeChips(period: String, pager: PagerState, onSelectPage: (Int) -> Unit, onPeriodChange: (String) -> Unit) {
+    val mode = pager.targetPage
+    // 胶囊列表只在选中项变化时重建，无关重组不再让两条胶囊栏重新组合。
+    val homePills = remember(mode) { HOME_TABS.mapIndexed { index, label -> QimengPill(label, mode == index) } }
+    val periodPills = remember(period) { HOME_PERIODS.map { QimengPill(it.second, period == it.first) } }
+    QimengChipRow(homePills, onPillClick = onSelectPage,
+        pillModifier = Modifier.softDaylightShadow(QimengShapes.pill), modifier = Modifier.padding(horizontal = 16.dp))
+    if (mode == 2) {
+        Spacer(Modifier.height(4.dp))
+        QimengChipRow(periodPills, { onPeriodChange(HOME_PERIODS[it].first) }, modifier = Modifier.padding(horizontal = 16.dp))
+    }
+}
+
 @Composable
 private fun HomeTopRow(
-    columns: Int,
+    controls: List<BrowserControls>,
+    pager: PagerState,
     backdrop: QimengBackdropState?,
     onOpenSearch: () -> Unit,
     onOpenFilter: () -> Unit,
-    onToggleColumns: () -> Unit,
 ) {
+    // 列数跟随当前页；targetPage 的读取收在顶栏内，翻页只重组这一行。
+    val current = controls[pager.targetPage]
+    val toggleColumns = remember(current, controls) {
+        {
+            val next = if (current.columns.intValue == 2) 1 else 2
+            controls.forEach { it.columns.intValue = next }
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -177,9 +214,9 @@ private fun HomeTopRow(
                 modifier = Modifier.padding(start = 10.dp, end = 6.dp).softDaylightShadow(QimengShapes.pill),
             )
             BackdropGlassIconButton(
-                icon = if (columns == 1) Grid1Icon else gridIconFor(columns),
+                icon = if (current.columns.intValue == 1) Grid1Icon else gridIconFor(current.columns.intValue),
                 contentDescription = "列数",
-                onClick = onToggleColumns,
+                onClick = toggleColumns,
                 modifier = Modifier.softDaylightShadow(QimengShapes.pill),
                 backdrop = backdrop,
                 tint = MaterialTheme.colorScheme.primary,
@@ -193,9 +230,9 @@ private fun HomeTopRow(
                 modifier = Modifier.padding(start = 10.dp, end = 6.dp).softDaylightShadow(QimengShapes.pill),
             )
             GlassIconButton(
-                icon = if (columns == 1) Grid1Icon else gridIconFor(columns),
+                icon = if (current.columns.intValue == 1) Grid1Icon else gridIconFor(current.columns.intValue),
                 contentDescription = "列数",
-                onClick = onToggleColumns,
+                onClick = toggleColumns,
                 modifier = Modifier.softDaylightShadow(QimengShapes.pill),
                 tint = MaterialTheme.colorScheme.primary,
             )
@@ -233,12 +270,22 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                  controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true,
                  pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false,
                  authorKind: String? = null, leading: (@Composable () -> Unit)? = null, scrollTab: Int? = null) {
-    val state by model.assets(key).collectAsStateWithLifecycle()
+    // P4：组合期只做只读查询。缺失的列表由 effect 登记，避免在组合中创建/淘汰 ViewModel 的列表缓存
+    // （淘汰会连带取消正在显示的列表的分页任务）。
+    var listFlow by remember(key) { mutableStateOf(model.assets(key)) }
+    LaunchedEffect(key) {
+        val resolved = model.openAssets(key)
+        if (listFlow !== resolved) listFlow = resolved
+    }
+    val listState = listFlow.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
     val publication by model.lastPublication.collectAsStateWithLifecycle()
     val batch = if (key == "albums") viewModel<AlbumBatchViewModel>() else null
-    val selection = batch?.selection?.collectAsStateWithLifecycle()?.value
-    val selecting = selection?.selecting == true
+    // 选中集只在条目/选择栏内部读取；这里只派生窄状态，勾选一项不再重组浏览区与全部可见卡片。
+    val selectionState: State<AlbumSelectionState?> =
+        if (batch != null) batch.selection.collectAsStateWithLifecycle() else remember { mutableStateOf<AlbumSelectionState?>(null) }
+    val selecting by remember(selectionState) { derivedStateOf { selectionState.value?.selecting == true } }
+    val sheetOpen by remember(selectionState) { derivedStateOf { selectionState.value?.sheetOpen == true } }
     val sharedColumns = key in setOf("albums", "favorites", "history")
     val committedColumns = if (sharedColumns) model.albumColumns.collectAsStateWithLifecycle().value else controls.columns.intValue
     var pinchColumns by remember(key) { mutableStateOf<Int?>(null) }
@@ -249,12 +296,26 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     val grid = rememberLazyGridState()
     LaunchedEffect(scrollTab, grid) { if (scrollTab != null) TabScrollController.events.collect { if (it == scrollTab) grid.scrollToItem(0) } }
-    val scope = rememberCoroutineScope()
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
         sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId,
         history = true.takeIf { source == "history" })).let {
         if (favorite == true) it.copy(sort = "favorited", order = "desc") else it
     }
+    // ListState 每页/每次加载都会换新对象：逐字段派生后，没变的读取不再让浏览区（及其可见卡片）重组。
+    val queryLoaded by remember(listState, query) { derivedStateOf { listState.value.loadedQuery == query } }
+    val entries by remember(listState, query) {
+        derivedStateOf {
+            val value = listState.value
+            if (value.loadedQuery == query) value.items else emptyList()
+        }
+    }
+    val listLoading by remember(listState) { derivedStateOf { listState.value.loading } }
+    val listLoaded by remember(listState) { derivedStateOf { listState.value.loaded } }
+    val listError by remember(listState) { derivedStateOf { listState.value.error } }
+    val listCursor by remember(listState) { derivedStateOf { listState.value.cursor } }
+    val totalMatched by remember(listState) { derivedStateOf { listState.value.totalMatched } }
+    val dateCounts by remember(listState) { derivedStateOf { listState.value.dateCounts } }
+    val unknownDateCount by remember(listState) { derivedStateOf { listState.value.unknownDateCount } }
     val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
     LaunchedEffect(key, session, query, group, publication) {
@@ -267,13 +328,13 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         val layout = grid.layoutInfo
         layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 8
     } }
-    LaunchedEffect(nearEnd, state.cursor, query) {
-        if (nearEnd && state.error == null) model.browse(key, query, next = true)
+    LaunchedEffect(nearEnd, listCursor, query) {
+        if (nearEnd && listError == null) model.browse(key, query, next = true)
     }
-    val entries = if (state.loadedQuery == query) state.items else emptyList()
-    if (batch != null && selection != null) {
-        BackHandler(enabled = selecting && !selection.sheetOpen, onBack = batch::exit)
-        if (selection.sheetOpen) AlbumBatchSheet(batch, selection, model::refreshAfterAlbumBatch)
+    // 选择模式/面板开关只派生窄布尔值，勾选单项不会触发浏览区重组。
+    if (batch != null) {
+        BackHandler(enabled = selecting && !sheetOpen, onBack = batch::exit)
+        if (sheetOpen) AlbumBatchSheetHost(batch, selectionState, model::refreshAfterAlbumBatch)
     }
     Column(Modifier.fillMaxSize()) {
         var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
@@ -283,11 +344,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             val values by facets.rows.collectAsStateWithLifecycle()
             rows = values
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
-            filters = { AlbumFilters(albumTitle, state.totalMatched.takeIf { state.loadedQuery == query }, controls, values,
+            filters = { AlbumFilters(albumTitle, totalMatched.takeIf { queryLoaded }, controls, values,
                 onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
-                loadFailed = state.error != null, columns = columns, showTitle = !selecting,
+                loadFailed = listError != null, columns = columns, showTitle = !selecting,
                 onToggleColumns = { setColumns(if (columns == 5) 2 else columns + 1) }) }
-            if (batch != null && selection != null && selecting) AlbumSelectionBar(batch, selection, entries)
+            if (batch != null && selecting) AlbumSelectionBarHost(batch, selectionState, entries)
             if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             listOf(null to "综合", "video" to "视频", "animated_image" to "动图", "image" to "图片").forEach { (value, label) ->
@@ -298,31 +359,27 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
         val retry: () -> Unit = {
-            if (state.reloadFromStart) {
-                if (onRefresh != null) onRefresh() else {
-                    scope.launch { grid.scrollToItem(0) }; model.browse(key, query, force = true)
-                }
-            } else model.browse(key, query, next = state.cursor != null && state.loadedQuery == query, force = true)
+            model.browse(key, query, next = listCursor != null && queryLoaded, force = true)
         }
-        if (leading == null) state.error?.let { ErrorNotice(it, retry) }
+        if (leading == null) listError?.let { ErrorNotice(it, retry) }
         val sectionMode = when {
             source == "history" -> "history"
             favorite == true -> "favorite"
             authorKind != null || caption -> "partitions"
             else -> group
         }
-        val sections = remember(entries, sectionMode, rows, state.dateCounts, state.unknownDateCount) {
-            gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), state.dateCounts, state.unknownDateCount)
+        val sections = remember(entries, sectionMode, rows, dateCounts, unknownDateCount) {
+            gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), dateCounts, unknownDateCount)
         }
         if (sharedColumns && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
-        PullToRefreshBox(isRefreshing = state.loading && state.loaded && state.cursor == null,
+        PullToRefreshBox(isRefreshing = listLoading && listLoaded && listCursor == null,
             onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
-            if (leading == null && !state.loaded && state.error == null) {
+            if (leading == null && !listLoaded && listError == null) {
                 QimengSkeletonGrid(columns, columns * QIMENG_SKELETON_GRID_ROWS)
                 return@PullToRefreshBox
             }
-            if (leading == null && state.loaded && entries.isEmpty() && !state.loading && key !in setOf("home:0", "home:1"))
+            if (leading == null && listLoaded && entries.isEmpty() && !listLoading && key !in setOf("home:0", "home:1"))
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (key == "home:2") "暂无数据" else "没有符合条件的媒体") }
             LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
                 contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = when {
@@ -364,26 +421,26 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     }
                 }) {
                 if (leading != null) {
-                    item(key = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading() }
+                    item(key = "author-heading", contentType = "author-heading", span = { GridItemSpan(maxLineSpan) }) { leading() }
                     filters?.let { authorFilters ->
-                        item(key = "author-filters", span = { GridItemSpan(maxLineSpan) }) { Column { authorFilters() } }
+                        item(key = "author-filters", contentType = "author-filters", span = { GridItemSpan(maxLineSpan) }) { Column { authorFilters() } }
                     }
-                    val message = state.error
+                    val message = listError
                     when {
                         message != null -> {
-                            item(key = "author-error", span = { GridItemSpan(maxLineSpan) }) {
+                            item(key = "author-error", contentType = "author-status", span = { GridItemSpan(maxLineSpan) }) {
                                 Box(Modifier.padding(horizontal = QimengDimens.ScreenPaddingHorizontal, vertical = QimengDimens.SpaceM)) {
                                     ErrorNotice(message, retry)
                                 }
                             }
                         }
-                        state.loadedQuery != query -> {
-                            item(key = "author-loading", span = { GridItemSpan(maxLineSpan) }) {
+                        !queryLoaded -> {
+                            item(key = "author-loading", contentType = "author-status", span = { GridItemSpan(maxLineSpan) }) {
                                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp).testTag("author-media-loading"))
                             }
                         }
-                        entries.isEmpty() && !state.loading -> {
-                            item(key = "author-empty", span = { GridItemSpan(maxLineSpan) }) {
+                        entries.isEmpty() && !listLoading -> {
+                            item(key = "author-empty", contentType = "author-status", span = { GridItemSpan(maxLineSpan) }) {
                                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                                     Text("没有符合条件的媒体", style = MaterialTheme.typography.bodyMedium)
                                 }
@@ -392,36 +449,71 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     }
                 }
                 sections.forEach { section ->
-                    section.header?.let { label -> item(key = "group:${section.key}", span = { GridItemSpan(maxLineSpan) }) {
+                    section.header?.let { label -> item(key = "group:${section.key}", contentType = "group-header", span = { GridItemSpan(maxLineSpan) }) {
                         Text(label, Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     } }
-                    items(section.items, key = Asset::id) { asset ->
-                        val selected = if (selecting) selection?.selected?.containsKey(asset.id) else null
+                    items(section.items, key = ASSET_KEY, contentType = ASSET_CONTENT_TYPE) { asset ->
+                        // 选中集只在条目内读取（单次收集在浏览区外），勾选只失效本卡片。
+                        val selectedState = remember(asset.id) { derivedStateOf { selectionState.value?.selected?.containsKey(asset.id) == true } }
+                        val selected = if (selecting) selectedState.value else null
                         MediaTile(asset, caption, selected, onLongClick = if (batch != null && !selecting) ({ batch.select(asset) }) else null) {
                             if (selecting) batch?.select(asset) else model.openAsset(asset.id, key, asset.target, seed = asset)
                         }
                     }
                 }
-                if (key in setOf("home:0", "home:1") && state.loadedQuery == query && entries.isNotEmpty() && state.cursor == null && state.error == null)
-                    item(key = "footer:end", span = { GridItemSpan(maxLineSpan) }) {
+                if (key in setOf("home:0", "home:1") && queryLoaded && entries.isNotEmpty() && listCursor == null && listError == null)
+                    item(key = "footer:end", contentType = "footer", span = { GridItemSpan(maxLineSpan) }) {
                         Text("已到底", Modifier.fillMaxWidth().padding(vertical = QimengDimens.SpaceL), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
             }
         }
-        if (batch != null && selection != null && selecting && selection.selected.isNotEmpty()) {
-            Button(onClick = batch::openSheet, modifier = Modifier.fillMaxWidth().padding(
-                start = 16.dp, end = 16.dp, bottom = TabDockDefaults.bottomClearance(), top = 4.dp,
-            )) { Text("批量设置作者与来源 (${selection.selected.size})") }
-        }
+        if (batch != null && selecting) BatchActionButton(batch, selectionState)
     }
 }
+
+/** 选择栏自己读选中集：勾选只让这一条栏重组，不再带着浏览区整页重组。 */
+@Composable
+private fun AlbumSelectionBarHost(batch: AlbumBatchViewModel, selection: State<AlbumSelectionState?>, loaded: List<Asset>) {
+    val state = selection.value ?: return
+    AlbumSelectionBar(batch, state, loaded)
+}
+
+/** 批量面板同理：只有面板打开时才订阅完整选中集。 */
+@Composable
+private fun AlbumBatchSheetHost(batch: AlbumBatchViewModel, selection: State<AlbumSelectionState?>, onUpdated: (Session) -> Unit) {
+    val state = selection.value ?: return
+    AlbumBatchSheet(batch, state, onUpdated)
+}
+
+/** 底部批量按钮只在自己读已选数量：勾选一项只重组这条按钮，不再重组浏览区。 */
+@Composable
+private fun BatchActionButton(batch: AlbumBatchViewModel, selection: State<AlbumSelectionState?>) {
+    val count = selection.value?.selected?.size ?: 0
+    if (count <= 0) return
+    Button(onClick = batch::openSheet, modifier = Modifier.fillMaxWidth().padding(
+        start = 16.dp, end = 16.dp, bottom = TabDockDefaults.bottomClearance(), top = 4.dp,
+    )) { Text("批量设置作者与来源 ($count)") }
+}
+
+/** 网格缩略图圆角沿用旧版 24px（像素密度换算，不是 dp）。 */
+private const val TILE_CORNER_RADIUS_PX = 24f
+
+/** 视频时长角标样式是常量，提到文件级避免逐项/逐次重组分配 TextStyle + Shadow。 */
+private val TILE_DURATION_STYLE = TextStyle(
+    fontSize = 12.sp,
+    shadow = Shadow(Color.Black.copy(alpha = 0.6f), Offset(0f, 1f), 4f),
+)
+
+private val TILE_DURATION_COLOR = Color.White
 
 @Composable
 private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
     val context = LocalContext.current
-    val radius = with(LocalDensity.current) { 24f.toDp() }
+    val density = LocalDensity.current
+    // 形状按当前密度只算一次：原先每次重组都新建 Dp + RoundedCornerShape。
+    val shape = remember(density) { RoundedCornerShape(with(density) { TILE_CORNER_RADIUS_PX.toDp() }) }
     // Existing AssetCard: 16:9 frame, 5dp outer spacing and a 24px corner; only search adds a caption.
     val animated = asset.mediaType == "animated_image"
     var failed by remember(asset.id, asset.version) { mutableStateOf(false) }
@@ -435,7 +527,6 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, o
             .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:grid-retry-$attempt")
             .build()
     }
-    val shape = RoundedCornerShape(radius)
     val click = if (onLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "选择媒体")
         else Modifier.clickable(onClick = onClick)
     Column {
@@ -451,9 +542,13 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, o
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
                     onError = { failed = true }, onSuccess = { failed = false })
             } else if (animated) {
-                AsyncImage(model = ImageRequest.Builder(context).data(asset.contentUrl)
-                    .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:animated-grid")
-                    .diskCachePolicy(coil3.request.CachePolicy.DISABLED).build(),
+                // 同一资产的动图兜底请求只构建一次，避免每次重组都新建 ImageRequest。
+                val animatedModel = remember(asset, context) {
+                    ImageRequest.Builder(context).data(asset.contentUrl)
+                        .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:animated-grid")
+                        .diskCachePolicy(coil3.request.CachePolicy.DISABLED).build()
+                }
+                AsyncImage(model = animatedModel,
                     imageLoader = LocalMediaImages.current, contentDescription = null,
                     contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
                     onError = { failed = true }, onSuccess = { failed = false })
@@ -463,10 +558,7 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, o
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
             if (isSelected == true) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)))
             if (asset.mediaType == "video") detailDuration(asset.durationMs)?.let { badge ->
-                Text(badge,
-                    Modifier.align(Alignment.BottomEnd).padding(8.dp), color = androidx.compose.ui.graphics.Color.White,
-                    style = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, shadow = androidx.compose.ui.graphics.Shadow(
-                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f), androidx.compose.ui.geometry.Offset(0f, 1f), 4f)))
+                Text(badge, Modifier.align(Alignment.BottomEnd).padding(8.dp), color = TILE_DURATION_COLOR, style = TILE_DURATION_STYLE)
             }
             if (isSelected != null) {
                 val marker = Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp)

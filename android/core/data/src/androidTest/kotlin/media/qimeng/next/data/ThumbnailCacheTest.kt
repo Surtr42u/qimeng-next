@@ -32,6 +32,7 @@ import okhttp3.tls.HeldCertificate
 import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -236,6 +237,29 @@ class ThumbnailCacheTest {
         }
     }
 
+    @Test fun sessionsWithoutEndpointMarkerRouteByCertificateAndAddress() = runBlocking {
+        val fixture = Fixture()
+        val cert = HeldCertificate.Builder().commonName("Synthetic embedded service")
+            .addSubjectAlternativeName("localhost").build()
+        try {
+            // 升级前保存的会话没有 session-endpoint 记录；缓存池只能按固定证书或回环地址判断。
+            // 证书用例故意用非回环主机，只有证书分支能让它落到 LOCAL。
+            val pinned = Session("https://pinned.synthetic.invalid/", "pinned", "Synthetic library")
+            fixture.settings.saveSession(pinned, OWNER, Base64.getEncoder().encodeToString(cert.certificate.encoded))
+            assertNull(fixture.settings.loginEndpointFor(pinned))
+            assertEquals(ThumbnailPool.LOCAL, fixture.repository.usage(ThumbnailPool.LOCAL).selection?.pool)
+            assertNull(fixture.repository.usage(ThumbnailPool.NAS).selection)
+
+            val nas = Session("https://nas.synthetic.invalid/", "nas", "Synthetic library")
+            fixture.settings.saveSession(nas, OWNER)
+            assertNull(fixture.settings.loginEndpointFor(nas))
+            assertEquals(ThumbnailPool.NAS, fixture.repository.usage(ThumbnailPool.NAS).selection?.pool)
+            assertNull(fixture.repository.usage(ThumbnailPool.LOCAL).selection)
+        } finally {
+            fixture.close()
+        }
+    }
+
     @Test fun clearAndSwitchRejectLateWritesAndOnlyAcceptDerivedJpegs() = runBlocking {
         val fixture = Fixture()
         val arrived = CountDownLatch(2)
@@ -419,7 +443,11 @@ class ThumbnailCacheTest {
         private fun loader() = ImageLoader.Builder(context).components { repository.addImageComponents(this) }.build()
 
         fun select(server: MockWebServer, id: String, certificate: String? = null): Session =
-            Session(server.url("/").toString(), id, "Synthetic library").also { settings.saveSession(it, OWNER, certificate) }
+            Session(server.url("/").toString(), id, "Synthetic library").also {
+                // Mirror the real login flows: only the embedded runtime signs in through "local";
+                // an address typed into the NAS screen is recorded as "nas" even on loopback.
+                settings.saveSession(it, OWNER, certificate, loginEndpoint = if (certificate == null) "nas" else "local")
+            }
 
         fun reopen(remove: () -> Unit = {}) {
             loader.shutdown()

@@ -1,6 +1,8 @@
 package media.qimeng.next.test
 
+import android.graphics.Bitmap
 import android.graphics.Color
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -170,7 +172,74 @@ class StatisticsAndHomeTest {
         compose.waitUntil(10_000) {
             captureCloudScreenshot("stats-return-to-dark-home.png") { screen -> screen.getPixel(4, 32) == Color.rgb(20, 20, 20) }
         }
+        assertOrdinaryRouteHeadingFollowsTheme(model, graph)
         assertManualSearch(model)
+    }
+
+    /**
+     * 任务中心是普通路由：既没有 Statistics provider，也没有包裹它的 Surface。
+     * 修好之前这里继承的是 Compose 默认纯黑前景，深色主题下标题黑压深底。
+     * 这里直接按标题语义范围采样亮度，不依赖固定字形位置，也不写死主题色板。
+     */
+    private fun assertOrdinaryRouteHeadingFollowsTheme(model: LibraryViewModel, graph: DataGraph) {
+        val settings = graph.settings
+        val baseline = settings.preferences.value
+        compose.runOnIdle { model.navigate("reports") }
+        try {
+            val bounds = compose.onNodeWithText("任务中心", exact = true).assertIsDisplayed()
+                .fetchSemanticsNode().boundsInWindow
+            // 截图是整块显示，bounds 却是窗口坐标：两者只在窗口铺满显示且原点为 (0,0) 时重合。
+            // 窗口尺寸取一次用于核对，别盒、分屏或多显示时直接失败，而不是静默采到别处像素。
+            val (windowWidth, windowHeight) = compose.runOnIdle {
+                compose.activity.window.decorView.let { it.width to it.height }
+            }
+            for ((theme, dark, name) in listOf(
+                Triple(ThemeChoice.DARK, true, "task-center-heading-dark.png"),
+                Triple(ThemeChoice.LIGHT, false, "task-center-heading-light.png"),
+            )) {
+                settings.savePreferences(baseline.copy(theme = theme))
+                compose.waitUntil(10_000) { captureCloudScreenshot(name) { it.headingContrastOk(bounds, dark, windowWidth, windowHeight) } }
+            }
+        } finally {
+            settings.savePreferences(baseline)
+        }
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.waitForIdle()
+        assertEquals("main", model.route.value)
+    }
+
+    /** 深色主题要求最亮笔画明显高于均值，浅色主题要求最深笔画明显低于均值；只比较相对亮度。 */
+    private fun Bitmap.headingContrastOk(bounds: Rect, dark: Boolean, windowWidth: Int, windowHeight: Int): Boolean {
+        // boundsInWindow 只在整屏截图与窗口同尺寸时才是有效坐标；不等就说明前提不成立，硬失败。
+        check(width == windowWidth && height == windowHeight) {
+            "整屏截图 ${width}x$height 与窗口 ${windowWidth}x$windowHeight 不一致，窗口坐标不能直接用于像素采样"
+        }
+        val left = bounds.left.toInt().coerceAtLeast(0)
+        val right = bounds.right.toInt().coerceAtMost(width - 1)
+        val top = bounds.top.toInt().coerceAtLeast(0)
+        val bottom = bounds.bottom.toInt().coerceAtMost(height - 1)
+        if (right - left < 8 || bottom - top < 8) return false
+        var lightest = 0
+        var darkest = 255
+        var sum = 0L
+        var count = 0
+        var y = top
+        while (y <= bottom) {
+            var x = left
+            while (x <= right) {
+                val pixel = getPixel(x, y)
+                val value = (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
+                lightest = maxOf(lightest, value)
+                darkest = minOf(darkest, value)
+                sum += value
+                count++
+                x += 2
+            }
+            y += 2
+        }
+        if (count == 0) return false
+        val mean = sum.toDouble() / count
+        return if (dark) lightest - mean >= 48 else mean - darkest >= 48
     }
 
     private fun assertTagSearch(model: LibraryViewModel, graph: DataGraph) {

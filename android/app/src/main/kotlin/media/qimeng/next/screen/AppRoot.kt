@@ -80,7 +80,9 @@ fun AppRoot(model: LibraryViewModel) {
         CompositionLocalProvider(
             LocalMediaImages provides imageLoader,
             LocalReducedMotion provides (preferences.reducedMotion || !ValueAnimator.areAnimatorsEnabled()),
-            LocalContentColor provides if (statistics) MaterialTheme.colorScheme.onBackground else LocalContentColor.current,
+            // Content outside a Surface (page headings, plain text) must inherit the active scheme,
+            // not Compose's Color.Black default, or it stays unreadable in dark mode.
+            LocalContentColor provides MaterialTheme.colorScheme.onBackground,
         ) {
             if (session == null) {
                 LoginScreen(model)

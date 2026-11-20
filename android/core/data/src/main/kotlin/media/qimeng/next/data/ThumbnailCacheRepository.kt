@@ -90,9 +90,13 @@ class ThumbnailCacheRepository internal constructor(
     private var capturedConnection: Connection? = null
     @Volatile private var clearedConnection: Connection? = null
     private val prefetchState = MutableStateFlow<ThumbnailPrefetch?>(null)
-    private val diskChanges = MutableStateFlow(0L)
+    private val nasDiskChanges = MutableStateFlow(0L)
+    private val localDiskChanges = MutableStateFlow(0L)
     val prefetch = prefetchState.asStateFlow()
-    val diskRevision = diskChanges.asStateFlow()
+
+    /** Per-pool counters so writes to one pool never force a rescan of the other pool's card. */
+    val nasDiskRevision = nasDiskChanges.asStateFlow()
+    val localDiskRevision = localDiskChanges.asStateFlow()
 
     private data class Connection(val target: Session, val revision: Long, val selection: ThumbnailCacheSelection)
     private data class Round(val connection: Connection, val allowed: Boolean, val cleared: Boolean)
@@ -105,6 +109,10 @@ class ThumbnailCacheRepository internal constructor(
 
     private fun diskFor(pool: ThumbnailPool) = if (pool == ThumbnailPool.LOCAL) local else nas
 
+    private fun noteDiskChange(pool: ThumbnailPool) {
+        if (pool == ThumbnailPool.LOCAL) localDiskChanges.update { it + 1 } else nasDiskChanges.update { it + 1 }
+    }
+
     /** Stable server identity matching the cache namespace: embedded restarts keep their key. */
     private fun serverKey(connection: Connection): String =
         "${connection.selection.pool.name}:${connection.selection.instanceKey}"
@@ -113,9 +121,13 @@ class ThumbnailCacheRepository internal constructor(
         val target = settings.session.value ?: return null
         val revision = settings.transportRevision.value
         capturedConnection?.takeIf { it.revision == revision && it.target == target }?.let { return it }
-        // 内嵌本机服务现在使用回环 HTTP，没有证书可作标记；回环地址仍归入独立的 local 池，
-        // 并沿用稳定的 instanceId 命名空间，升级前后缓存键保持一致。
-        val embedded = settings.certificateFor(target) != null || isLoopback(target.baseUrl)
+        // 内嵌本机服务现在使用回环 HTTP，没有证书可作标记；回环也可能是用户为 NAS 配置的隧道，
+        // 所以以登录入口为准。升级前的会话没有该记录时，仍按证书或回环地址识别，避免旧缓存换池。
+        val embedded = when (settings.loginEndpointFor(target)) {
+            "local" -> true
+            "nas" -> false
+            else -> settings.certificateFor(target) != null || isLoopback(target.baseUrl)
+        }
         val kind = if (embedded) ThumbnailPool.LOCAL else ThumbnailPool.NAS
         val identity = if (embedded) target.instanceId else "${target.baseUrl}\n${target.instanceId}"
         Connection(target, revision, ThumbnailCacheSelection(kind, thumbnailHash(identity))).also { capturedConnection = it }
@@ -159,7 +171,7 @@ class ThumbnailCacheRepository internal constructor(
                 val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = false) {
                     currentConnection() == preview.connection
                 }
-                if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
+                if (result == ThumbnailDiskResult.READY) noteDiskChange(preview.connection.selection.pool)
             }
             requireCurrent(preview.connection)
             payload.bytes to DataSource.NETWORK
@@ -217,16 +229,16 @@ class ThumbnailCacheRepository internal constructor(
                 revisionStore.clear()
             }
         } finally {
-            diskChanges.update { it + 1 }
+            noteDiskChange(selection.pool)
         }
     }
 
-    suspend fun localCoverage(): Pair<ThumbnailCacheSelection, ThumbnailCoverage>? {
-        val connection = currentConnection()?.takeIf { it.selection.pool == ThumbnailPool.LOCAL } ?: return null
+    suspend fun localCoverage(): Pair<ThumbnailCacheSelection, ThumbnailCoverage>? = withContext(Dispatchers.IO) {
+        val connection = currentConnection()?.takeIf { it.selection.pool == ThumbnailPool.LOCAL } ?: return@withContext null
         val progress = provider.api(connection.target).getThumbnailProgress().bodyOrThrow()
         verifyInstance(connection, progress.instanceId)
         requireCurrent(connection)
-        return connection.selection to ThumbnailCoverage(progress.thumbsOnDisk, progress.totalAssets)
+        connection.selection to ThumbnailCoverage(progress.thumbsOnDisk, progress.totalAssets)
     }
 
     /**
@@ -416,7 +428,7 @@ class ThumbnailCacheRepository internal constructor(
                 val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
                     currentConnection() == preview.connection && clearedConnection != preview.connection
                 }
-                if (result == ThumbnailDiskResult.READY) diskChanges.update { it + 1 }
+                if (result == ThumbnailDiskResult.READY) noteDiskChange(preview.connection.selection.pool)
                 result
             }
         }

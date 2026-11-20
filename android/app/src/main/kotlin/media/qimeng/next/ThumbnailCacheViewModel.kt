@@ -30,32 +30,53 @@ internal class ThumbnailCacheViewModel(app: Application) : AndroidViewModel(app)
     private val graph = (app as QimengApplication).graph
     private val repository = graph.thumbnails
     private val page = MutableStateFlow(ThumbnailCachePage())
-    private val usageLock = Mutex()
+    private val nasUsageLock = Mutex()
+    private val localUsageLock = Mutex()
+    private var observedTransport: Long? = null
     val state = page.asStateFlow()
     val prefetch = repository.prefetch
 
     suspend fun observe() = coroutineScope {
-        launch {
-            graph.settings.transportRevision.collectLatest {
-                page.update { it.copy(nas = null, local = null) }
-                var sampledRevision = -1L
-                while (true) {
-                    val revision = repository.diskRevision.value
-                    if (revision != sampledRevision) {
-                        usageLock.withLock { refreshUsage() }
-                        sampledRevision = revision
-                    }
-                    delay(5_000L)
-                }
+        graph.settings.transportRevision.collectLatest { revision ->
+            // Re-entering the screen re-subscribes to the current revision; only a real
+            // connection switch invalidates the numbers already on screen and forces a rescan.
+            if (observedTransport != null && observedTransport != revision) {
+                page.update { it.copy(nas = null, local = null, coverage = null) }
+            }
+            observedTransport = revision
+            coroutineScope {
+                launch { sampleUsage() }
+                launch { sampleCoverage() }
             }
         }
-        graph.settings.transportRevision.collectLatest {
-            page.update { it.copy(coverage = null) }
-            while (true) {
-                val coverage = read { repository.localCoverage() }
-                page.update { it.copy(coverage = coverage) }
-                delay(15_000L)
+    }
+
+    /** Publishes each pool as soon as its own walk ends instead of waiting for both to finish. */
+    private suspend fun sampleUsage() = coroutineScope {
+        var nasSampled = -1L
+        var localSampled = -1L
+        while (true) {
+            val nasRevision = repository.nasDiskRevision.value
+            if (nasRevision != nasSampled) {
+                nasSampled = nasRevision
+                launch { nasUsageLock.withLock { refreshUsage(ThumbnailPool.NAS) } }
             }
+            val localRevision = repository.localDiskRevision.value
+            if (localRevision != localSampled) {
+                localSampled = localRevision
+                launch { localUsageLock.withLock { refreshUsage(ThumbnailPool.LOCAL) } }
+            }
+            delay(5_000L)
+        }
+    }
+
+    /** Polls faster while the embedded server is still generating, so the bar moves with the work. */
+    private suspend fun sampleCoverage() {
+        while (true) {
+            val coverage = read { repository.localCoverage() }
+            if (coverage != null) page.update { it.copy(coverage = coverage) }
+            val generating = coverage != null && coverage.second.covered < coverage.second.total
+            delay(if (generating) 4_000L else 15_000L)
         }
     }
 
@@ -64,9 +85,9 @@ internal class ThumbnailCacheViewModel(app: Application) : AndroidViewModel(app)
         page.update { it.copy(clearing = selection.pool, error = null) }
         viewModelScope.launch {
             try {
-                usageLock.withLock {
+                usageLock(selection.pool).withLock {
                     repository.clear(selection)
-                    refreshUsage()
+                    refreshUsage(selection.pool)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -78,10 +99,16 @@ internal class ThumbnailCacheViewModel(app: Application) : AndroidViewModel(app)
         }
     }
 
-    private suspend fun refreshUsage() {
-        val nas = read { repository.usage(ThumbnailPool.NAS) }
-        val local = read { repository.usage(ThumbnailPool.LOCAL) }
-        page.update { it.copy(nas = nas, local = local) }
+    private fun usageLock(pool: ThumbnailPool) = if (pool == ThumbnailPool.LOCAL) localUsageLock else nasUsageLock
+
+    private suspend fun refreshUsage(pool: ThumbnailPool) {
+        val usage = read { repository.usage(pool) } ?: return
+        page.update { current ->
+            when (pool) {
+                ThumbnailPool.NAS -> current.copy(nas = usage)
+                ThumbnailPool.LOCAL -> current.copy(local = usage)
+            }
+        }
     }
 
     private suspend fun <T> read(block: suspend () -> T): T? = try {

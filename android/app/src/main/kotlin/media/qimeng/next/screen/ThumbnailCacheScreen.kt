@@ -71,10 +71,12 @@ internal fun ThumbnailCacheContent(
         ) {
             QimengPageIntro("按连接端分别管理缓存。清理缩略图缓存不会删除媒体原件。")
             page.error?.let { ErrorNotice(it) }
-            CacheCard(ThumbnailPool.NAS, page.nas, prefetch?.takeIf { it.selection == page.nas?.selection }?.status,
+            // Progress is routed by pool, not by the (slow) usage scan: the prefetch flow and the
+            // server coverage arrive on their own schedule and must show before the counts do.
+            CacheCard(ThumbnailPool.NAS, page.nas, prefetch?.takeIf { it.selection.pool == ThumbnailPool.NAS }?.status,
                 null, page.clearing, { confirming = it })
-            CacheCard(ThumbnailPool.LOCAL, page.local, prefetch?.takeIf { it.selection == page.local?.selection }?.status,
-                page.coverage?.takeIf { it.first == page.local?.selection }?.second, page.clearing, { confirming = it })
+            CacheCard(ThumbnailPool.LOCAL, page.local, prefetch?.takeIf { it.selection.pool == ThumbnailPool.LOCAL }?.status,
+                page.coverage?.second, page.clearing, { confirming = it })
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -101,11 +103,15 @@ private fun CacheCard(
     onAskClear: (ThumbnailCacheSelection) -> Unit,
 ) {
     val title = cacheTitle(pool)
+    // Prefetch progress re-composes this card many times per round; the counters only change
+    // when the usage snapshot does, so their (locale-formatted) text is derived once per scan.
+    val fileCount = remember(usage) { usage?.usage?.let { "${it.files} 个" } ?: "—" }
+    val occupied = remember(usage) { usage?.usage?.let { formatBytes(it.bytes) } ?: "—" }
     QimengSettingsCard {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
-            CacheInfoRow("文件数", usage?.usage?.let { "${it.files} 个" } ?: "—")
-            CacheInfoRow("实际占用", usage?.usage?.let { formatBytes(it.bytes) } ?: "—")
+            CacheInfoRow("文件数", fileCount)
+            CacheInfoRow("实际占用", occupied)
             if (coverage != null && coverage.total > 0) {
                 Text("生成进度", style = MaterialTheme.typography.titleSmall)
                 val progress = coverage.covered.toDouble() / coverage.total

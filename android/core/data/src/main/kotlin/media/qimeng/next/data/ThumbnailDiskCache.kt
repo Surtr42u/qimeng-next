@@ -86,7 +86,12 @@ internal class ThumbnailDiskCache(private val directory: File, maxBytes: Long) {
         return warmState(key, version)
     }
 
-    @Synchronized
+    /**
+     * Best-effort statistics for one instance. Deliberately unsynchronized: a multi-second walk
+     * must not hold the cache monitor and stall live reads/writes (prefetch progress). Coil only
+     * renames committed entries into place, so the walk never reads a partial file; a snapshot
+     * taken during a concurrent store or clear can be stale until the next revision-triggered scan.
+     */
     fun usage(instanceKey: String): ThumbnailUsage {
         var files = 0L
         var bytes = 0L

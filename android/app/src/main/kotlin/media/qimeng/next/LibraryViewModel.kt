@@ -16,7 +16,7 @@ import java.util.UUID
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
-    val unknownDateCount: Long? = null, val reloadFromStart: Boolean = false, val publicationId: String? = null)
+    val unknownDateCount: Long? = null, val publicationId: String? = null)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
 
@@ -100,6 +100,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val tagCursor = mutableTagCursor.asStateFlow()
     private val tagReads = RequestGeneration()
     private val lists = mutableMapOf<String, MutableStateFlow<ListState<Asset>>>()
+    /** 组合期只读入口在 key 尚未登记时返回的共享空状态：不参与写入，也不带任何分页任务。 */
+    private val emptyAssetsState = MutableStateFlow(ListState<Asset>())
     private val queries = mutableMapOf<String, AssetQuery>()
     private val listJobs = mutableMapOf<String, Job>()
     private val listVersions = mutableMapOf<String, RequestGeneration>()
@@ -160,7 +162,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    fun assets(key: String): StateFlow<ListState<Asset>> = assetState(key)
+    /**
+     * 组合期只读查询：只回已有列表流，不创建、不淘汰。缺失时返回共享空流（首帧即骨架），
+     * 由 [openAssets] 在 LaunchedEffect 里登记，避免在组合中改写缓存或淘汰正在显示的列表
+     * （淘汰会连带取消它的分页任务）。
+     */
+    fun assets(key: String): StateFlow<ListState<Asset>> = lists[key] ?: emptyAssetsState
+
+    /** 非组合调用：登记 key 并返回稳定列表流（动态 key 超量时淘汰最旧一条）。 */
+    fun openAssets(key: String): StateFlow<ListState<Asset>> = assetState(key)
     fun saveAlbumColumns(columns: Int) {
         viewModelScope.launch {
             try {
@@ -207,7 +217,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val state = assetState(key)
         val previous = queries[key]
         val publication = lastPublication.value?.takeIf { sameTarget(it.first, session.value) }?.second
-        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query || state.value.reloadFromStart || state.value.publicationId != publication)) return
+        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query || state.value.publicationId != publication)) return
         if (!next && !force && previous == query && state.value.publicationId == publication && (state.value.loaded || state.value.loading)) return
         queries[key] = query
         listJobs[key]?.cancel()
@@ -219,18 +229,28 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         state.value = if (keep) old.copy(loading = true, error = null, publicationId = publication) else ListState(loading = true, publicationId = publication)
         listJobs[key] = viewModelScope.launch {
             try {
-                val page = repository.assets(query, if (next) old.cursor else null)
+                var restarted = false
+                val page = try {
+                    repository.assets(query, if (next) old.cursor else null)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    // 推荐顺序在服务端会短时过期，旧游标随之失效；此时静默从第一页重新加载，
+                    // 不把自动恢复当成需要用户处理的错误。其他失败仍照常呈现。
+                    if (!next || failure !is ApiFailure || failure.code != "recommendation_expired") throw failure
+                    restarted = true
+                    repository.assets(query, null)
+                }
+                val append = next && !restarted
                 if (generation.isCurrent(ticket) && connection == connectionGeneration) {
-                    state.value = ListState(if (next) (old.items + page.items).distinctBy(Asset::id) else page.items,
+                    state.value = ListState(if (append) appendDistinct(old.items, page.items) else page.items,
                         page.nextCursor, loaded = true, totalMatched = page.totalMatched,
-                        dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query,
-                        unknownDateCount = if (next) old.unknownDateCount else page.unknownDateCount, publicationId = publication)
+                        dateCounts = if (append) old.dateCounts else page.dateCounts, loadedQuery = query,
+                        unknownDateCount = if (append) old.unknownDateCount else page.unknownDateCount, publicationId = publication)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (generation.isCurrent(ticket) && connection == connectionGeneration)
-                    state.value = state.value.copy(loading = false, error = explain(failure),
-                        reloadFromStart = next && failure is ApiFailure && failure.code == "recommendation_expired")
+                    state.value = state.value.copy(loading = false, error = explain(failure))
             }
         }
     }
@@ -507,9 +527,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private fun publishAsset(asset: Asset) {
         if (!sameTarget(asset.target, session.value)) return
         if (mutableAsset.value?.let { it.id == asset.id && it.revision <= asset.revision } == true) mutableAsset.value = asset
-        lists.values.forEach { state -> state.value = state.value.copy(items = state.value.items.map {
-            if (it.id == asset.id && it.revision <= asset.revision) asset.copy(rankingScore = it.rankingScore, lastViewedAt = it.lastViewedAt) else it
-        }) }
+        // 收藏/点赞/标签等保存只改一条资产：不含该 id 的列表整张跳过，避免每次保存都复制所有已加载列表。
+        lists.values.forEach { state ->
+            val current = state.value
+            if (current.items.none { it.id == asset.id }) return@forEach
+            var changed = false
+            val items = current.items.map { item ->
+                if (item.id == asset.id && item.revision <= asset.revision) {
+                    changed = true
+                    asset.copy(rankingScore = item.rankingScore, lastViewedAt = item.lastViewedAt)
+                } else item
+            }
+            if (changed) state.value = current.copy(items = items)
+        }
     }
 
     fun loadAuthors(next: Boolean = false) = loadPage(authorState, next) { repository.authors(it) }
@@ -796,6 +826,18 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         job.invokeOnCompletion { activeOperations.remove(job) }
         job.start()
     }
+}
+
+/**
+ * 分页追加：一趟扫描按 id 去重（先出现的保留）。原实现 `old + page` 之后 `distinctBy` 要分配
+ * 两份整表；这里只分配结果表与一个 id 集合，顺序与去重语义不变。
+ */
+private fun appendDistinct(existing: List<Asset>, appended: List<Asset>): List<Asset> {
+    val seen = HashSet<String>(existing.size + appended.size)
+    val merged = ArrayList<Asset>(existing.size + appended.size)
+    for (asset in existing) if (seen.add(asset.id)) merged.add(asset)
+    for (asset in appended) if (seen.add(asset.id)) merged.add(asset)
+    return merged
 }
 
 private fun explain(failure: Exception): String = when (failure) {

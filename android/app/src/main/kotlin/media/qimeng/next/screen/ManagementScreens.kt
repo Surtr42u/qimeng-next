@@ -33,6 +33,7 @@ import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
 import media.qimeng.next.ui.component.*
 import media.qimeng.next.ui.icon.*
+import media.qimeng.next.ui.theme.softDaylightBackground
 import media.qimeng.next.ui.theme.softDaylightShadow
 import media.qimeng.next.ui.theme.isQimengDarkTheme
 
@@ -129,7 +130,9 @@ internal fun InventoryCountCard(title: String, count: Long?, modifier: Modifier 
 
 @Composable
 fun DataManageScreen(model: LibraryViewModel) {
-    Column(Modifier.fillMaxSize()) {
+    // Own the themed background (as the original DataManageScreen did) so the page never
+    // depends on an ambient light window while the rest of the app is dark.
+    Column(Modifier.fillMaxSize().softDaylightBackground()) {
     QimengTopBar("数据管理", onBack = model::back)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         QimengPageIntro("从添加作品到整理和备份，照顾好你的媒体库。")

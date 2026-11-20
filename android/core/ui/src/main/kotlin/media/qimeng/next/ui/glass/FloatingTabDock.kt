@@ -43,6 +43,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -83,9 +85,10 @@ fun FloatingTabDock(
     modifier: Modifier = Modifier,
 ) {
     val capability = resolveBackdropCapabilities()
+    // 效果提到文件常量，下游再按参数记住整条 drawBackdrop 修饰链：坞体重组时复用同一元素实例。
     val dockEffects = when (material) {
-        TabBarMaterial.LIQUID -> liquidEffects(capability == DockGlassCapability.Full)
-        else -> frostedEffects()
+        TabBarMaterial.LIQUID -> if (capability == DockGlassCapability.Full) LiquidFullEffects else LiquidBlurEffects
+        else -> FrostedEffects
     }
     val scrimAlpha = if (material == TabBarMaterial.FROSTED) FROSTED_SCRIM_ALPHA else LIQUID_SCRIM_ALPHA
     val lensPill = (material == TabBarMaterial.LIQUID || material == TabBarMaterial.FROSTED) &&
@@ -221,18 +224,39 @@ private fun DockBody(
     }
 }
 
-private fun liquidEffects(full: Boolean): BackdropEffectScope.() -> Unit = {
+/**
+ * 坞体与透镜丸的绘制参数：效果/shape/表面回调提到文件常量，修饰链按参数 `remember`。
+ *
+ * 库里的 `drawBackdrop` 每次调用都会新建 `ShapeProvider`，元素按引用比较永不相等；只有复用
+ * 同一条修饰链实例，坞体重组（切页/主题/忙碌态）时才不会重估模糊与透镜的绘制缓存。
+ * 效果本身（blur/lens）每帧跟着滚动内容重算是玻璃必须表现的内容，不做滚动门控——门控会
+ * 冻结背板与边缘折射，滚动中肉眼可见。
+ */
+private val DockPillShape: () -> Shape = { QimengShapes.pill }
+
+private val NoHighlight = { null }
+
+private val NoShadow = { Shadow(alpha = 0f) }
+
+private val NoBackdropEffects: BackdropEffectScope.() -> Unit = { }
+
+private val PILL_FALLBACK_SHAPE = RoundedCornerShape(PILL_CORNER_PERCENT)
+
+private val LiquidFullEffects: BackdropEffectScope.() -> Unit = {
     vibrancy()
     blur(LIQUID_BLUR_RADIUS.toPx())
-    if (full) {
-        lens(
-            refractionHeight = LENS_REFRACTION_HEIGHT.toPx(),
-            refractionAmount = LENS_REFRACTION_AMOUNT.toPx(),
-        )
-    }
+    lens(
+        refractionHeight = LENS_REFRACTION_HEIGHT.toPx(),
+        refractionAmount = LENS_REFRACTION_AMOUNT.toPx(),
+    )
 }
 
-private fun frostedEffects(): BackdropEffectScope.() -> Unit = {
+private val LiquidBlurEffects: BackdropEffectScope.() -> Unit = {
+    vibrancy()
+    blur(LIQUID_BLUR_RADIUS.toPx())
+}
+
+private val FrostedEffects: BackdropEffectScope.() -> Unit = {
     blur(FROSTED_BLUR_RADIUS.toPx())
 }
 
@@ -246,27 +270,35 @@ private fun GlassDockBody(
 ) {
     val glass = glassColors()
     val scrimColor = MaterialTheme.colorScheme.surface.copy(alpha = scrimAlpha)
-    Box(
-        modifier = modifier
+    val surface: DrawScope.() -> Unit = remember(scrimColor, glass) {
+        {
+            drawRect(scrimColor)
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(glass.edgeTop, glass.edgeBottom),
+                    startY = 0f,
+                    endY = size.height,
+                ),
+                cornerRadius = CornerRadius(size.height / 2f),
+                style = Stroke(width = DOCK_EDGE_STROKE_WIDTH.toPx()),
+            )
+        }
+    }
+    // drawBackdrop 的 ShapeProvider 每次调用都是新实例，元素永远不相等；把整条修饰链按参数
+    // 记住、复用同一元素实例，才能在坞体重组（切页/主题/忙碌状态变化）时不重估绘制缓存。
+    val backdropModifier = remember(backdrop, effects, surface) {
+        Modifier
             .height(TabDockDefaults.DockHeight)
             .drawBackdrop(
                 backdrop = backdrop,
-                shape = { QimengShapes.pill },
+                shape = DockPillShape,
                 effects = effects,
-                highlight = { null },
-                onDrawSurface = {
-                    drawRect(scrimColor)
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(glass.edgeTop, glass.edgeBottom),
-                            startY = 0f,
-                            endY = size.height,
-                        ),
-                        cornerRadius = CornerRadius(size.height / 2f),
-                        style = Stroke(width = DOCK_EDGE_STROKE_WIDTH.toPx()),
-                    )
-                },
-            ),
+                highlight = NoHighlight,
+                onDrawSurface = surface,
+            )
+    }
+    Box(
+        modifier = modifier.then(backdropModifier),
         content = content,
     )
 }
@@ -355,6 +387,23 @@ private fun DockItemsRow(
     val accentColor = MaterialTheme.colorScheme.primary
     val replicaScrim = MaterialTheme.colorScheme.surface.copy(alpha = scrimAlpha)
     val lensPillSurface = if (isQimengDarkTheme()) LENS_PILL_SURFACE_DARK else LENS_PILL_SURFACE_LIGHT
+    val replicaSurface: DrawScope.() -> Unit = remember(replicaScrim) { { drawRect(replicaScrim) } }
+    val lensSurface: DrawScope.() -> Unit = remember(lensPillSurface) { { drawRect(lensPillSurface) } }
+    // 与坞体同理：整条修饰链记住，复用同一 drawBackdrop 元素实例，避免重组时重估模糊/透镜效果。
+    val pillDrawModifier = remember(lensBackdrop, lensSurface, pillTint) {
+        if (lensBackdrop != null) {
+            Modifier.drawBackdrop(
+                backdrop = lensBackdrop,
+                shape = DockPillShape,
+                effects = NoBackdropEffects,
+                highlight = NoHighlight,
+                shadow = NoShadow,
+                onDrawSurface = lensSurface,
+            )
+        } else {
+            Modifier.background(color = pillTint, shape = PILL_FALLBACK_SHAPE)
+        }
+    }
 
     Box(modifier = Modifier.consumeTaps()) {
         Row(
@@ -376,25 +425,25 @@ private fun DockItemsRow(
         }
 
         if (useLensPill && externalBackdrop != null) {
-            Row(
-                modifier = Modifier
+            val replicaBackdrop = externalBackdrop
+            val replicaModifier = remember(replicaBackdrop, dockEffects, replicaSurface, tabsBackdrop, accentColor) {
+                Modifier
                     .clearAndSetSemantics {}
                     .alpha(0f)
                     .layerBackdrop(tabsBackdrop)
                     .drawBackdrop(
-                        backdrop = externalBackdrop,
-                        shape = { QimengShapes.pill },
+                        backdrop = replicaBackdrop,
+                        shape = DockPillShape,
                         effects = dockEffects,
-                        highlight = { null },
-                        onDrawSurface = {
-                            drawRect(replicaScrim)
-                        },
+                        highlight = NoHighlight,
+                        onDrawSurface = replicaSurface,
                     )
                     .height(TabDockDefaults.DockHeight)
                     .fillMaxWidth()
                     .padding(horizontal = TabDockDefaults.SlotInnerPadding)
-                    .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
-            ) {
+                    .graphicsLayer(colorFilter = ColorFilter.tint(accentColor))
+            }
+            Row(modifier = replicaModifier) {
                 items.forEachIndexed { index, item ->
                     DockNavReplicaItem(
                         item = item,
@@ -422,25 +471,7 @@ private fun DockItemsRow(
                             translationX = center - pillWidthPx / 2f
                         }
                     }
-                    .then(
-                        if (useLensPill && lensBackdrop != null) {
-                            Modifier.drawBackdrop(
-                                backdrop = lensBackdrop,
-                                shape = { QimengShapes.pill },
-                                effects = { },
-                                highlight = { null },
-                                shadow = { Shadow(alpha = 0f) },
-                                onDrawSurface = {
-                                    drawRect(lensPillSurface)
-                                },
-                            )
-                        } else {
-                            Modifier.background(
-                                color = pillTint,
-                                shape = RoundedCornerShape(PILL_CORNER_PERCENT),
-                            )
-                        },
-                    ),
+                    .then(pillDrawModifier),
             )
         }
     }

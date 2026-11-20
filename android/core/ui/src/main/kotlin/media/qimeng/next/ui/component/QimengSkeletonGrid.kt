@@ -7,7 +7,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,9 +18,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import media.qimeng.next.ui.theme.QimengDimens
@@ -49,7 +50,9 @@ fun QimengSkeletonGrid(
     modifier: Modifier = Modifier,
 ) {
     val pulse = rememberInfiniteTransition(label = "qimengSkeletonPulse")
-    val pulseAlpha by pulse.animateFloat(
+    // 不在这里读取动画值：脉动 alpha 以 State 下传，只在叶子的绘制阶段读取，
+    // 整张骨架网与 Lazy 内容不再随每一帧抖动重组。
+    val pulseAlpha = pulse.animateFloat(
         initialValue = SKELETON_MIN_ALPHA,
         targetValue = SKELETON_MAX_ALPHA,
         animationSpec = infiniteRepeatable(
@@ -58,9 +61,10 @@ fun QimengSkeletonGrid(
         ),
         label = "qimengSkeletonPulseAlpha",
     )
-    val cellShape = RoundedCornerShape(
-        with(LocalDensity.current) { SKELETON_CARD_CORNER_RADIUS_PX.toDp() },
-    )
+    val density = LocalDensity.current
+    val cellShape = remember(density) {
+        RoundedCornerShape(with(density) { SKELETON_CARD_CORNER_RADIUS_PX.toDp() })
+    }
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -71,20 +75,22 @@ fun QimengSkeletonGrid(
         verticalArrangement = Arrangement.spacedBy(SKELETON_GRID_INTER_ITEM_SPACING),
         contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM),
     ) {
-        items(itemCount) {
+        items(itemCount, contentType = { "skeleton" }) {
             SkeletonCell(shape = cellShape, pulseAlpha = pulseAlpha)
         }
     }
 }
 
 @Composable
-private fun SkeletonCell(shape: RoundedCornerShape, pulseAlpha: Float) {
+private fun SkeletonCell(shape: RoundedCornerShape, pulseAlpha: State<Float>) {
+    val color = MaterialTheme.colorScheme.surfaceVariant
     Box(
         modifier = Modifier
             .padding(SKELETON_CARD_OUTER_PADDING)
             .fillMaxWidth()
             .aspectRatio(16f / 9f)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = pulseAlpha)),
+            // 只在绘制阶段读 State：动画每帧仅重绘，不触发重组。
+            .drawBehind { drawRect(color = color, alpha = pulseAlpha.value) },
     )
 }

@@ -76,7 +76,15 @@ class SecureSettings(context: Context) {
         val recent = if (rememberAddress) (listOf(session.baseUrl) + mutableRecentServers.value).distinct().take(5) else mutableRecentServers.value
         val editor = storage.edit().putString("session", gson.toJson(session)).putString("token", encrypted)
             .putString("certificate", certificateDerBase64).putString("recent-servers", gson.toJson(recent))
-        loginEndpoint?.let { editor.putString("default-endpoint", it) }
+        if (loginEndpoint != null) {
+            editor.putString("default-endpoint", loginEndpoint)
+            // Session-scoped copy: the preference above can change later from settings, but cache
+            // pools must keep treating this session the way its login actually reached the server.
+            editor.putString("session-endpoint", loginEndpoint)
+        } else if (mutableSession.value?.let { sameTarget(it, session) } != true) {
+            // A silent relogin keeps the marker only for the same server; otherwise it would lie.
+            editor.remove("session-endpoint")
+        }
         check(editor.commit()) { "无法保存登录凭据" }
         mutableSession.value = session
         mutableTransportRevision.value++
@@ -89,6 +97,13 @@ class SecureSettings(context: Context) {
     fun certificateFor(target: Session): String? {
         check(sameTarget(target, mutableSession.value)) { "连接已变更" }
         return storage.getString("certificate", null)
+    }
+
+    /** Endpoint used to sign into the selected session ("local"/"nas"), or null for older sessions. */
+    @Synchronized
+    fun loginEndpointFor(target: Session): String? {
+        check(sameTarget(target, mutableSession.value)) { "连接已变更" }
+        return storage.getString("session-endpoint", null)?.takeIf { it in setOf("local", "nas") }
     }
 
     fun savePreferences(preferences: Preferences) {
@@ -147,7 +162,7 @@ class SecureSettings(context: Context) {
 
     @Synchronized
     fun clearSession() {
-        check(storage.edit().remove("session").remove("token").remove("certificate").commit()) { "无法清除登录凭据" }
+        check(storage.edit().remove("session").remove("token").remove("certificate").remove("session-endpoint").commit()) { "无法清除登录凭据" }
         mutableSession.value = null
         mutableTransportRevision.value++
     }
