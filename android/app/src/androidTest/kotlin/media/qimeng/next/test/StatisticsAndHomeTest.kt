@@ -270,7 +270,7 @@ class StatisticsAndHomeTest {
         val baseline = settings.preferences.value
         compose.runOnIdle { model.navigate("reports") }
         try {
-            val title = compose.onNodeWithText("任务中心", exact = true)
+            val title = compose.onNodeWithText("任务中心", substring = false)
             val bounds = title.assertIsDisplayed().fetchSemanticsNode().boundsInWindow
             // This ordinary route has no Statistics provider or enclosing Surface.
             // Sample the rendered title within its semantics bounds, not a fixed glyph position.
