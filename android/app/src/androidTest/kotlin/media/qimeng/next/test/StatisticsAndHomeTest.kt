@@ -5,11 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.view.KeyEvent
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
@@ -417,16 +419,45 @@ class StatisticsAndHomeTest {
         val selected = compose.onNodeWithText(window.label).assertIsSelected().fetchSemanticsNode().boundsInWindow
         val otherLabel = if (window.label == "7天") "30天" else "7天"
         val other = compose.onNodeWithText(otherLabel).assertIsNotSelected().fetchSemanticsNode().boundsInWindow
-        compose.waitUntil(10_000) {
-            captureCloudScreenshot("stats-overview-$evidence-" + window.range + ".png") { screen ->
-                screen.getPixel(4, first.center.y.toInt()) == palette.background &&
-                    screen.getPixel(first.center.x.toInt(), first.bottom.toInt() + 3) == palette.card &&
-                    screen.pillAt(selected) == palette.accent && screen.pillAt(other) == palette.track &&
-                    screen.hasColor(selected, palette.selectedText) && screen.hasColor(other, palette.secondaryText) &&
-                    screen.hasColor(chart, palette.accent) && screen.hasColor(chart, palette.plotFill) &&
-                    screen.hasColor(dates, palette.secondaryText)
+        val selectedInk = assertSegmentTextColor(window.label, palette.selectedText)
+        val otherInk = assertSegmentTextColor(otherLabel, palette.secondaryText)
+        var missing = emptyList<String>()
+        try {
+            compose.waitUntil(10_000) {
+                captureCloudScreenshot("stats-overview-$evidence-" + window.range + ".png") { screen ->
+                    missing = buildList {
+                        if (screen.getPixel(4, first.center.y.toInt()) != palette.background) add("page background")
+                        if (screen.getPixel(first.center.x.toInt(), first.bottom.toInt() + 3) != palette.card) add("metric card")
+                        if (screen.pillAt(selected) != palette.accent) add("selected capsule")
+                        if (screen.pillAt(other) != palette.track) add("unselected track")
+                        if (!screen.hasGlyphInk(selectedInk, palette.selectedText, palette.accent)) add("selected label")
+                        if (!screen.hasGlyphInk(otherInk, palette.secondaryText, palette.track)) add("unselected label")
+                        if (!screen.hasColor(chart, palette.accent)) add("chart line")
+                        if (!screen.hasColor(chart, palette.plotFill)) add("chart fill")
+                        if (!screen.hasColor(dates, palette.secondaryText)) add("date axis")
+                    }
+                    missing.isEmpty()
+                }
             }
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Statistics $evidence/${window.range} did not render: ${missing.joinToString()}", timeout)
         }
+    }
+
+    private fun assertSegmentTextColor(label: String, expected: Int): Rect {
+        val text = compose.onNodeWithText(label, substring = false, useUnmergedTree = true).assertIsDisplayed()
+        var actual: Int? = null
+        try {
+            compose.waitUntil(10_000) {
+                val layouts = mutableListOf<TextLayoutResult>()
+                text.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                actual = layouts.singleOrNull()?.layoutInput?.style?.color?.toArgb()
+                actual == expected
+            }
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Resolved text color for $label: expected $expected, got $actual", timeout)
+        }
+        return text.fetchSemanticsNode().boundsInWindow
     }
 
     private fun captureStatisticsPage(name: String, label: String, palette: StatsPalette = StatsPalette.DARK) {
@@ -440,7 +471,15 @@ class StatisticsAndHomeTest {
     private fun Bitmap.pillAt(bounds: Rect) =
         getPixel((bounds.left + bounds.width / 5).toInt(), bounds.center.y.toInt())
 
-    private fun Bitmap.hasColor(bounds: Rect, color: Int): Boolean {
+    private fun Bitmap.hasGlyphInk(bounds: Rect, ink: Int, backdrop: Int): Boolean {
+        // Tiny antialiased glyphs need not contain eight nearly solid pixels. Check for ink
+        // within one eighth of the ink/background color distance, inside the actual text bounds.
+        val tolerance = maxOf(abs(Color.red(ink) - Color.red(backdrop)),
+            abs(Color.green(ink) - Color.green(backdrop)), abs(Color.blue(ink) - Color.blue(backdrop))) / 8
+        return hasColor(bounds, ink, tolerance)
+    }
+
+    private fun Bitmap.hasColor(bounds: Rect, color: Int, tolerance: Int = 7): Boolean {
         val left = bounds.left.toInt().coerceIn(0, width)
         val right = bounds.right.toInt().coerceIn(left, width)
         val top = bounds.top.toInt().coerceIn(0, height)
@@ -449,9 +488,9 @@ class StatisticsAndHomeTest {
         for (y in top until bottom) for (x in left until right) {
             val pixel = getPixel(x, y)
             // Text and thin chart strokes include antialiasing, unlike the solid surfaces above.
-            if (abs(Color.red(pixel) - Color.red(color)) <= 7 &&
-                abs(Color.green(pixel) - Color.green(color)) <= 7 &&
-                abs(Color.blue(pixel) - Color.blue(color)) <= 7 && ++hits >= 8) return true
+            if (abs(Color.red(pixel) - Color.red(color)) <= tolerance &&
+                abs(Color.green(pixel) - Color.green(color)) <= tolerance &&
+                abs(Color.blue(pixel) - Color.blue(color)) <= tolerance && ++hits >= 8) return true
         }
         return false
     }
