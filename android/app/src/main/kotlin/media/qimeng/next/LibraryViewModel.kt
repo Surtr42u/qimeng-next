@@ -252,12 +252,30 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         if (bindObjectTarget(target)) navigate("tag:$tag")
     }
 
-    fun refreshConnection() = action(blocking = false) {
-        val caps = repository.capabilities()
-        mutableCapabilities.value = caps
-        loadLibraries()
-        graph.uploads.schedule()
-        session.value?.let { graph.archives.resume(it) }
+    fun refreshConnection() {
+        val generation = connectionGeneration
+        viewModelScope.launch {
+            var failure: Exception? = null
+            repeat(3) { attempt ->
+                try {
+                    val caps = repository.capabilities()
+                    if (generation != connectionGeneration) return@launch
+                    mutableCapabilities.value = caps
+                    loadLibraries()
+                    graph.uploads.schedule()
+                    session.value?.let { graph.archives.resume(it) }
+                    // 本机服务刚启动或刚迁移地址时可能短暂连不上；成功后要清掉旧的失败横幅。
+                    mutableMessage.value = null
+                    graph.queue.clearConnectionProblem()
+                    return@launch
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    failure = error
+                    if (attempt < 2) delay(600L * (attempt + 1))
+                }
+            }
+            if (generation == connectionGeneration) mutableMessage.value = explain(failure ?: IllegalStateException("操作未完成"))
+        }
     }
     suspend fun readServerVersion(target: Session, transport: Long): LoadState<String> = try {
         val version = repository.serverVersion(target)

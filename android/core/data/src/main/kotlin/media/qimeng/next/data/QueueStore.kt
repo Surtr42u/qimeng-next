@@ -27,6 +27,11 @@ class QueueStore(context: Context) {
     val error = mutableError.asStateFlow()
     internal fun reportProblem(message: String) { mutableError.value = message }
 
+    /** 服务器已经可达时清掉上一次断线留下的横幅；真正的失败任务仍保留在队列里。 */
+    fun clearConnectionProblem() {
+        if (mutableError.value?.startsWith("连接失败") == true) mutableError.value = null
+    }
+
     suspend fun load() = withContext(Dispatchers.IO) {
         lock.withLock {
             try {

@@ -67,6 +67,7 @@ class LocalConnectionCoordinator(private val graph: DataGraph, private val runti
         }
         runtime.confirmInstance(connection.instanceId)
         if (graph.queue.state.value == null) graph.queue.load()
+        graph.queue.clearConnectionProblem()
         val selected = graph.settings.session.value
         val target = Session(connection.baseUrl, connection.instanceId,
             selected?.takeIf { it.instanceId == connection.instanceId && it.baseUrl == connection.baseUrl }?.label ?: "本机影库")

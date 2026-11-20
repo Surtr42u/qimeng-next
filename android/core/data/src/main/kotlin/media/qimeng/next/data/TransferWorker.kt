@@ -35,6 +35,7 @@ class TransferWorker(context: Context, parameters: WorkerParameters) : Coroutine
             val api = graph.provider.api(target)
             val instance = api.getInstance().bodyOrThrow()
             if (instance.id != target.instanceId) return@withContext stopForTarget("此地址已更换服务器实例，请重新登录")
+            graph.queue.clearConnectionProblem()
             val initial = requireNotNull(graph.queue.state.value)
             val withTransfers = initial.transfers.mapTo(mutableSetOf(), Transfer::batchKey)
             var retry = false
