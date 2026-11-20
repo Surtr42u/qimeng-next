@@ -190,13 +190,9 @@ private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> 
                 if (!transformed && kotlin.math.abs(horizontal) > size.width * 0.18f) onNavigate(if (horizontal < 0) 1 else -1)
             }
         }, contentAlignment = Alignment.Center) {
-        // 先用 512 缩略图占位，原图解码/下载完成后覆盖；点开立即有画面，不出现旧版没有的黑屏等待。
-        AsyncImage(model = remember(asset.thumbnailUrl, asset.version) {
-            ImageRequest.Builder(context).data(asset.thumbnailUrl)
-                .memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:thumbnail")
-                .build()
-        }, imageLoader = LocalMediaImages.current, contentDescription = null, contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize())
+        // 直接用网格同一份 Asset 缩略图请求，命中内存缓存；原图加载完成后覆盖。
+        AsyncImage(model = asset, imageLoader = LocalMediaImages.current, contentDescription = null,
+            contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         AsyncImage(model = remember(asset.contentUrl, asset.version, retry) {
             ImageRequest.Builder(context).data(asset.contentUrl).size(Size.ORIGINAL)
                 .diskCachePolicy(CachePolicy.DISABLED).memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:original").build()
