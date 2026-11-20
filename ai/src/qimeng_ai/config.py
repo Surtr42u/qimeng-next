@@ -36,6 +36,8 @@ class Config:
     storages: dict[str, Path]
     allow_media_to_model: bool
     recycle_storages: frozenset[str] = frozenset()
+    tls_ca: str | None = None
+    tls_insecure_loopback: bool = False
 
     @classmethod
     def load(cls, env=None) -> "Config":
@@ -88,6 +90,18 @@ class Config:
         if (not isinstance(recycle, list) or len(recycle) > 100
                 or any(not isinstance(key, str) or key not in storages for key in recycle)):
             raise ToolError("CONFIG_INVALID", "可回收存储须明确选自已配置的来源存储")
+        tls_ca = env.get("QIMENG_AI_TLS_CA", "")
+        if tls_ca:
+            if parsed.scheme != "https" or not Path(tls_ca).is_absolute() or not Path(tls_ca).is_file():
+                raise ToolError("CONFIG_INVALID", "QIMENG_AI_TLS_CA 必须是 HTTPS 服务对应证书的绝对路径")
+        tls_insecure_loopback = env.get("QIMENG_AI_TLS_INSECURE_LOOPBACK", "false").lower() in {"1", "true"}
+        if tls_insecure_loopback:
+            try:
+                loopback = parsed.scheme == "https" and ipaddress.ip_address(parsed.hostname or "").is_loopback
+            except ValueError:
+                loopback = False
+            if not loopback or tls_ca:
+                raise ToolError("CONFIG_INVALID", "QIMENG_AI_TLS_INSECURE_LOOPBACK 只允许回环 HTTPS，且不能与 TLS CA 同时使用")
         if positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576) < 2048:
             raise ToolError("CONFIG_INVALID", "输出预算至少2048字节，以容纳执行结果和恢复引用")
         return cls(origin, token, directory, env.get("QIMENG_AI_TASK_ID", "interactive"), permissions,
@@ -96,4 +110,5 @@ class Config:
                    positive(env, "QIMENG_AI_MAX_UNCHANGED", 3, 100),
                    positive(env, "QIMENG_AI_OUTPUT_BYTES", 12288, 1048576),
                    positive(env, "QIMENG_AI_TIMEOUT", 120, 1800), storages,
-                   env.get("QIMENG_AI_ALLOW_MEDIA_TO_MODEL", "false").lower() in {"1", "true"}, frozenset(recycle))
+                   env.get("QIMENG_AI_ALLOW_MEDIA_TO_MODEL", "false").lower() in {"1", "true"}, frozenset(recycle),
+                   tls_ca or None, tls_insecure_loopback)

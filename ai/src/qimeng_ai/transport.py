@@ -32,6 +32,7 @@ class Transport:
         self.active_token = None
         self.client = client or httpx.Client(base_url=config.origin, timeout=config.timeout,
                                             follow_redirects=False, trust_env=False,
+                                            verify=config.tls_ca or (False if config.tls_insecure_loopback else True),
                                             headers={"Authorization": f"Bearer {config.token}"})
 
     def close(self) -> None:
