@@ -210,6 +210,7 @@ class StatisticsAndHomeTest {
         val result = awaitSearchResults(model, "合成标签").single()
         compose.onNodeWithContentDescription(result.name).performClick()
         compose.waitUntil(20_000) { model.asset.value?.id == result.id && model.route.value == "asset:${result.id}" }
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("asset-detail").fetchSemanticsNodes().isNotEmpty() }
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         input.assertTextEquals("合成标签")
         compose.onNodeWithContentDescription(result.name).assertIsDisplayed()

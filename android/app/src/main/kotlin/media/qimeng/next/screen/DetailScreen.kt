@@ -25,6 +25,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
@@ -95,7 +96,7 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     BackHandler(item.mediaType != "video" && (!chromeVisible || zoomImmersive)) { resetImage++; chromeVisible = true }
     val position = model.detailPosition(id)
     val backdrop = if (visible) MaterialTheme.colorScheme.background else Color.Black
-    Box(Modifier.fillMaxSize().background(backdrop)) {
+    Box(Modifier.fillMaxSize().background(backdrop).testTag("asset-detail")) {
         if (item.mediaType == "video") VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
         else ImageStage(item, model::adjacentAsset, { model.refreshAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
         DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))

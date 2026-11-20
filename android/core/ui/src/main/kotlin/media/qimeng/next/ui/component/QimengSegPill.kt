@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -103,7 +104,7 @@ fun QimengSegPill(
                     onClick = onClick,
                 ),
             )
-            .semanticsPillSelected(selected),
+            .semanticsPillSelected(selected, enabled),
     ) {
         Box(
             modifier = Modifier
@@ -122,8 +123,9 @@ fun QimengSegPill(
     }
 }
 
-/** FilterChip 语义等价物：可选项角色 + 选中态（无障碍朗读与换芯片前一致） */
-private fun Modifier.semanticsPillSelected(selected: Boolean): Modifier = semantics {
+/** FilterChip 语义等价物：可选项角色 + 选中态 + 禁用态（无障碍朗读与换芯片前一致） */
+private fun Modifier.semanticsPillSelected(selected: Boolean, enabled: Boolean): Modifier = semantics {
     role = Role.Checkbox
     this.selected = selected
+    if (!enabled) disabled()
 }
