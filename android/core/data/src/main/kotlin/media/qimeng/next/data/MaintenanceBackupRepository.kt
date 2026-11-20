@@ -95,6 +95,7 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
             }
             runCatching { tree.discardStage(work.token) }
             tree.dropReusableFolder()
+            runCatching { tree.overwriteText(tree.root, maintenanceReadmeName, maintenanceReadme) }
         }
         save(target, binding.copy(message = "已放弃上次未完成的轮换"), null)
         return folder(target)

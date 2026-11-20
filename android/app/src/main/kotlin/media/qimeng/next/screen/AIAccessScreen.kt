@@ -235,7 +235,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
                             onClick = { if (index < step) step = index }, enabled = !busy)
                     }
                 }
-                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                LazyColumn(Modifier.weight(1f).testTag("ai-form-list"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                     when (step) {
                         0 -> {
                             item {

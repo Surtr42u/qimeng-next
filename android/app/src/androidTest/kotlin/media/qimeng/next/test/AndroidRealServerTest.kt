@@ -814,17 +814,26 @@ class AndroidRealServerTest {
         compose.onNodeWithText("新增媒体").performScrollTo().performClick()
         compose.onNodeWithText("研究").performScrollTo().performClick()
         compose.onNodeWithText("下一步").performClick()
+        val form = compose.onNodeWithTag("ai-form-list")
+        form.performScrollToNode(hasText("允许单帧识图"))
         val imageLookup = compose.onNodeWithText("允许单帧识图")
         imageLookup.assertIsNotEnabled().assertIsOff()
-        compose.waitUntil(20_000) { compose.onAllNodesWithText(target.name).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(20_000) {
+            try { form.performScrollToNode(hasText(target.name)); true } catch (_: AssertionError) { false }
+        }
         val library = compose.onNodeWithText(target.name)
         library.performScrollTo().performClick()
+        form.performScrollToNode(hasText("允许单帧识图"))
         imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
         imageLookup.assertIsOn()
+        form.performScrollToNode(hasTestTag("ai-access-research-budget"))
         val budget = compose.onNodeWithTag("ai-access-research-budget")
         budget.performScrollTo().performTextReplacement("0")
+        form.performScrollToNode(hasText("允许单帧识图"))
         imageLookup.assertIsNotEnabled().assertIsOff()
+        form.performScrollToNode(hasTestTag("ai-access-research-budget"))
         budget.performTextReplacement("2")
+        form.performScrollToNode(hasText("允许单帧识图"))
         imageLookup.assertIsEnabled().assertIsOff().performScrollTo().performClick()
         compose.onNodeWithText("下一步").performClick()
         val permission = "单帧识图 · 允许向已配置的识图服务发送一帧派生预览"
