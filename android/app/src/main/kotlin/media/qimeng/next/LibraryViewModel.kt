@@ -2,6 +2,7 @@ package media.qimeng.next
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -70,6 +71,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val message = mutableMessage.asStateFlow()
     /** 一次性轻提示的票据：新提示递增，旧定时器据此不再清掉新消息。 */
     private var hintTicket = 0L
+    /**
+     * 连接失败提示的冷却闸门：同一文本已在屏上或 4s 内刚发过就不再重发。
+     * 后台健康检查、自动恢复与多次详情刷新会连续撞上同一个断线窗口；没有闸门时
+     * 每次失败都重post，横幅看起来「反复出现」。成功路径清空提示时一并重置。
+     */
+    private val connectionMessages = ConnectionMessageGate()
     private val mutableBusy = MutableStateFlow(false)
     val busy = mutableBusy.asStateFlow()
     private val libraryState = MutableStateFlow(ListState<Library>())
@@ -270,7 +277,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     withContext(Dispatchers.IO) { write(columns) }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { mutableMessage.value = explain(failure) }
+            catch (failure: Exception) { showFailure(failure) }
         }
     }
 
@@ -457,6 +464,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
      */
     private fun showUpToDateHint() {
         val ticket = ++hintTicket
+        // 刷新成功本身就是「连接正常」的证据：下一次真实失败应立刻提示，不受旧冷却影响。
+        connectionMessages.reset()
         mutableMessage.value = LIST_UP_TO_DATE_MESSAGE
         viewModelScope.launch {
             delay(UP_TO_DATE_HINT_MS)
@@ -468,7 +477,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun navigate(destination: String) {
         if (destination != route.value) saved["backStack"] = ArrayList(saved.get<ArrayList<String>>("backStack").orEmpty() + route.value)
         saved["route"] = destination
-        mutableMessage.value = null
+        clearMessageNow()
     }
     fun back() {
         detailGeneration.next(); detailJob?.cancel()
@@ -483,7 +492,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     fun refreshConnection() {
         val generation = connectionGeneration
+        val target = session.value
         viewModelScope.launch {
+            // 服务端可能仍在冷启动/重启（内嵌本机或 PC/NAS 刚起）：先做就绪等待再发业务
+            // 请求，避免把首个 capabilities() 打进未监听窗口后立刻报「连接失败」。
+            // 探针超时不改变失败语义：下面照常重试 3 次，仍失败则走后台维护的静默路径。
+            if (target != null) {
+                repository.awaitReady(target)
+                if (generation != connectionGeneration) return@launch
+            }
             var failure: Exception? = null
             repeat(3) { attempt ->
                 try {
@@ -494,7 +511,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     graph.uploads.schedule()
                     session.value?.let { graph.archives.resume(it) }
                     // 本机服务刚启动或刚迁移地址时可能短暂连不上；成功后要清掉旧的失败横幅。
-                    mutableMessage.value = null
+                    clearMessageNow()
                     graph.queue.clearConnectionProblem()
                     return@launch
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -505,7 +522,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             }
             // 刷新连接属于后台维护：失败时由各页面自己的空状态/错误卡呈现，
             // 不再往首页顶栏塞全局提示。
-            if (generation == connectionGeneration) mutableMessage.value = null
+            if (generation == connectionGeneration) clearMessageNow()
         }
     }
     /** 服务版本按「会话 + 传输修订」缓存：同一连接重进「我的」先显已知值，不再先读后显。 */
@@ -573,7 +590,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun restoreLocalConnection() {
         runtime.files.refreshAccess()
         session.value?.let { graph.backups.resume(it) }
-        if (runtime.available && runtime.shouldRestore && session.value?.baseUrl == runtime.baseUrl) action { connectLocal(forceLogin = false) }
+        // 回前台自动恢复：失败已经由本机传输状态与页面空态呈现，不再弹全局横幅。
+        // 非连接类失败（凭据/协议/业务校验）仍然照常提示，不能被这里吞掉。
+        if (runtime.available && runtime.shouldRestore && session.value?.baseUrl == runtime.baseUrl) {
+            action(surfaceConnectionFailure = false) { connectLocal(forceLogin = false) }
+        }
     }
     private suspend fun connectLocal(forceLogin: Boolean, password: String = "") {
         localConnection.connect(forceLogin, password)
@@ -581,7 +602,22 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun logout() = action { repository.logout(); saved["route"] = "main" }
     fun disconnect() = action { repository.disconnect(); saved["route"] = "main" }
-    fun clearMessage() { mutableMessage.value = null }
+    fun clearMessage() { clearMessageNow() }
+
+    /** 清空提示并重置连接失败冷却：成功/用户关闭/新动作开始都视为「上一轮失败已结束」。 */
+    private fun clearMessageNow() {
+        mutableMessage.value = null
+        connectionMessages.reset()
+    }
+
+    /**
+     * 失败提示的唯一出口：连接类文本先过冷却闸门，其余文本（业务校验、权限、冲突等）
+     * 原样发布。见 [shouldPostConnectionMessage]。
+     */
+    private fun showFailure(failure: Exception) {
+        val text = explain(failure)
+        if (connectionMessages.shouldPost(text, mutableMessage.value, monotonicNowMs())) mutableMessage.value = text
+    }
 
     private fun ownsObjectRoutes(target: Session) =
         saved.get<String>("objectInstance") == target.instanceId && saved.get<String>("objectEndpoint") == target.baseUrl
@@ -658,7 +694,14 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 val names = coroutineScope { result.authorIds.map { async { repository.author(it, target) } }.awaitAll() }
                 if (detailGeneration.isCurrent(ticket) && connection == connectionGeneration && sameTarget(target, session.value)) mutableAssetAuthors.value = names
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (detailGeneration.isCurrent(ticket) && sameTarget(target, session.value)) mutableMessage.value = explain(failure) }
+            catch (failure: Exception) {
+                if (!detailGeneration.isCurrent(ticket) || !sameTarget(target, session.value)) return@launch
+                // 旧版口径：屏幕上已有这一件（种子上屏或上一次结果）时数据刷新失败保持静默，
+                // 画面不动；只有无内容可显示时才需要错误出口。HTTP 业务失败保持原提示。
+                val displayed = mutableAsset.value?.takeIf { it.id == id }
+                if (detailFailureIsSilent(failure, displayed != null)) return@launch
+                showFailure(failure)
+            }
         }
     }
 
@@ -666,7 +709,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val id = mutableAsset.value?.id ?: return
         val source = saved.get<String>("detailListKey")?.let { lists[it]?.value?.items }.orEmpty()
         val index = source.indexOfFirst { it.id == id }
-        val next = source.getOrNull(index + direction) ?: return
+        // index=-1 表示当前件不在这份已加载清单里：不能再做 index+direction 后取 0 号位，
+        // 否则左滑会「穿」到列表第一张（旧版按批次内 id 定位，不在批次内就不切）。
+        val next = adjacentAssetIndex(index, direction, source.size)?.let(source::get) ?: return
         // A sibling replaces the detail scene, without growing its return stack.
         saved["route"] = "asset:${next.id}"
         openAsset(next.id, target = next.target, seed = next)
@@ -861,6 +906,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun cancelReport() = action { mutableReport.value?.let { mutableReport.value = repository.cancelReport(it) } }
     fun loadStatistics() = action { mutableStats.value = repository.statistics() }
+    /** 最近一次统计请求的范围；只在该请求的 job 仍存活时参与判定（见 [ensureAnalytics]）。 */
+    private var analyticsRange: String? = null
+    /** 当前报告落地的单调毫秒；只用于新鲜度窗口判定（见 [ANALYTICS_FRESHNESS_MS]）。 */
+    private var analyticsLoadedAtMs: Long? = null
     /**
      * 统计页三档重新进入时保留上一份报告：旧版统计卡片的数字在重查期间不消失，只有
      * 从未取到过的范围才显示加载文案。成功整份替换、失败保留旧数字并在页内提示。
@@ -870,11 +919,30 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val previous = analyticsState.value
         analyticsState.value = previous.copy(loading = true, error = null)
         val connection = connectionGeneration
+        analyticsRange = range
         analyticsJob = viewModelScope.launch {
-            try { val result = graph.analytics.report(range); if (connection == connectionGeneration) analyticsState.value = LoadState(data = result) }
+            try {
+                val result = graph.analytics.report(range)
+                if (connection == connectionGeneration) {
+                    analyticsState.value = LoadState(data = result)
+                    analyticsLoadedAtMs = monotonicNowMs()
+                }
+            }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (connection == connectionGeneration) analyticsState.value = previous.copy(loading = false, error = explain(failure)) }
         }
+    }
+
+    /**
+     * 统计页与统计详情进入（或范围变化、回前台）时的惰性入口：本范围报告仍在新鲜窗口内、
+     * 或本范围请求已在途中时不重复请求；范围变化、从未加载、窗口过期、上次失败仍走
+     * [loadAnalytics] 立即重取（旧报告保留在屏上，见 [loadAnalytics]）。
+     * 错误卡与显式刷新继续直接调 [loadAnalytics] 强制请求（不受本闸门约束）。
+     */
+    fun ensureAnalytics(range: String) {
+        val inFlightRange = if (analyticsJob?.isActive == true) analyticsRange else null
+        if (shouldLoadAnalytics(analyticsState.value.data?.overview?.range, analyticsLoadedAtMs,
+                analyticsState.value.error, inFlightRange, range, monotonicNowMs())) loadAnalytics(range)
     }
     fun loadReview(range: String) {
         reviewJob?.cancel()
@@ -973,7 +1041,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     if (group != null) withContext(NonCancellable) { graph.uploads.releaseSharedDrafts(group) }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { mutableMessage.value = explain(failure) }
+            catch (failure: Exception) { showFailure(failure) }
         }
     }
     fun startUpload() = action {
@@ -1012,7 +1080,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         nameWrites[draft.id] = viewModelScope.launch {
             try { delay(350); graph.uploads.renameDraft(draft.id, draft.withEditedStem(stem).name) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { mutableMessage.value = explain(failure) }
+            catch (failure: Exception) { showFailure(failure) }
             finally { if (nameWrites[draft.id] == coroutineContext[Job]) nameWrites.remove(draft.id) }
         }
     }
@@ -1056,15 +1124,21 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    private fun action(blocking: Boolean = true, operation: suspend () -> Unit) {
+    private fun action(blocking: Boolean = true, surfaceConnectionFailure: Boolean = true, operation: suspend () -> Unit) {
         if (blocking && mutableBusy.value) return
         val generation = connectionGeneration
         if (blocking) mutableBusy.value = true
-        if (blocking) mutableMessage.value = null
+        if (blocking) clearMessageNow()
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try { operation() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (generation == connectionGeneration) mutableMessage.value = explain(failure) }
+            catch (failure: Exception) {
+                if (generation == connectionGeneration) {
+                    // 自动恢复/后台维护传 false：传输层失败本就没有用户动作可归因，由页面态呈现。
+                    // 非连接类失败（凭据失效、协议/业务校验）仍然必须让用户看到，不能被选项吞掉。
+                    if (surfaceConnectionFailure || !isTransportFailure(failure)) showFailure(failure)
+                }
+            }
             finally { if (blocking && generation == connectionGeneration) mutableBusy.value = false }
         }
         activeOperations += job
@@ -1072,6 +1146,42 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         job.start()
     }
 }
+
+/**
+ * 同一范围报告的新鲜窗口（毫秒）：窗口内重进统计页不重取五组接口；回前台或再次进入时
+ * 超过窗口就在后台补读，旧数字继续留在屏上直到新报告落地。与旧版「每次恢复都重查」相比
+ * 只是省掉重复抖动，不改变数据最终会重新对齐的语义。
+ */
+internal const val ANALYTICS_FRESHNESS_MS = 60_000L
+
+/**
+ * 统计页是否要发起新请求（纯判断，单测锁定；由 [LibraryViewModel.ensureAnalytics] 使用）。
+ *
+ * - [inFlightRange] 与 [requestedRange] 相同：本范围已在请求中，重复进入不取消重启。
+ * - [inFlightRange] 是别的范围：必须改取当前范围。渲染按 `overview.range == requestedRange`
+ *   过滤报告，若放任旧范围的请求落地，页面会停在「加载中」而没有请求去补当前范围。
+ * - [loadedRange] 等于 [requestedRange]、无 [error]，且报告在 [ANALYTICS_FRESHNESS_MS]
+ *   内落地：不重取、不闪卡片；窗口过期则重取。
+ * - 其余（从未加载、范围不同、窗口过期、上次失败）：立即请求；错误卡另由调用方直接
+ *   [LibraryViewModel.loadAnalytics] 强制刷新。
+ */
+internal fun shouldLoadAnalytics(
+    loadedRange: String?,
+    loadedAtMs: Long?,
+    error: String?,
+    inFlightRange: String?,
+    requestedRange: String,
+    nowMs: Long,
+): Boolean = when {
+    inFlightRange == requestedRange -> false
+    inFlightRange != null -> true
+    error != null -> true
+    loadedRange == requestedRange && loadedAtMs != null && nowMs - loadedAtMs < ANALYTICS_FRESHNESS_MS -> false
+    else -> true
+}
+
+/** 单调时钟（毫秒，含休眠）：新鲜度只用差值判断，不受系统时间调整影响。 */
+private fun monotonicNowMs(): Long = SystemClock.elapsedRealtime()
 
 /**
  * 服务器事件计数与会话的配对闸门。
@@ -1140,6 +1250,20 @@ internal val APPEND_RETRY_DELAYS_MS = listOf(1_000L, 3_000L)
 internal fun appendRetryDelayMs(append: Boolean, attempt: Int): Long? =
     if (append) APPEND_RETRY_DELAYS_MS.getOrNull(attempt) else null
 
+/**
+ * [LibraryViewModel.adjacentAsset] 的目标下标（纯函数，单测锁定）。
+ *
+ * 当前件不在已加载清单时 [index] = -1：若照旧做 `index + direction` 再 `getOrNull`，
+ * 左滑（direction=-1）会落到 0 号位，用户看到详情「穿」到列表第一张而不是相邻件。
+ * 因此 index 不在 [0, size) 时直接返回 null；目标越过清单首/尾（第一张右滑、最后一张
+ * 左滑）同样返回 null，保持原有边界行为。
+ */
+internal fun adjacentAssetIndex(index: Int, direction: Int, size: Int): Int? {
+    if (index < 0 || index >= size) return null
+    val target = index + direction
+    return target.takeIf { it in 0 until size }
+}
+
 /** 屏幕上现有的清单与刷新返回的首屏逐项同 id、同顺序、同长度（不把重排冒充变化）。 */
 private fun sameAssetIds(onScreen: List<Asset>, fresh: List<Asset>): Boolean =
     onScreen.size == fresh.size && onScreen.indices.all { onScreen[it].id == fresh[it].id }
@@ -1154,6 +1278,71 @@ private fun appendDistinct(existing: List<Asset>, appended: List<Asset>): List<A
     for (asset in existing) if (seen.add(asset.id)) merged.add(asset)
     for (asset in appended) if (seen.add(asset.id)) merged.add(asset)
     return merged
+}
+
+/**
+ * 传输层失败判定（纯函数，单测锁定）：连接拒绝、超时、断流都是 IO 异常；
+ * [ApiFailure] 虽然也继承 IOException，但它代表「已经收到 HTTP 应答」（401/403/404/409/5xx
+ * 都有明确业务含义），不能当作连接问题静默或重试。
+ */
+internal fun isTransportFailure(failure: Throwable): Boolean = failure is java.io.IOException && failure !is ApiFailure
+
+/**
+ * 详情数据刷新失败是否静默（纯函数，单测锁定）。
+ *
+ * 屏幕上已经显示当前资产（列表种子上屏，或上一次详情结果还在）时，传输失败保持画面、
+ * 不弹全局提示——旧版详情就是这样：种子继续显示，失败只影响「补数据」这一步。
+ * 没有内容可显示时仍需要错误出口；非传输失败（HTTP 业务应答、解析/校验异常）也保持
+ * 原有提示，用户需要知道对象已不存在、没有权限或数据有问题。
+ */
+internal fun detailFailureIsSilent(failure: Throwable, assetDisplayed: Boolean): Boolean =
+    assetDisplayed && isTransportFailure(failure)
+
+/** 连接失败提示的文本前缀：只有这类文本参与冷却去重，业务错误每次都要照常提示。 */
+internal const val CONNECTION_MESSAGE_PREFIX = "连接失败"
+
+/** 同一连接失败文本的冷却窗口（毫秒）：几秒内的连续失败只保留一条横幅。 */
+internal const val CONNECTION_MESSAGE_COOLDOWN_MS = 4_000L
+
+/**
+ * 连接失败提示的去重判定（纯函数，单测锁定）：
+ * - 非连接类文本永远照常发布（业务校验、权限、冲突等不能被冷却吞掉）；
+ * - 同一文本已经在屏上：保留现有实例，不重发（否则横幅会闪一下再出现）；
+ * - 同一文本在冷却窗内刚发布过：保留，不重发；
+ * - 其他情况：允许发布。
+ */
+internal fun shouldPostConnectionMessage(
+    text: String,
+    visible: String?,
+    lastPostedText: String?,
+    lastPostedAtMs: Long?,
+    nowMs: Long,
+    cooldownMs: Long = CONNECTION_MESSAGE_COOLDOWN_MS,
+): Boolean {
+    if (!text.startsWith(CONNECTION_MESSAGE_PREFIX)) return true
+    if (visible == text) return false
+    if (lastPostedText != text || lastPostedAtMs == null) return true
+    return nowMs - lastPostedAtMs >= cooldownMs
+}
+
+/** 冷却状态持有者：发布连接失败时记录，任何成功/清除路径调用 [reset]。 */
+internal class ConnectionMessageGate(private val cooldownMs: Long = CONNECTION_MESSAGE_COOLDOWN_MS) {
+    private var lastPostedText: String? = null
+    private var lastPostedAtMs: Long? = null
+
+    fun shouldPost(text: String, visible: String?, nowMs: Long): Boolean {
+        val post = shouldPostConnectionMessage(text, visible, lastPostedText, lastPostedAtMs, nowMs, cooldownMs)
+        if (post && text.startsWith(CONNECTION_MESSAGE_PREFIX)) {
+            lastPostedText = text
+            lastPostedAtMs = nowMs
+        }
+        return post
+    }
+
+    fun reset() {
+        lastPostedText = null
+        lastPostedAtMs = null
+    }
 }
 
 private fun explain(failure: Exception): String = when (failure) {

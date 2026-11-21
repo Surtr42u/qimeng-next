@@ -35,7 +35,7 @@ fun StatsDetailScreen(model: LibraryViewModel, mode: String, range: String) {
     val seriesColors = qimengStatsSeriesColors()
     // 列表状态提到报告内容之外：换范围只替换条目，列本身不离开组合，滚动状态对象始终存活。
     val listState = rememberLazyListState()
-    LaunchedEffect(range) { if (state.data?.overview?.range != range) model.loadAnalytics(range) }
+    LaunchedEffect(range) { model.ensureAnalytics(range) }
     val title = when (mode) { "trends" -> "类型浏览趋势"; "distribution" -> "分布统计"; else -> "常看作者与标签" }
     val report = state.data?.takeIf { it.overview.range == range }
     Column(Modifier.fillMaxSize()) {

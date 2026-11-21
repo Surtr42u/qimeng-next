@@ -6,9 +6,11 @@ import com.google.gson.annotations.SerializedName
 import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.api.DefaultApi
 import media.qimeng.next.transport.PinnedTls
+import okhttp3.Call
 import okhttp3.Dispatcher
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import retrofit2.Converter
 import retrofit2.Response
@@ -140,7 +142,8 @@ internal class ApiProvider(private val settings: SecureSettings) {
             val token = try { settings.tokenFor(target) }
             catch (_: Exception) { throw ApiFailure(401, "登录凭据不可用或连接已变更，请重新登录") }
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
-        }.build()
+        // 认证头的读取/校验失败不是传输失败：重试放在凭据拦截器内侧，只包住 proceed。
+        }.addInterceptor(transportRetryInterceptor()).build()
         // newBuilder() 保留连接池/超时/拦截器，只换 Dispatcher——分流的只是并发名额，不是连接。
         return Clients(
             api,
@@ -156,6 +159,80 @@ internal class ApiProvider(private val settings: SecureSettings) {
         .baseUrl(baseUrl.toHttpUrl().resolve("api/v1/")!!).client(client)
         .addConverterFactory(QueryEnumConverterFactory)
         .addConverterFactory(GsonConverterFactory.create(Gson())).build().create(DefaultApi::class.java)
+
+    /**
+     * 认证客户端的传输层重试：手机息屏唤醒、Wi-Fi 重关联或服务端刚重启时，第一条
+     * TCP/TLS 连接常直接 IOException（服务端大概率没收到请求）。只重试幂等读
+     * （GET/HEAD，见 [transportRetryDelayMs]），最多补 2 次（300ms、900ms）。
+     *
+     * 非 2xx 是「收到了应答」，不在这里重试（本拦截器只捕获 IOException；ApiFailure
+     * 在 Retrofit 层由 bodyOrThrow 产生）。SSE 请求由 ServerEventConsumer 自己按
+     * 3s→30s 退避重连，这里跳过，避免两层重连叠加。
+     *
+     * 只挂在 [clients] 构造的认证客户端上：登录走 anonymous 客户端，已有
+     * MediaRepository.retryLoginTransport 的 3 次重试，不能再叠一层。
+     */
+    private fun transportRetryInterceptor(): Interceptor = Interceptor(::proceedWithTransportRetry)
+
+    private fun proceedWithTransportRetry(chain: Interceptor.Chain): okhttp3.Response {
+        val request = chain.request()
+        var attempt = 0
+        while (true) {
+            try {
+                return chain.proceed(request)
+            } catch (failure: IOException) {
+                val delayMs = transportRetryDelayMs(
+                    method = request.method,
+                    accept = request.header("Accept"),
+                    cancelled = chain.call().isCanceled() || Thread.currentThread().isInterrupted,
+                    attempt = attempt,
+                ) ?: throw failure
+                attempt++
+                // OkHttp 拦截器是同步的：用可中断的分片等待，取消后立即放弃，不白等一整个退避。
+                if (!awaitRetryWindow(chain.call(), delayMs)) throw failure
+            }
+        }
+    }
+}
+
+/** 重试等待期间检查取消的粒度（毫秒）：足够细，又不会把等待拆成忙等。 */
+private const val RETRY_CANCEL_CHECK_MS = 50L
+
+/** 认证客户端幂等读的重试延迟：第 1、2 次传输失败后分别等 300ms、900ms。 */
+internal val TRANSPORT_RETRY_DELAYS_MS = longArrayOf(300L, 900L)
+
+/**
+ * 认证客户端传输层重试的纯判定（单测锁定；由 [ApiProvider.clients] 的拦截器使用）。
+ *
+ * - 只重试 GET/HEAD：POST/PUT/PATCH/DELETE 可能已在服务端生效，重试会把「响应丢失」
+ *   变成重复写入。
+ * - `Accept: text/event-stream` 的 GET 不重试：SSE 消费者自己按 3s→30s 退避重连。
+ * - 调用方协程取消会 cancel Call；取消后立即上抛，不继续睡眠/重发。
+ * - [attempt] 是本请求已完成的传输失败次数（0 = 第一次失败）；额度用完返回 null。
+ */
+internal fun transportRetryDelayMs(method: String, accept: String?, cancelled: Boolean, attempt: Int): Long? {
+    if (cancelled) return null
+    if (method != "GET" && method != "HEAD") return null
+    // 任何接受 SSE 的请求都由 ServerEventConsumer 自己重连：这里再试一次会叠成两条重连链。
+    val acceptsEventStream = accept?.split(',')?.any { it.trim().equals("text/event-stream", ignoreCase = true) } == true
+    if (acceptsEventStream) return null
+    return TRANSPORT_RETRY_DELAYS_MS.getOrNull(attempt)
+}
+
+/** 分片等待退避窗口；取消/线程中断返回 false（调用方按原失败上抛）。 */
+private fun awaitRetryWindow(call: Call, delayMs: Long): Boolean {
+    val deadline = System.nanoTime() + delayMs * 1_000_000L
+    while (true) {
+        if (call.isCanceled() || Thread.currentThread().isInterrupted) return false
+        val remainingMs = (deadline - System.nanoTime()) / 1_000_000L
+        if (remainingMs <= 0) return true
+        try {
+            Thread.sleep(minOf(remainingMs, RETRY_CANCEL_CHECK_MS))
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return false
+        }
+    }
 }
 
 internal object QueryEnumConverterFactory : Converter.Factory() {

@@ -1,6 +1,7 @@
 package media.qimeng.next.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import media.qimeng.next.model.*
@@ -39,6 +40,9 @@ import media.qimeng.next.sdk.model.BatchInput
  */
 private const val RECOMMENDATION_PAGE_SIZE = 100
 
+/** 登录交换的传输层重试间隔：第 1、2 次失败后分别等待 300ms、800ms，共最多 3 次尝试。 */
+private val LOGIN_RETRY_DELAYS_MS = longArrayOf(300L, 800L)
+
 /** Only this data boundary knows generated DTOs. UI and ViewModels use client models. */
 class MediaRepository internal constructor(val settings: SecureSettings, private val provider: ApiProvider) {    val session = settings.session
     private val authenticationGeneration = AtomicLong()
@@ -70,14 +74,17 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
                                      expectedInstanceId: String? = null, rememberAddress: Boolean = false, loginEndpoint: String? = null) = withContext(Dispatchers.IO) {
         val (attempt, connection) = synchronized(authenticationLock) { authenticationGeneration.incrementAndGet() to settings.transportRevision.value }
         val root = normalizedServer(address)
-        val api = provider.anonymous(root, certificateDerBase64)
-        val instance = api.getInstance().bodyOrThrow()
-        check(expectedInstanceId == null || instance.id == expectedInstanceId) { "服务实例与启动回执不匹配" }
-        require(instance.apiVersion == "0.1.0") { "服务器协议不兼容，请同步更新客户端与服务器" }
-        val created = try { api.createSession(credentials).bodyOrThrow() }
-        catch (failure: ApiFailure) {
-            if (failure.status == 401 && credentials.password != null) throw ApiFailure(401, "密码错误，请重新输入")
-            throw failure
+        val (instance, created) = retryLoginTransport {
+            val api = provider.anonymous(root, certificateDerBase64)
+            val instance = api.getInstance().bodyOrThrow()
+            check(expectedInstanceId == null || instance.id == expectedInstanceId) { "服务实例与启动回执不匹配" }
+            require(instance.apiVersion == "0.1.0") { "服务器协议不兼容，请同步更新客户端与服务器" }
+            val created = try { api.createSession(credentials).bodyOrThrow() }
+            catch (failure: ApiFailure) {
+                if (failure.status == 401 && credentials.password != null) throw ApiFailure(401, "密码错误，请重新输入")
+                throw failure
+            }
+            instance to created
         }
         val secret = created.token ?: throw IOException("服务器未返回登录凭据")
         synchronized(authenticationLock) {
@@ -100,6 +107,15 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         check(instance.id == target.instanceId) { "地址已指向另一个媒体库，请重新登录" }
         return ServerCapabilities(instance.capabilities.aiConfigured, instance.capabilities.recommendations, instance.capabilities.rankings)
     }
+
+    /**
+     * 等待 [target] 的服务端就绪（300ms 轮询、10s 预算、5s 就绪短窗复用、单飞）。
+     * 只给后台维护（首个业务读）用：登录不经过这里，密码错误要立即反馈。
+     * 返回 false 不改变任何失败语义——调用方照常发起业务请求并走既有错误路径。
+     */
+    suspend fun awaitReady(target: Session): Boolean = readinessProbe.awaitReady(target)
+
+    private val readinessProbe by lazy { ServerReadinessProbe(settings, provider) }
 
     suspend fun serverVersion(target: Session): String? {
         val status = provider.api(target).getSystemStatus().bodyOrThrow()
@@ -391,6 +407,28 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
     }
 
     fun mediaClient(target: Session) = provider.mediaClient(target)
+}
+
+/**
+ * 登录握手最多尝试 3 次，只在传输层 IOException 上按 [LOGIN_RETRY_DELAYS_MS] 退避重试。
+ * 手机息屏唤醒或 Wi-Fi 重新关联后，第一条 TCP/TLS 连接常因网络栈尚未恢复而直接失败，
+ * 此时服务端通常没收到请求；重试会整段重做实例探测与会话创建，保留既有的实例/协议校验。
+ * ApiFailure 表示已收到 HTTP 应答（401/403/409/5xx 或业务错误），结果不会因重试改变，
+ * 且 createSession 可能已产生会话，因此立即上抛。若传输层在服务端处理后才断开，重试最多
+ * 留下一个孤儿会话，可以接受。CancellationException 不是 IOException，取消会立即传播。
+ */
+private suspend fun <T> retryLoginTransport(block: suspend () -> T): T {
+    var failures = 0
+    while (true) {
+        try {
+            return block()
+        } catch (failure: ApiFailure) {
+            throw failure
+        } catch (failure: IOException) {
+            if (failures == LOGIN_RETRY_DELAYS_MS.size) throw failure
+            delay(LOGIN_RETRY_DELAYS_MS[failures++])
+        }
+    }
 }
 
 /** UI projections pre-parse grouping timestamps and build media URLs; keep that work off the main thread. */

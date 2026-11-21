@@ -13,6 +13,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.AnalyticsReport
@@ -28,7 +30,10 @@ import media.qimeng.next.ui.theme.softDaylightShadow
 fun StatisticsScreen(model: LibraryViewModel) {
     var range by rememberSaveable { mutableStateOf("7d") }
     val state by model.analytics.collectAsStateWithLifecycle()
-    LaunchedEffect(range) { model.loadAnalytics(range) }
+    // 范围变化立即取；回前台按新鲜度窗口补读（见 ensureAnalytics）。窗口内重进标签页不重取，
+    // 窗口过期时旧数字留在屏上直到新报告落地。
+    LaunchedEffect(range) { model.ensureAnalytics(range) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.ensureAnalytics(range) }
     val report = state.data?.takeIf { it.overview.range == range }
     val loading = state.error == null && report == null
     val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
