@@ -122,3 +122,7 @@ Android `b23a2a3` 将四个一级 Tab 改为首次访问后常驻（对齐旧版
 
 服务端同批移除排行榜 N+1、统计重复扫描、facet 逐组 DISTINCT 和缩略图候选对完整资产文档的依赖。真实 8,241 件库只读副本上新旧查询逐行一致。云端 `44938498886` 22/22 通过（含 JVM 单测、Lint、Release APK、内嵌 APK、联网与本机 UI 仪器），工程检查 `44938498864` 通过。实体手机验收仍需使用者在本机完成。[云端作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44938498886) · [工程检查](https://github.com/Surtr42u/qimeng-next/actions/runs/44938498864)
 
+## 2026-11-22 本机影库启动死路
+
+Android `ff3fc64` 修复内嵌包在本机会话下的启动死路。此前运行层未 READY 时，首页只显示通用的「连接失败，请检查服务器后重试」；唯一可点的重试只会再次请求没有监听的 loopback 端口，不会启动或重启本机 host；`EmbeddedService` 还可能在前台残留而没有 host 任务，后续 startId 覆盖让旧的 `stopSelf` 失效。现在列表横幅优先显示运行层阶段或失败原因（启动凭据、启动程序、等待就绪、退出码）；本机端点的重试先做有界停止再走 `runtime.start()`，服务侧复活僵尸 host、没有可观察子进程时停止不再空等，并把安全阶段、异常类名和退出码写入 `QimengEmbedded`（不含路径、凭据或子进程输出）。远端会话仍保留显式「连接本机影库」，业务错误不会触发媒体库切换。纯判定单测覆盖远端/本机、`STARTING`/`FAILED`/`STOPPED`、僵尸复活与重复 host 防护。云端 `44945396450` 全部通过；`android-ui` 首轮视频控件 12 秒 Compose 超时，重跑通过。独立复核无 P1，4 个 P2（健康冷启动的宽限、端到端停止边界、pushed 路由入口、极窄双进程时序）留待后续收口。[云端作业](https://github.com/Surtr42u/qimeng-next/actions/runs/44945396450)
+
