@@ -14,14 +14,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusState
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,6 +52,13 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val field = remember { FocusRequester() }
+    // 搜索框文本与选区同持（TextFieldValue 重载）：String 重载的 selection 锁在实现内部，
+    // 结果态提交失焦后重新聚焦时折叠光标停在 0，退格删不到字。外部 query 变化（deep link、
+    // 提交时 trim、返回清词）才重建文本并把选区放到末尾；用户输入路径保留 IME 组合区与选区。
+    var fieldValue by remember { mutableStateOf(TextFieldValue(query, TextRange(query.length))) }
+    LaunchedEffect(query) {
+        if (fieldValue.text != query) fieldValue = TextFieldValue(query, TextRange(query.length))
+    }
     LaunchedEffect(initialTag) { model.open(initialTag) }
     LaunchedEffect(phase) { if (phase != "result") library.cancelBrowse("search") }
     DisposableEffect(library) {
@@ -74,18 +85,34 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
     }
     val onFieldTap by rememberUpdatedState {
         model.enterEditing()
+        // 结果态点击被 interceptSearchResultTap 在 Initial 阶段吃掉，输入框收不到这次手势；
+        // 显式把折叠光标放到已有文本末尾（只移光标，不 select-all），退格即可删上一轮问句。
+        fieldValue = fieldValue.copy(selection = TextRange(fieldValue.text.length))
         field.requestFocus()
         keyboard?.show()
+    }
+    // 任意路径获得焦点（建议态点框、入口态点框、结果态点回、deep link 后回来）都走这里：
+    // 仅当选择折叠在最左端且文本非空时把光标移到末尾；用户正在输入/框选时焦点不变，不触发。
+    val onFieldFocusChanged: (FocusState) -> Unit = { state ->
+        if (state.isFocused) {
+            searchFieldFocusCaret(fieldValue.text.length, fieldValue.selection.start, fieldValue.selection.end)
+                ?.let { caret -> fieldValue = fieldValue.copy(selection = TextRange(caret)) }
+        }
     }
     BackHandler(onBack = back)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = back) { Icon(BackIcon, "返回") }
             Box(Modifier.weight(1f).interceptSearchResultTap(phase == "result") { onFieldTap() }) {
-                QimengCapsuleTextField(query, model::edit, placeholder = "搜索文件、出处、角色、COS作者…", singleLine = true,
+                QimengCapsuleTextField(fieldValue, { next: TextFieldValue ->
+                    // 只有文本变化才经 ViewModel 落账（model.query 仍是真相）；纯光标/选区/IME
+                    // 组合变化只更新本地 TextFieldValue，避免移动光标也重发一次建议查询。
+                    if (next.text != fieldValue.text) model.edit(next.text)
+                    fieldValue = next
+                }, placeholder = "搜索文件、出处、角色、COS作者…", singleLine = true,
                     leadingIcon = { Icon(SearchIcon, null) }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { submit(query) }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(field).testTag("search-input"))
+                    modifier = Modifier.fillMaxWidth().focusRequester(field).onFocusChanged(onFieldFocusChanged).testTag("search-input"))
             }
             TextButton(onClick = { submit(query) }) { Text("搜索", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Normal)) }
         }
@@ -137,6 +164,16 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
 @Composable
 private fun SearchSectionHeader(text: String) { Text(text, style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.sp),
     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp)) }
+
+/**
+ * 搜索框重新获得焦点时的折叠光标落点（返回 null=保持当前选区）。
+ *
+ * 结果态提交会 clearFocus，再点回搜索栏时选择常从 0 开始：只有「文本非空 + 选择折叠在 0」
+ * 才把光标移到末尾，让退格直接删掉上一轮问句。用户主动点在中间、框选文本或光标已在末尾时
+ * 不动；输入过程不产生焦点事件，所以不会干扰打字与 IME。
+ */
+internal fun searchFieldFocusCaret(textLength: Int, selectionStart: Int, selectionEnd: Int): Int? =
+    if (textLength > 0 && selectionStart == 0 && selectionEnd == 0) textLength else null
 
 /** Retained pure UI gesture: result-field tap returns to suggestions before the text field handles it. */
 private fun Modifier.interceptSearchResultTap(enabled: Boolean, onTap: () -> Unit): Modifier = if (!enabled) this else pointerInput(Unit) {

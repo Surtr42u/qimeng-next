@@ -20,11 +20,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import media.qimeng.next.ui.theme.QimengDimens
@@ -72,11 +76,72 @@ import media.qimeng.next.ui.theme.QimengDimens
  * feature/upload 新建目录、feature/detail 标签新建 + 时间轴标签命名 + 改名/整理目标输入、
  * core:ui QimengFilterSheet 添加标签（core:ui 自家消费）——全部跟随 34dp，即旧版全局
  * bg_capsule_soft 胶囊语言，不是回退。
+ *
+ * 选区面（2026-11-22 搜索框修复）：无 [TextFieldValue] 重载时调用方只能传 String，
+ * 组件内部的选择停在 foundation 的实现里，页面无法在被拦截的点击（SearchScreen 结果态
+ * 点搜索栏回到建议态）或重新聚焦时把光标放到文本末尾，退格删不到任何字。现在分工：
+ *  - [String] 重载仍覆盖绝大多数调用方，内部把文本镜像为 [TextFieldValue]（文本以外部
+ *    String 为准，光标/选区与 IME 组合区保留；只有文本真的变了才回调业务，与 foundation
+ *    String 重载同口径）；
+ *  - [TextFieldValue] 重载让需要控制 selection 的页面（搜索页）持有光标状态。
+ * 两种重载共用下面同一个 decorationBox/视觉实现，没有第二份布局。
  */
 @Composable
 fun QimengCapsuleTextField(
     value: String,
     onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    singleLine: Boolean = false,
+    enabled: Boolean = true,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+) {
+    // String 调用方的选区镜像（与 foundation String 重载同口径）：文本始终以外部 String 为准，
+    // selection/composition 由组件内状态保留，外部改词不会把光标重置到 0；纯光标移动也只在
+    // 内部记录，不回调业务（沿用 String 重载「仅在文本变化时回调」的契约）。
+    var mirrored by remember { mutableStateOf(TextFieldValue(value)) }
+    var lastText by remember(value) { mutableStateOf(value) }
+    val shown = mirrored.copy(text = value)
+    // 外部文本变短时 TextFieldValue 会把 selection/composition 夹到新长度内；把夹紧后的值写回
+    // 内部状态，避免文本再变长时恢复越界选区（foundation String 重载的 SideEffect 同口径）。
+    SideEffect {
+        if (shown.selection != mirrored.selection || shown.composition != mirrored.composition) {
+            mirrored = shown
+        }
+    }
+    QimengCapsuleTextField(
+        value = shown,
+        onValueChange = { next ->
+            mirrored = next
+            if (next.text != lastText) {
+                lastText = next.text
+                onValueChange(next.text)
+            }
+        },
+        modifier = modifier,
+        placeholder = placeholder,
+        leadingIcon = leadingIcon,
+        trailingIcon = trailingIcon,
+        singleLine = singleLine,
+        enabled = enabled,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation,
+    )
+}
+
+/**
+ * [QimengCapsuleTextField] 的选区可控重载：视觉与其余行为全部复用同一实现。
+ * 供需要在重新聚焦时把折叠光标放到文本末尾的调用方使用（SearchScreen 搜索框）。
+ */
+@Composable
+fun QimengCapsuleTextField(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
     modifier: Modifier = Modifier,
     placeholder: String? = null,
     leadingIcon: (@Composable () -> Unit)? = null,
@@ -134,7 +199,7 @@ fun QimengCapsuleTextField(
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         // 空值时内层文本零宽，placeholder 与其叠放（M3 TextField 同款叠放语义）
-                        if (value.isEmpty() && placeholder != null) {
+                        if (value.text.isEmpty() && placeholder != null) {
                             Text(
                                 text = placeholder,
                                 style = MaterialTheme.typography.bodyMedium,
