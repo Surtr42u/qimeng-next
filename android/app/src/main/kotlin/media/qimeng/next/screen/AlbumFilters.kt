@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import media.qimeng.next.FacetRowState
 import media.qimeng.next.model.FacetChoice
+import media.qimeng.next.model.withOtherBucketLast
 import media.qimeng.next.ui.ErrorNotice
 import media.qimeng.next.ui.component.*
 import media.qimeng.next.ui.theme.QimengShapes
@@ -50,9 +51,14 @@ internal fun AlbumFilters(title: String, total: Long?, controls: BrowserControls
     val state = rows[row] ?: return
     if (!controls.expanded) return
     val dynamic = row == "works" || row == "roles"
+    // 同一个 items 列表既渲染胶囊又按下标回查点击项：置底只改显示顺序，选中态按 key/id 判定，
+    // 不会因为重排错位。「其他」恒末位（旧版 FacetOption.kt 同口径；服务端只承诺计数降序）。
     val items = when {
-        dynamic -> listOfNotNull(state.totalMatched?.let { FacetChoice("all", row, "all", "全部", it) }) + state.items
+        dynamic -> (listOfNotNull(state.totalMatched?.let { FacetChoice("all", row, "all", "全部", it) }) + state.items)
+            .withOtherBucketLast()
         row == "types" -> state.items.sortedWith(compareByDescending<FacetChoice> { it.id == "all" }.thenByDescending { it.count })
+            .withOtherBucketLast()
+        // 分区行是服务端固定顺序，不参与计数排序，也不重排。
         else -> state.items
     }
     val selected = when (row) {
