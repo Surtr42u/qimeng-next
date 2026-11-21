@@ -1,5 +1,6 @@
 package media.qimeng.next.screen
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -71,6 +72,12 @@ private val SWIPE_DISTANCE = 60.dp
 /** 双击缩放动画时长；旧版 ZoomImageView 为瞬切，动画是本轮明确要求（REQ 8）。 */
 private const val DOUBLE_TAP_ANIM_MS = 220
 
+/**
+ * 原图成功后的淡入时长。旧版舞台只挂原图、没有网格缩略图垫底，因此是直接出现；
+ * 新仓首帧先显示 lg 预览，原图到达后 160ms 内淡入，消掉硬切的那一下。
+ */
+private const val ORIGINAL_FADE_MS = 160
+
 /** 已按 Fit 规则落入视口的图片基准尺寸（scale=1 时实际绘制大小）。 */
 internal data class FittedContent(val width: Float, val height: Float)
 
@@ -138,10 +145,13 @@ internal fun clampPan(pan: Float, contentSize: Float, viewportSize: Float, scale
 }
 
 /**
- * 1x 横滑切件判定（旧版 ZoomImageView onFling / UP 慢拖合流口径）：
+ * 1x 横滑切件判定（旧版 feature/detail/image/ZoomImageView.kt onFling，196–210 行；
+ * 常量 SWIPE_DISTANCE_DP = 60 / SWIPE_VELOCITY = 800 见同文件 574–575 行）：
  * - 放大态（>1.05x）一律不切：横拖属于平移；
  * - 距离必须严格超过 60dp 且横向占优（纵向斜滑、下拉不切件）；
- * - 快甩（|vx|>800）额外要求横向速度也占优：快速斜甩不得误判成切件。
+ * - 速度必须严格超过 800px/s 且横向速度占优：对齐旧版 onFling 的三重门槛
+ *   （距离 / 横向占优 / 速度）。本仓在单次手势的收束点只按这一套门槛判定一次，
+ *   慢速长拖不翻页，快速斜甩也不得误判成切件。
  * 方向沿用旧版：手指左移 (dragX<0) → +1 下一张，右移 → -1 上一张。
  */
 internal fun swipeDirection(
@@ -156,7 +166,8 @@ internal fun swipeDirection(
     if (isZoomImmersive(scale)) return null
     if (abs(dragX) <= distancePx) return null
     if (abs(dragX) <= abs(dragY)) return null
-    if (abs(velocityX) > velocityThreshold && abs(velocityY) > abs(velocityX)) return null
+    if (abs(velocityX) <= velocityThreshold) return null
+    if (abs(velocityY) >= abs(velocityX)) return null
     return if (dragX < 0f) 1 else -1
 }
 
@@ -172,7 +183,8 @@ internal fun swipeDirection(
  * 原地轻点在任何缩放态都不消费，双击双向可重复。
  *
  * 口径对齐旧版 ZoomImageView：双击 1.8x/回位阈值 1.1x、双指 0.5x–5x、放大态阈值
- * 1.05x、松手低于 1x 回中、1x 横滑 60dp + 横向占优 + 800px/s、平移按图片边界钳制。
+ * 1.05x、松手低于 1x 回中、1x 横滑 60dp + 横向占优 + 速度严格 >800px/s 且横向速度占优、
+ * 平移按图片边界钳制。
  * 双击缩放动画（220ms）是本轮新要求：旧版 ZoomImageView 用 configureBaseMatrix/
  * postScale 瞬切，源码里没有补间动画。
  */
@@ -197,6 +209,14 @@ internal fun ZoomableImageStage(
     var imageHeight by remember(asset.id, asset.version) { mutableIntStateOf(asset.height ?: 0) }
     var viewportWidth by remember { mutableIntStateOf(0) }
     var viewportHeight by remember { mutableIntStateOf(0) }
+    // 首帧预览：lg 缩略图（1024 长边），不是网格那份 512 的 md——网格位图铺满舞台就是
+    // 用户看到的糊图。URL 为空时请求为 null，舞台只剩主题底色，不崩溃。
+    val previewModel = remember(context, asset.id, asset.version, asset.thumbnailUrl) {
+        detailPreviewRequest(context, asset)
+    }
+    // 原图淡入状态按资产/版本/重试重置：换件时不能带着上一张的 alpha=1 直接亮相。
+    var originalVisible by remember(asset.id, asset.version, retry) { mutableStateOf(false) }
+    val originalAlpha = remember(asset.id, asset.version, retry) { Animatable(0f) }
     // 已上报给宿主的沉浸态：只在跨阈值时发一次（旧版 emitZoomImmersive 的边沿语义）。
     var immersiveReported by remember(asset.id, asset.version) { mutableStateOf(false) }
     val animationJob = remember(asset.id, asset.version) { AnimationJob() }
@@ -265,6 +285,12 @@ internal fun ZoomableImageStage(
         val content = contentSize()
         panX = clampPan(panX, content.width, viewportWidth.toFloat(), scale)
         panY = clampPan(panY, content.height, viewportHeight.toFloat(), scale)
+    }
+    // 原图成功：0→1 淡入覆盖 lg 预览；换件/重试时 originalAlpha 是新实例，直接停在 0。
+    // 失败保持 0，预览继续可见，错误层与重试按钮照旧。
+    LaunchedEffect(originalAlpha, originalVisible) {
+        if (originalVisible) originalAlpha.animateTo(1f, animationSpec = tween(ORIGINAL_FADE_MS))
+        else originalAlpha.snapTo(0f)
     }
 
     Box(
@@ -378,7 +404,7 @@ internal fun ZoomableImageStage(
             },
         contentAlignment = Alignment.Center,
     ) {
-        // 缩放在同一层里同时作用于缩略图与原图：原图未到时不至于只有底图不跟随。
+        // 缩放在同一层里同时作用于预览与原图：原图未到/淡入中时，lg 预览跟随缩放和平移。
         Box(
             Modifier
                 .fillMaxSize()
@@ -389,29 +415,35 @@ internal fun ZoomableImageStage(
                     translationY = panY
                 },
         ) {
-            // 直接用网格同一份 Asset 缩略图请求，命中内存缓存；原图加载完成后覆盖。
-            AsyncImage(
-                model = asset,
-                imageLoader = LocalMediaImages.current,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
+            // 首帧 lg 预览：独立固定内存键，绝不复用网格 512 位图的缓存槽。
+            previewModel?.let { request ->
+                AsyncImage(
+                    model = request,
+                    imageLoader = LocalMediaImages.current,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             AsyncImage(
                 model = remember(asset.contentUrl, asset.version, retry) { originalImageRequest(context, asset) },
                 imageLoader = LocalMediaImages.current,
                 contentDescription = asset.name,
                 contentScale = ContentScale.Fit,
-                onError = { failure = it.result.throwable },
+                onError = {
+                    failure = it.result.throwable
+                    originalVisible = false
+                },
                 onSuccess = {
                     failure = null
+                    originalVisible = true
                     val image = it.result.image
                     if (image.width > 0 && image.height > 0) {
                         imageWidth = image.width
                         imageHeight = image.height
                     }
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = originalAlpha.value },
             )
         }
         failure?.let { cause ->
