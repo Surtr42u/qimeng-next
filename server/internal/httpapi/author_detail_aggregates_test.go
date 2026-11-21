@@ -37,10 +37,10 @@ func TestAuthorDetailDerivesCountsAndTextOrder(t *testing.T) {
 	}, 200)
 	f.json("DELETE", "/assets/"+trashedAsset.ID+"?expectedRevision="+strconv.FormatInt(trashedAsset.Revision, 10), "author-detail-trash-asset", struct{}{}, 200)
 
-	if _, e := f.s.DB.DB.Exec(`INSERT INTO author_lists(id,name,position,revision,data) VALUES('detail-list-one','Detail list one',1,1,'{}')`); e != nil {
+	if _, e := f.s.DB.DB.Exec(`INSERT INTO author_lists(id,name,position,revision,data) SELECT 'detail-list-one','Detail list one',COALESCE(MAX(position),0)+1,1,'{}' FROM author_lists`); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := f.s.DB.DB.Exec(`INSERT INTO author_lists(id,name,position,revision,data) VALUES('detail-list-two','Detail list two',2,1,'{}')`); e != nil {
+	if _, e := f.s.DB.DB.Exec(`INSERT INTO author_lists(id,name,position,revision,data) SELECT 'detail-list-two','Detail list two',COALESCE(MAX(position),0)+1,1,'{}' FROM author_lists`); e != nil {
 		t.Fatal(e)
 	}
 	for _, member := range []struct {

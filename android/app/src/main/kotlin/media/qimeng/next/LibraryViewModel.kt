@@ -405,7 +405,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     suspend fun readServerVersion(target: Session, transport: Long): LoadState<String> = try {
         val version = repository.serverVersion(target)
         check(sameTarget(target, session.value) && transport == transportRevision.value) { "连接已改变" }
-        serverVersionCache = Triple(target, transport, version)
+        if (version != null) serverVersionCache = Triple(target, transport, version)
         LoadState(data = version)
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (failure: ApiFailure) { LoadState(error = failure.message) }

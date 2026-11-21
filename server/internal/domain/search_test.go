@@ -10,7 +10,7 @@ func TestSearchKeepsWorkNumbersSeparateFromPages(t *testing.T) {
 		{"朱诺 11 (2).png", "11", true}, {"朱诺 110.png", "11", false}, {"朱诺 2011.png", "11", false}, {"11 (2).png", "2", false}, {"11 （2）.png", "(2)", true}, {"11 [2].png", "【2】", true}, {"11 【20】.png", "(2)", false},
 		{"DVA Sunset", "dva", true}, {"50%_\\real", "%_\\", true}, {"汉字角色", "字", true}, {"1080p.mp4", "1080", true}, {"1080p.mp4", "4", true}, {"Family 0011.png", "11", false}, {"Family 0011.png", "0011", true},
 		// Literal metacharacters are never treated as pattern syntax.
-		{"a*b-c:d(e)f", "*b-c", true}, {"a*b-c:d(e)f", "%", false}, {"a_b%c\\d", "_%c\\", true}, {`quote "x"`, `"x"`, true}, {"a'b", "'", true}, {"a[b]c", "[b]", true}, {"a?b", "?", true}, {"a*b", "*", true},
+		{"a*b-c:d(e)f", "*b-c", true}, {"a*b-c:d(e)f", "%", false}, {"a_b%c\\d", "b%c\\", true}, {`quote "x"`, `"x"`, true}, {"a'b", "'", true}, {"a[b]c", "[b]", true}, {"a?b", "?", true}, {"a*b", "*", true},
 		// Bracketed page variants and CJK without separators.
 		{"（2）[3]【4】", "（3）", true}, {"（2）[3]【4】", "【4】", true}, {"(2) [3] 【4】", "(4)", true}, {"(2) [3] 【4】", "(3)", true}, {"汉字角色", "字角", true}, {"作品110", "作品1", true},
 		// Standalone digit runs: start, middle, end, and both rejected sides.

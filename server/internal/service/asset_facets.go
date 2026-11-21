@@ -169,9 +169,9 @@ func (s *Service) AssetFacets(ctx context.Context, filter AssetFilter, row, quer
 		if e != nil {
 			return page, e
 		}
-		totals, totalExpression := ", totals AS (SELECT count(*) n FROM matched)", "(SELECT n FROM totals)"
+		totals, totalExpression := "), totals AS (SELECT count(*) n FROM matched)", "(SELECT n FROM totals)"
 		if carriedTotal != nil {
-			totals, totalExpression = "", "?"
+			totals, totalExpression = ")", "?"
 			args = append(args, *carriedTotal)
 		}
 		if cursor.ID != "" {
