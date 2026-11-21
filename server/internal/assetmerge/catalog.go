@@ -236,6 +236,15 @@ func (a *area) verifyTree(stage string, expected map[string]bool) error {
 				return nil
 			}
 		}
+		if entry.IsDir() {
+			// 记录型备份的恢复会先建出库/上传的空目录骨架，原件由操作者已有的媒体根
+			// 提供（真实恢复就是“恢复记录 + 已有文件”），所以允许空目录。目录里一旦
+			// 有文件，WalkDir 会逐项经过这里并拒绝，未预期的字节仍然进不来。
+			children, readErr := fs.ReadDir(a.root.FS(), p)
+			if readErr == nil && len(children) == 0 {
+				return nil
+			}
+		}
 		return errors.New("working directory contains a file or directory outside the native restore")
 	})
 }

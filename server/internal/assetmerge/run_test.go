@@ -121,6 +121,24 @@ func TestMetadataArchiveVerifiesLiveOriginals(t *testing.T) {
 	if err != nil || len(files) != 1 {
 		t.Fatalf("records-only baseline did not verify the live original: %v %d", err, len(files))
 	}
+	// 记录型恢复会留下库/上传的空目录骨架；空目录没有字节，不能被当成“多余内容”，
+	// 但骨架里一旦出现文件，仍然必须拒绝。
+	if err = a.mkdirAll("stage/uploads"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.verifyBaseline(context.Background(), "stage", manifest, c); err != nil {
+		t.Fatalf("records-only restore skeleton failed the tree check: %v", err)
+	}
+	stray := filepath.Join(parent, "stage", "uploads", "stray")
+	if err = os.WriteFile(stray, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.verifyBaseline(context.Background(), "stage", manifest, c); err == nil {
+		t.Fatal("a file inside the restore skeleton was accepted")
+	}
+	if err = os.Remove(stray); err != nil {
+		t.Fatal(err)
+	}
 	damaged := append([]byte(nil), data...)
 	damaged[0] ^= 1
 	if err = os.WriteFile(name, damaged, 0600); err != nil {

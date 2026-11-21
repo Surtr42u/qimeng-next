@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -84,6 +85,7 @@ def native_export(request, destination):
             raise RuntimeError("native checkpoint export did not complete")
         time.sleep(.12)
     destination.write_bytes(request(base + "/archive", raw=True))
+    assert b.get("scope") == "metadata" and b.get("exportedFiles") == 0, "the owner export must stay records-only"
     assert cold.digest(destination) == b["archiveHash"]
     return b["archiveHash"]
 
@@ -302,7 +304,10 @@ def run(args, base):
         new_digest = native_export(get, merged)
     assert new_digest != baseline
     restored = base/"replay"
-    restore_for_review(merged, restored)
+    replay_stage, _ = restore_for_review(merged, restored)
+    # 记录型备份只带数据库记录，不含原件：真实恢复是“恢复记录 + 操作者已有的媒体根”，
+    # 合并工具按目录里的哈希/大小/时间核对原件。这里把合并后的媒体目录原样放回。
+    shutil.copytree(final/"libraries", replay_stage/"libraries", dirs_exist_ok=True, copy_function=shutil.copy2)
     command("apply", restored, merged, success=False, **{"catalog-sha256": accepted_catalogs[parent]})
     replay = command("apply", restored, merged)
     assert replay["alreadyApplied"] and replay["baselineSHA256"] == baseline
