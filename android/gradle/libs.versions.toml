@@ -12,7 +12,11 @@ lifecycle = "2.9.0"
 profileinstaller = "1.4.1"
 work = "2.10.1"
 coroutines = "1.10.2"
-coil = "3.1.0"
+# 与旧版（用户对照的已安装版本）对齐锁定：旧版在同一 Kotlin 2.4.20 / Compose BOM
+# 2026.09.00 下使用 3.6.2 并通过真机验收；本仓用到的 OkHttpNetworkFetcherFactory /
+# ConnectivityChecker / Keyer / Fetcher / ImageRequest 协程上下文等 API 在 3.6.2 均保留
+# 签名，且其 POM 依赖仍是 okhttp 4.12.0（与本目录 okhttp 一致），故对齐旧版而不自行前进。
+coil = "3.6.2"
 media3 = "1.6.1"
 retrofit = "2.11.0"
 okhttp = "4.12.0"
