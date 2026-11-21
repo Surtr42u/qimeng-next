@@ -59,6 +59,7 @@ fun AppRoot(model: LibraryViewModel) {
     val tab by model.tab.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val message by model.message.collectAsStateWithLifecycle()
+    val messageOffersLocalRecovery by model.messageOffersLocalRecovery.collectAsStateWithLifecycle()
     // 统计页（选项卡 2、统计详情、浏览回顾、榜单）不再固定浅色，统一跟随外观设置。
     // 旧的固定浅色规则作废：用户要求夜间运行时统计页与其余页面一致。
     val dark = when (preferences.theme) {
@@ -126,7 +127,7 @@ fun AppRoot(model: LibraryViewModel) {
                         ResidentSceneHost(
                             activeKey = if (route == "main") "tab:$tab" else route,
                             modifier = Modifier.weight(1f),
-                            chrome = { sceneKey -> SceneChrome(sceneKey, model, message) },
+                            chrome = { sceneKey -> SceneChrome(sceneKey, model, message, messageOffersLocalRecovery) },
                         ) { sceneKey -> SceneContent(sceneKey, model, session, transportRevision, preferences) }
                     }
                     var lastTap by remember { mutableLongStateOf(0L) }
@@ -155,7 +156,7 @@ fun AppRoot(model: LibraryViewModel) {
  * Tab 场景（"tab:N"）等价于旧的 route == "main"。
  */
 @Composable
-private fun SceneChrome(sceneKey: String, model: LibraryViewModel, message: String?) {
+private fun SceneChrome(sceneKey: String, model: LibraryViewModel, message: String?, offersLocalRecovery: Boolean) {
     if (sceneKey.startsWith("tab:")) return
     val detailRoute = sceneKey.startsWith("asset:")
     val searchRoute = sceneKey == "search" || sceneKey.startsWith("tag:")
@@ -167,7 +168,14 @@ private fun SceneChrome(sceneKey: String, model: LibraryViewModel, message: Stri
     // 详情有自管的错误层，服务器页在卡片内显示提示，首页由列表内的轻提示承担：同改前。
     if (!detailRoute && sceneKey != "server" && message != null) {
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { ErrorNotice(message) }
+            Box(Modifier.weight(1f)) {
+                ErrorNoticeWithActions(
+                    message,
+                    onRetry = null,
+                    retryLabel = "重试",
+                    secondary = if (offersLocalRecovery) ErrorNoticeAction("连接本机影库", model::connectLocalLibrary) else null,
+                )
+            }
             IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
         }
     }

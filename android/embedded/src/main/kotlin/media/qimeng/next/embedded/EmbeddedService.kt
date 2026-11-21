@@ -52,7 +52,11 @@ class EmbeddedService : Service() {
     private val restartReason = AtomicReference<String?>(null)
     private val running = AtomicBoolean()
     private val hostOwner = AtomicLong()
+    /** Set while a host task is actually running, so a timed-out launch is not duplicated. */
+    private val hostLoopActive = AtomicBoolean()
     private val stopping = AtomicBoolean()
+    /** Serializes the host ownership transition (main-thread intents vs. host-thread cleanup). */
+    private val hostStateLock = Any()
     private val healthGate = ReentrantLock()
     private val healthRequestPending = AtomicBoolean()
     private var sessionEpoch = 0L
@@ -82,24 +86,60 @@ class EmbeddedService : Service() {
             // A foreground return asks an already running service for one probe. When the service
             // survived but no host task is running, the same intent falls through to a normal start.
             if (stopping.get()) return START_NOT_STICKY
-            if (running.compareAndSet(false, true)) beginHost(startId)
-            else requestHealthProbe()
+            if (running.get() && HostState.status.value.phase == RuntimePhase.READY) requestHealthProbe()
+            else beginHost(startId)
             return START_STICKY
         }
-        if (running.compareAndSet(false, true)) beginHost(startId)
+        beginHost(startId)
         return START_STICKY
     }
 
+    /**
+     * Starts the host loop, or revives a zombie service: a superseded startId can leave the
+     * service foreground after the host task ended (its `stopSelf(oldStartId)` is ignored once a
+     * newer intent arrived). A launch timeout also writes STARTING before this intent arrives, so
+     * liveness is decided by [hostLoopActive] rather than the phase alone. [hostStateLock] keeps
+     * the main-thread transition from racing the host thread's cleanup, which only clears
+     * ownership if it still owns this ticket.
+     */
     private fun beginHost(startId: Int) {
-        HostState.ownerActive.set(true)
-        stopping.set(false)
-        stopWarning = null
-        val ticket = HostState.generation.incrementAndGet()
-        HostState.status.value = RuntimeStatus(RuntimePhase.STARTING, "正在启动本机影库")
-        HostState.certificateDerBase64 = null
-        hostOwner.set(ticket)
-        // PDEATHSIG is tied to the parent task. This exact thread launches AND waits for the child.
-        hostThread.execute { runOwnedProcess(ticket, startId) }
+        synchronized(hostStateLock) {
+            // An old host task still holds its ticket while a stop is in progress. It may be blocked
+            // in native/Keystore/process launch and will check `stopping` when it unblocks; starting
+            // a second task on this service instance could let both launch a child. Let stopSelf end
+            // this instance and let the next START create a fresh one.
+            if (!shouldStartHost(HostState.status.value.phase, stopping.get(), hostOwner.get() != 0L, hostLoopActive.get())) return
+            if (running.get()) {
+                running.set(false)
+                hostOwner.set(0L)
+            }
+            HostState.ownerActive.set(true)
+            stopping.set(false)
+            stopWarning = null
+            val ticket = HostState.generation.incrementAndGet()
+            HostState.status.value = RuntimeStatus(RuntimePhase.STARTING, "正在启动本机影库")
+            HostState.certificateDerBase64 = null
+            hostOwner.set(ticket)
+            // Claim the launch before queueing it: the main thread must never see running=true with
+            // no host task and start a second one between these two assignments.
+            hostLoopActive.set(true)
+            running.set(true)
+            try {
+                // PDEATHSIG is tied to the parent task. This exact thread launches AND waits for the child.
+                hostThread.execute { runOwnedProcess(ticket, startId) }
+            } catch (_: RejectedExecutionException) {
+                // The executor is gone (service teardown race). Leaving running=true here would make
+                // every later START/HEALTH_CHECK believe a host task still exists.
+                hostLoopActive.set(false)
+                running.set(false)
+                hostOwner.compareAndSet(ticket, 0L)
+                if (HostState.generation.get() == ticket) {
+                    HostState.ownerActive.set(false)
+                    HostState.status.value = RuntimeStatus(RuntimePhase.FAILED, "本机服务启动线程已结束，请重新启动本机影库")
+                }
+                main.post { stopSelf(startId) }
+            }
+        }
     }
 
     /**
@@ -118,6 +158,7 @@ class EmbeddedService : Service() {
             val runtime = File(root, "runtime")
             if (secrets.confirmedInstance != null && !control.isDirectory) fail("原本机数据目录不可用，已停止启动以免创建空库")
             val emptyControl = !control.exists() || control.list()?.isEmpty() == true
+            stage(ticket, "正在读取本机启动凭据")
             val token = secrets.token(allowCreate = emptyControl)
             listOf(control, media, runtime).forEach { directory ->
                 if ((!directory.isDirectory && !directory.mkdirs()) || directory.canonicalFile != directory.absoluteFile) fail("无法准备本机私有目录")
@@ -151,6 +192,7 @@ class EmbeddedService : Service() {
                     put("LD_LIBRARY_PATH", nativeRoot.absolutePath)
                 }
                 if (stopping.get()) return
+                stage(ticket, "正在启动本机程序")
                 HostDiagnostics.begin(listOf(token, filesDir.absolutePath, nativeRoot.absolutePath))
                 val launched = builder.start()
                 child = launched
@@ -166,6 +208,7 @@ class EmbeddedService : Service() {
                     while (true) { val count = stream.read(bytes); if (count < 0) break; HostDiagnostics.append(bytes, count) }
                 } } catch (_: java.io.IOException) { /* Process/pipe closed. */ } }, "qimeng-local-output").apply { isDaemon = true; start() }
                 if (stopping.get()) launched.destroy()
+                else stage(ticket, "正在等待本机服务就绪")
                 val deadline = startedAt + STARTUP_RECEIPT_TIMEOUT_MS
                 var instanceId: String? = null
                 var certificate = ""
@@ -214,22 +257,35 @@ class EmbeddedService : Service() {
                 publish(ticket, RuntimeStatus(RuntimePhase.STARTING, "本机影库正在恢复（第 ${attempt + 1} 次启动）"))
             }
         } catch (failure: Exception) {
-            if (!stopping.get()) publish(ticket, RuntimeStatus(RuntimePhase.FAILED,
-                if (failure is HostFailure) failure.message.orEmpty() else "本机启动失败；原数据保留，请核对安装包和本机配置"))
+            // The loop is over: allow a foreground intent to revive this service once FAILED is visible.
+            if (HostState.generation.get() == ticket) hostLoopActive.set(false)
+            if (!stopping.get()) {
+                val message = if (failure is HostFailure) failure.message.orEmpty() else GENERIC_START_FAILURE
+                // Release builds keep no child output. The class name plus the published message
+                // (no token, paths, env or stack trace) is the only way to see why the host died:
+                // adb logcat -s QimengEmbedded.
+                Log.e(LOG_TAG, "local server failed: ${failure.javaClass.simpleName}: $message")
+                publish(ticket, RuntimeStatus(RuntimePhase.FAILED, message))
+            }
         } finally {
-            session.set(null)
-            watchdog.getAndSet(null)?.future?.cancel(false)
             val finished = child
             if (finished != null && finished.isAlive) {
                 finished.destroy()
                 if (!finished.waitFor(STOP_GRACE_MS, TimeUnit.MILLISECONDS)) { finished.destroyForcibly(); finished.waitFor() }
             }
             process.compareAndSet(finished, null)
-            running.set(false)
-            // A newer host may already own the service after running became false; only the
-            // current owner may clear the shared flag.
-            hostOwner.compareAndSet(ticket, 0L)
-            if (HostState.generation.get() == ticket) HostState.ownerActive.set(false)
+            synchronized(hostStateLock) {
+                // A zombie revival may already have started a newer host on the main thread; only
+                // the task that still owns this ticket may clear the shared session/watchdog/running
+                // state, or the old cleanup would strand the new host.
+                if (hostOwner.compareAndSet(ticket, 0L)) {
+                    hostLoopActive.set(false)
+                    session.set(null)
+                    watchdog.getAndSet(null)?.future?.cancel(false)
+                    running.set(false)
+                    if (HostState.generation.get() == ticket) HostState.ownerActive.set(false)
+                }
+            }
             if (stopping.get()) publish(ticket, stoppedStatus())
             main.post { stopSelf(startId) }
         }
@@ -328,7 +384,10 @@ class EmbeddedService : Service() {
     }
 
     private fun ensureHostStarted() {
-        if (stopping.get() || hostOwner.get() != 0L || !EmbeddedSecrets(this).enabled) return
+        if (stopping.get() || !EmbeddedSecrets(this).enabled) return
+        // A queued/running host loop owns the launch; a stale owner with no active loop is a
+        // terminal failure that a fresh START may revive.
+        if (hostOwner.get() != 0L && hostLoopActive.get()) return
         // Foreground-only call site: the platform rejects an FGS start from a background shell.
         runCatching {
             ContextCompat.startForegroundService(this, Intent(this, EmbeddedService::class.java).setAction(START))
@@ -390,10 +449,30 @@ class EmbeddedService : Service() {
             stopSelf(startId)
         } else if (child != null) {
             main.postDelayed({ if (process.get() === child && stopping.get() && child.isAlive) child.destroyForcibly() }, STOP_GRACE_MS)
+        } else {
+            // No observable child: the host task may be blocked in native/Keystore/process launch
+            // (or already finished with a stale running flag). It re-checks `stopping` before and
+            // after builder.start() and destroys any child in finally, so ending the foreground
+            // service now cannot leave a server running. Waiting for it would time out stop() and
+            // keep the zombie service alive forever.
+            running.set(false)
+            hostLoopActive.set(false)
+            HostState.ownerActive.set(false)
+            HostState.status.value = stoppedStatus()
+            stopSelf(startId)
         }
     }
 
     private fun publish(ticket: Long, state: RuntimeStatus) { if (HostState.generation.get() == ticket) HostState.status.value = state }
+
+    /**
+     * One host stage: visible in the banner and, even when the task later blocks without throwing,
+     * the last line in `adb logcat -s QimengEmbedded`. Safe strings only (no paths or tokens).
+     */
+    private fun stage(ticket: Long, message: String) {
+        Log.i(LOG_TAG, message)
+        publish(ticket, RuntimeStatus(RuntimePhase.STARTING, message))
+    }
     private fun stoppedStatus() = stopWarning?.let { RuntimeStatus(RuntimePhase.FAILED, it) }
         ?: RuntimeStatus(RuntimePhase.STOPPED, "本机服务已停止")
 
@@ -447,6 +526,9 @@ class EmbeddedService : Service() {
         private const val IDENTITY_TIMEOUT_MS = 1_500
         private const val WATCHDOG_REASON = "watchdog"
         private const val FOREGROUND_REASON = "foreground"
+
+        /** Filters unexpected exceptions before they reach the UI or logcat. */
+        private const val GENERIC_START_FAILURE = "本机启动失败；原数据保留，请核对安装包和本机配置"
 
         /** Startup receipt budget; the Go server writes it after it is able to answer. */
         private const val STARTUP_RECEIPT_TIMEOUT_MS = 45_000L

@@ -14,12 +14,17 @@ import media.qimeng.next.data.ApiFailure
 import media.qimeng.next.model.*
 import java.util.UUID
 
+/**
+ * 列表状态。[errorIsTransport] 只在传输层失败（连接拒绝、超时、断流）时为 true；
+ * 已收到 HTTP 应答的业务错误不能被「连接本机影库」掩盖。
+ */
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
     val unknownDateCount: Long? = null, val publicationId: String? = null,
     /** 显式刷新（下拉/重试）在途：只有这里驱动刷新指示，筛选重查沿用内容但不亮指示。 */
-    val refreshing: Boolean = false)
+    val refreshing: Boolean = false,
+    val errorIsTransport: Boolean = false)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
 /** 一次资产页请求的结果；[restarted] 表示推荐顺序过期后已静默重取第一页（见 [LibraryViewModel.browse]）。 */
@@ -69,6 +74,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val nameWrites = mutableMapOf<String, Job>()
     private val mutableMessage = MutableStateFlow<String?>(null)
     val message = mutableMessage.asStateFlow()
+    /**
+     * 当前全局提示是否同时提供「连接本机影库」。传输层失败、或当前会话就是本机端点且运行层
+     * 未 READY 时为 true；远端已收到 HTTP 应答的业务错误与已在屏上的旧提示不带来这个动作。
+     */
+    private val mutableMessageOffersLocalRecovery = MutableStateFlow(false)
+    val messageOffersLocalRecovery = mutableMessageOffersLocalRecovery.asStateFlow()
     /** 一次性轻提示的票据：新提示递增，旧定时器据此不再清掉新消息。 */
     private var hintTicket = 0L
     /**
@@ -360,7 +371,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val reportUnchanged = announceUnchanged && !next && force
         // 翻页沿用原发布标记（尚未按最新发布补齐），首屏/刷新才认领当前发布。
         val requestPublication = if (next) old.publicationId else publication
-        state.value = if (keep) old.copy(loading = true, refreshing = refreshing, error = null, publicationId = requestPublication)
+        state.value = if (keep) old.copy(loading = true, refreshing = refreshing, error = null, errorIsTransport = false, publicationId = requestPublication)
             else ListState(loading = true, publicationId = requestPublication)
         listJobs[key] = viewModelScope.launch {
             try {
@@ -419,7 +430,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (generation.isCurrent(ticket) && connection == connectionGeneration)
-                    state.value = state.value.copy(loading = false, refreshing = false, error = explain(failure))
+                    state.value = state.value.copy(loading = false, refreshing = false, error = explain(failure),
+                        errorIsTransport = isTransportFailure(failure))
             }
         }
     }
@@ -466,10 +478,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val ticket = ++hintTicket
         // 刷新成功本身就是「连接正常」的证据：下一次真实失败应立刻提示，不受旧冷却影响。
         connectionMessages.reset()
-        mutableMessage.value = LIST_UP_TO_DATE_MESSAGE
+        publishMessage(LIST_UP_TO_DATE_MESSAGE)
         viewModelScope.launch {
             delay(UP_TO_DATE_HINT_MS)
-            if (ticket == hintTicket && mutableMessage.value == LIST_UP_TO_DATE_MESSAGE) mutableMessage.value = null
+            if (ticket == hintTicket && mutableMessage.value == LIST_UP_TO_DATE_MESSAGE) publishMessage(null)
         }
     }
 
@@ -571,7 +583,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun stopDiscovery() = graph.discovery.stop()
     fun requestLocalFileAccess() = action { runtime.files.requestAccess() }
     fun refreshLocalFileAccess() = runtime.files.refreshAccess()
-    fun isLocalSession() = session.value?.let { runtime.available && it.baseUrl in runtime.ownedEndpoints(it.instanceId) } == true
+    /** 会话地址是否由本机运行层拥有（私有启动回执确认过的实例与端口）。 */
+    fun isLocalEndpoint(target: Session?): Boolean =
+        target != null && runtime.available && target.baseUrl in runtime.ownedEndpoints(target.instanceId)
+    fun isLocalSession() = isLocalEndpoint(session.value)
     fun setChargeOnlyScan(enabled: Boolean) = action { runtime.scans.setChargeOnly(enabled) }
     fun saveDefaultEndpoint(value: String) = action(blocking = false) {
         check(value != "local" || runtime.available) { "此安装包未包含本机服务" }
@@ -596,27 +611,69 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             action(surfaceConnectionFailure = false) { connectLocal(forceLogin = false) }
         }
     }
-    private suspend fun connectLocal(forceLogin: Boolean, password: String = "") {
-        localConnection.connect(forceLogin, password)
+    private suspend fun connectLocal(forceLogin: Boolean, password: String = "", retryLocal: Boolean = false) {
+        localConnection.connect(forceLogin, password, retryLocal)
         refreshConnection()
+    }
+
+    /**
+     * 连接失败横幅在本机端点上的「重启本机影库」：不重新登录，只按既有本机连接流程启动/
+     * 重启运行层、等待 READY 后刷新连接。用户点按才执行；自动恢复仍尊重显式停止标记。
+     */
+    fun retryLocalRuntime() = action {
+        check(localRuntimeAvailable) { "此安装包未包含本机服务" }
+        connectLocal(forceLogin = false, retryLocal = true)
+        refreshFailedLists()
+    }
+
+    /**
+     * 连接失败横幅上的「连接本机影库」：显式启动本机运行模块并按正常会话交换登录。
+     * 只有用户点按才会调用；失败时不自动切换媒体库，也不在后台拉起本机服务。
+     */
+    fun connectLocalLibrary() = action {
+        check(localRuntimeAvailable) { "此安装包未包含本机服务" }
+        connectLocal(forceLogin = true)
+        refreshFailedLists()
+    }
+
+    /**
+     * 连接恢复后重读当前失败的列表：同一端点的会话重新保存时 Session 相等，StateFlow 不发
+     * 新值，列表的 LaunchedEffect 不会重跑；不主动重读，横幅会在连接已恢复后继续挂着。
+     */
+    private fun refreshFailedLists() {
+        lists.keys.toList().filter { lists[it]?.value?.error != null }
+            .forEach { key -> browse(key, query(key), force = true) }
     }
     fun logout() = action { repository.logout(); saved["route"] = "main" }
     fun disconnect() = action { repository.disconnect(); saved["route"] = "main" }
     fun clearMessage() { clearMessageNow() }
 
+    /** 发布全局提示；除 [showFailure] 的传输失败分支外，所有提示都不带本机恢复动作。 */
+    private fun publishMessage(text: String?) {
+        mutableMessage.value = text
+        mutableMessageOffersLocalRecovery.value = false
+    }
+
     /** 清空提示并重置连接失败冷却：成功/用户关闭/新动作开始都视为「上一轮失败已结束」。 */
     private fun clearMessageNow() {
-        mutableMessage.value = null
+        publishMessage(null)
         connectionMessages.reset()
     }
 
     /**
      * 失败提示的唯一出口：连接类文本先过冷却闸门，其余文本（业务校验、权限、冲突等）
-     * 原样发布。见 [shouldPostConnectionMessage]。
+     * 原样发布。见 [shouldPostConnectionMessage]。传输层失败或本机运行层未 READY 时才可能
+     * 附带「连接本机影库」；远端已收到 HTTP 应答的业务错误不能靠切换媒体库掩盖。
      */
     private fun showFailure(failure: Exception) {
         val text = explain(failure)
-        if (connectionMessages.shouldPost(text, mutableMessage.value, monotonicNowMs())) mutableMessage.value = text
+        if (connectionMessages.shouldPost(text, mutableMessage.value, monotonicNowMs())) {
+            mutableMessage.value = text
+            val current = session.value
+            mutableMessageOffersLocalRecovery.value = shouldOfferLocalRecovery(
+                localRuntimeAvailable, current?.baseUrl, runtime.baseUrl, isTransportFailure(failure),
+                runtime.status.value.phase, isLocalEndpoint(current))
+        }
     }
 
     private fun ownsObjectRoutes(target: Session) =
@@ -637,7 +694,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     private fun bindObjectTarget(target: Session): Boolean {
         if (!sameTarget(target, session.value)) {
-            mutableMessage.value = "请先连接任务原来的服务器"
+            publishMessage("请先连接任务原来的服务器")
             return false
         }
         discardForeignObjectRoutes(target)
@@ -867,7 +924,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             val result = repository.mergeAuthors(it, target)
             mutableAuthor.value = result.first
             saved["route"] = "author:${result.first.id}"
-            mutableMessage.value = result.second
+            publishMessage(result.second)
             onSaved(); loadAuthors()
         }
     }
@@ -1036,7 +1093,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     if (group == null) return@launch
                     if (target != null && destination != null && sameTarget(target, session.value) && repository.library(target, destination).enabled) {
                         graph.uploads.enqueue(destination, directory, UploadMode.ORDINARY, target = target, inputIds = inputs, batchKey = group)
-                    } else mutableMessage.value = "原上传位置已改变，本次分享已保留，请选择上传位置"
+                    } else publishMessage("原上传位置已改变，本次分享已保留，请选择上传位置")
                 } finally {
                     if (group != null) withContext(NonCancellable) { graph.uploads.releaseSharedDrafts(group) }
                 }

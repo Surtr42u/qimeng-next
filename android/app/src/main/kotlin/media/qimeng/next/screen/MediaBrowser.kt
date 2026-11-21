@@ -56,11 +56,16 @@ import media.qimeng.next.AlbumSelectionState
 import media.qimeng.next.LIST_UP_TO_DATE_MESSAGE
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.ListState
+import media.qimeng.next.sameEndpoint
+import media.qimeng.next.shouldOfferLocalRecovery
+import media.qimeng.next.shouldPreferRuntimeFailureMessage
+import media.qimeng.next.shouldRestartLocalRuntime
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.AssetQuery
 import media.qimeng.next.model.Session
 import media.qimeng.next.ui.ContentCard
-import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.ErrorNoticeAction
+import media.qimeng.next.ui.ErrorNoticeWithActions
 import media.qimeng.next.ui.TabScrollController
 import media.qimeng.next.ui.component.QimengChipRow
 import media.qimeng.next.ui.component.QimengPill
@@ -328,6 +333,15 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     val listState = listFlow.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
+    // 本机运行层的回环入口（远程包为空串，判定先看 localRuntimeAvailable）。
+    val localRuntimeAddress by model.localAddress.collectAsStateWithLifecycle()
+    val localRuntimeStatus by model.localRuntimeStatus.collectAsStateWithLifecycle()
+    // 归属可能来自启动回执确认过的旧端口（ownedEndpoints），也可能是当前配置的 baseUrl；
+    // 两者都算本机端点，不能用 IP 字面量判定。
+    val currentIsLocal = model.isLocalEndpoint(session) || sameEndpoint(session?.baseUrl, localRuntimeAddress)
+    val preferRuntimeMessage = shouldPreferRuntimeFailureMessage(
+        model.localRuntimeAvailable, currentIsLocal, localRuntimeStatus.phase, localRuntimeStatus.message)
+    val localRuntimeNotice = localRuntimeStatus.message.takeIf { preferRuntimeMessage }
     // 主页面不渲染 AppRoot 的全局提示条（那里只覆盖 pushed 路由）；刷新「内容没有变化」
     // 的轻提示由本组件在主页面内落地，避免消息设了却看不见。
     val route by model.route.collectAsStateWithLifecycle()
@@ -395,6 +409,18 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val listRefreshing by remember(listState) { derivedStateOf { listState.value.refreshing } }
     val listLoaded by remember(listState) { derivedStateOf { listState.value.loaded } }
     val listError by remember(listState) { derivedStateOf { listState.value.error } }
+    // 运行层的状态优先显示；数据层的通用「连接失败」退居其后，绝不反过来淹没退出码等原因。
+    val listNotice = listError?.let { error ->
+        localRuntimeNotice?.takeIf { it != error }?.let { "$it\n$error" } ?: error
+    }
+    // 只有传输层失败才允许出现「连接本机影库」：HTTP 业务错误（401/404/5xx 等）有明确含义，
+    // 不能靠切换媒体库掩盖。列表状态在失败时一并记录来源。
+    val listErrorIsTransport by remember(listState) {
+        derivedStateOf { listState.value.error != null && listState.value.errorIsTransport }
+    }
+    // 本机端点未 READY：横幅的「重试」必须先启动/重启运行层，单纯 browse 只会再撞空端口。
+    val restartLocalRuntime = shouldRestartLocalRuntime(
+        model.localRuntimeAvailable, currentIsLocal, localRuntimeStatus.phase)
     val listCursor by remember(listState) { derivedStateOf { listState.value.cursor } }
     val totalMatched by remember(listState) { derivedStateOf { listState.value.totalMatched } }
     // 只有响应确实属于本次查询时，totalMatched 才能归到该查询名下；重查在途时它仍是上一个
@@ -496,11 +522,26 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         // ModalBottomSheet 是独立窗口，隐藏 Tab 里的实例会浮在当前 Tab 之上。
         if (sceneActive && (albumTitle != null || toolbar)) BrowserFilterSheet(controls)
         val retry: () -> Unit = {
-            // 只有「当前查询确实加载过」才续页；重查失败后 loadedQuery 还是旧查询，
-            // 用旧游标续新查询会拿错顺序，改为从第一页重取。
-            model.browse(key, query, next = listCursor != null && listState.value.loadedQuery == query, force = true)
+            if (restartLocalRuntime) {
+                // 本机端点未 READY：重试必须先拉起运行层并等 READY，单纯 browse 永远撞空端口。
+                model.retryLocalRuntime()
+            } else {
+                // 只有「当前查询确实加载过」才续页；重查失败后 loadedQuery 还是旧查询，
+                // 用旧游标续新查询会拿错顺序，改为从第一页重取。
+                model.browse(key, query, next = listCursor != null && listState.value.loadedQuery == query, force = true)
+            }
         }
-        if (leading == null) listError?.let { ErrorNotice(it, retry) }
+        // 远端会话：传输失败时给「连接本机影库」。本机端点未 READY 时上面的重试已改走本机
+        // 流程，不再重复摆第二个按钮；运行层 READY 但请求仍失败时保留这个显式重连接口。
+        val localRecovery = remember(listErrorIsTransport, session?.baseUrl, localRuntimeAddress,
+            localRuntimeStatus.phase, currentIsLocal, restartLocalRuntime) {
+            if (!restartLocalRuntime && shouldOfferLocalRecovery(model.localRuntimeAvailable, session?.baseUrl,
+                    localRuntimeAddress, listErrorIsTransport, localRuntimeStatus.phase, currentIsLocal))
+                ErrorNoticeAction("连接本机影库", model::connectLocalLibrary)
+            else null
+        }
+        val retryLabel = if (restartLocalRuntime) "重启本机影库" else "重试"
+        if (leading == null) listNotice?.let { ErrorNoticeWithActions(it, retry, retryLabel, localRecovery) }
         // 下拉刷新「已是最新」轻提示：只显示这一条一次性文案，其他消息仍走 AppRoot 的
         // pushed 路由提示条，避免同一条消息在两处重复。
         if (route == "main") browserMessage?.takeIf { it == LIST_UP_TO_DATE_MESSAGE }?.let { UpToDateHint(it) }
@@ -614,12 +655,12 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                     filters?.let { authorFilters ->
                         item(key = "author-filters", contentType = "author-filters", span = { GridItemSpan(maxLineSpan) }) { Column { authorFilters() } }
                     }
-                    val message = listError
+                    val message = listNotice
                     when {
                         message != null -> {
                             item(key = "author-error", contentType = "author-status", span = { GridItemSpan(maxLineSpan) }) {
                                 Box(Modifier.padding(horizontal = QimengDimens.ScreenPaddingHorizontal, vertical = QimengDimens.SpaceM)) {
-                                    ErrorNotice(message, retry)
+                                    ErrorNoticeWithActions(message, retry, retryLabel, localRecovery)
                                 }
                             }
                         }
