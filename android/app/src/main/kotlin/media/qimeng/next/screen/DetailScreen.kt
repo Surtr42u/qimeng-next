@@ -107,7 +107,7 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
                 reset = resetImage,
             )
             // 视频播放时不预载：避免邻位原图下载和视频流抢带宽（旧版 preloadEnabled 同口径）。
-            DetailNeighbourOriginalPreload(item)
+            DetailNeighbourOriginalPreload(model, item)
         }
         DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))
         DetailBottomChrome(visible, item, busy, busy, { model.setTodayLike(item, !item.liked) },

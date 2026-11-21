@@ -21,7 +21,8 @@ class BrowserControls(
     partition: String? = null,
     tag: String = "",
     columnCount: Int = 3,
-    private val minColumns: Int = MIN_GRID_COLUMNS,
+    /** 恢复列数下界（首页 1，其余网格 2）；Saver 需要读它，故模块内可见。 */
+    internal val minColumns: Int = MIN_GRID_COLUMNS,
 ) {
     val type = mutableStateOf<String?>(null)
     val partition = mutableStateOf(partition)

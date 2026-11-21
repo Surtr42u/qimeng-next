@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createServerEventParser,
   refreshTargets,
-} from "../src/data/server-events";
+} from "../src/data/server-events-core";
 
 describe("server event parser", () => {
   it("parses one frame with event, data and id", () => {

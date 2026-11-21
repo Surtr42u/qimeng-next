@@ -183,8 +183,11 @@ func TestMutationsPublishMinimalInvalidations(t *testing.T) {
 	}
 	noEvent(t, sub.C, "like must not publish library.changed")
 
-	// Trash invalidates content just like an edit.
-	f.json("DELETE", "/assets/"+asset.ID+"?expectedRevision="+strconv.FormatInt(edited.Revision, 10), "event-trash", struct{}{}, 200)
+	// Trash invalidates content just like an edit. 收藏/点赞各自推进一次内容修订，
+	// 所以删除前重新读取当前修订，不能沿用编辑时的旧值（否则先撞 409，事件断言不会执行）。
+	var current model.Asset
+	decode(t, f.json("GET", "/assets/"+asset.ID, "", nil, 200), &current)
+	f.json("DELETE", "/assets/"+asset.ID+"?expectedRevision="+strconv.FormatInt(current.Revision, 10), "event-trash", struct{}{}, 200)
 	if e := takeEvent(t, sub.C); e.Topic != events.TopicLibraryChanged {
 		t.Fatalf("trash published %s, want library.changed", e.Topic)
 	}

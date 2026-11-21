@@ -419,9 +419,13 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     // 汇入 100 个文件只会让列表变「旧」，不会在这里变成 100 次请求：刷新发生在下一次
     // 进入列表或回前台，每次至多一次；手动下拉刷新不受影响。
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.browse(key, query) }
-    val nearEnd by remember { derivedStateOf {
+    // 续页运行距离按"行"给，不再固定 8 格：搜索页的下一页对每个 token 都是一次 instr 全表扫描
+    // （server/internal/service/asset_filters.go 的 q 谓词），一次往返数百毫秒。8 格（约 2~3 行）
+    // 在快速滑动下等于没有余量：先撞到已加载清单末端停死、再等这一页，每 50 项重复一次。
+    val nearEnd by remember(columns) { derivedStateOf {
         val layout = grid.layoutInfo
-        layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 8
+        val runway = PAGE_RUNWAY_ROWS * columns
+        layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - runway
     } }
     LaunchedEffect(nearEnd, listCursor, query, sceneActive) {
         // 隐藏场景里的布局残影（高度/可见项变化）也能让 nearEnd 成立；不为看不见的网格续页。
@@ -665,6 +669,12 @@ private fun UpToDateHint(message: String) {
 private const val TILE_CORNER_RADIUS_PX = 24f
 
 /**
+ * 续页运行距离（行）：约 1.3 屏。按行而不是按格，列数变化时余量不变；
+ * 搜索的整页延迟可达数百毫秒，这个距离要让一次快滑在页面到达前还留在已加载内容里。
+ */
+private const val PAGE_RUNWAY_ROWS = 8
+
+/**
  * 这份列表状态是否有可以给 [query] 渲染的内容。重查在途时 `loadedQuery` 仍是上一个查询，
  * 列表条目会被保留：继续渲染它，网格与计数就不会在筛选/刷新期间闪空。请求失败后
  * （error != null）不再沿用上一个查询的条目与计数，否则新筛选会顶着旧结果冒充成功；
@@ -765,7 +775,7 @@ private fun MediaTile(asset: Asset, shortTitle: Boolean, isSelected: Boolean?, o
                 }
             }
         }
-        if (shortTitle) Text(asset.name.substringBeforeLast('.', asset.name), Modifier.fillMaxWidth().padding(horizontal = 5.dp), maxLines = 1,
+        if (shortTitle) Text(remember(asset.name) { asset.name.substringBeforeLast('.', asset.name) }, Modifier.fillMaxWidth().padding(horizontal = 5.dp), maxLines = 1,
             overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
     }
 }

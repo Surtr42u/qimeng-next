@@ -4,7 +4,7 @@ import {
   EVENTS_PATH,
   refreshTargets,
   subscribeServerEvents,
-} from "./server-events";
+} from "./server-events-core";
 
 /**
  * Holds one stream for the authenticated session and turns frames into cache
