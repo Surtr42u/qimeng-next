@@ -28,3 +28,16 @@
 #    只有 PlatformContextKt，没有同名类），所以 R8 会报 missing class 并中止 release。
 #    我们始终显式传入 connectivityChecker，那条默认参数不会被构造，放过这条悬空引用即可。
 -dontwarn coil3.PlatformContext
+
+# 6) Room 生成的 *_Impl 由 Room 按「基类名 + _Impl」反射实例化。WorkManager 的
+#    androidx.startup 初始化路径就会走到 WorkDatabase_Impl：只保留字段名不够，
+#    类名和构造器都必须保留（实测 release 首启 NoSuchMethodException）。
+-keep class * extends androidx.room.RoomDatabase {
+    <init>();
+}
+
+# 7) WorkManager 从数据库里按类名重建任务，Worker 类一旦被改名或被裁掉，已排队的
+#    上传/归档/备份恢复就永久失效。保留类名与构造器。
+-keep class * extends androidx.work.ListenableWorker {
+    <init>(android.content.Context, androidx.work.WorkerParameters);
+}
