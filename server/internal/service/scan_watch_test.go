@@ -116,14 +116,15 @@ func TestScanBatchMixedWatchChangesRetainWritesAcrossQueueConflict(t *testing.T)
 	if err := json.Unmarshal(checkpoint.Body, &backup); err != nil {
 		t.Fatal(err)
 	}
-	s.exportBackup(ctx, backup)
-	backup, err = s.Backup(ctx, syncOwner(), backup.ID)
-	if err != nil || backup.ExportState != "completed" || backup.ArchiveHash == "" {
-		t.Fatal("updated originals could not be exported", backup, err)
+	// This test verifies the updated original bytes after a restore. The
+	// user-facing export is records-only, so build the internal full archive.
+	_, archiveHash, err := s.WriteFullBackupArchive(ctx, backup.ID, "backups/"+backup.ID+"/archive.full.qnext")
+	if err != nil {
+		t.Fatal("updated originals could not be exported", err)
 	}
 	into := filepath.Join(t.TempDir(), "restored")
-	restored, err := RestoreBackup(ctx, RestoreOptions{Destination: into, ExpectedSHA256: backup.ArchiveHash,
-		ArchivePath: filepath.Join(s.Config.DataDir, "backups", backup.ID, "archive.qnext"), ReserveBytes: 1})
+	restored, err := RestoreBackup(ctx, RestoreOptions{Destination: into, ExpectedSHA256: archiveHash,
+		ArchivePath: filepath.Join(s.Config.DataDir, "backups", backup.ID, "archive.full.qnext"), ReserveBytes: 1})
 	if err != nil || restored.AssetCount != 2 {
 		t.Fatal("watch backup restore", restored, err)
 	}

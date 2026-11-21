@@ -239,7 +239,7 @@ func TestRecordsBackupRestoresCatalogueWithoutOriginals(t *testing.T) {
 func TestRecordsRestoreKeepsReferencedUploadRowsUnresumable(t *testing.T) {
 	f := setup(t)
 	var batch model.Batch
-	decode(t, f.json("POST", "/batches", "records-upload-batch", map[string]any{"libraryId": f.library, "mode": "intelligent"}, 201), &batch)
+	decode(t, f.json("POST", "/batches", "records-upload-batch", map[string]any{"libraryId": f.library, "mode": "intelligent", "label": "Records retained upload"}, 201), &batch)
 	ids := f.declareInputs(batch.ID, "staged.png")
 	upload, _ := f.upload("staged.png", 176, map[string]any{"batchId": batch.ID, "inputId": ids["staged.png"], "mode": "intelligent"})
 	if out := f.complete(upload); out.Upload.State != "staged" {

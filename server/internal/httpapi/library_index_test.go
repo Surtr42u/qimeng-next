@@ -69,13 +69,14 @@ func TestDetachLibraryRetainsOriginalHistoryAndTerminalUploadBackup(t *testing.T
 	f.json("POST", "/libraries", "reregister-same-physical-root", request, 201)
 	var backup service.Backup
 	decode(t, f.json("POST", "/backups", "detached-input-backup", struct{}{}, 201), &backup)
-	f.json("POST", "/backups/"+backup.ID+"/export", "detached-input-export", struct{}{}, 202)
-	backup = awaitBackup(t, f, backup.ID)
-	if backup.ExportState != "completed" {
-		t.Fatal(backup.ExportError)
+	// Detaching a library is an internal safety artifact: the terminal upload
+	// prefix must survive, so use the full-archive path, not the user export.
+	_, archiveHash, e := f.s.WriteFullBackupArchive(context.Background(), backup.ID, "backups/"+backup.ID+"/archive.full.qnext")
+	if e != nil {
+		t.Fatal(e)
 	}
 	into := filepath.Join(t.TempDir(), "restore")
-	report, e := service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(cfg.DataDir, "backups", backup.ID, "archive.qnext"), Destination: into, ExpectedSHA256: backup.ArchiveHash, ReserveBytes: 1})
+	report, e := service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(cfg.DataDir, "backups", backup.ID, "archive.full.qnext"), Destination: into, ExpectedSHA256: archiveHash, ReserveBytes: 1})
 	if e != nil || report.UploadCount != 1 {
 		t.Fatal("detached input was lost in backup", report, e)
 	}

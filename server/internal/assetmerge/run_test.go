@@ -1,6 +1,7 @@
 package assetmerge
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"qimeng.local/next/server/internal/backup"
 	"qimeng.local/next/server/internal/service"
 	"qimeng.local/next/server/internal/store"
 )
@@ -88,4 +90,43 @@ func TestReserveFailureAfterClaimKeepsCatalogAndSelectedOriginal(t *testing.T) {
 	}
 	check("work/selection.png", oldFile)
 	check("work/qimeng.sqlite", oldCatalog)
+}
+
+func TestMetadataArchiveVerifiesLiveOriginals(t *testing.T) {
+	data := []byte("synthetic original bytes")
+	digest := sha256.Sum256(data)
+	parent := t.TempDir()
+	a, err := openArea(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.root.Close()
+	if err = a.mkdir("stage"); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.mkdirAll("stage/libraries/lib"); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(parent, "stage", "libraries", "lib", "a.png")
+	if err = os.WriteFile(name, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := catalog{files: map[string]payload{"asset/a": {
+		File: backup.File{Kind: "asset", ObjectID: "a", ContentVersion: 1,
+			StoragePath: "libraries/lib/a.png", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))},
+		Physical: "libraries/lib/a.png",
+	}}, dirs: map[string]bool{"libraries": true, "libraries/lib": true}}
+	manifest := backup.Manifest{Scope: backup.ScopeMetadata}
+	files, err := a.verifyBaseline(context.Background(), "stage", manifest, c)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("records-only baseline did not verify the live original: %v %d", err, len(files))
+	}
+	damaged := append([]byte(nil), data...)
+	damaged[0] ^= 1
+	if err = os.WriteFile(name, damaged, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.verifyBaseline(context.Background(), "stage", manifest, c); err == nil {
+		t.Fatal("records-only baseline accepted a damaged original")
+	}
 }

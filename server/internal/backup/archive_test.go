@@ -92,7 +92,13 @@ func TestContainerSizeMatchesWrite(t *testing.T) {
 			t.Fatal(e)
 		}
 		var buffer bytes.Buffer
-		open := func(f File) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("original")), nil }
+		open := func(f File) (io.ReadCloser, error) {
+			text := "original"
+			if f.Kind == "snapshot" {
+				text = "snapshot"
+			}
+			return io.NopCloser(strings.NewReader(text)), nil
+		}
 		if e = Write(context.Background(), &buffer, m, open, nil); e != nil {
 			t.Fatal(e)
 		}
