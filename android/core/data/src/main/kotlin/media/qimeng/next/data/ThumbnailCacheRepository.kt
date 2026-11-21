@@ -81,6 +81,15 @@ internal object ThumbnailCachePolicy {
     const val VERSION = "v5"
     const val SIZE = "md"
 
+    /**
+     * 单池配额。与旧版 `DiskCacheQuota.DEFAULT`（1 GiB）及「本地池取档位一半」同值：
+     * 旧版缓存页早已把「缓存上限」一行改成显示实际占用，档位选择器没有消费方，因此这里
+     * 固定默认档而不引入第二套持久化。Coil 的 DiskCache 按配额做 LRU，写入超过配额时
+     * 淘汰最旧条目（见 [ThumbnailDiskCache.store] 的 allowEviction）。
+     */
+    const val NAS_POOL_BYTES = 1024L * 1024 * 1024
+    const val LOCAL_POOL_BYTES = NAS_POOL_BYTES / 2
+
     /** Identity hashed into each disk key, so policy or size changes cannot reuse old bytes. */
     fun assetKey(assetId: String): String = "$VERSION:$SIZE:$assetId"
 }
@@ -98,8 +107,8 @@ class ThumbnailCacheRepository internal constructor(
     private val cacheRoot = directory
     /** 旧命名空间只回收一次；所有调用点都在 IO 线程，删除大目录不阻塞界面。 */
     private val supersededCleanup = AtomicBoolean(false)
-    private val nas = ThumbnailDiskCache(File(directory, "nas"), 1024L * 1024 * 1024)
-    private val local = ThumbnailDiskCache(File(directory, "local"), 512L * 1024 * 1024)
+    private val nas = ThumbnailDiskCache(File(directory, "nas"), ThumbnailCachePolicy.NAS_POOL_BYTES)
+    private val local = ThumbnailDiskCache(File(directory, "local"), ThumbnailCachePolicy.LOCAL_POOL_BYTES)
     /** 每个物理缓存池一条修订记录：清空一个池只作废该池的 SKIP 证据，另一个池照旧跳过全量拉取。 */
     private val revisionStores = ThumbnailPool.entries.associateWith {
         ThumbnailPrefetchRevisionStore(context, it.name.lowercase())
@@ -109,6 +118,11 @@ class ThumbnailCacheRepository internal constructor(
     private val backgroundFetch = Semaphore(PREFETCH_CONCURRENCY)
     private val flights = ThumbnailFlights()
     private var capturedConnection: Connection? = null
+    /**
+     * 用户刚清空过的当前连接：只用来让**全库预取**停手（别把用户刚腾出的空间立刻填回去），
+     * 不影响可见请求与视口前瞻——那两类是用户正在看的格子，清空后也要照常缓存。
+     * 每次连接变更（登录/换服务器）自然失效。
+     */
     @Volatile private var clearedConnection: Connection? = null
     private val prefetchState = MutableStateFlow<ThumbnailPrefetch?>(null)
     private val nasDiskChanges = MutableStateFlow(0L)
@@ -127,7 +141,16 @@ class ThumbnailCacheRepository internal constructor(
         // The policy and size live inside the hashed key so early Go previews and future policy
         // revisions can never collide with this cache generation.
         val key = "${connection.selection.instanceKey}:${thumbnailHash(ThumbnailCachePolicy.assetKey(assetId))}"
-        val flightKey = "$key:${connection.revision}:$generation"
+        /**
+         * Coil 内存缓存键（Keyer<Asset> 的返回值）：只认实例身份 + 资产 + 内容版本。
+         * 传输代次与磁盘代次不进内存键：本机服务重启后的自动重登、同服务器重新登录都会
+         * 递增 transportRevision，清空磁盘池会递增 generation，但同一份预览的内容没变，
+         * 已经解码好的位图不该因此不可达（旧版进程级 ImageLoader 的内存键同样不含它们；
+         * 现壳已按「哪台服务器」重建 ImageLoader，正是为了保留这份内存缓存）。
+         */
+        val memoryKey = "$key:$version"
+        /** 在途键：连接代次与磁盘代次都算数——旧连接的请求不能给新连接复用 flight，清空后的旧写入作废。 */
+        val flightKey = "$memoryKey:${connection.revision}:$generation"
     }
 
     private fun diskFor(pool: ThumbnailPool) = if (pool == ThumbnailPool.LOCAL) local else nas
@@ -155,8 +178,9 @@ class ThumbnailCacheRepository internal constructor(
         // 磁盘命名空间只由服务器实例身份决定：同一实例可以经 LAN 地址、隧道域名或回环访问，
         // 换地址不等于换库。旧版 SignedMediaCacheKeys 剥掉 scheme/host 就是同一裁决；把 baseUrl
         // 编进缓存键会让一次地址切换把整库缩略图判为未缓存、全部重下。
-        // 传输修订（transportRevision）仍留在 Preview.flightKey 里——那是内存/在途键：请求绑定
-        // 具体连接，连接变了旧请求不能算数；磁盘条目按 (实例, 资产, 内容版本) 复用，与连接无关。
+        // 传输修订（transportRevision）只留在 Preview.flightKey 里——那是在途键：请求绑定
+        // 具体连接，连接变了旧请求不能算数；磁盘条目与内存位图按 (实例, 资产, 内容版本)
+        // 复用，与连接代次无关（见 Preview.memoryKey）。
         val identity = target.instanceId
         Connection(target, revision, ThumbnailCacheSelection(kind, thumbnailHash(identity))).also { capturedConnection = it }
     }
@@ -171,9 +195,7 @@ class ThumbnailCacheRepository internal constructor(
     }
 
     fun addImageComponents(builder: ComponentRegistry.Builder) {
-        builder.add(Keyer<Asset> { asset, _ ->
-            preview(asset)?.let { "${it.flightKey}:${it.version}" }
-        })
+        builder.add(Keyer<Asset> { asset, _ -> preview(asset)?.memoryKey })
         builder.add(Fetcher.Factory<Asset> { asset, options, _ ->
             val request = preview(asset) ?: return@Factory null
             Fetcher {
@@ -226,12 +248,16 @@ class ThumbnailCacheRepository internal constructor(
      * （旧版网格预取的 `imageLoader.execute` 语义）；false 表示没有落盘，不必解码。
      *
      * 调用方是视口队列的长驻 worker，只在离开页面时取消；这里不做任何逐窗口取消。
+     *
+     * 与全库预取不同，视口前瞻**不受容量门约束**：这些格子用户正在滚入，无论如何都会
+     * 请求，池满时也必须落盘（Coil 的 LRU 淘汰最旧条目）——否则池一满，前瞻就静默停止，
+     * 每次滚入都退回冷网络请求。清空缓存也不停前瞻：清空要释放空间，不是禁止重新缓存
+     * 用户正在看的格子；在途写入由 generation 校验作废。
      */
     suspend fun prefetchNearby(assets: List<Asset>): Boolean = withContext(Dispatchers.IO) {
         val connection = currentConnection() ?: return@withContext false
         // 视口前瞻不做计费网络门（旧版网格预取同样不设门）：这些条目是用户正在滚入、
         // 无论如何都会请求的缩略图，提前 1 个往返不增加总流量；全库预取仍按未计费网络门控。
-        if (clearedConnection == connection) return@withContext false
         val pool = connection.selection.pool
         val disk = diskFor(pool)
         val generation = disk.generation
@@ -384,6 +410,14 @@ class ThumbnailCacheRepository internal constructor(
             Log.d("ThumbnailCache", "Revision sample missing $missing/${sample.size}; running a full prefetch round")
         }
         val api = provider.api(connection.target)
+        // 池满后的淘汰额度：当前实例只占少数时按「接管」放行（另一实例的条目本连接永远
+        // 读不到，却会把新键全部挡在 FULL），否则只给新增媒体一个小额度（见策略 KDoc）。
+        val turnover = ThumbnailTurnoverBudget(
+            ThumbnailTurnoverPolicy.limit(
+                ownBytes = disk.usage(connection.selection.instanceKey).bytes,
+                poolBytes = disk.usedBytes,
+            ),
+        )
         var cursor: String? = null
         var lastId: String? = null
         var seen = 0L
@@ -424,7 +458,7 @@ class ThumbnailCacheRepository internal constructor(
                             yieldForForegroundRefresh()
                             val preview = previews[index]
                             val result = try {
-                                prefetchOne(preview, disk)
+                                prefetchOne(preview, disk, turnover = turnover)
                             } catch (failure: ApiFailure) {
                                 if (!failure.isMissingThumbnail()) throw failure
                                 ThumbnailDiskResult.MISSING
@@ -502,27 +536,47 @@ class ThumbnailCacheRepository internal constructor(
      * 只发生在「预热中的格子恰好滚入视口」这一窗口，且磁盘写入由 [ThumbnailDiskCache.store]
      * 串行化，结果一致。lookahead=true 的视口预取另外跳过后台配额：它服务的是马上要看的
      * 格子，不能排在 4 条全库预取后面。
+     *
+     * 池满时 lookahead 一律允许淘汰最旧条目；全库预取按 [ThumbnailTurnoverBudget] 决定
+     * 这一条值不值得淘汰（配额见 [ThumbnailTurnoverPolicy]）。
      */
-    private suspend fun prefetchOne(preview: Preview, disk: ThumbnailDiskCache, lookahead: Boolean = false): ThumbnailDiskResult {
+    private suspend fun prefetchOne(
+        preview: Preview,
+        disk: ThumbnailDiskCache,
+        lookahead: Boolean = false,
+        turnover: ThumbnailTurnoverBudget? = null,
+    ): ThumbnailDiskResult {
         val current = disk.warmState(preview.key, preview.version)
-        if (current != ThumbnailDiskResult.MISSING) return current
-        if (lookahead) return downloadMissing(preview, disk, lookahead = true)
-        return backgroundFetch.withPermit { downloadMissing(preview, disk, lookahead = false) }
+        if (current == ThumbnailDiskResult.READY) return current
+        val allowEviction = when {
+            current != ThumbnailDiskResult.FULL -> false // 池没满，普通写入即可
+            lookahead -> true // 马上要看的格子：值得淘汰一条最旧条目
+            else -> turnover?.tryAcquire() == true
+        }
+        if (current == ThumbnailDiskResult.FULL && !allowEviction) return ThumbnailDiskResult.FULL
+        if (lookahead) return downloadMissing(preview, disk, lookahead = true, allowEviction = allowEviction)
+        return backgroundFetch.withPermit {
+            downloadMissing(preview, disk, lookahead = false, allowEviction = allowEviction)
+        }
     }
 
-    private suspend fun downloadMissing(preview: Preview, disk: ThumbnailDiskCache, lookahead: Boolean): ThumbnailDiskResult {
+    private suspend fun downloadMissing(
+        preview: Preview,
+        disk: ThumbnailDiskCache,
+        lookahead: Boolean,
+        allowEviction: Boolean,
+    ): ThumbnailDiskResult {
         requireCurrent(preview.connection)
-        if (disk.generation != preview.generation || clearedConnection == preview.connection) {
-            throw CancellationException("缩略图缓存已清空")
-        }
-        val existing = disk.warmState(preview.key, preview.version)
+        // 清空使 pool generation 递增：在途写入自然作废，不需要另记「已清空连接」来挡住后续
+        // 的用户驱动预热（清空要的是空间，不是让用户滚入的格子永远冷加载）。
+        if (disk.generation != preview.generation) throw CancellationException("缩略图缓存已清空")
+        val existing = disk.warmState(preview.key, preview.version, ignoreCapacity = allowEviction)
         if (existing != ThumbnailDiskResult.MISSING) return existing
         val payload = download(preview, background = true, lookahead)
         currentCoroutineContext().ensureActive()
         requireCurrent(preview.connection)
-        val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
-            currentConnection() == preview.connection && clearedConnection != preview.connection
-        }
+        val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true,
+            authorized = { currentConnection() == preview.connection }, allowEviction = allowEviction)
         if (result == ThumbnailDiskResult.READY) noteDiskChange(preview.connection.selection.pool)
         return result
     }

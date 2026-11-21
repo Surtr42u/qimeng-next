@@ -63,25 +63,36 @@ internal class ThumbnailDiskCache(private val directory: File, maxBytes: Long) {
     }
 
     /** 同 [read]：探测只读已提交条目，不占类监视器。 */
-    fun warmState(key: String, version: Long): ThumbnailDiskResult {
+    fun warmState(key: String, version: Long, ignoreCapacity: Boolean = false): ThumbnailDiskResult {
         val current = disk.openSnapshot(key)?.use {
             val entry = metadata(it.metadata.toFile()) ?: return@use null
             if (entry.key != key || dataBytes(it.data.toFile()) !in 4L..MAX_THUMBNAIL_BYTES) return@use null
             entry.version
         }
         if (current == version) return ThumbnailDiskResult.READY
-        if (current == null && disk.size >= disk.maxSize - 1024) return ThumbnailDiskResult.FULL
+        // FULL 只表示「没有这条 + 池已满」。调用方决定是否让 Coil 的 LRU 为它淘汰最旧条目
+        // （见 [store] 的 allowEviction 与 ThumbnailTurnoverPolicy）。
+        if (current == null && !ignoreCapacity && atCapacity) return ThumbnailDiskResult.FULL
         return ThumbnailDiskResult.MISSING
     }
 
+    /** 池已到配额（Coil 的 journal 统计，含全部实例的条目）。 */
+    val atCapacity: Boolean get() = disk.size >= disk.maxSize - 1024
+
+    /** 整个物理池（所有实例）的占用字节；用于判断当前实例是否只是池里的少数。 */
+    val usedBytes: Long get() = disk.size
+
     @Synchronized
     fun store(key: String, version: Long, jpeg: Buffer, capturedGeneration: Long, background: Boolean,
-              authorized: () -> Boolean): ThumbnailDiskResult {
+              allowEviction: Boolean = false, authorized: () -> Boolean): ThumbnailDiskResult {
         if (generation != capturedGeneration || !authorized()) return ThumbnailDiskResult.MISSING
         val previous = disk.openSnapshot(key)?.use { metadata(it.metadata.toFile()) }
         if (previous != null && previous.version > version) return ThumbnailDiskResult.MISSING
         val text = "$key\n$version"
-        if (background && previous == null && disk.size + jpeg.size + text.length > disk.maxSize) {
+        // allowEviction：配额写满时仍落盘，由 Coil 的 LRU 淘汰最旧条目。呼叫方只在
+        // 「这条马上会被看」或「池里主要是别的实例的条目」时打开它，避免超大库每轮
+        // 重下被淘汰的尾部（见 ThumbnailTurnoverPolicy）。
+        if (background && !allowEviction && previous == null && disk.size + jpeg.size + text.length > disk.maxSize) {
             return ThumbnailDiskResult.FULL
         }
         if (directory.usableSpace < MIN_FREE_BYTES + jpeg.size) return ThumbnailDiskResult.FULL

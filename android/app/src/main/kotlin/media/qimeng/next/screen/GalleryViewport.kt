@@ -41,6 +41,12 @@ private const val LOOKAHEAD_TILE_CAP = 16
 private const val PREFETCH_QUEUE_LIMIT = 64
 
 /**
+ * 可见窗口播种上限：队列的一半。种子只服务「刚上屏的那一屏」，必须给随后入队的
+ * 前瞻窗口留出位置——用户立刻滚动时，真正要看的下一屏不能排在几十个种子后面。
+ */
+private const val SEED_TILE_LIMIT = PREFETCH_QUEUE_LIMIT / 2
+
+/**
  * 预热解码尺寸。源图是服务端 md（512 宽）；4-5 列格子约 187-240 px 宽（16:9），
  * 解 256x144 已高于目标，且像素/内存只有 512x288 的四分之一。2-3 列格子约
  * 330-530 px 宽，256 会**小于**目标，Coil 的内存缓存尺寸校验会拒绝这份位图并重新
@@ -67,6 +73,13 @@ private fun viewportWarmSize(columns: Int): Size =
  *    INEXACT 精度会接受不小于目标的非采样/大尺寸位图；格子滚入时直接命中内存，
  *    不再在可见帧里读盘+解码。旧版网格预取正是 `imageLoader.execute(...size(Size.ORIGINAL))`
  *    （默认内存缓存开启），所以旧版滚入即出图；新实现此前只落盘，这是「顿一下」的另一半。
+ *
+ * 预热连续性（不得因分页/重查/池满/清空而静默停止）：
+ * - 每份新清单的可见窗口由 [seedTiles] 播种一次。前瞻窗口严格在可见窗口之外（旧版同款
+ *   几何），所以列表首次上屏、换查询后这一屏原本没有任何预热路径——搜索/筛选后立刻滑动，
+ *   首屏每一格都要冷解码；分页追加不重播（那些格子已经在屏上）。
+ * - 队列只丢「尚未开始且已不在行进方向」的项；在途与种子从不取消，离开 STARTED 才整体结束。
+ * - 池写满或用户刚清空缓存都不停视口前瞻：见 `ThumbnailCacheRepository.prefetchNearby`。
  */
 @Composable
 internal fun PrefetchGalleryViewport(
@@ -116,7 +129,7 @@ internal fun PrefetchGalleryViewport(
                             continue
                         }
                         try {
-                            prefetchAndWarm(model, imageLoader, context, item.asset, warmSize)
+                            prefetchAndWarm(model, imageLoader, context, item, warmSize)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
@@ -136,11 +149,26 @@ internal fun PrefetchGalleryViewport(
                 for (window in windows) {
                     if (window.first < 0) continue
                     val currentTiles = latestTiles
+                    var added = false
                     if (currentTiles !== lastTiles) {
                         // 重查询换了整张清单：丢掉尚未开始的旧队列（在途项继续跑完）。
                         // 分页只是尾部追加，保留队列；用首个资产身份区分两者。
-                        if (lastTiles != null && !appendsTo(lastTiles, currentTiles)) queue.dropQueued()
+                        val newList = lastTiles == null || lastTiles.isEmpty() || !appendsTo(lastTiles, currentTiles)
+                        if (newList && lastTiles != null) queue.dropQueued()
                         lastTiles = currentTiles
+                        // 可见窗口播种（每份新清单一次）：前瞻窗口严格在可见窗口之外
+                        // （见 [lookaheadTiles]），所以列表首次上屏或换查询后，屏上这批格子
+                        // 没有任何预热路径——它们既是用户立刻会看的，也是下一次返回时最该
+                        // 命中的。分页追加不重播（那些格子早就在屏上了）。
+                        if (newList) {
+                            for (item in seedTiles(currentTiles, window.first, window.last, SEED_TILE_LIMIT)) {
+                                when (queue.offer(item)) {
+                                    QueueOffer.ADDED -> added = true
+                                    QueueOffer.PRESENT -> Unit
+                                    QueueOffer.FULL -> break
+                                }
+                            }
+                        }
                     }
                     val forward = previousFirst < 0 || window.first >= previousFirst
                     previousFirst = window.first
@@ -152,8 +180,8 @@ internal fun PrefetchGalleryViewport(
                     // 旧版前瞻窗口严格在行进方向的可见窗口之外（QimengMediaGrid.kt:82）：
                     // 正向滚动时 index<=last（已可见或已滚过）的排队项作废，反向时
                     // index>=first 的作废。只丢排队项，在途/解码中的项不在 queued 里。
+                    // 种子例外：它们就是当前可见窗口，正在被看，不能被这条规则剪掉。
                     queue.dropStale(window.first, window.last, forward)
-                    var added = false
                     for (item in lookaheadTiles(currentTiles, window.first, window.last + 1, limit, forward)) {
                         when (queue.offer(item)) {
                             QueueOffer.ADDED -> added = true
@@ -174,7 +202,30 @@ internal fun PrefetchGalleryViewport(
 private data class VisibleWindow(val first: Int, val last: Int)
 
 /** 队列项带原始格子下标，剪枝只按位置，不重新扫描整张清单。 */
-private data class PrefetchItem(val asset: Asset, val index: Int)
+internal data class PrefetchItem(val asset: Asset, val index: Int, val seed: Boolean = false)
+
+/**
+ * 可见窗口播种清单：列表首次上屏/换查询时，把当前屏上的格子（组头跳过）按
+ * 自上而下的顺序入队。与 [lookaheadTiles] 同样跳过空缩略图与动图（动图格子走原件
+ * 兜底请求，预热 md 缩略图命中不到它）。真机可见窗口在 5 列布局下可超过 100 格，
+ * 这里按 [limit] 截断，余量留给随后入队的前瞻窗口。
+ */
+internal fun seedTiles(
+    tiles: List<Asset?>,
+    first: Int,
+    last: Int,
+    limit: Int,
+): List<PrefetchItem> {
+    if (limit <= 0 || tiles.isEmpty()) return emptyList()
+    val start = first.coerceIn(0, tiles.size)
+    val end = (last + 1).coerceIn(0, tiles.size)
+    if (start >= end) return emptyList()
+    return (start until minOf(end, start + limit)).mapNotNull { index ->
+        tiles.getOrNull(index)
+            ?.takeIf { it.thumbnailUrl.isNotBlank() && it.mediaType != "animated_image" }
+            ?.let { PrefetchItem(it, index, seed = true) }
+    }
+}
 
 /**
  * 旧版几何（QimengMediaGrid.kt:79-87）：只取行进方向 `min(columns*2,16)` 个格子，
@@ -239,7 +290,8 @@ private class PrefetchQueue {
         val iterator = queued.iterator()
         while (iterator.hasNext()) {
             val item = iterator.next()
-            val stale = if (forward) item.index <= last else item.index >= first
+            // 种子是当前可见窗口，正在被看：位置剪枝对它们不成立（它们会随 finish 出队）。
+            val stale = !item.seed && if (forward) item.index <= last else item.index >= first
             if (stale) {
                 iterator.remove()
                 pending.remove(item.asset.id)
@@ -262,15 +314,22 @@ private class PrefetchQueue {
  * `prefetchNearby` 自身整段 `withContext(Dispatchers.IO)`，Coil 请求无 target、
  * 不触发 `needsExecuteOnMainDispatcher`，interceptor/decoder 也显式压到 IO，
  * 因此 Main 在帧间不会碰到 URL/键/解码准备。
+ *
+ * 种子（[PrefetchItem.seed]）跳过落盘步骤：它们就是当前屏上正在被 AsyncImage 加载的
+ * 格子，同一 `Keyer<Asset>` 键的 flight 已经在跑，直接 `execute` 会命中那份在途下载 /
+ * 已落盘字节，只补一次内存缓存位图。若再走一遍 `prefetchNearby`，同一张图会被前瞻
+ * 客户端下载第二次，还占掉两个前瞻槽位。格子被回收导致 AsyncImage 取消时，种子的
+ * execute 会在 flight 释放后自行补下，屏幕不会停留在空白。
  */
 private suspend fun prefetchAndWarm(
     model: LibraryViewModel,
     imageLoader: ImageLoader,
     context: Context,
-    asset: Asset,
+    item: PrefetchItem,
     warmSize: Size,
 ) {
-    if (!model.prefetchNearbyThumbnails(listOf(asset))) return
+    val asset = item.asset
+    if (!item.seed && !model.prefetchNearbyThumbnails(listOf(asset))) return
     val request = ImageRequest.Builder(context)
         .data(asset)
         .size(warmSize)

@@ -22,3 +22,9 @@
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }
+
+# 5) coil-network-okhttp 3.1.0 的 android 产物里，OkHttpNetworkFetcherFactory 的默认参数
+#    字面量仍带着 KMP 公共签名 coil3.PlatformContext；它在 Android 侧是 typealias（成品里
+#    只有 PlatformContextKt，没有同名类），所以 R8 会报 missing class 并中止 release。
+#    我们始终显式传入 connectivityChecker，那条默认参数不会被构造，放过这条悬空引用即可。
+-dontwarn coil3.PlatformContext

@@ -63,6 +63,17 @@ class DetailPreloadPolicyTest {
         assertTrue(preloadableOriginal(asset("animated", mediaType = "animated_image"), asset("current")))
     }
 
+    @Test
+    fun `解码后超过 8MP 的原图不预载`() {
+        val current = asset("current")
+        // 12 MP：4 B/px ≈ 48 MB 位图，超过了 64 MiB 强缓存能长期容纳的单张量级。
+        assertFalse(preloadableOriginal(asset("huge", width = 4000, height = 3000), current))
+        // 恰好 8 MP 仍可预载（边界包含）。
+        assertTrue(preloadableOriginal(asset("limit", width = 4000, height = 2000), current))
+        // 尺寸未知（0×0）无法判断，按不可预载处理，避免把超大图当小图拉。
+        assertFalse(preloadableOriginal(asset("unknown-size", width = 0, height = 0), current))
+    }
+
     private fun asset(
         id: String,
         mediaType: String = "image",
@@ -70,10 +81,12 @@ class DetailPreloadPolicyTest {
         version: Long = 3,
         target: Session = SESSION,
         url: String = "http://example.test/$id",
+        width: Int = 16,
+        height: Int = 9,
     ) = Asset(
         id = id, libraryId = "lib", target = target, name = id, originalName = id,
         relativePath = "$id.jpg", mediaType = mediaType, version = version, revision = 1, tagsRevision = 1,
-        bytes = bytes, width = 16, height = 9, durationMs = null, authorId = null, authorIds = emptyList(),
+        bytes = bytes, width = width, height = height, durationMs = null, authorId = null, authorIds = emptyList(),
         authorsRevision = 1, authorName = null, tags = emptyList(), favorite = false, liked = false,
         likeCount = 0, positionMs = 0, positionVersion = 0, note = "", sourceIds = emptyList(),
         characterIds = emptyList(), acquisitionSources = emptyList(), collectionId = null, page = null,

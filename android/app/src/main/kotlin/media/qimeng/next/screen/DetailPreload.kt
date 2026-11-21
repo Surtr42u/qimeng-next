@@ -21,6 +21,13 @@ internal const val ORIGINAL_PRELOAD_BACK = 1
 internal const val MAX_ORIGINAL_PRELOAD_BYTES = 8L * 1024 * 1024
 
 /**
+ * 单张原图预载的像素上限（约 8 MP）。解码后按 4 B/px 估算：超过这个尺寸的原图
+ * 本身就大于 25%×256MB≈64MiB 的 Coil 强缓存，`StrongMemoryCache` 不会收它——
+ * 预载只会白耗流量与解码时间，不如滑到跟前再逐张加载。
+ */
+internal const val MAX_ORIGINAL_PRELOAD_PIXELS = 8_000_000L
+
+/**
  * 详情原图的显式内存缓存键。舞台（[ZoomableImageStage]）与邻位预载都必须用这一个键：
  * 键不一致时预载的解码结果进不了舞台命中的槽位，warm-up 等于白做。
  */
@@ -43,18 +50,23 @@ internal fun originalImageRequest(context: Context, asset: Asset): ImageRequest 
 
 /**
  * 单张邻居是否值得预载（旧版 DetailPreloadPolicy.eligibleTargets 的机会性预取口径）：
- * 同一实例、非视频、字节数已知且不超过 8 MiB，且不是当前件/重复项。
+ * 同一实例、非视频、字节数已知且不超过 8 MiB、解码后不超过 8 MP，且不是当前件/重复项。
+ * 像素这一条是新增的：压缩字节小但分辨率极高的图进不了内存缓存，预载纯属浪费。
  */
 internal fun preloadableOriginal(
     asset: Asset,
     current: Asset,
     maxBytes: Long = MAX_ORIGINAL_PRELOAD_BYTES,
-): Boolean =
-    asset.id != current.id &&
+    maxPixels: Long = MAX_ORIGINAL_PRELOAD_PIXELS,
+): Boolean {
+    val pixels = (asset.width ?: 0).toLong() * (asset.height ?: 0)
+    return asset.id != current.id &&
         sameTarget(asset.target, current.target) &&
         asset.mediaType != "video" &&
         asset.contentUrl.isNotBlank() &&
-        asset.bytes in 1..maxBytes
+        asset.bytes in 1..maxBytes &&
+        pixels in 1..maxPixels
+}
 
 /** 邻位原图预载清单：保持 [LibraryViewModel.detailNeighbourOriginals] 给出的「前 2 后 1」顺序，去重后过滤不可预载项。 */
 internal fun originalPreloadTargets(

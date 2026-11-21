@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,16 +56,20 @@ internal class ThumbnailCacheViewModel(app: Application) : AndroidViewModel(app)
     private suspend fun sampleUsage() = coroutineScope {
         var nasSampled = -1L
         var localSampled = -1L
+        // 大池一次遍历可能超过 5s 轮询周期。按「在途才停手」补扫，而不是每周期无条件再
+        // launch 一个：后者会在锁前无界排队（遍历一个接一个跑），卡片上的占用越来越滞后。
+        var nasWalk: Job? = null
+        var localWalk: Job? = null
         while (true) {
             val nasRevision = repository.nasDiskRevision.value
             if (nasRevision != nasSampled) {
                 nasSampled = nasRevision
-                launch { nasUsageLock.withLock { refreshUsage(ThumbnailPool.NAS) } }
+                if (nasWalk?.isActive != true) nasWalk = launch { nasUsageLock.withLock { refreshUsage(ThumbnailPool.NAS) } }
             }
             val localRevision = repository.localDiskRevision.value
             if (localRevision != localSampled) {
                 localSampled = localRevision
-                launch { localUsageLock.withLock { refreshUsage(ThumbnailPool.LOCAL) } }
+                if (localWalk?.isActive != true) localWalk = launch { localUsageLock.withLock { refreshUsage(ThumbnailPool.LOCAL) } }
             }
             delay(5_000L)
         }

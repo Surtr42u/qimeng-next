@@ -65,4 +65,29 @@ class ThumbnailPrefetchGateTest {
         assertNull(ThumbnailPrefetchSample.decode("0|aa"))
         assertNull(ThumbnailPrefetchSample.decode("12|"))
     }
+
+    @Test fun turnoverTakesOverAForeignPoolAndCapsWritesOnAnOwnedPool() {
+        val pool = 1024L * 1024 * 1024
+        // 空池：没有可淘汰的条目，按刷新额度收口（额度只在池满时才消耗）。
+        assertEquals(ThumbnailTurnoverPolicy.REFRESH_ENTRIES, ThumbnailTurnoverPolicy.limit(0, 0))
+        // 池里全是他人的条目：接管（否则新实例一张也预取不进）。
+        assertEquals(Long.MAX_VALUE, ThumbnailTurnoverPolicy.limit(0, pool))
+        // 恰好一半是别人的条目仍按接管处理（>= 阈值）。
+        assertEquals(Long.MAX_VALUE, ThumbnailTurnoverPolicy.limit(pool / 2, pool))
+        // 自己已占多数：只给新增媒体的刷新额度。
+        assertEquals(ThumbnailTurnoverPolicy.REFRESH_ENTRIES, ThumbnailTurnoverPolicy.limit(pool / 2 + 1, pool))
+        assertEquals(ThumbnailTurnoverPolicy.REFRESH_ENTRIES, ThumbnailTurnoverPolicy.limit(pool, pool))
+        // 统计偏大也不能得出「负数他人条目 → 接管」。
+        assertEquals(ThumbnailTurnoverPolicy.REFRESH_ENTRIES, ThumbnailTurnoverPolicy.limit(pool * 2, pool))
+    }
+
+    @Test fun turnoverBudgetStopsAtItsLimitAndUnlimitedNeverExhausts() {
+        val budget = ThumbnailTurnoverBudget(2L)
+        assertTrue(budget.tryAcquire())
+        assertTrue(budget.tryAcquire())
+        assertFalse(budget.tryAcquire())
+        assertFalse(ThumbnailTurnoverBudget(0L).tryAcquire())
+        val unlimited = ThumbnailTurnoverBudget(Long.MAX_VALUE)
+        repeat(64) { assertTrue(unlimited.tryAcquire()) }
+    }
 }
