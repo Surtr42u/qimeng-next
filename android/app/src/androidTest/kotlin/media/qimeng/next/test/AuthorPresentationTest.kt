@@ -75,12 +75,19 @@ class AuthorPresentationTest {
             openDirectory(suffix)
             compose.onNodeWithText(author.name).performClick()
             val loading = hasTestTag("author-media-loading")
+            // The header count is seeded from the tapped author, so the list can
+            // finish before this frame: assert that a first row follows the
+            // filters, not that a specific loading frame was captured.
+            val firstRow = loading or media or hasText("没有符合条件的媒体")
             await(hasTestTag("author-media-scroll"))
-            await(loading)
-            assertOrder(loading)
-            screenshot("loading")
+            await(firstRow)
+            assertOrder(firstRow)
+            screenshot("first-row")
 
             await(hasText("本地作品 · 筛选结果 $assetCount 个文件"))
+            // The count is displayed from the tap seed before the list loads, so
+            // wait for the assets themselves before asserting their order.
+            compose.waitUntil(30_000) { compose.onAllNodes(media).fetchSemanticsNodes().isNotEmpty() }
             grid.performScrollToIndex(0)
             assertOrder(media)
             assertFullBiography()
