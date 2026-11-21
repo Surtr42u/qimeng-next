@@ -87,6 +87,7 @@ class AuthorPresentationTest {
             await(hasText("本地作品 · 筛选结果 $assetCount 个文件"))
             // The count is displayed from the tap seed before the list loads, so
             // wait for the assets themselves before asserting their order.
+            grid.performScrollToKey("author-filters")
             compose.waitUntil(30_000) { compose.onAllNodes(media).fetchSemanticsNodes().isNotEmpty() }
             grid.performScrollToIndex(0)
             assertOrder(media)
