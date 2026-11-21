@@ -211,21 +211,12 @@ func TestSelectedImageMergeReadsAndPreservesEveryNativeOriginal(t *testing.T) {
 	checkPhysicalOriginal(t, f, donor, original)
 	f.json("DELETE", fmt.Sprintf("/trash/%s?expectedRevision=%d", discard.ID, discard.Revision), "purge-unrelated", struct{}{}, 204)
 	decode(t, f.json("POST", "/trash/"+rep.ID+"/restore", "restore-visible", map[string]any{"expectedRevision": rep.Revision}, 200), &rep)
-	reopened := nativeCheckpointCopy(t, f, "selected-again", 3)
-	var backups model.Page[service.Backup]
-	decode(t, f.json("GET", "/backups", "", nil, 200), &backups)
-	verified := false
-	for _, backup := range backups.Items {
-		if backup.ExportState == "completed" {
-			result, err := service.VerifyBackup(context.Background(), filepath.Join(f.s.Config.DataDir, "backups", backup.ID, "archive.qnext"), backup.ArchiveHash)
-			if err != nil || result.AssetCount != 3 {
-				t.Fatal("physical coverage of the second archive", result, err)
-			}
-			verified = true
-		}
-	}
-	if !verified {
-		t.Fatal("missing completed archive after the second export")
+	reopened, fullArchive, fullHash := nativeCheckpointCopyWithArchive(t, f, "selected-again", 3)
+	// 面向用户的导出是记录-only，不会再产出带原件的 archive.qnext；这里要证明的是
+	// "第二份归档在物理上覆盖了三份原件"，所以校验内部完整归档本身。
+	result, err := service.VerifyBackup(context.Background(), fullArchive, fullHash)
+	if err != nil || result.AssetCount != 3 {
+		t.Fatal("physical coverage of the second archive", result, err)
 	}
 	decode(t, reopened.json("GET", old, "", nil, 200), &detail)
 	if detail.ID != rep.ID || !detail.Favorite || detail.Trashed {

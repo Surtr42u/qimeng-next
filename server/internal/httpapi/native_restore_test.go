@@ -97,11 +97,18 @@ func assertNativeLibraryDirectory(t *testing.T, f *fixture, expected string) os.
 
 func nativeCheckpointCopy(t *testing.T, f *fixture, stage string, assetCount int) *fixture {
 	t.Helper()
+	restored, _, _ := nativeCheckpointCopyWithArchive(t, f, stage, assetCount)
+	return restored
+}
+
+// nativeCheckpointCopyWithArchive additionally returns the internal full
+// archive path and its hash so a caller can assert physical coverage of the
+// bytes it restored. The user-facing export is records-only; these tests keep
+// their original-bytes guarantee through WriteFullBackupArchive instead.
+func nativeCheckpointCopyWithArchive(t *testing.T, f *fixture, stage string, assetCount int) (*fixture, string, string) {
+	t.Helper()
 	var b service.Backup
 	decode(t, f.json("POST", "/backups", "native-checkpoint-"+stage, struct{}{}, 201), &b)
-	// These restore tests exercise original bytes. The user-facing export is
-	// records-only, so build the internal full archive explicitly through the
-	// same writer instead of weakening their assertions.
 	archiveName := "backups/" + b.ID + "/archive.full.qnext"
 	_, archiveHash, err := f.s.WriteFullBackupArchive(context.Background(), b.ID, archiveName)
 	if err != nil {
@@ -134,7 +141,7 @@ func nativeCheckpointCopy(t *testing.T, f *fixture, stage string, assetCount int
 	if os.SameFile(source, bound) {
 		t.Fatal("restored library is still bound to the source directory")
 	}
-	return restoredFixture
+	return restoredFixture, filepath.Join(f.s.Config.DataDir, archiveName), archiveHash
 }
 
 func assertNativeOriginal(t *testing.T, f *fixture, id string, version int64, original []byte) {
