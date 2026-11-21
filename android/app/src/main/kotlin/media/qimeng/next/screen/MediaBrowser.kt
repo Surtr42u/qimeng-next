@@ -70,7 +70,9 @@ import media.qimeng.next.ui.icon.*
 import media.qimeng.next.ui.theme.QimengDimens
 import media.qimeng.next.ui.theme.QimengShapes
 import media.qimeng.next.ui.theme.softDaylightShadow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 首页顶部固定文案：提到文件级常量，滚动/翻页重组时不再重复分配列表。 */
 private val HOME_TABS = listOf("推荐", "COS", "排行榜")
@@ -413,9 +415,22 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             authorKind != null || caption -> "partitions"
             else -> group
         }
-        val sections = remember(entries, sectionMode, rows, dateCounts, unknownDateCount) {
-            gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), dateCounts, unknownDateCount)
+        // 分组是 O(n)（groupBy + 组头计数）：页追加/筛选变化时放到 Default 计算，不在页边界
+        // 占住当帧主线程。首帧仍在组合内同步算完，网格不会先空一帧；后台结果用引用相等策略
+        // 写入（新旧值相等比较本身也是 O(n)，同样不能放主线程）。
+        val sectionFacets = group?.let(rows::get)?.items.orEmpty()
+        val sectionsState = remember(key) {
+            mutableStateOf(
+                gallerySections(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount),
+                referentialEqualityPolicy(),
+            )
         }
+        LaunchedEffect(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount) {
+            sectionsState.value = withContext(Dispatchers.Default) {
+                gallerySections(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount)
+            }
+        }
+        val sections = sectionsState.value
         // 首页/搜索/收藏/历史与相册一样做视口前瞻预取（旧版 QimengMediaGrid 对全部网格生效）。
         // 带 leading 的网格下标含前导项，预取窗口会错位，故暂不接入。
         if (leading == null && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)

@@ -73,7 +73,7 @@ internal class ApiProvider(private val settings: SecureSettings) {
     private val baseClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build()
     private data class ClientKey(val target: Session, val certificate: String?)
-    private data class Clients(val api: OkHttpClient, val media: OkHttpClient, val background: OkHttpClient)
+    private data class Clients(val api: OkHttpClient, val media: OkHttpClient, val background: OkHttpClient, val lookahead: OkHttpClient)
     @Volatile private var cachedClients: Pair<ClientKey, Clients>? = null
 
     fun anonymous(baseUrl: String, certificateDerBase64: String? = null): DefaultApi = build(baseUrl, trustedClient(baseUrl, certificateDerBase64))
@@ -117,6 +117,16 @@ internal class ApiProvider(private val settings: SecureSettings) {
         return clients(target, certificate).background
     }
 
+    /**
+     * 视口前瞻专用客户端：独立 Dispatcher 且只给 2 个并发名额。可见缩略图从不在
+     * 前瞻请求后面排队（两条队列互不占位），前瞻也不会像全库预取那样被 4 条后台
+     * 请求饿住——它服务的正是马上要滚入的格子。
+     */
+    fun lookaheadMediaClient(target: Session): OkHttpClient {
+        val certificate = try { settings.certificateFor(target) } catch (_: Exception) { throw ApiFailure(401, "连接已变更，请重新登录") }
+        return clients(target, certificate).lookahead
+    }
+
     private fun clients(target: Session, certificate: String?): Clients {
         val key = ClientKey(target, certificate)
         cachedClients?.takeIf { it.first == key }?.let { return it.second }
@@ -132,8 +142,12 @@ internal class ApiProvider(private val settings: SecureSettings) {
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
         }.build()
         // newBuilder() 保留连接池/超时/拦截器，只换 Dispatcher——分流的只是并发名额，不是连接。
-        return Clients(api, api.newBuilder().dispatcher(Dispatcher()).build(), api.newBuilder().dispatcher(Dispatcher()).build())
-            .also { cachedClients = key to it }
+        return Clients(
+            api,
+            api.newBuilder().dispatcher(Dispatcher()).build(),
+            api.newBuilder().dispatcher(Dispatcher()).build(),
+            api.newBuilder().dispatcher(Dispatcher().apply { maxRequests = 2; maxRequestsPerHost = 2 }).build(),
+        ).also { cachedClients = key to it }
     }
 
     fun api(target: Session): DefaultApi = build(target.baseUrl, client(target))

@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
+import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.AssetEditorTarget
@@ -42,6 +43,9 @@ import media.qimeng.next.ui.icon.StatsIcon
 import media.qimeng.next.ui.icon.ProfileIcon
 
 val LocalMediaImages = staticCompositionLocalOf<ImageLoader> { error("ImageLoader missing") }
+
+/** Coil 内存缓存占最大堆比例：旧版 CoilModule 同值 25%（Coil 3.1 默认 20%/低内存 15%）。 */
+private const val MEMORY_CACHE_PERCENT = 0.25
 
 @Composable
 fun AppRoot(model: LibraryViewModel) {
@@ -73,7 +77,15 @@ fun AppRoot(model: LibraryViewModel) {
             model.addThumbnailImageComponents(this)
             if (imageTarget != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient(imageTarget) }))
             if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
-        }.build()
+        }
+            // 旧版 CoilModule 显式 25%（CoilModule.kt:148-152/215）。Coil 3.1.0 未配置时
+            // 默认 20%（低内存机 15%）：3 列 × 三屏的 ORIGINAL 预热位图约 99×590KB≈58MB，
+            // 在 256MB heap 上超过 20%（51MB）但落在 25%（64MB）内；5 列的 256×144
+            // 预热约 40MB，两档都够。与旧版同值，避免三列回看时反复淘汰。
+            .memoryCache {
+                MemoryCache.Builder().maxSizePercent(context, MEMORY_CACHE_PERCENT).build()
+            }
+            .build()
     }
     DisposableEffect(imageLoader) { onDispose { imageLoader.shutdown() } }
     QimengTheme(dark) {

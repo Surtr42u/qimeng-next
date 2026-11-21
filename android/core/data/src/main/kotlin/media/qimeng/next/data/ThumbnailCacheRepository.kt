@@ -220,29 +220,48 @@ class ThumbnailCacheRepository internal constructor(
         while (System.currentTimeMillis() < foregroundUntilMs) delay(PREFETCH_YIELD_POLL_MS)
     }
 
-    suspend fun prefetchNearby(assets: List<Asset>) = withContext(Dispatchers.IO) {
-        val connection = currentConnection() ?: return@withContext
+    /**
+     * 视口前瞻：把字节写进磁盘池，返回这些字节是否已可读。
+     * 返回 true 时调用方可以再用同一个 ImageLoader 解码一次，把位图预热进内存缓存
+     * （旧版网格预取的 `imageLoader.execute` 语义）；false 表示没有落盘，不必解码。
+     *
+     * 调用方是视口队列的长驻 worker，只在离开页面时取消；这里不做任何逐窗口取消。
+     */
+    suspend fun prefetchNearby(assets: List<Asset>): Boolean = withContext(Dispatchers.IO) {
+        val connection = currentConnection() ?: return@withContext false
         // 视口前瞻不做计费网络门（旧版网格预取同样不设门）：这些条目是用户正在滚入、
         // 无论如何都会请求的缩略图，提前 1 个往返不增加总流量；全库预取仍按未计费网络门控。
-        if (clearedConnection == connection) return@withContext
+        if (clearedConnection == connection) return@withContext false
         val pool = connection.selection.pool
         val disk = diskFor(pool)
         val generation = disk.generation
+        var warmed = true
         for (asset in assets) {
             requireCurrent(connection)
-            if (asset.thumbnailUrl.isBlank() || asset.mediaType == "animated_image" || !sameTarget(asset.target, connection.target)) continue
+            if (asset.thumbnailUrl.isBlank() || asset.mediaType == "animated_image" || !sameTarget(asset.target, connection.target)) {
+                warmed = false
+                continue
+            }
             val request = Preview(asset.id, asset.version, connection, generation)
             try {
-                if (prefetchOne(request, disk, lookahead = true) == ThumbnailDiskResult.FULL) return@withContext
+                when (prefetchOne(request, disk, lookahead = true)) {
+                    ThumbnailDiskResult.READY -> Unit
+                    ThumbnailDiskResult.FULL -> return@withContext false
+                    ThumbnailDiskResult.MISSING -> warmed = false
+                }
             } catch (failure: ApiFailure) {
-                if (failure.isMissingThumbnail()) continue
+                if (failure.isMissingThumbnail()) {
+                    warmed = false
+                    continue
+                }
                 Log.d("ThumbnailCache", "Nearby thumbnail prefetch stopped (HTTP ${failure.status})")
-                return@withContext
+                return@withContext false
             } catch (_: IOException) {
                 Log.d("ThumbnailCache", "Nearby thumbnail prefetch stopped after an I/O error")
-                return@withContext
+                return@withContext false
             }
         }
+        warmed
     }
 
     private fun selected(pool: ThumbnailPool, current: Connection?): ThumbnailCacheSelection? {
@@ -530,7 +549,7 @@ class ThumbnailCacheRepository internal constructor(
         // 可见项、视口前瞻与后台全库预取分属不同 Dispatcher：任一方在途都不会占掉另一方的
         // 每主机并发名额（旧版 Coil 客户端与列表 SDK 客户端也是分开的）。
         val client = when {
-            lookahead -> provider.mediaClient(target)
+            lookahead -> provider.lookaheadMediaClient(target)
             background -> provider.backgroundMediaClient(target)
             else -> provider.mediaClient(target)
         }

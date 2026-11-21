@@ -231,7 +231,7 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
     }
 
-    suspend fun prefetchNearbyThumbnails(assets: List<Asset>) = graph.thumbnails.prefetchNearby(assets)
+    suspend fun prefetchNearbyThumbnails(assets: List<Asset>): Boolean = graph.thumbnails.prefetchNearby(assets)
 
     /**
      * 前台刷新让路（对齐旧版 ThumbnailPrefetchThrottle）：全库预取在窗口内暂停下载，
@@ -336,7 +336,13 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     val merged = append || restarted || mergeFresh
                     // 整页替换（换筛选/显式刷新）后列表重新从第一页开始，翻页标记随之作废。
                     if (next || mergeFresh) paginatedKeys.add(key) else paginatedKeys.remove(key)
-                    state.value = ListState(if (merged) appendDistinct(old.items, page.items) else page.items,
+                    // 并入是 O(n) 的 id 去重：页追加时放到 Default，避免在页边界占住主线程。
+                    // 挂起期间可能已开始新查询，因此写回前必须重新校验代次与连接。
+                    val mergedItems = if (merged) {
+                        withContext(Dispatchers.Default) { appendDistinct(old.items, page.items) }
+                    } else page.items
+                    if (!generation.isCurrent(ticket) || connection != connectionGeneration) return@launch
+                    state.value = ListState(mergedItems,
                         // 新鲜度并入沿用原游标：从用户停下的位置继续翻页，不把第 2..N 页重走一遍。
                         when {
                             exhausted -> null
