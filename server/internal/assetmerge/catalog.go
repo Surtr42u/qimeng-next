@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,7 +54,7 @@ func (c *catalog) add(router *storage.Root, stage string, f backup.File) error {
 	return nil
 }
 
-func readCatalog(ctx context.Context, db *sql.DB, stage string) (catalog, error) {
+func readCatalog(ctx context.Context, db *sql.DB, stage string, recordsOnly bool) (catalog, error) {
 	c := catalog{map[string]payload{}, map[string]bool{}}
 	// Storage roots use their resolved spelling. A Windows temp directory can
 	// arrive through a legitimate 8.3 alias even after all links were rejected.
@@ -126,7 +127,14 @@ func readCatalog(ctx context.Context, db *sql.DB, stage string) (catalog, error)
 	if err = rows.Close(); err != nil {
 		return c, err
 	}
-	uploads, err := store.List[model.Upload](ctx, db, "SELECT data FROM uploads WHERE state!='ingested'")
+	// A records-only restore marks lost prefixes cancelled and never creates
+	// their .part files. Older full archives may still carry a cancelled upload
+	// prefix, so keep the previous behavior for complete archives.
+	query := "SELECT data FROM uploads WHERE state!='ingested'"
+	if recordsOnly {
+		query = "SELECT data FROM uploads WHERE state!='ingested' AND state!='cancelled'"
+	}
+	uploads, err := store.List[model.Upload](ctx, db, query)
 	if err != nil {
 		return c, err
 	}
@@ -154,15 +162,26 @@ func sameTime(a, b *time.Time) bool {
 }
 
 func (a *area) verifyBaseline(ctx context.Context, stage string, m backup.Manifest, c catalog) ([]original, error) {
-	if len(m.Files) != len(c.files) {
+	// A records-only archive has no payload list. The restored catalog is then
+	// the relink index: verify every live original against its recorded hash,
+	// size and current version instead of silently verifying nothing.
+	entries := m.Files
+	if m.Scope == backup.ScopeMetadata {
+		entries = make([]backup.File, 0, len(c.files))
+		for _, p := range c.files {
+			entries = append(entries, p.File)
+		}
+		sort.Slice(entries, func(i, j int) bool { return payloadKey(entries[i]) < payloadKey(entries[j]) })
+	}
+	if len(entries) != len(c.files) {
 		return nil, errors.New("restore omits archive entries")
 	}
-	files := make([]original, 0, len(m.Files))
+	files := make([]original, 0, len(entries))
 	expected := map[string]bool{"qimeng.sqlite": true}
 	for d := range c.dirs {
 		expected[d] = true
 	}
-	for i, entry := range m.Files {
+	for i, entry := range entries {
 		actual, ok := c.files[payloadKey(entry)]
 		hashMatches := actual.SHA256 == entry.SHA256 || (entry.Kind == "upload" && actual.SHA256 == "")
 		if !ok || !hashMatches || actual.ContentVersion != entry.ContentVersion || actual.StoragePath != entry.StoragePath || actual.Size != entry.Size ||

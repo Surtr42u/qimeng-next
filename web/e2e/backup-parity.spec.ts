@@ -22,7 +22,7 @@ for (const width of [1440, 390]) {
       await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     }
     const panel = page.getByRole("region", { name: "备份导入 / 导出" });
-    const archives = panel.locator("summary").filter({ hasText: "服务器完整归档" });
+    const archives = panel.locator("summary").filter({ hasText: "服务器记录备份" });
     const delivery = panel.locator("summary").filter({ hasText: "发送资料到另一台设备" });
     await expect(archives).toBeVisible();
     await panel.scrollIntoViewIfNeeded();

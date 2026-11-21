@@ -308,10 +308,15 @@ func TestSelectedImageMergeScanAndBackupCheckPhysicalContent(t *testing.T) {
 	}
 	var b service.Backup
 	decode(t, f.json("POST", "/backups", "damaged-member-checkpoint", struct{}{}, 201), &b)
+	// The user-facing records export intentionally does not read originals.
+	// Internal full archives must still reject a same-length damaged member.
+	if _, _, fullErr := f.s.WriteFullBackupArchive(context.Background(), b.ID, "backups/"+b.ID+"/archive.full.qnext"); fullErr == nil {
+		t.Fatal("full archive accepted a same-length damaged member")
+	}
 	f.json("POST", "/backups/"+b.ID+"/export", "damaged-member-export", struct{}{}, 202)
 	b = awaitBackup(t, f, b.ID)
-	if b.AssetCount != 2 || b.ExportState != "failed" || b.ArchiveHash != "" {
-		t.Fatal("archive accepted a same-length damaged member")
+	if b.AssetCount != 2 || b.ExportState != "completed" || b.TotalFiles != 0 {
+		t.Fatalf("records export claimed original verification: %+v", b)
 	}
 }
 

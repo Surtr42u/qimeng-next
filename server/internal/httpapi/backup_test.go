@@ -222,15 +222,62 @@ func TestRecordsBackupRestoresCatalogueWithoutOriginals(t *testing.T) {
 	if e != nil || !deleted.Trashed {
 		t.Fatal("records restore lost trash identity")
 	}
-	var active int
-	if e = restored.DB.DB.QueryRow("SELECT COUNT(*) FROM uploads WHERE state!='ingested'").Scan(&active); e != nil || active != 0 {
-		t.Fatalf("records restore kept an unrestorable upload row: %v %d", e, active)
+	var active, cancelled int
+	if e = restored.DB.DB.QueryRow("SELECT COUNT(*) FROM uploads WHERE state!='ingested' AND state!='cancelled'").Scan(&active); e != nil || active != 0 {
+		t.Fatalf("records restore left a resumable upload row: %v %d", e, active)
+	}
+	if e = restored.DB.DB.QueryRow("SELECT COUNT(*) FROM uploads WHERE state='cancelled'").Scan(&cancelled); e != nil || cancelled != 1 {
+		t.Fatalf("records restore did not mark the lost upload: %v %d", e, cancelled)
 	}
 	if _, e = os.Stat(filepath.Join(destination, "libraries", live.LibraryID, filepath.FromSlash(live.RelativePath))); !os.IsNotExist(e) {
 		t.Fatalf("records restore wrote original media: %v", e)
 	}
 	if _, e = service.RestoreBackup(ctx, service.RestoreOptions{ArchivePath: source, Destination: destination, ReserveBytes: 1}); e == nil {
 		t.Fatal("existing instance overwritten")
+	}
+}
+func TestRecordsRestoreKeepsReferencedUploadRowsUnresumable(t *testing.T) {
+	f := setup(t)
+	var batch model.Batch
+	decode(t, f.json("POST", "/batches", "records-upload-batch", map[string]any{"libraryId": f.library, "mode": "intelligent"}, 201), &batch)
+	ids := f.declareInputs(batch.ID, "staged.png")
+	upload, _ := f.upload("staged.png", 176, map[string]any{"batchId": batch.ID, "inputId": ids["staged.png"], "mode": "intelligent"})
+	if out := f.complete(upload); out.Upload.State != "staged" {
+		t.Fatalf("expected staged input: %+v", out.Upload)
+	}
+	r := f.json("POST", "/backups", "records-upload-checkpoint", struct{}{}, 201)
+	var b service.Backup
+	decode(t, r, &b)
+	f.json("POST", "/backups/"+b.ID+"/export", "records-upload-export", struct{}{}, 202)
+	b = awaitBackup(t, f, b.ID)
+	if b.ExportState != "completed" {
+		t.Fatalf("records export: %+v", b)
+	}
+	destination := filepath.Join(t.TempDir(), "records-upload-restored")
+	report, e := service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext"), Destination: destination, ExpectedSHA256: b.ArchiveHash, ReserveBytes: 1})
+	if e != nil {
+		t.Fatalf("records restore with referenced upload: %v", e)
+	}
+	restored, e := service.New(service.Config{DataDir: destination, AdminToken: testSecret, ReserveBytes: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer restored.Close()
+	var state string
+	if e = restored.DB.DB.QueryRow("SELECT state FROM uploads WHERE id=?", upload.ID).Scan(&state); e != nil || state != "cancelled" {
+		t.Fatalf("lost upload row state: %v %s", e, state)
+	}
+	var referenced int
+	if e = restored.DB.DB.QueryRow("SELECT COUNT(*) FROM batch_inputs WHERE upload_id=?", upload.ID).Scan(&referenced); e != nil || referenced != 1 {
+		t.Fatalf("referenced upload row disappeared: %v %d", e, referenced)
+	}
+	restoredFixture := &fixture{t: t, s: restored, h: httpapi.New(restored), library: f.library}
+	response := restoredFixture.request("PUT", "/uploads/"+upload.ID+"/content", "", testSecret, []byte("more"), map[string]string{"Content-Type": "application/octet-stream", "Upload-Offset": "0"})
+	if response.Code != 409 {
+		t.Fatalf("cancelled restored upload accepted bytes: %d %s", response.Code, response.Body.String())
+	}
+	if report.MissingOriginals != 1 {
+		t.Fatalf("records restore did not report the lost prefix: %+v", report)
 	}
 }
 func TestRecordsArchiveScrubsCredentialsAndRequestBodies(t *testing.T) {

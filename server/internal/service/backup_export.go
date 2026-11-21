@@ -196,6 +196,141 @@ func (s *Service) prepareArchive(b Backup, snapshot archiveSnapshot) (archive.Ma
 	return manifest, manifest.Validate()
 }
 
+// WriteFullBackupArchive is the internal full-archive path used by tests and
+// verification tools that must inspect original bytes. The user-facing export
+// is always records-only; this builder is never exposed through HTTP. It uses
+// the same archive writer and a scrubbed snapshot, and fails when any original
+// is missing, changed or damaged.
+func (s *Service) WriteFullBackupArchive(ctx context.Context, id, destination string) (archive.Manifest, string, error) {
+	b, e := store.Get[Backup](ctx, s.DB.DB, "SELECT data FROM backups WHERE id=?", id)
+	if e != nil {
+		return archive.Manifest{}, "", Normalize(e)
+	}
+	b = s.describeBackup(b)
+	snapshot, e := s.exportSnapshot(ctx, b)
+	if e != nil {
+		return archive.Manifest{}, "", e
+	}
+	if snapshot.cleanup != nil {
+		defer snapshot.cleanup()
+	}
+	manifest := archive.Manifest{
+		Format:     archive.Format,
+		Version:    archive.Version,
+		BackupID:   b.ID,
+		InstanceID: s.InstanceID,
+		CreatedAt:  b.CreatedAt,
+		Scope:      archive.ScopeComplete,
+		Snapshot:   archive.File{Kind: "snapshot", ObjectID: b.ID, StoragePath: "qimeng.sqlite", SHA256: snapshot.hash, Size: snapshot.size},
+		Files:      []archive.File{},
+	}
+	absolute, e := s.Root.AbsolutePath(snapshot.name)
+	if e != nil {
+		return archive.Manifest{}, "", e
+	}
+	db, e := store.OpenDatabase(absolute, store.SnapshotDatabase)
+	if e != nil {
+		return archive.Manifest{}, "", e
+	}
+	defer db.Close()
+	add := func(f archive.File) error {
+		if len(manifest.Files) >= archive.MaxFiles {
+			return Fail(422, "backup_manifest_budget", "备份文件清单超过当前资源预算，未截断导出。")
+		}
+		manifest.Files = append(manifest.Files, f)
+		return nil
+	}
+	last := ""
+	for {
+		assets, e := store.List[model.Asset](ctx, db, "SELECT data FROM assets WHERE id>? ORDER BY id LIMIT 256", last)
+		if e != nil {
+			return archive.Manifest{}, "", e
+		}
+		for _, a := range assets {
+			if e = add(archive.File{Kind: "asset", ObjectID: a.ID, ContentVersion: a.ContentVersion, StoragePath: assetPath(a), SHA256: a.Hash, Size: a.Size, ModifiedAt: a.ContentMtime}); e != nil {
+				return archive.Manifest{}, "", e
+			}
+			last = a.ID
+		}
+		if len(assets) < 256 {
+			break
+		}
+	}
+	last = ""
+	for {
+		uploads, e := store.List[model.Upload](ctx, db, "SELECT data FROM uploads WHERE id>? AND state!='ingested' ORDER BY id LIMIT 128", last)
+		if e != nil {
+			return archive.Manifest{}, "", e
+		}
+		for _, u := range uploads {
+			last = u.ID
+			file := archive.File{Kind: "upload", ObjectID: u.ID, StoragePath: uploadPath(u.ID), Size: u.Offset}
+			source, e := s.backupSource(ctx, file)
+			if e != nil {
+				return archive.Manifest{}, "", e
+			}
+			hash := sha256.New()
+			_, e = io.CopyN(hash, source, u.Offset)
+			closeErr := source.Close()
+			if e != nil {
+				return archive.Manifest{}, "", e
+			}
+			if closeErr != nil {
+				return archive.Manifest{}, "", closeErr
+			}
+			file.SHA256 = hex.EncodeToString(hash.Sum(nil))
+			if u.Hash != "" && (u.Offset != u.Size || file.SHA256 != u.Hash) {
+				return archive.Manifest{}, "", Fail(409, "backup_input_changed", "封存输入内容与检查点摘要不一致。")
+			}
+			if e = add(file); e != nil {
+				return archive.Manifest{}, "", e
+			}
+		}
+		if len(uploads) < 128 {
+			break
+		}
+	}
+	if e = manifest.Validate(); e != nil {
+		return archive.Manifest{}, "", e
+	}
+	if e = s.ensureArchiveSpace(manifest); e != nil {
+		return archive.Manifest{}, "", e
+	}
+	file, e := s.Root.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if e != nil {
+		return archive.Manifest{}, "", e
+	}
+	hash := sha256.New()
+	writer := io.MultiWriter(&reserveWriter{ctx: ctx, s: s, file: file}, hash)
+	open := func(f archive.File) (io.ReadCloser, error) {
+		if f.Kind == "snapshot" {
+			return s.Root.Open(snapshot.name)
+		}
+		return s.backupSource(ctx, f)
+	}
+	e = archive.Write(ctx, writer, manifest, open, nil)
+	if e == nil {
+		e = file.Sync()
+	}
+	_, statErr := file.Stat()
+	closeErr := file.Close()
+	if e == nil {
+		e = statErr
+	}
+	if e == nil {
+		e = closeErr
+	}
+	if e != nil {
+		_ = s.Root.Remove(destination)
+		return archive.Manifest{}, "", e
+	}
+	if e = s.syncParent(destination); e != nil {
+		_ = s.Root.Remove(destination)
+		return archive.Manifest{}, "", e
+	}
+	return manifest, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 // archiveSnapshot is the exact bytes the archive carries. A checkpoint created
 // by this version is already scrubbed. An older checkpoint is copied first so
 // its recorded hash and any protection reference stay valid.

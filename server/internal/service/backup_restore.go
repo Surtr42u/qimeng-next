@@ -243,11 +243,13 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 		"UPDATE batch_protections SET state='historical',data=json_set(data,'$.state','historical')",
 		"UPDATE source_cleanup_permits SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='issued'",
 	}
-	// A records-only archive never carries the committed .part prefixes, so
-	// keeping those rows would point AppendUpload at files that do not exist.
+	// A records-only archive never carries the committed .part prefixes.
+	// Keep the upload rows because batch_inputs, research and plan receipts
+	// reference them, but mark them unresumable instead of leaving a state
+	// that would make AppendUpload open a file that was never restored.
 	// Legacy full archives still restore and keep their upload prefixes.
 	if manifest.Scope == archive.ScopeMetadata {
-		statements = append(statements, "DELETE FROM uploads WHERE state!='ingested'")
+		statements = append(statements, "UPDATE uploads SET state='cancelled',data=json_set(data,'$.state','cancelled','$.offset',0,'$.errorCode','backup_originals_missing') WHERE state!='ingested'")
 	}
 	for _, statement := range statements {
 		if _, e = tx.ExecContext(ctx, statement); e != nil {

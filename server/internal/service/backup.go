@@ -86,7 +86,9 @@ func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write, inspect 
 	snapshot := directory + "/snapshot.sqlite"
 	// A previous uncommitted attempt may have completed its snapshot. Its manifest
 	// must be rebuilt against that same snapshot, never relabelled as a newer one.
+	created := false
 	if _, e := s.Root.Stat(snapshot); errors.Is(e, os.ErrNotExist) {
+		created = true
 		var pages, pageSize int64
 		if e = s.DB.DB.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pages); e != nil {
 			return b, e
@@ -110,15 +112,29 @@ func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write, inspect 
 	// The checkpoint is the portable relink copy. Remove credentials, request
 	// receipts and machine-local runtime rows before hashing it, so both the
 	// archive and any protection copy are free of those secrets.
-	absolute, e := s.Root.AbsolutePath(snapshot)
-	if e != nil {
-		return b, e
-	}
-	if e = scrubSnapshotFile(ctx, absolute); e != nil {
-		return b, e
-	}
-	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
-		_ = s.Root.Remove(snapshot + suffix)
+	// Never rewrite a snapshot that already has a published manifest: its hash
+	// is part of that catalogue, and a retry after an interrupted receipt must
+	// reuse the exact same bytes. Older unscrubbed checkpoints are scrubbed in
+	// the export copy instead.
+	_, manifestErr := s.Root.Stat(directory + "/manifest.json")
+	scannable := created || errors.Is(manifestErr, os.ErrNotExist)
+	if scannable {
+		absolute, e := s.Root.AbsolutePath(snapshot)
+		if e != nil {
+			return b, e
+		}
+		secrets, e := snapshotHasSecrets(ctx, absolute)
+		if e != nil {
+			return b, e
+		}
+		if secrets {
+			if e = scrubSnapshotFile(ctx, absolute); e != nil {
+				return b, e
+			}
+			for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+				_ = s.Root.Remove(snapshot + suffix)
+			}
+		}
 	}
 	snapshotDB, e := store.OpenDatabase(filepath.Join(s.Config.DataDir, filepath.FromSlash(snapshot)), store.SnapshotDatabase)
 	if e != nil {

@@ -210,7 +210,7 @@ func (op *operation) prepare(ctx context.Context) error {
 	}
 	defer db.DB.Close()
 	stage := filepath.Join(op.name, op.req.Stage)
-	before, err := readCatalog(ctx, db.DB, stage)
+	before, err := readCatalog(ctx, db.DB, stage, op.manifest.Scope == backup.ScopeMetadata)
 	if err != nil {
 		return phase("restored_current_versions", err)
 	}
@@ -226,7 +226,7 @@ func (op *operation) prepare(ctx context.Context) error {
 	if op.req.ArchiveHash != op.plan.BaselineSHA256 && !result.AlreadyApplied {
 		return phase("baseline_sha256_binding", errors.New("a different archive can only replay existing decisions"))
 	}
-	after, err := readCatalog(ctx, db.DB, stage)
+	after, err := readCatalog(ctx, db.DB, stage, op.manifest.Scope == backup.ScopeMetadata)
 	if err != nil {
 		return phase("projected_current_versions", err)
 	}

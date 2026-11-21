@@ -51,13 +51,15 @@ func TestPartialPlanAdvancesWithSameKeyOnOriginalAndRestoredInstance(t *testing.
 	firstID := detail.Items[0].Upload.AssetID
 	var backup service.Backup
 	decode(t, f.json("POST", "/backups", "checkpoint-partially-applied-plan", struct{}{}, 201), &backup)
-	f.json("POST", "/backups/"+backup.ID+"/export", "export-partially-applied-plan", struct{}{}, 202)
-	backup = awaitBackup(t, f, backup.ID)
-	if backup.ExportState != "completed" {
-		t.Fatal(backup.ExportError)
+	// The interrupted plan must resume its committed upload prefix. That byte
+	// exists only in a full archive, so build the internal full archive instead
+	// of the user-facing records export.
+	_, archiveHash, e := f.s.WriteFullBackupArchive(context.Background(), backup.ID, "backups/"+backup.ID+"/archive.full.qnext")
+	if e != nil {
+		t.Fatal(e)
 	}
 	destination := filepath.Join(t.TempDir(), "resumed")
-	_, e = service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", backup.ID, "archive.qnext"), ExpectedSHA256: backup.ArchiveHash, Destination: destination, ReserveBytes: 1})
+	_, e = service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", backup.ID, "archive.full.qnext"), ExpectedSHA256: archiveHash, Destination: destination, ReserveBytes: 1})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -84,13 +86,12 @@ func TestPartialPlanAdvancesWithSameKeyOnOriginalAndRestoredInstance(t *testing.
 	}
 	var second service.Backup
 	decode(t, copyFixture.json("POST", "/backups", "second-generation-checkpoint", struct{}{}, 201), &second)
-	copyFixture.json("POST", "/backups/"+second.ID+"/export", "second-generation-export", struct{}{}, 202)
-	second = awaitBackup(t, copyFixture, second.ID)
-	if second.ExportState != "completed" {
-		t.Fatal(second.ExportError)
+	_, secondHash, e := restored.WriteFullBackupArchive(context.Background(), second.ID, "backups/"+second.ID+"/archive.full.qnext")
+	if e != nil {
+		t.Fatal(e)
 	}
 	next := filepath.Join(t.TempDir(), "second-restore")
-	report, e := service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(destination, "backups", second.ID, "archive.qnext"), ExpectedSHA256: second.ArchiveHash, Destination: next, ReserveBytes: 1})
+	report, e := service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: filepath.Join(destination, "backups", second.ID, "archive.full.qnext"), ExpectedSHA256: secondHash, Destination: next, ReserveBytes: 1})
 	if e != nil || report.AssetCount != 2 {
 		t.Fatal("second generation lost committed results", report, e)
 	}

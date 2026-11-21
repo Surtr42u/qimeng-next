@@ -99,17 +99,20 @@ func nativeCheckpointCopy(t *testing.T, f *fixture, stage string, assetCount int
 	t.Helper()
 	var b service.Backup
 	decode(t, f.json("POST", "/backups", "native-checkpoint-"+stage, struct{}{}, 201), &b)
-	f.json("POST", "/backups/"+b.ID+"/export", "native-export-"+stage, struct{}{}, 202)
-	b = awaitBackup(t, f, b.ID)
-	if b.ExportState != "completed" || b.ArchiveHash == "" {
-		t.Fatal("checkpoint export failed", b.ExportState, b.ExportError)
+	// These restore tests exercise original bytes. The user-facing export is
+	// records-only, so build the internal full archive explicitly through the
+	// same writer instead of weakening their assertions.
+	archiveName := "backups/" + b.ID + "/archive.full.qnext"
+	_, archiveHash, err := f.s.WriteFullBackupArchive(context.Background(), b.ID, archiveName)
+	if err != nil {
+		t.Fatal("full checkpoint archive failed", err)
 	}
 	destination := filepath.Join(t.TempDir(), "isolated")
 	result, err := service.RestoreBackup(context.Background(), service.RestoreOptions{
-		ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext"), Destination: destination,
-		ExpectedSHA256: b.ArchiveHash, ReserveBytes: 1,
+		ArchivePath: filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.full.qnext"), Destination: destination,
+		ExpectedSHA256: archiveHash, ReserveBytes: 1,
 	})
-	if err != nil || result.AssetCount != assetCount || result.InstanceID == f.s.InstanceID || result.ArchiveHash != b.ArchiveHash {
+	if err != nil || result.AssetCount != assetCount || result.InstanceID == f.s.InstanceID || result.ArchiveHash != archiveHash {
 		t.Fatal("isolated restore", result, err)
 	}
 	restored, err := service.New(service.Config{DataDir: destination, AdminToken: testSecret, ReserveBytes: 1})
