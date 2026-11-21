@@ -49,6 +49,9 @@ func (a *API) routes(operations generated.ServerInterface) http.Handler {
 	// so it is registered by hand. It still passes the same authentication and
 	// scope middleware as every other route.
 	mux.HandleFunc("GET "+contract.baseURL+events.Path, a.auth(a.events.ServeHTTP))
+	// 旧版记录导入的正文是单个 JSON 文件而不是生成的请求模型，暂时与事件流一样
+	// 手写注册。api/openapi.yaml 补上该操作后应迁入 generated.ServerInterface。
+	mux.HandleFunc("POST "+contract.baseURL+"/migration/portable/imports", a.authScope("admin", a.importPortableBackup))
 	router := &authenticatedRouter{ServeMux: mux, api: a, contract: contract}
 	handler := generated.HandlerWithOptions(operations, generated.StdHTTPServerOptions{
 		BaseURL: contract.baseURL, BaseRouter: router, ErrorHandlerFunc: parameterError,
@@ -828,6 +831,55 @@ func (a *API) CommitPlan(w http.ResponseWriter, r *http.Request, id generated.Id
 		return
 	}
 	out, e := a.s.CommitPlan(r.Context(), principal(r), id, planId, in.Fingerprint, key)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	result(w, out)
+}
+
+// importPortableBackup 接收旧版应用导出的单个 qimeng_backup v2 JSON。
+//
+// 这条路由暂未写入 api/openapi.yaml：本仓库禁止手改生成 SDK、也不在本地生成，
+// 因此按 /events 的既有先例在 http.go 手写注册并直接读取正文。CI 补上 OpenAPI
+// 操作后应迁入 generated.ServerInterface。
+//
+//   - ?dryRun=true 只返回匹配/写入报告，不写库；
+//   - 正文上限 64 MiB（service.PortableImportMaxBytes），与旧应用导出端点一致；
+//   - 必须 admin；同一文件重复提交由服务层回执去重。
+func (a *API) importPortableBackup(w http.ResponseWriter, r *http.Request) {
+	dryRun, e := boolQuery(r, "dryRun")
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	raw, e := io.ReadAll(http.MaxBytesReader(w, r.Body, service.PortableImportMaxBytes))
+	if e != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(e, &tooLarge) {
+			fail(w, service.Fail(http.StatusRequestEntityTooLarge, "portable_import_too_large", "导入文件超出 64 MiB，请确认导出完整后重试。"))
+		} else {
+			fail(w, service.Fail(400, "invalid_json", "导入文件读取失败；请重新选择完整的旧版导出文件。"))
+		}
+		return
+	}
+	if len(raw) == 0 {
+		fail(w, service.Fail(400, "portable_import_empty", "请选择旧版导出的 JSON 文件。"))
+		return
+	}
+	if dryRun != nil && *dryRun {
+		report, e := a.s.PreviewPortableImport(r.Context(), principal(r), raw)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 200, report)
+		return
+	}
+	out, e := a.s.Run(r.Context(), principal(r), "POST /migration/portable/imports", "", raw, func(tx *service.Write) (any, int, error) {
+		report, e := a.s.ApplyPortableImport(r.Context(), tx, raw)
+		return report, 200, e
+	})
 	if e != nil {
 		fail(w, e)
 		return
