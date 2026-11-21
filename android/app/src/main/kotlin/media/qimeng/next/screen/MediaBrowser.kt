@@ -126,8 +126,9 @@ fun HomeScreen(model: LibraryViewModel) {
         // 边界内采样），因此这层 backdrop 从未画出任何像素，只是每帧把整个网格再录一遍。
         // 去掉录制后像素不变，滚动时少了一次全网格离屏拷贝。
         // beyondViewportPageCount=1：只预组合当前页相邻的一页（另一侧在组合窗口之外，不占
-        // 内存），滑动时邻页已有首屏内容而不是骨架；邻页以 prefetchEnabled=false 组合，不起
-        // 自己的视口预取 worker（它照常登记列表并取第一页数据，见 MediaBrowser 参数说明）。
+        // 内存），滑动时邻页已有首屏内容而不是骨架。邻页以 prefetchEnabled=false 组合：不起
+        // 视口前瞻 worker、不续页，但它自身首屏可见格子的 AsyncImage 仍会随组合取缩略图——
+        // 这是「滑过去即显」的代价（审查 P2 已记档），不是零下载。
         HorizontalPager(pager, modifier = Modifier.weight(1f), key = { "home:$it" }, beyondViewportPageCount = 1) { page ->
             // targetPage 在 pager 内容里读取：翻页只重组已组合的页面，不再带上整个首页。
             val active = pager.targetPage
@@ -419,7 +420,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     // 用户下拉刷新标志：只由 PullToRefreshBox 的手势回调置位。重试、批量刷新、服务器推送、
     // 翻页与换 seed 都不置位；成功归位或刷新失败时清零。
     var userRefresh by remember(key) { mutableStateOf(false) }
-    LaunchedEffect(key, session, query, group) {
+    LaunchedEffect(key, session, query, group, sceneActive) {
+        // 进程恢复会把所有已访问 Tab 一起上树（rememberSaveable visited 集）：隐藏层此时
+        // 生命周期是 CREATED，但 LaunchedEffect 不看生命周期。首屏请求只在场景可见时发，
+        // 否则恢复详情页时四份列表/统计会同时抢带宽（审查 P1）。
+        if (!sceneActive) return@LaunchedEffect
         batch?.bindQuery(query)
         // 入库新鲜度不在这里触发：browse 自己比对 publicationId，进入列表时最多补一次。
         model.browse(key, query)
@@ -445,9 +450,10 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         val runway = PAGE_RUNWAY_ROWS * columns
         layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - runway
     } }
-    LaunchedEffect(nearEnd, listCursor, query, sceneActive) {
+    LaunchedEffect(nearEnd, listCursor, query, sceneActive, prefetchEnabled) {
         // 隐藏场景里的布局残影（高度/可见项变化）也能让 nearEnd 成立；不为看不见的网格续页。
-        if (sceneActive && nearEnd && listError == null) model.browse(key, query, next = true)
+        // 首页 pager 的预组合邻页同样不在此续页：它有自己的整页布局，否则会在后台一页页翻下去。
+        if (sceneActive && prefetchEnabled && nearEnd && listError == null) model.browse(key, query, next = true)
     }
     // 选择模式/面板开关只派生窄布尔值，勾选单项不会触发浏览区重组。
     if (batch != null) {
@@ -469,7 +475,10 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             val facets: media.qimeng.next.FacetViewModel = viewModel(key = "facets:$key")
             val values by facets.rows.collectAsStateWithLifecycle()
             rows = values
-            LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
+            LaunchedEffect(session, query, sceneActive) {
+                // 隐藏的已恢复 Tab 不发四行 facet 请求；首次可见时补。
+                if (sceneActive) session?.let { facets.bind(it, query) }
+            }
             filters = { AlbumFilters(albumTitle, headerTotal, controls, values,
                 onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
                 loadFailed = listError != null, columns = columns, showTitle = !selecting,

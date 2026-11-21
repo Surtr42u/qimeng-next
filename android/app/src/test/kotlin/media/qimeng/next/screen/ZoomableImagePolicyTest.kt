@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * 详情图片手势纯逻辑锁定（口径来源=旧版 feature/detail/image/ZoomImageView.kt）：
  * 双击双向切换 1x ↔ 1.8x、放大态 1.05x 阈值、双指 0.5x–5x、松手低于 1x 回中、
- * 平移按图片（Fit 后）边界钳制、1x 横滑 60dp + 横向占优 + 速度严格 >800px/s 且横向速度占优。
+ * 平移按图片（Fit 后）边界钳制、1x 横滑 60dp + 横向占优即切（快甩与慢拖同口径）。
  * 被测函数均为文件级 internal 纯函数、无 Android/Compose 依赖（先例
  * ImageFailureClassifierTest / SiblingSwipePolicyTest）。
  */
@@ -139,84 +139,27 @@ class ZoomableImagePolicyTest {
     // ---------- 1x 横滑切件（REQ 5） ----------
 
     @Test
-    fun `1x 快甩达距离且横向占优才切件`() {
-        assertEquals(
-            1,
-            swipeDirection(dragX = -100f, dragY = 10f, velocityX = -1200f, velocityY = 100f, scale = 1f, distancePx = 80f),
-        )
-        assertEquals(
-            -1,
-            swipeDirection(dragX = 100f, dragY = 10f, velocityX = 1200f, velocityY = -100f, scale = 1f, distancePx = 80f),
-        )
-    }
-
-    @Test
-    fun `慢速长拖不切件_旧版 onFling 的速度门槛`() {
-        // 距离和横向占优都满足，但松手速度没到 800px/s：旧版 onFling 不触发，不切件。
-        // 新仓此前漏了这道门槛，60dp 慢拖就会翻页，手感比旧版更敏感。
-        assertNull(swipeDirection(dragX = -200f, dragY = 10f, velocityX = 0f, velocityY = 0f, scale = 1f, distancePx = 80f))
-        assertNull(swipeDirection(dragX = -200f, dragY = 10f, velocityX = -400f, velocityY = 0f, scale = 1f, distancePx = 80f))
-        // 恰好等于阈值也不切（旧版严格 > SWIPE_VELOCITY）。
-        assertNull(
-            swipeDirection(
-                dragX = -200f, dragY = 10f,
-                velocityX = -SWIPE_VELOCITY, velocityY = 0f,
-                scale = 1f, distancePx = 80f,
-            ),
-        )
+    fun `1x 横滑达距离且横向占优即切件_快甩与慢拖同口径`() {
+        // 旧版 onFling 要求 |vx|>800，但慢拖没有 fling 时 ACTION_UP 的 swipeDeltaFromDrag
+        // 按累积位移判定、不要求速度；两条合并后的契约就是距离 + 横向占优。
+        assertEquals(1, swipeDirection(dragX = -100f, dragY = 10f, scale = 1f, distancePx = 80f))
+        assertEquals(-1, swipeDirection(dragX = 100f, dragY = 10f, scale = 1f, distancePx = 80f))
+        assertEquals(1, swipeDirection(dragX = -200f, dragY = 10f, scale = 1f, distancePx = 80f))
     }
 
     @Test
     fun `放大态横拖只平移绝不切件`() {
-        assertNull(swipeDirection(dragX = -200f, dragY = 0f, velocityX = -1200f, velocityY = 0f, scale = 1.2f, distancePx = 80f))
-        assertNull(swipeDirection(dragX = -200f, dragY = 0f, velocityX = -1200f, velocityY = 0f, scale = 2f, distancePx = 80f))
+        assertNull(swipeDirection(dragX = -200f, dragY = 0f, scale = 1.2f, distancePx = 80f))
+        assertNull(swipeDirection(dragX = -200f, dragY = 0f, scale = 2f, distancePx = 80f))
     }
 
     @Test
     fun `距离不足或纵向占优不切件`() {
-        // 快速短甩（未达 60dp）不切：防「想点按/轻扫」误翻页
-        assertNull(swipeDirection(dragX = -50f, dragY = 0f, velocityX = -2000f, velocityY = 0f, scale = 1f, distancePx = 80f))
-        // 纵向/斜向滑动：横向即使过距离也不切
-        assertNull(
-            swipeDirection(
-                dragX = -100f, dragY = 200f,
-                velocityX = -2000f, velocityY = 3000f,
-                scale = 1f, distancePx = 80f,
-            ),
-        )
-        // 严格大于阈值：恰好等于不切（与旧版同级）
-        assertNull(swipeDirection(dragX = -80f, dragY = 0f, velocityX = -2000f, velocityY = 0f, scale = 1f, distancePx = 80f))
-    }
-
-    @Test
-    fun `快速竖向甩动即使横向距离达标也不切件`() {
-        // 速度大小已过 800：竖向速度占优时仍不切（快速斜甩/下滑不误翻页）。
-        assertNull(
-            swipeDirection(
-                dragX = -100f, dragY = 10f,
-                velocityX = -100f, velocityY = -1500f,
-                scale = 1f, distancePx = 80f,
-            ),
-        )
-    }
-
-    @Test
-    fun `快速斜甩即使距离达标也不切件`() {
-        assertNull(
-            swipeDirection(
-                dragX = -100f, dragY = 10f,
-                velocityX = -900f, velocityY = -1500f,
-                scale = 1f, distancePx = 80f,
-            ),
-        )
-        // 横向速度占优的快甩照常切
-        assertEquals(
-            1,
-            swipeDirection(
-                dragX = -100f, dragY = 10f,
-                velocityX = -1500f, velocityY = -100f,
-                scale = 1f, distancePx = 80f,
-            ),
-        )
+        // 短拖（未达 60dp）不切：防「想点按/轻扫」误翻页。
+        assertNull(swipeDirection(dragX = -50f, dragY = 0f, scale = 1f, distancePx = 80f))
+        // 纵向/斜向滑动：横向即使过距离也不切。
+        assertNull(swipeDirection(dragX = -100f, dragY = 200f, scale = 1f, distancePx = 80f))
+        // 严格大于阈值：恰好等于不切（与旧版同级）。
+        assertNull(swipeDirection(dragX = -80f, dragY = 0f, scale = 1f, distancePx = 80f))
     }
 }

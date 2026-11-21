@@ -1254,7 +1254,7 @@ internal fun appendRetryDelayMs(append: Boolean, attempt: Int): Long? =
  * [LibraryViewModel.adjacentAsset] 的目标下标（纯函数，单测锁定）。
  *
  * 当前件不在已加载清单时 [index] = -1：若照旧做 `index + direction` 再 `getOrNull`，
- * 左滑（direction=-1）会落到 0 号位，用户看到详情「穿」到列表第一张而不是相邻件。
+ * 左滑（direction=+1，下一张）会落到 0 号位，用户看到详情「穿」到列表第一张而不是相邻件。
  * 因此 index 不在 [0, size) 时直接返回 null；目标越过清单首/尾（第一张右滑、最后一张
  * 左滑）同样返回 null，保持原有边界行为。
  */

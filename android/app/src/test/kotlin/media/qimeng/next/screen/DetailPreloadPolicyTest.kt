@@ -150,7 +150,7 @@ class DetailPreloadPolicyTest {
 
     @Test
     fun `当前件不在已加载清单时邻位不动`() {
-        // index=-1：照旧做 index+direction 后 getOrNull，左滑会取 source[0]，
+        // index=-1：照旧做 index+direction 后 getOrNull，左滑（direction=+1）会取 source[0]，
         // 用户看到详情「穿」到列表第一张而不是相邻件。
         assertNull(adjacentAssetIndex(index = -1, direction = -1, size = 5))
         assertNull(adjacentAssetIndex(index = -1, direction = 1, size = 5))

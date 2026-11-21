@@ -31,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -62,9 +61,6 @@ internal const val MIN_GESTURE_ZOOM = 0.5f
 
 /** 捏合缩放上限（旧版 MAX_SCALE/END_MAX_SCALE） */
 internal const val MAX_ZOOM = 5f
-
-/** 切件速度阈值 px/s（旧版 SWIPE_VELOCITY） */
-internal const val SWIPE_VELOCITY = 800f
 
 /** 切件距离阈值（旧版 SWIPE_DISTANCE_DP = 60dp） */
 private val SWIPE_DISTANCE = 60.dp
@@ -145,29 +141,25 @@ internal fun clampPan(pan: Float, contentSize: Float, viewportSize: Float, scale
 }
 
 /**
- * 1x 横滑切件判定（旧版 feature/detail/image/ZoomImageView.kt onFling，196–210 行；
- * 常量 SWIPE_DISTANCE_DP = 60 / SWIPE_VELOCITY = 800 见同文件 574–575 行）：
+ * 1x 横滑切件判定（旧版 feature/detail/image/ZoomImageView.kt）：
  * - 放大态（>1.05x）一律不切：横拖属于平移；
- * - 距离必须严格超过 60dp 且横向占优（纵向斜滑、下拉不切件）；
- * - 速度必须严格超过 800px/s 且横向速度占优：对齐旧版 onFling 的三重门槛
- *   （距离 / 横向占优 / 速度）。本仓在单次手势的收束点只按这一套门槛判定一次，
- *   慢速长拖不翻页，快速斜甩也不得误判成切件。
+ * - 距离必须严格超过 60dp 且横向占优（纵向斜滑、下拉不切件）即切件。
+ *
+ * 旧版有两条互补的收尾路径：onFling（196–210 行）要求 |vx|>800，慢拖没有 fling 时由
+ * ACTION_UP 的 swipeDeltaFromDrag（369–395 行）按累积位移判定——距离与横向占优即可，
+ * **不要求速度**。两条合并后的实际契约就是「距离 + 横向占优」，因此这里不再看速度：
+ * 加 800px/s 门槛会让慢速长拖在旧版能切、新版不切，正是用户反馈的滑动不如旧版。
  * 方向沿用旧版：手指左移 (dragX<0) → +1 下一张，右移 → -1 上一张。
  */
 internal fun swipeDirection(
     dragX: Float,
     dragY: Float,
-    velocityX: Float,
-    velocityY: Float,
     scale: Float,
     distancePx: Float,
-    velocityThreshold: Float = SWIPE_VELOCITY,
 ): Int? {
     if (isZoomImmersive(scale)) return null
     if (abs(dragX) <= distancePx) return null
     if (abs(dragX) <= abs(dragY)) return null
-    if (abs(velocityX) <= velocityThreshold) return null
-    if (abs(velocityY) >= abs(velocityX)) return null
     return if (dragX < 0f) 1 else -1
 }
 
@@ -183,8 +175,8 @@ internal fun swipeDirection(
  * 原地轻点在任何缩放态都不消费，双击双向可重复。
  *
  * 口径对齐旧版 ZoomImageView：双击 1.8x/回位阈值 1.1x、双指 0.5x–5x、放大态阈值
- * 1.05x、松手低于 1x 回中、1x 横滑 60dp + 横向占优 + 速度严格 >800px/s 且横向速度占优、
- * 平移按图片边界钳制。
+ * 1.05x、松手低于 1x 回中、1x 横滑 60dp + 横向占优（快甩与慢拖都切，对齐旧版 onFling+
+ * ACTION_UP 两条收尾路径的并集）、平移按图片边界钳制。
  * 双击缩放动画（220ms）是本轮新要求：旧版 ZoomImageView 用 configureBaseMatrix/
  * postScale 瞬切，源码里没有补间动画。
  */
@@ -330,8 +322,6 @@ internal fun ZoomableImageStage(
                             animationJob.job?.cancel()
                             // 动画被新手势打断时按当前真实缩放校正一次沉浸态（例如回位动画到一半）。
                             reportSettled()
-                            val tracker = VelocityTracker()
-                            tracker.addPosition(down.uptimeMillis, down.position)
                             var dragX = 0f
                             var dragY = 0f
                             var pastSlop = false
@@ -339,7 +329,6 @@ internal fun ZoomableImageStage(
                             do {
                                 val event = awaitPointerEvent()
                                 val pan = event.calculatePan()
-                                event.changes.firstOrNull()?.let { tracker.addPosition(it.uptimeMillis, it.position) }
                                 dragX += pan.x
                                 dragY += pan.y
                                 if (!pastSlop && hypot(dragX, dragY) > viewConfiguration.touchSlop) pastSlop = true
@@ -393,8 +382,7 @@ internal fun ZoomableImageStage(
                                 if (transformed) reportSettled()
                             }
                             if (!transformed && pastSlop) {
-                                val velocity = tracker.calculateVelocity()
-                                swipeDirection(dragX, dragY, velocity.x, velocity.y, scale, swipeDistancePx)?.let {
+                                swipeDirection(dragX, dragY, scale, swipeDistancePx)?.let {
                                     currentNavigate(it)
                                 }
                             }

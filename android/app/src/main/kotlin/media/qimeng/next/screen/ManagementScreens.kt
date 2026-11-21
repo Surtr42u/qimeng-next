@@ -46,7 +46,14 @@ fun ProfileScreen(model: LibraryViewModel) {
     val busy by model.busy.collectAsStateWithLifecycle()
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
     var showPreferences by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { model.loadStatistics(); if (recommendation == null) model.loadRecommendationPreferences() }
+    // 进程恢复时已访问的隐藏 Tab 也会组合；清单与偏好只在场景可见时读。
+    val sceneActive = LocalSceneActive.current
+    LaunchedEffect(sceneActive) {
+        if (sceneActive) {
+            model.loadStatistics()
+            if (recommendation == null) model.loadRecommendationPreferences()
+        }
+    }
     // Presentation hierarchy and dimensions retained from the existing SettingsScreen.
     val scroll = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(scroll) { TabScrollController.events.collect { if (it == 3) scroll.scrollToItem(0) } }
