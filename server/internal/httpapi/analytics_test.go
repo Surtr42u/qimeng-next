@@ -1,8 +1,9 @@
 package httpapi_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/url"
-	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -147,8 +148,20 @@ func TestRankingPageMatchesPerAssetProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(ranking.Items[0].Asset, want) {
-		t.Fatalf("batched ranking projection differs from the per-asset read:\nranking %+v\nasset   %+v", ranking.Items[0].Asset, want)
+	// Compare the client-visible projection, not Go struct identity: the two
+	// reads legitimately differ in nil-vs-empty slice headers and time.Time
+	// location pointers, which reflect.DeepEqual treats as unequal while the
+	// JSON payload is byte-identical.
+	gotJSON, err := json.Marshal(ranking.Items[0].Asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotJSON, wantJSON) {
+		t.Fatalf("batched ranking projection differs from the per-asset read:\nranking %s\nasset   %s", gotJSON, wantJSON)
 	}
 }
 
