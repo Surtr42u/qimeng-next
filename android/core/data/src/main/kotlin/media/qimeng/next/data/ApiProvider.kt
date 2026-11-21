@@ -158,13 +158,34 @@ internal class ApiProvider(private val settings: SecureSettings) {
         .addConverterFactory(GsonConverterFactory.create(Gson())).build().create(DefaultApi::class.java)
 }
 
-private object QueryEnumConverterFactory : Converter.Factory() {
+internal object QueryEnumConverterFactory : Converter.Factory() {
+    // OpenAPI names such as "7d" are legal query values but cannot be Kotlin enum identifiers,
+    // so the wire value comes from @SerializedName.
+    //
+    // Reflection must not resolve the constant by `value.name`: in a release build R8 renames the
+    // enum constant fields (the DEX holds `l`/`m`) while `Enum.name()` keeps the source name
+    // ("regular"/"cos"), so `enumType.getField(value.name)` throws NoSuchFieldException while
+    // Retrofit is still building the request. That surfaced as "操作未完成，请重试" on every list
+    // query that passes an enum parameter, with no request ever leaving the app. Keying off the
+    // constant instance and `Field.isEnumConstant` is independent of obfuscation.
+    private val wireValues = HashMap<Class<*>, Map<Enum<*>, String>>()
+
     override fun stringConverter(type: Type, annotations: Array<Annotation>, retrofit: Retrofit): Converter<*, String>? {
         val enumType = type as? Class<*> ?: return null
         if (!enumType.isEnum || annotations.none { it is Query }) return null
-        // OpenAPI names such as "7d" are legal query values but cannot be Kotlin enum identifiers.
-        return Converter<Enum<*>, String> { value ->
-            enumType.getField(value.name).getAnnotation(SerializedName::class.java)?.value ?: value.toString()
+        val values = wireValuesOf(enumType)
+        return Converter<Enum<*>, String> { value -> values[value] ?: value.name }
+    }
+
+    private fun wireValuesOf(enumType: Class<*>): Map<Enum<*>, String> = synchronized(wireValues) {
+        wireValues.getOrPut(enumType) {
+            val values = LinkedHashMap<Enum<*>, String>()
+            for (field in enumType.declaredFields) {
+                if (!field.isEnumConstant) continue
+                val constant = field.get(null) as? Enum<*> ?: continue
+                values[constant] = field.getAnnotation(SerializedName::class.java)?.value ?: constant.name
+            }
+            values
         }
     }
 }
