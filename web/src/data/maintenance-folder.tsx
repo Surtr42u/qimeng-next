@@ -147,9 +147,9 @@ class MaintenanceFolder {
           backup = await requestExport(checkpoint.id, job.exportKey, signal);
         } else if (backup.exportState === "not_started") backup = await requestExport(checkpoint.id, job.exportKey, signal);
         if (backup.exportState === "queued" || backup.exportState === "running") {
-          this.update({ status: "服务器正在准备完整归档（" + (backup.exportedFiles ?? 0) + "/" + (backup.totalFiles ?? "—") + "）。" }); return;
+          this.update({ status: "服务器正在准备记录备份（" + (backup.exportedFiles ?? 0) + "/" + (backup.totalFiles ?? "—") + "）。" }); return;
         }
-        if (backup.exportState !== "completed" || !backup.archiveHash) throw new Error("完整归档不可用：" + (backup.exportError || backup.exportState || "未返回状态"));
+        if (backup.exportState !== "completed" || !backup.archiveHash) throw new Error("记录备份不可用：" + (backup.exportError || backup.exportState || "未返回状态"));
         if (backup.id !== checkpoint.id || (backup.businessRevision && backup.businessRevision !== checkpoint.businessRevision))
           throw new Error("归档与原快照不一致，已停止写回。");
         this.update({ status: "正在核对旧代并写入维护目录…" });

@@ -25,13 +25,16 @@ type RestoreOptions struct {
 	ReserveBytes                             int64
 }
 type RestoreResult struct {
-	BackupID         string `json:"backupId"`
-	SourceInstanceID string `json:"sourceInstanceId"`
-	InstanceID       string `json:"instanceId"`
-	AssetCount       int    `json:"assetCount"`
-	UploadCount      int    `json:"uploadCount"`
-	ArchiveHash      string `json:"archiveHash"`
-	State            string `json:"state"`
+	BackupID          string `json:"backupId"`
+	SourceInstanceID  string `json:"sourceInstanceId"`
+	InstanceID        string `json:"instanceId"`
+	Scope             string `json:"scope"`
+	OriginalsIncluded bool   `json:"originalsIncluded"`
+	MissingOriginals  int    `json:"missingOriginals"`
+	AssetCount        int    `json:"assetCount"`
+	UploadCount       int    `json:"uploadCount"`
+	ArchiveHash       string `json:"archiveHash"`
+	State             string `json:"state"`
 }
 
 // RestoreBackup writes only a newly created destination. The manifest cannot
@@ -195,6 +198,16 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 	if e = validateBackupCoverage(ctx, snapshot, manifest, len(seenAssets), len(seenUploads)); e != nil {
 		return result, e
 	}
+	result.Scope = manifest.Scope
+	if result.Scope == "" {
+		result.Scope = backupScopeComplete
+	}
+	result.OriginalsIncluded = manifest.Scope != archive.ScopeMetadata
+	if !result.OriginalsIncluded {
+		if e = snapshot.QueryRowContext(ctx, "SELECT (SELECT COUNT(*) FROM assets)+(SELECT COUNT(*) FROM uploads WHERE state!='ingested')").Scan(&result.MissingOriginals); e != nil {
+			return result, e
+		}
+	}
 	if e = snapshot.Close(); e != nil {
 		return result, e
 	}
@@ -212,7 +225,7 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 	result.InstanceID = ID()
 	// Runtime capabilities cannot survive a cross-instance restore. Business task
 	// reports remain, but no previous session or delegated writer can claim them.
-	for _, statement := range []string{
+	statements := []string{
 		"DELETE FROM credentials", "DELETE FROM idempotency", "DELETE FROM file_intents", "DELETE FROM delegated_tasks",
 		"DELETE FROM author_list_mirror", "DELETE FROM client_diagnostics",
 		"DELETE FROM detached_upload_roots",
@@ -229,7 +242,14 @@ func RestoreBackup(ctx context.Context, options RestoreOptions) (result RestoreR
 		"UPDATE batches SET data=json_set(data,'$.backupState','not_covered')",
 		"UPDATE batch_protections SET state='historical',data=json_set(data,'$.state','historical')",
 		"UPDATE source_cleanup_permits SET state='revoked',data=json_set(data,'$.state','revoked') WHERE state='issued'",
-	} {
+	}
+	// A records-only archive never carries the committed .part prefixes, so
+	// keeping those rows would point AppendUpload at files that do not exist.
+	// Legacy full archives still restore and keep their upload prefixes.
+	if manifest.Scope == archive.ScopeMetadata {
+		statements = append(statements, "DELETE FROM uploads WHERE state!='ingested'")
+	}
+	for _, statement := range statements {
 		if _, e = tx.ExecContext(ctx, statement); e != nil {
 			return result, e
 		}
@@ -331,15 +351,20 @@ func validateBackupPayload(ctx context.Context, db *sql.DB, file archive.File) (
 	return file.ModifiedAt, nil
 }
 func validateBackupCoverage(ctx context.Context, db *sql.DB, m archive.Manifest, assetCount, uploadCount int) error {
-	var assets, uploads int
-	if e := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM assets").Scan(&assets); e != nil {
-		return e
-	}
-	if e := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM uploads WHERE state!='ingested'").Scan(&uploads); e != nil {
-		return e
-	}
-	if assets != assetCount || uploads != uploadCount {
-		return errors.New("backup omits snapshot payloads")
+	// A metadata archive is a catalogue, not a restorable set of bytes. It
+	// deliberately carries no payloads; the operator must supply the originals.
+	// Identity, snapshot schema and unfinished-publication checks still apply.
+	if m.Scope != archive.ScopeMetadata {
+		var assets, uploads int
+		if e := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM assets").Scan(&assets); e != nil {
+			return e
+		}
+		if e := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM uploads WHERE state!='ingested'").Scan(&uploads); e != nil {
+			return e
+		}
+		if assets != assetCount || uploads != uploadCount {
+			return errors.New("backup omits snapshot payloads")
+		}
 	}
 	var original string
 	if e := db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='instance_id'").Scan(&original); e != nil {
@@ -417,6 +442,16 @@ func VerifyBackup(ctx context.Context, filename, expected string) (RestoreResult
 	}
 	if e = validateBackupCoverage(ctx, db, manifest, result.AssetCount, result.UploadCount); e != nil {
 		return result, e
+	}
+	result.Scope = manifest.Scope
+	if result.Scope == "" {
+		result.Scope = backupScopeComplete
+	}
+	result.OriginalsIncluded = manifest.Scope != archive.ScopeMetadata
+	if !result.OriginalsIncluded {
+		if e = db.QueryRowContext(ctx, "SELECT (SELECT COUNT(*) FROM assets)+(SELECT COUNT(*) FROM uploads WHERE state!='ingested')").Scan(&result.MissingOriginals); e != nil {
+			return result, e
+		}
 	}
 	result.ArchiveHash = hex.EncodeToString(hash.Sum(nil))
 	if expected != "" && strings.ToLower(expected) != result.ArchiveHash {

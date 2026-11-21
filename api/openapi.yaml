@@ -1184,7 +1184,14 @@ paths:
       operationId: createBackupManifest
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
-        '201': {description: Consistent database snapshot and original-version manifest; not proof of independent backup, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
+        '201': {description: Consistent database snapshot and relink catalogue; records only and never original media, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /backups/export-estimate:
+    get:
+      operationId: estimateBackupExport
+      description: Owner-only preflight estimate for the next records-only checkpoint (snapshot plus the small archive manifest). The export worker repeats the check against the exact manifest before opening a partial file.
+      responses:
+        '200': {description: Estimated archive bytes, configured reserve and current free bytes, content: {application/json: {schema: {$ref: '#/components/schemas/BackupExportEstimate'}}}}
         default: {$ref: '#/components/responses/Error'}
   /backups/change-state:
     get:
@@ -1208,10 +1215,17 @@ paths:
       responses:
         '200': {description: Durable export progress and integrity metadata, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
         default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: discardBackup
+      description: Remove an unfinished (failed or interrupted) export's checkpoint files and record. Refuses a published archive, an active export, a never-exported checkpoint, or a checkpoint referenced by batch protection or migration.
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '204': {description: Unfinished export removed}
+        default: {$ref: '#/components/responses/Error'}
   /backups/{id}/export:
     post:
       operationId: exportBackup
-      description: Build one complete portable archive asynchronously. Includes database facts and exact current or recycled originals plus committed prefixes of uncompleted uploads. A changed or missing snapshot input fails the export. Downloading is not independent-backup proof. Reuse the same key after a timeout and read the backup record.
+      description: Build one records-only portable archive asynchronously. The archive contains the scrubbed database snapshot and its manifest; original media is never read or copied. A missing checkpoint fails the export. Downloading is not independent-backup proof. Reuse the same key after a timeout and read the backup record.
       parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
         '202': {description: Export queued or its original receipt, content: {application/json: {schema: {$ref: '#/components/schemas/Backup'}}}}
@@ -3605,12 +3619,28 @@ components:
         businessRevision: {type: string, pattern: '^[0-9]+$', description: Revision captured in the checkpoint. Older checkpoints may omit it.}
         manifestHash: {type: string}
         exportState: {type: string, enum: [not_started, queued, running, completed, failed, interrupted, unavailable]}
+        scope: {type: string, enum: [complete, metadata], description: metadata is the current records-only export. complete marks older records created before records-only exports; any archive they published remains downloadable and restorable.}
         exportError: {type: string, description: Stable non-sensitive failure code; never a filesystem path}
+        exportMessage: {type: string, description: Bounded user-facing explanation; never a filesystem path}
+        storageBytes: {type: integer, format: int64, minimum: 0, description: Bytes currently occupied by this checkpoint directory (recomputed on read)}
         archiveHash: {type: string, description: SHA-256 of the completed archive}
         archiveBytes: {type: integer, format: int64, minimum: 0}
         exportedFiles: {type: integer, minimum: 0}
         totalFiles: {type: integer, minimum: 0}
         exportedAt: {type: string, format: date-time}
+    BackupExportEstimate:
+      type: object
+      required: [scope, snapshotBytes, originalBytes, originalFiles, archiveBytes, requiredBytes, freeBytes, reserveBytes, fits]
+      properties:
+        scope: {type: string, enum: [complete, metadata], description: Always metadata for a new export; complete is retained only for older records.}
+        snapshotBytes: {type: integer, format: int64, minimum: 0, description: Estimated VACUUM INTO snapshot size}
+        originalBytes: {type: integer, format: int64, minimum: 0, description: Reserved for older complete archives; always 0 for the current records-only export}
+        originalFiles: {type: integer, minimum: 0, description: Reserved for older complete archives; always 0 for the current records-only export}
+        archiveBytes: {type: integer, format: int64, minimum: 0, description: Estimated archive including manifest and tar framing}
+        requiredBytes: {type: integer, format: int64, minimum: 0, description: archiveBytes plus the configured reserve and the 8 MiB writer guard}
+        freeBytes: {type: integer, format: int64, minimum: 0}
+        reserveBytes: {type: integer, format: int64, minimum: 0, description: Configured reserve plus the 8 MiB writer guard}
+        fits: {type: boolean, description: False when the volume cannot hold the estimate plus the reserve}
     BackupPage:
       type: object
       required: [items]

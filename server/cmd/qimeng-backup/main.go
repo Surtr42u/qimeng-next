@@ -24,7 +24,7 @@ func run() error {
 		return fmt.Errorf("expected verify or restore")
 	}
 	flags := flag.NewFlagSet("qimeng-backup", flag.ContinueOnError)
-	archive := flags.String("archive", "", "Path to a complete .qnext archive")
+	archive := flags.String("archive", "", "Path to a .qnext archive (records-only or an older complete archive)")
 	destination := flags.String("destination", "", "New isolated data directory (must not exist)")
 	hash := flags.String("sha256", "", "Expected archive SHA-256 from the source service")
 	if e := flags.Parse(os.Args[2:]); e != nil {

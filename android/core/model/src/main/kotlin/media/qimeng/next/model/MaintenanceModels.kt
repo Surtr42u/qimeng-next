@@ -7,6 +7,11 @@ data class AuthorImportSummary(val newAuthors: Int, val matched: Int, val change
 data class MissingAuthorWorks(val total: Int, val examples: List<Pair<String, String>>)
 data class MaintenanceFolder(val tree: String? = null, val label: String = "", val automatic: Boolean = false,
     val lastChecked: Long = 0, val message: String? = null, val pending: Boolean = false)
+data class MaintenanceBackup(val id: String, val state: String, val scope: String, val createdAt: String,
+    val storageBytes: Long, val archiveBytes: Long, val exportedFiles: Int, val totalFiles: Int,
+    val exportError: String?, val exportMessage: String?)
+data class BackupExportPlan(val scope: String, val needed: Boolean, val fits: Boolean, val archiveBytes: Long,
+    val requiredBytes: Long, val freeBytes: Long, val reserveBytes: Long)
 data class DeviceDeliverySettings(val deviceId: String, val label: String = "", val address: String = "", val configured: Boolean = false,
     val background: Boolean = false, val destination: String? = null, val notice: String? = null, val replaceAuthorProfiles: Boolean = false)
 data class DevicePackage(val id: String, val state: String, val createdAt: String, val results: List<DeviceSegmentResult>)

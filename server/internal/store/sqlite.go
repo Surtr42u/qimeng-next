@@ -17,6 +17,9 @@ const (
 	OwnershipDatabase
 	ResearchDatabase
 	SnapshotDatabase
+	// SnapshotScrubDatabase opens a private checkpoint copy read-write so
+	// credentials and runtime secrets can be removed before it is archived.
+	SnapshotScrubDatabase
 )
 
 func OpenDatabase(filename string, use DatabaseUse) (*sql.DB, error) {
@@ -30,6 +33,8 @@ func OpenDatabase(filename string, use DatabaseUse) (*sql.DB, error) {
 		options = ownershipOptions
 	case SnapshotDatabase:
 		options = snapshotOptions
+	case SnapshotScrubDatabase:
+		options = snapshotScrubOptions
 	default:
 		return nil, fmt.Errorf("unknown SQLite connection use %d", use)
 	}

@@ -20,6 +20,16 @@ import (
 	"qimeng.local/next/server/internal/service"
 )
 
+// setWebCacheHeaders 让“壳”不缓存、带哈希的静态资源长期缓存：
+// 重建 Web 后 index.html 立刻换到新的 chunk 名，旧标签页不会拿着死链去请求。
+func setWebCacheHeaders(w http.ResponseWriter, requestPath string) {
+	if strings.HasPrefix(requestPath, "/assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+}
+
 func main() {
 	if e := run(); e != nil {
 		reason := "configuration, storage or listener failure"
@@ -167,13 +177,25 @@ func run() error {
 				http.Error(w, "invalid path", 400)
 				return
 			}
-			if entry, ok := packaged[r.URL.Path]; ok && entry.serve(w, r, web) {
-				return
+			if entry, ok := packaged[r.URL.Path]; ok {
+				setWebCacheHeaders(w, r.URL.Path)
+				if entry.serve(w, r, web) {
+					return
+				}
 			}
 			if _, e := os.Stat(filepath.Join(web, local)); errors.Is(e, os.ErrNotExist) {
+				// 缺失的静态资源必须回 404，不能回退到 index.html：浏览器的动态 import
+				// 拿到 HTML 会报 "Failed to fetch dynamically imported module"（重建 Web 后
+				// 旧标签页请求已不存在的 chunk 名就是这种情况）。只对导航请求做 SPA 回退。
+				if strings.HasPrefix(r.URL.Path, "/assets/") || filepath.Ext(local) != "" {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, filepath.Join(web, "index.html"))
 				return
 			}
+			setWebCacheHeaders(w, r.URL.Path)
 			files.ServeHTTP(w, r)
 		})
 	}

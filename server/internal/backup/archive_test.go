@@ -55,3 +55,49 @@ func TestArchiveRejectsChangedSourceAndDuplicateIdentity(t *testing.T) {
 		t.Fatal("changed source accepted")
 	}
 }
+func TestMetadataArchiveCarriesOnlyTheSnapshot(t *testing.T) {
+	m := testManifest()
+	m.Scope = ScopeMetadata
+	m.Files = nil
+	opened := 0
+	open := func(f File) (io.ReadCloser, error) {
+		opened++
+		return io.NopCloser(strings.NewReader("snapshot")), nil
+	}
+	var buffer bytes.Buffer
+	if e := Write(context.Background(), &buffer, m, open, nil); e != nil {
+		t.Fatal(e)
+	}
+	if opened != 1 {
+		t.Fatalf("metadata archive opened %d payloads", opened)
+	}
+	read, e := Read(context.Background(), bytes.NewReader(buffer.Bytes()), nil)
+	if e != nil || read.Scope != ScopeMetadata || len(read.Files) != 0 {
+		t.Fatalf("metadata round trip: %v %+v", e, read)
+	}
+	m.Files = testManifest().Files
+	if _, e = Encode(m); e == nil {
+		t.Fatal("metadata archive with originals accepted")
+	}
+}
+func TestContainerSizeMatchesWrite(t *testing.T) {
+	for _, scope := range []string{ScopeComplete, ScopeMetadata} {
+		m := testManifest()
+		m.Scope = scope
+		if scope == ScopeMetadata {
+			m.Files = nil
+		}
+		size, e := ContainerSize(m)
+		if e != nil {
+			t.Fatal(e)
+		}
+		var buffer bytes.Buffer
+		open := func(f File) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("original")), nil }
+		if e = Write(context.Background(), &buffer, m, open, nil); e != nil {
+			t.Fatal(e)
+		}
+		if int64(buffer.Len()) != size {
+			t.Fatalf("%s archive size %d, estimate %d", scope, buffer.Len(), size)
+		}
+	}
+}

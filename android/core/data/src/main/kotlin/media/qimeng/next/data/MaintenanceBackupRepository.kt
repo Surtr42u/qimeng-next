@@ -13,15 +13,28 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import media.qimeng.next.model.BackupExportPlan
+import media.qimeng.next.model.MaintenanceBackup
 import media.qimeng.next.model.MaintenanceFolder
 import media.qimeng.next.model.Session
 import media.qimeng.next.model.sameTarget
+import media.qimeng.next.sdk.model.Backup
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 private data class Rotation(val token: String, val checkpoint: String? = null, val exportKey: String = UUID.randomUUID().toString(),
     val masterHash: String? = null, val old: BackupGeneration? = null, val older: BackupGeneration? = null,
     val prepared: BackupGeneration? = null, val phase: String = "prepare")
+
+private const val SCOPE_COMPLETE = "complete"
+private const val SCOPE_METADATA = "metadata"
+
+private fun normalizedScope(value: String?): String = if (value == SCOPE_METADATA) SCOPE_METADATA else SCOPE_COMPLETE
+
+private fun Backup.toModel() = MaintenanceBackup(id = id, state = exportState?.value ?: "not_started",
+    scope = scope?.value ?: SCOPE_COMPLETE, createdAt = createdAt, storageBytes = storageBytes ?: 0,
+    archiveBytes = archiveBytes ?: 0, exportedFiles = exportedFiles ?: 0, totalFiles = totalFiles ?: 0,
+    exportError = exportError, exportMessage = exportMessage)
 
 class MaintenanceBackupRepository internal constructor(private val context: Context, private val provider: ApiProvider,
     private val settings: SecureSettings, private val archives: ArchiveRepository) {
@@ -175,15 +188,16 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
             }
             val directory = tree.staging(stage)
             if (checkpoint.exportState?.value in setOf("failed", "interrupted")) {
-                check(manual) { "完整归档制作中断，可点击导出备份重试" }
+                check(manual) { "记录备份制作中断，可点击导出记录备份重试" }
                 active = active.copy(exportKey = UUID.randomUUID().toString()); save(target, binding, active)
                 checkpoint = api.exportBackup(checkpoint.id, active.exportKey).bodyOrThrow()
             } else if (checkpoint.exportState?.value == "not_started") checkpoint = api.exportBackup(checkpoint.id, active.exportKey).bodyOrThrow()
             if (checkpoint.exportState?.value in setOf("queued", "running")) {
-                save(target, binding.copy(message = "服务器正在准备完整归档（${checkpoint.exportedFiles ?: 0}/${checkpoint.totalFiles ?: 0}）"), active)
+                val progress = if ((checkpoint.totalFiles ?: 0) > 0) "（${checkpoint.exportedFiles ?: 0}/${checkpoint.totalFiles}）" else ""
+                save(target, binding.copy(message = "服务器正在准备记录备份$progress"), active)
                 return@withLock false
             }
-            check(checkpoint.exportState?.value == "completed" && !checkpoint.archiveHash.isNullOrEmpty()) { "完整归档尚未准备好，原有两代保留" }
+            check(checkpoint.exportState?.value == "completed" && !checkpoint.archiveHash.isNullOrEmpty()) { "记录备份尚未准备好，原有两代保留" }
             val report = api.exportBackupAuthorDocuments(checkpoint.id).bodyOrThrow().use { it.byteStream().use { input -> tree.part(directory, "report", input) } }
             val index = "[\"作者总表.txt\"]".byteInputStream().use { tree.part(directory, "index", it) }
             val archive = api.downloadBackupArchive(checkpoint.id).bodyOrThrow().use { it.byteStream().use { input -> tree.part(directory, "archive", input, checkpoint.archiveHash) } }
@@ -219,6 +233,83 @@ class MaintenanceBackupRepository internal constructor(private val context: Cont
         save(target, binding.copy(lastChecked = System.currentTimeMillis(), message = "当前备份与作者资料已更新。"), null)
         true
     } }
+
+    /** Server records plus the bytes each checkpoint directory occupies now. */
+    suspend fun backups(target: Session): List<MaintenanceBackup> = withContext(Dispatchers.IO) {
+        val api = provider.api(target)
+        val items = mutableListOf<MaintenanceBackup>()
+        var cursor: String? = null
+        var pages = 0
+        do {
+            val page = api.listBackups(cursor = cursor, limit = 100).bodyOrThrow()
+            items += page.items.map { it.toModel() }
+            cursor = page.nextCursor
+            pages++
+        } while (cursor != null && pages < 20)
+        items.sortedByDescending { it.createdAt }
+    }
+
+    /**
+     * Preflight the next rotation without creating a checkpoint. The server
+     * estimate mirrors its exact snapshot-only export check.
+     */
+    suspend fun estimate(target: Session): BackupExportPlan = withContext(Dispatchers.IO) {
+        val api = provider.api(target)
+        val anchor = api.getBackupChangeState().bodyOrThrow()
+        check(anchor.instanceId == target.instanceId) { "服务器身份已改变" }
+        val binding = folder(target)
+        val raw = binding.tree ?: error("维护目录已解除绑定")
+        val tree = MaintenanceTree(context.contentResolver, Uri.parse(raw))
+        val work = job(target)
+        val estimate = api.estimateBackupExport().bodyOrThrow()
+        val current = tree.generation("当前")
+        val needed = work != null || current?.businessRevision != anchor.businessRevision
+        BackupExportPlan(scope = normalizedScope(estimate.scope?.value ?: SCOPE_METADATA), needed = needed,
+            fits = estimate.fits == true, archiveBytes = estimate.archiveBytes ?: 0,
+            requiredBytes = estimate.requiredBytes ?: 0, freeBytes = estimate.freeBytes ?: 0,
+            reserveBytes = estimate.reserveBytes ?: 0)
+    }
+
+    /** One records-only action; the server never includes original media. */
+    suspend fun export(target: Session) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val binding = folder(target)
+            check(binding.tree != null) { "请先设置维护目录" }
+            val existing = job(target)
+            save(target, binding, existing ?: Rotation(UUID.randomUUID().toString()))
+            schedule(target, manual = true)
+        }
+    }
+
+    /**
+     * Best-effort explicit cleanup of failed/interrupted exports. The server
+     * refuses active exports, published archives and referenced checkpoints.
+     */
+    suspend fun discardUnfinished(target: Session): Int = withContext(Dispatchers.IO) {
+        val api = provider.api(target)
+        val candidates = backups(target).filter { it.state == "failed" || it.state == "interrupted" }
+        var removed = 0
+        var conflict: Exception? = null
+        val removedIds = mutableSetOf<String>()
+        for (backup in candidates) {
+            try {
+                val result = api.discardBackup(backup.id, idempotencyKey = operationKey("discard-backup", backup.id))
+                if (!result.isSuccessful) result.bodyOrThrow()
+                removed++
+                removedIds += backup.id
+            } catch (failure: ApiFailure) {
+                if (failure.status == 404) continue
+                if (failure.status == 409) conflict = conflict ?: failure else throw failure
+            }
+        }
+        lock.withLock {
+            val checkpoint = job(target)?.checkpoint
+            if (checkpoint != null && checkpoint in removedIds) save(target, folder(target), null)
+        }
+        mutable.update { it + 1 }
+        conflict?.let { throw it }
+        removed
+    }
 
     internal suspend fun failure(target: Session, text: String) = lock.withLock { save(target, folder(target).copy(message = text)) }
     suspend fun currentAuthorFile(target: Session): Uri? = withContext(Dispatchers.IO) {

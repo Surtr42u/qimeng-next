@@ -142,7 +142,7 @@ foreach ($row in $rows) {
 | 所在阶段 | 验收与可执行的回退 |
 |---|---|
 | 封存旧库、制作原生归档 | 从只读封存 SQLite、全部明确指定的原件副本和旧回收站转换。保存旧资料、完整未合并 `.qnext`、独立 SHA-256 和私有覆盖报告；核对原资产 ID、文件字节、时间、作者和事件，字节相同的独立身份仍各在。转换或对账有差异时保留源及失败报告，在新的输出目录重做受影响步骤。[旧 PC 转换](legacy-cold.md) |
-| 新目录恢复、尚未切换 | `qimeng-backup verify --archive ARCHIVE --sha256 DIGEST` 成功后，执行 `qimeng-backup restore --archive ARCHIVE --sha256 DIGEST --destination NEW_DIR`。恢复生成独立实例身份，重新授权设备和外部存储，核对原资产/内容版本、历史和关系。遇 `RESTORE_INCOMPLETE` 保留现场，用已核验归档和另一处尚不存在的目标恢复。[原生恢复](migration.md#完整归档与隔离恢复) |
+| 新目录恢复、尚未切换 | `qimeng-backup verify --archive ARCHIVE --sha256 DIGEST` 成功后，执行 `qimeng-backup restore --archive ARCHIVE --sha256 DIGEST --destination NEW_DIR`。恢复生成独立实例身份，重新授权设备和外部存储，核对原资产/内容版本、历史和关系。遇 `RESTORE_INCOMPLETE` 保留现场，用已核验归档和另一处尚不存在的目标恢复。[原生恢复](migration.md#记录备份与隔离恢复) |
 | 明确选择的图片合并 | 只在尚未启动的恢复副本，用已对账的数据库摘要、归档摘要和计划摘要执行 `check`、`apply`。保存预像、每个成员及来源回执，未选条目照旧可读。出现 `ready.json` 可凭原参数续作；只有 `attempt.json` 则保留现场并另起恢复。完整撤回合并时，从未合并归档恢复到另一新目录。[精确命令与中断分支](selected-image-merge.md) |
 | 已切换、需要退回 | 先停止对新实例的写入，保留切换后新增事实的归档与差异。用原软件、原独立目录或对应版本的已核验归档另起实例，回读身份和资料后再改连接。新写入另行按明确授权处理，保留两侧以供核对。[迁移与回退](migration.md) |
 

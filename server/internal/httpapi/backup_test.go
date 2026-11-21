@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/backup"
+	"qimeng.local/next/server/internal/httpapi"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 	"qimeng.local/next/server/internal/store"
@@ -40,15 +42,37 @@ func TestNativeBackupChecksRecordedFileTimes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
 	payloads := map[string][]byte{}
 	base, err := backup.Read(ctx, file, func(entry backup.File, reader io.Reader) error {
 		body, err := io.ReadAll(reader)
 		payloads[entry.StoragePath] = body
 		return err
 	})
+	file.Close()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The portable export is records-only. Build a legacy full manifest from
+	// the same checkpoint to keep the original-time compatibility test alive.
+	storagePath := func(a *model.Asset) string { return "libraries/" + a.LibraryID + "/" + a.RelativePath }
+	original := func(a *model.Asset) []byte {
+		input, e := f.s.Root.Open(storagePath(a))
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer input.Close()
+		body, e := io.ReadAll(input)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return body
+	}
+	payloads[storagePath(known)] = original(known)
+	payloads[storagePath(historical)] = original(historical)
+	base.Scope = ""
+	base.Files = []backup.File{
+		{Kind: "asset", ObjectID: known.ID, ContentVersion: known.ContentVersion, StoragePath: storagePath(known), SHA256: known.Hash, Size: known.Size},
+		{Kind: "asset", ObjectID: historical.ID, ContentVersion: historical.ContentVersion, StoragePath: storagePath(historical), SHA256: historical.Hash, Size: historical.Size},
 	}
 	withOffset := modified.In(time.FixedZone("fixture", 8*60*60))
 	conflicting := modified.Add(time.Minute)
@@ -132,77 +156,273 @@ func awaitBackup(t *testing.T, f *fixture, id string) service.Backup {
 	t.Fatal("backup did not reach durable state")
 	return service.Backup{}
 }
-func TestCompleteBackupRestoresIdentityMetadataTrashAndPendingPrefix(t *testing.T) {
+func TestRecordsBackupRestoresCatalogueWithoutOriginals(t *testing.T) {
 	f := setup(t)
-	u, _ := f.upload("backup-live.png", 171, nil)
-	a := *f.complete(u).Asset
-	f.json("PUT", "/assets/"+a.ID+"/favorite", "backup-favorite", map[string]any{"favorite": true}, 200)
-	r := f.json("PUT", "/assets/"+a.ID+"/like/today", "backup-today-like", map[string]any{"liked": true}, 200)
-	decode(t, r, &a)
-	u, _ = f.upload("backup-trash.png", 172, nil)
+	ctx := context.Background()
+	u, _ := f.upload("records-live.png", 171, nil)
+	live := *f.complete(u).Asset
+	f.json("PUT", "/assets/"+live.ID+"/favorite", "records-favorite", map[string]any{"favorite": true}, 200)
+	r := f.json("PUT", "/assets/"+live.ID+"/like/today", "records-today-like", map[string]any{"liked": true}, 200)
+	decode(t, r, &live)
+	u, _ = f.upload("records-trash.png", 172, nil)
 	trashed := *f.complete(u).Asset
-	f.json("DELETE", "/assets/"+trashed.ID+"?expectedRevision=1", "backup-trash", struct{}{}, 200)
-	r = f.json("POST", "/uploads", "backup-pending-upload", map[string]any{"libraryId": f.library, "fileName": "pending.png", "size": 10, "mimeType": "image/png", "mode": "ordinary"}, 201)
+	f.json("DELETE", "/assets/"+trashed.ID+"?expectedRevision=1", "records-trash", struct{}{}, 200)
+	r = f.json("POST", "/uploads", "records-pending-upload", map[string]any{"libraryId": f.library, "fileName": "pending.png", "size": 10, "mimeType": "image/png", "mode": "ordinary"}, 201)
 	var pending model.Upload
 	decode(t, r, &pending)
-	response := f.request("PUT", "/uploads/"+pending.ID+"/content", "", testSecret, []byte("part"), map[string]string{"Content-Type": "application/octet-stream", "Upload-Offset": "0"})
-	if response.Code != 200 {
+	if response := f.request("PUT", "/uploads/"+pending.ID+"/content", "", testSecret, []byte("part"), map[string]string{"Content-Type": "application/octet-stream", "Upload-Offset": "0"}); response.Code != 200 {
 		t.Fatalf("partial upload: %s", response.Body.String())
 	}
-	r = f.json("POST", "/backups", "complete-backup-checkpoint", struct{}{}, 201)
+	r = f.json("GET", "/backups/export-estimate", "", nil, 200)
+	var estimate service.BackupExportEstimate
+	decode(t, r, &estimate)
+	if estimate.Scope != "metadata" || estimate.OriginalBytes != 0 || estimate.OriginalFiles != 0 || estimate.SnapshotBytes <= 0 {
+		t.Fatalf("records estimate: %+v", estimate)
+	}
+	r = f.json("POST", "/backups", "records-backup", struct{}{}, 201)
 	var b service.Backup
 	decode(t, r, &b)
-	f.json("POST", "/backups/"+b.ID+"/export", "complete-backup-export", struct{}{}, 202)
+	if b.Scope != "metadata" {
+		t.Fatalf("checkpoint scope: %+v", b)
+	}
+	f.json("POST", "/backups/"+b.ID+"/export", "records-export", struct{}{}, 202)
 	b = awaitBackup(t, f, b.ID)
-	if b.ExportState != "completed" || b.ArchiveHash == "" || b.TotalFiles != 3 {
-		t.Fatalf("export: %+v", b)
+	if b.ExportState != "completed" || b.Scope != "metadata" || b.TotalFiles != 0 || b.ArchiveBytes <= 0 {
+		t.Fatalf("records export: %+v", b)
 	}
 	source := filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext")
-	if _, e := service.VerifyBackup(context.Background(), source, b.ArchiveHash); e != nil {
-		t.Fatal(e)
-	}
-	destination := filepath.Join(t.TempDir(), "restored")
-	report, e := service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: source, Destination: destination, ExpectedSHA256: b.ArchiveHash, ReserveBytes: 1})
+	file, e := os.Open(source)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if report.InstanceID == f.s.InstanceID || report.AssetCount != 2 || report.UploadCount != 1 {
-		t.Fatal("restore identity or counts incorrect")
+	manifest, e := backup.Read(ctx, file, nil)
+	file.Close()
+	if e != nil || manifest.Scope != backup.ScopeMetadata || len(manifest.Files) != 0 {
+		t.Fatalf("records manifest: %v %+v", e, manifest)
+	}
+	verified, e := service.VerifyBackup(ctx, source, b.ArchiveHash)
+	if e != nil || verified.OriginalsIncluded || verified.MissingOriginals != 3 || verified.AssetCount != 0 {
+		t.Fatalf("records verify: %v %+v", e, verified)
+	}
+	destination := filepath.Join(t.TempDir(), "records-restored")
+	report, e := service.RestoreBackup(ctx, service.RestoreOptions{ArchivePath: source, Destination: destination, ExpectedSHA256: b.ArchiveHash, ReserveBytes: 1})
+	if e != nil || report.OriginalsIncluded || report.MissingOriginals != 3 || report.AssetCount != 0 {
+		t.Fatalf("records restore: %v %+v", e, report)
 	}
 	restored, e := service.New(service.Config{DataDir: destination, AdminToken: strings.Repeat("r", 32), ReserveBytes: 1})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer restored.Close()
-	actual, e := restored.Asset(context.Background(), a.ID)
-	if e != nil {
-		t.Fatal(e)
+	actual, e := restored.Asset(ctx, live.ID)
+	if e != nil || !actual.Favorite || actual.Hash != live.Hash || actual.LikeCount != live.LikeCount {
+		t.Fatal("records restore changed metadata")
 	}
-	if !actual.Favorite || actual.Hash != a.Hash || actual.LikeCount != a.LikeCount {
-		t.Fatal("restored metadata changed")
-	}
-	deleted, e := restored.Asset(context.Background(), trashed.ID)
+	deleted, e := restored.Asset(ctx, trashed.ID)
 	if e != nil || !deleted.Trashed {
-		t.Fatal("trash identity lost")
+		t.Fatal("records restore lost trash identity")
 	}
-	prefix, e := restored.Root.Open("uploads/" + pending.ID + ".part")
-	if e != nil {
-		t.Fatal(e)
+	var active int
+	if e = restored.DB.DB.QueryRow("SELECT COUNT(*) FROM uploads WHERE state!='ingested'").Scan(&active); e != nil || active != 0 {
+		t.Fatalf("records restore kept an unrestorable upload row: %v %d", e, active)
 	}
-	data, e := io.ReadAll(prefix)
-	prefix.Close()
-	if e != nil || string(data) != "part" {
-		t.Fatal("committed upload prefix lost")
+	if _, e = os.Stat(filepath.Join(destination, "libraries", live.LibraryID, filepath.FromSlash(live.RelativePath))); !os.IsNotExist(e) {
+		t.Fatalf("records restore wrote original media: %v", e)
 	}
-	record, e := store.Get[model.Upload](context.Background(), restored.DB.DB, "SELECT data FROM uploads WHERE id=?", pending.ID)
-	if e != nil || record.Offset != 4 || record.State != "receiving" {
-		t.Fatal("upload continuation identity changed")
-	}
-	if _, e = service.RestoreBackup(context.Background(), service.RestoreOptions{ArchivePath: source, Destination: destination, ReserveBytes: 1}); e == nil {
+	if _, e = service.RestoreBackup(ctx, service.RestoreOptions{ArchivePath: source, Destination: destination, ReserveBytes: 1}); e == nil {
 		t.Fatal("existing instance overwritten")
 	}
 }
-func TestBackupExportFailsWhenSnapshotOriginalWasReplaced(t *testing.T) {
+func TestRecordsArchiveScrubsCredentialsAndRequestBodies(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	u, _ := f.upload("scrub-original.png", 183, nil)
+	asset := *f.complete(u).Asset
+	if _, e := f.s.DB.DB.Exec("INSERT INTO credentials(id,token_hash,expires_at,data) VALUES('synthetic-credential','synthetic-token-hash','2099-01-01T00:00:00Z','{}')"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := f.s.DB.DB.Exec("INSERT INTO idempotency(principal_id,operation,key,input_hash,response,status) VALUES('synthetic','POST /api/v1/credentials','synthetic-key','synthetic-hash','{\"token\":\"synthetic-secret\"}',201)"); e != nil {
+		t.Fatal(e)
+	}
+	r := f.json("POST", "/backups", "scrub-checkpoint", struct{}{}, 201)
+	var b service.Backup
+	decode(t, r, &b)
+	f.json("POST", "/backups/"+b.ID+"/export", "scrub-export", struct{}{}, 202)
+	b = awaitBackup(t, f, b.ID)
+	if b.ExportState != "completed" {
+		t.Fatalf("scrub export: %+v", b)
+	}
+	var liveCredentials int
+	if e := f.s.DB.DB.QueryRow("SELECT COUNT(*) FROM credentials").Scan(&liveCredentials); e != nil || liveCredentials != 1 {
+		t.Fatalf("live credential was touched: %v %d", e, liveCredentials)
+	}
+	file, e := os.Open(filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer file.Close()
+	snapshot := filepath.Join(t.TempDir(), "snapshot.sqlite")
+	manifest, e := backup.Read(ctx, file, func(entry backup.File, reader io.Reader) error {
+		if entry.Kind != "snapshot" {
+			return nil
+		}
+		out, e := os.OpenFile(snapshot, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if e != nil {
+			return e
+		}
+		_, copyErr := io.Copy(out, reader)
+		closeErr := out.Close()
+		return errors.Join(copyErr, closeErr)
+	})
+	if e != nil || manifest.Scope != backup.ScopeMetadata {
+		t.Fatalf("scrub archive: %v %+v", e, manifest)
+	}
+	copyDB, e := store.OpenDatabase(snapshot, store.SnapshotDatabase)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer copyDB.Close()
+	for _, table := range []string{"credentials", "idempotency"} {
+		var count int
+		if e = copyDB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); e != nil || count != 0 {
+			t.Fatalf("%s survived in the archive snapshot: %v %d", table, e, count)
+		}
+	}
+	var assets int
+	var instance string
+	if e = copyDB.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); e != nil || assets != 1 {
+		t.Fatalf("archive snapshot lost its catalogue: %v %d", e, assets)
+	}
+	if e = copyDB.QueryRow("SELECT value FROM settings WHERE key='instance_id'").Scan(&instance); e != nil || instance != f.s.InstanceID {
+		t.Fatalf("archive snapshot lost the instance identity: %v", e)
+	}
+	var assetID string
+	if e = copyDB.QueryRow("SELECT id FROM assets WHERE id=?", asset.ID).Scan(&assetID); e != nil {
+		t.Fatal("archive snapshot lost the asset row")
+	}
+}
+func TestBackupExportRefusesToStartWithoutSpaceForTheArchive(t *testing.T) {
+	f := setup(t)
+	u, _ := f.upload("space-original.png", 174, nil)
+	f.complete(u)
+	r := f.json("POST", "/backups", "space-checkpoint", struct{}{}, 201)
+	var b service.Backup
+	decode(t, r, &b)
+	f.s.Config.ReserveBytes = 1 << 62
+	f.json("POST", "/backups/"+b.ID+"/export", "space-export", struct{}{}, 202)
+	b = awaitBackup(t, f, b.ID)
+	if b.ExportState != "failed" || b.ExportError != "insufficient_storage" {
+		t.Fatalf("space preflight: %+v", b)
+	}
+	if !strings.Contains(b.ExportMessage, "约需") || !strings.Contains(b.ExportMessage, "当前可用") {
+		t.Fatalf("space message: %q", b.ExportMessage)
+	}
+	directory := filepath.Join(f.s.Config.DataDir, "backups", b.ID)
+	if _, e := os.Stat(filepath.Join(directory, "archive.partial")); !os.IsNotExist(e) {
+		t.Fatalf("preflight created a partial: %v", e)
+	}
+	if _, e := os.Stat(filepath.Join(directory, "snapshot.sqlite")); e != nil {
+		t.Fatalf("checkpoint was removed after a retryable failure: %v", e)
+	}
+}
+func TestDiscardBackupReclaimsOnlyFailedDebris(t *testing.T) {
+	f := setup(t)
+	u, _ := f.upload("discard-original.png", 175, nil)
+	f.complete(u)
+	r := f.json("POST", "/backups", "discard-complete-checkpoint", struct{}{}, 201)
+	var completed service.Backup
+	decode(t, r, &completed)
+	f.json("POST", "/backups/"+completed.ID+"/export", "discard-complete-export", struct{}{}, 202)
+	completed = awaitBackup(t, f, completed.ID)
+	if completed.ExportState != "completed" {
+		t.Fatalf("completed export: %+v", completed)
+	}
+	if response := f.request("DELETE", "/backups/"+completed.ID, "discard-completed", testSecret, nil, nil); response.Code != 409 {
+		t.Fatalf("published backup was discardable: %d %s", response.Code, response.Body.String())
+	}
+	r = f.json("POST", "/backups", "discard-failed-checkpoint", struct{}{}, 201)
+	var failed service.Backup
+	decode(t, r, &failed)
+	f.s.Config.ReserveBytes = 1 << 62
+	f.json("POST", "/backups/"+failed.ID+"/export", "discard-failed-export", struct{}{}, 202)
+	failed = awaitBackup(t, f, failed.ID)
+	if failed.ExportState != "failed" {
+		t.Fatalf("failed export: %+v", failed)
+	}
+	r = f.json("GET", "/backups/"+failed.ID, "", nil, 200)
+	var listed service.Backup
+	decode(t, r, &listed)
+	if listed.StorageBytes <= 0 {
+		t.Fatalf("incomplete backup size was hidden: %+v", listed)
+	}
+	if response := f.request("DELETE", "/backups/"+failed.ID, "discard-failed", testSecret, nil, nil); response.Code != 204 {
+		t.Fatalf("discard failed backup: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.request("GET", "/backups/"+failed.ID, "", testSecret, nil, nil); response.Code != 404 {
+		t.Fatalf("discarded record still exists: %d", response.Code)
+	}
+	if _, e := os.Stat(filepath.Join(f.s.Config.DataDir, "backups", failed.ID)); !os.IsNotExist(e) {
+		t.Fatalf("discarded directory still exists: %v", e)
+	}
+	if _, e := os.Stat(filepath.Join(f.s.Config.DataDir, "backups", completed.ID, "archive.qnext")); e != nil {
+		t.Fatalf("published archive was touched: %v", e)
+	}
+}
+func TestStartupSweepKeepsPublishedArchivesAndReclaimsInterruptedExports(t *testing.T) {
+	dir := t.TempDir()
+	s, e := service.New(service.Config{DataDir: dir, AdminToken: testSecret, ReserveBytes: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	f := &fixture{t: t, s: s, h: httpapi.New(s)}
+	r := f.json("POST", "/libraries", "sweep-library", map[string]any{"name": "Sweep", "kind": "regular"}, 201)
+	var library model.Library
+	decode(t, r, &library)
+	f.library = library.ID
+	u, _ := f.upload("sweep-original.png", 176, nil)
+	f.complete(u)
+	r = f.json("POST", "/backups", "sweep-complete-checkpoint", struct{}{}, 201)
+	var completed service.Backup
+	decode(t, r, &completed)
+	f.json("POST", "/backups/"+completed.ID+"/export", "sweep-complete-export", struct{}{}, 202)
+	completed = awaitBackup(t, f, completed.ID)
+	if completed.ExportState != "completed" {
+		t.Fatalf("completed export: %+v", completed)
+	}
+	r = f.json("POST", "/backups", "sweep-failed-checkpoint", struct{}{}, 201)
+	var failed service.Backup
+	decode(t, r, &failed)
+	s.Config.ReserveBytes = 1 << 62
+	f.json("POST", "/backups/"+failed.ID+"/export", "sweep-failed-export", struct{}{}, 202)
+	failed = awaitBackup(t, f, failed.ID)
+	if failed.ExportState != "failed" {
+		t.Fatalf("failed export: %+v", failed)
+	}
+	partial := filepath.Join(dir, "backups", failed.ID, "archive.partial")
+	if e = os.WriteFile(partial, []byte("interrupted bytes"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Close(); e != nil {
+		t.Fatal(e)
+	}
+	next, e := service.New(service.Config{DataDir: dir, AdminToken: testSecret, ReserveBytes: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer next.Close()
+	if _, e = os.Stat(filepath.Join(dir, "backups", completed.ID, "archive.qnext")); e != nil {
+		t.Fatalf("sweep removed a published archive: %v", e)
+	}
+	if _, e = os.Stat(filepath.Join(dir, "backups", failed.ID)); !os.IsNotExist(e) {
+		t.Fatalf("sweep kept an interrupted directory: %v", e)
+	}
+	record, e := next.Backup(context.Background(), model.Principal{Scopes: []string{"admin"}}, failed.ID)
+	if e != nil || record.StorageBytes != 0 {
+		t.Fatalf("swept record: %v %+v", e, record)
+	}
+}
+
+func TestRecordsExportDoesNotReadReplacedOriginals(t *testing.T) {
 	f := setup(t)
 	u, _ := f.upload("snapshot-original.png", 181, nil)
 	a := *f.complete(u).Asset
@@ -213,11 +433,17 @@ func TestBackupExportFailsWhenSnapshotOriginalWasReplaced(t *testing.T) {
 	f.complete(u)
 	f.json("POST", "/backups/"+b.ID+"/export", "after-replacement-export", struct{}{}, 202)
 	b = awaitBackup(t, f, b.ID)
-	if b.ExportState != "failed" || b.ExportError != "backup_source_changed" {
-		t.Fatalf("old source falsely protected: %+v", b)
+	if b.ExportState != "completed" || b.TotalFiles != 0 {
+		t.Fatalf("records export read originals: %+v", b)
 	}
-	if _, e := os.Stat(filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext")); !os.IsNotExist(e) {
-		t.Fatal("failed archive was published")
+	file, e := os.Open(filepath.Join(f.s.Config.DataDir, "backups", b.ID, "archive.qnext"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer file.Close()
+	manifest, e := backup.Read(context.Background(), file, nil)
+	if e != nil || manifest.Scope != backup.ScopeMetadata || len(manifest.Files) != 0 {
+		t.Fatalf("records archive carried originals: %v %+v", e, manifest)
 	}
 }
 func TestIncompleteRestoreCannotStartAndWrongArchiveHashCannotPublish(t *testing.T) {

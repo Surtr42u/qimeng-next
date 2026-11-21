@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	archive "qimeng.local/next/server/internal/backup"
 	"qimeng.local/next/server/internal/store"
 )
 
@@ -20,13 +21,40 @@ type Backup struct {
 	AssetCount       int        `json:"assetCount"`
 	ManifestHash     string     `json:"manifestHash"`
 	ExportState      string     `json:"exportState"`
+	Scope            string     `json:"scope,omitempty"`
 	ExportError      string     `json:"exportError,omitempty"`
+	ExportMessage    string     `json:"exportMessage,omitempty"`
 	ArchiveHash      string     `json:"archiveHash,omitempty"`
 	ArchiveBytes     int64      `json:"archiveBytes,omitempty"`
 	ExportedFiles    int        `json:"exportedFiles"`
 	TotalFiles       int        `json:"totalFiles"`
 	ExportedAt       *time.Time `json:"exportedAt,omitempty"`
+	// StorageBytes is computed from the checkpoint directory on read; it is
+	// never business truth and is not relied on after a restart.
+	StorageBytes int64 `json:"storageBytes,omitempty"`
 }
+
+const (
+	backupScopeComplete = "complete"
+	backupScopeMetadata = "metadata"
+)
+
+// normalizeScope maps stored and legacy values to the API vocabulary. An empty
+// value predates scopes, when every export carried the original media.
+func normalizeScope(value string) string {
+	if value == backupScopeMetadata {
+		return backupScopeMetadata
+	}
+	return backupScopeComplete
+}
+
+func archiveScope(value string) string {
+	if normalizeScope(value) == backupScopeMetadata {
+		return archive.ScopeMetadata
+	}
+	return archive.ScopeComplete
+}
+
 type backupEntry struct {
 	AssetID        string `json:"assetId"`
 	ContentVersion int64  `json:"contentVersion"`
@@ -43,7 +71,7 @@ func (s *Service) CreateBackup(ctx context.Context, w *Write) (Backup, error) {
 	return s.createBackupCheckpoint(ctx, w, nil)
 }
 func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write, inspect func(*sql.DB) error) (Backup, error) {
-	b := Backup{ID: w.ID("backup"), State: "awaiting_external_backup", ExportState: "not_started", CreatedAt: time.Now().UTC()}
+	b := Backup{ID: w.ID("backup"), State: "awaiting_external_backup", ExportState: "not_started", Scope: backupScopeMetadata, CreatedAt: time.Now().UTC()}
 	directory := "backups/" + b.ID
 	var pending int
 	if e := s.DB.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM file_intents WHERE state='prepared'").Scan(&pending); e != nil {
@@ -78,6 +106,19 @@ func (s *Service) createBackupCheckpoint(ctx context.Context, w *Write, inspect 
 		}
 	} else if e != nil {
 		return b, e
+	}
+	// The checkpoint is the portable relink copy. Remove credentials, request
+	// receipts and machine-local runtime rows before hashing it, so both the
+	// archive and any protection copy are free of those secrets.
+	absolute, e := s.Root.AbsolutePath(snapshot)
+	if e != nil {
+		return b, e
+	}
+	if e = scrubSnapshotFile(ctx, absolute); e != nil {
+		return b, e
+	}
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		_ = s.Root.Remove(snapshot + suffix)
 	}
 	snapshotDB, e := store.OpenDatabase(filepath.Join(s.Config.DataDir, filepath.FromSlash(snapshot)), store.SnapshotDatabase)
 	if e != nil {

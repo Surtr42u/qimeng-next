@@ -18,7 +18,8 @@ import java.util.UUID
 data class MaintenanceState(val target: Session? = null, val folder: MaintenanceFolder = MaintenanceFolder(),
     val fragments: List<AuthorFragment> = emptyList(), val cursor: String? = null, val mirror: AuthorMirror? = null,
     val draft: AuthorImportDraft? = null, val missing: MissingAuthorWorks? = null, val summary: AuthorImportSummary? = null,
-    val busy: Boolean = false, val error: String? = null)
+    val backups: List<MaintenanceBackup> = emptyList(), val backupsLoaded: Boolean = false,
+    val exportPlan: BackupExportPlan? = null, val busy: Boolean = false, val error: String? = null)
 
 class MaintenanceViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as QimengApplication).graph
@@ -33,10 +34,19 @@ class MaintenanceViewModel(application: Application) : AndroidViewModel(applicat
             if (target != mutable.value.target) {
                 action?.cancel(); choiceKey = null
                 mutable.value = MaintenanceState(target = target, folder = target?.let(graph.backups::folder) ?: MaintenanceFolder())
-                if (target != null) refreshAuthors()
-            } else if (target != null) mutable.update { it.copy(folder = graph.backups.folder(target)) }
+                if (target != null) { refreshAuthors(); loadBackups(target) }
+            } else if (target != null) {
+                mutable.update { it.copy(folder = graph.backups.folder(target)) }
+                loadBackups(target)
+            }
         }
     } }
+    private suspend fun loadBackups(target: Session) {
+        val result = runCatching { graph.backups.backups(target) }
+        if (current(target)) mutable.update {
+            it.copy(backups = result.getOrNull() ?: it.backups, backupsLoaded = result.isSuccess || it.backupsLoaded)
+        }
+    }
     private fun act(block: suspend (Session) -> Unit) {
         val target = mutable.value.target ?: return
         if (mutable.value.busy) return
@@ -63,6 +73,23 @@ class MaintenanceViewModel(application: Application) : AndroidViewModel(applicat
     fun abandonRotation() = act { graph.backups.abandon(it) }
     fun clearError() { if (!mutable.value.busy) mutable.update { it.copy(error = null) } }
     fun export() = act { graph.backups.schedule(it, true) }
+    fun openExport() = act { target ->
+        val plan = graph.backups.estimate(target)
+        if (!plan.needed) {
+            mutable.update { it.copy(folder = it.folder.copy(message = "当前资料已是最新一代，无需导出。"), exportPlan = null) }
+        } else if (current(target)) mutable.update { it.copy(exportPlan = plan) }
+    }
+    fun startExport() = act { target ->
+        graph.backups.export(target)
+        if (current(target)) mutable.update { it.copy(exportPlan = null, folder = it.folder.copy(message = "已开始导出记录备份")) }
+        loadBackups(target)
+    }
+    fun dismissExport() { if (!mutable.value.busy) mutable.update { it.copy(exportPlan = null) } }
+    fun discardUnfinished() = act { target ->
+        val removed = graph.backups.discardUnfinished(target)
+        loadBackups(target)
+        if (current(target)) mutable.update { it.copy(folder = it.folder.copy(message = if (removed > 0) "已清除 $removed 份未完成备份" else "没有可清除的未完成备份")) }
+    }
     fun automatic(on: Boolean) = act { graph.backups.automatic(it, on) }
     fun prepareAuthor(uri: Uri? = null) = act { target ->
         val input = uri ?: graph.backups.currentAuthorFile(target) ?: error("维护目录的当前代尚无作者总表")

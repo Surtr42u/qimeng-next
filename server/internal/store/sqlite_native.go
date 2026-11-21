@@ -18,6 +18,9 @@ const (
 	researchOptions  = "_busy_timeout=5000&_journal_mode=WAL&_synchronous=FULL"
 	ownershipOptions = "_busy_timeout=0"
 	snapshotOptions  = "mode=ro"
+	// The scrubbed copy stays private to the service; it is writable for
+	// exactly one scrub pass and is never used as the live catalog.
+	snapshotScrubOptions = "mode=rw"
 )
 
 func init() {

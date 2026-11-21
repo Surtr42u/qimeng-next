@@ -115,6 +115,21 @@ func (a *API) GetBackup(w http.ResponseWriter, r *http.Request, id generated.Id)
 	a.readJSON(w, r, func(r *http.Request) (any, error) { return a.s.Backup(r.Context(), principal(r), id) })
 }
 
+func (a *API) EstimateBackupExport(w http.ResponseWriter, r *http.Request) {
+	a.readJSON(w, r, func(r *http.Request) (any, error) {
+		return a.s.EstimateBackupExport(r.Context(), principal(r))
+	})
+}
+
+func (a *API) DiscardBackup(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.DiscardBackupParams) {
+	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
+		if e := a.s.DiscardBackup(r.Context(), w, id); e != nil {
+			return nil, 0, e
+		}
+		return nil, 204, nil
+	})
+}
+
 func (a *API) ExportBackup(w http.ResponseWriter, r *http.Request, id generated.Id, params generated.ExportBackupParams) {
 	write[struct{}](a, w, r, true, func(r *http.Request, w *service.Write, _ struct{}) (any, int, error) {
 		b, e := a.s.StartBackupExport(r.Context(), w, id)

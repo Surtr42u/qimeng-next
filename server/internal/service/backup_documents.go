@@ -161,7 +161,7 @@ func (s *Service) BackupAuthorDocuments(ctx context.Context, p model.Principal, 
 			err = documentField(out, "作品 "+strconv.Itoa(workCount), raw)
 		}
 		if err != nil {
-			return nil, backup, Fail(422, "author_document_limit", "可读作者资料超过 64 MiB。完整备份仍包含全部资料。")
+			return nil, backup, Fail(422, "author_document_limit", "可读作者资料超过 64 MiB。记录备份仍包含全部资料。")
 		}
 	}
 	if err = rows.Err(); err != nil {

@@ -21,6 +21,17 @@ const Version = 1
 const MaxManifestBytes = 64 << 20
 const MaxFiles = 500000
 
+// ScopeComplete is the portable archive that carries the snapshot and every
+// original. It is the empty manifest value so archives written before export
+// scopes existed remain byte-compatible and readable by older binaries.
+const ScopeComplete = ""
+
+// ScopeMetadata carries only the database snapshot: business facts, author
+// avatars, tags, activity and readable documents. Original media bytes are
+// intentionally absent, so it restores a catalogue that needs the originals
+// placed back by the operator.
+const ScopeMetadata = "metadata"
+
 type File struct {
 	Kind           string     `json:"kind"`
 	ObjectID       string     `json:"objectId"`
@@ -36,6 +47,7 @@ type Manifest struct {
 	BackupID   string    `json:"backupId"`
 	InstanceID string    `json:"instanceId"`
 	CreatedAt  time.Time `json:"createdAt"`
+	Scope      string    `json:"scope,omitempty"`
 	Snapshot   File      `json:"snapshot"`
 	Files      []File    `json:"files"`
 }
@@ -45,8 +57,13 @@ func validHash(value string) bool {
 	return e == nil && len(b) == sha256.Size && value == strings.ToLower(value)
 }
 func (m Manifest) Validate() error {
-	if m.Format != Format || m.Version != Version || m.BackupID == "" || m.InstanceID == "" || m.CreatedAt.IsZero() || m.Snapshot.Kind != "snapshot" || m.Snapshot.StoragePath != "qimeng.sqlite" || m.Snapshot.Size < 1 || !validHash(m.Snapshot.SHA256) || len(m.Files) > MaxFiles {
+	if m.Format != Format || m.Version != Version || m.BackupID == "" || m.InstanceID == "" || m.CreatedAt.IsZero() || m.Snapshot.Kind != "snapshot" || m.Snapshot.StoragePath != "qimeng.sqlite" || m.Snapshot.Size < 1 || !validHash(m.Snapshot.SHA256) || len(m.Files) > MaxFiles || m.Scope != ScopeComplete && m.Scope != ScopeMetadata {
 		return errors.New("invalid backup manifest")
+	}
+	// A metadata archive states that the snapshot is the whole payload. It must
+	// never carry original bytes that a reader could mistake for restorable media.
+	if m.Scope == ScopeMetadata && len(m.Files) != 0 {
+		return errors.New("metadata backup unexpectedly carries original media")
 	}
 	seen := map[string]bool{}
 	paths := map[string]bool{}
@@ -73,6 +90,30 @@ func Encode(m Manifest) ([]byte, error) {
 	}
 	return raw, nil
 }
+
+// ContainerSize returns the exact number of bytes Write produces for m: the
+// manifest, every payload and the tar headers/padding. Callers use it before
+// opening an output file so a full disk is rejected before any bytes are
+// written.
+func ContainerSize(m Manifest) (int64, error) {
+	raw, e := Encode(m)
+	if e != nil {
+		return 0, e
+	}
+	total := int64(tarBlock) + padded(int64(len(raw))) + tarEnd
+	total += int64(tarBlock) + padded(m.Snapshot.Size)
+	for _, f := range m.Files {
+		total += int64(tarBlock) + padded(f.Size)
+	}
+	return total, nil
+}
+
+const (
+	tarBlock = 512
+	tarEnd   = 2 * tarBlock
+)
+
+func padded(size int64) int64 { return (size + tarBlock - 1) / tarBlock * tarBlock }
 
 type contextReader struct {
 	ctx context.Context

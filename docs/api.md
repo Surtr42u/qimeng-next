@@ -214,9 +214,9 @@ JPEG 预览按 EXIF 方向显示，尺寸探测和缩略图使用同一方向规
 
 `contentUrl` 指原件，`thumbnailUrl` 指真实有界缩略图。Go 服务自带 PNG、JPEG 和 GIF 的解码能力，其他格式的预览和元数据依赖服务端媒体工具。`probeState` 区分 ready、unavailable 和 failed；旧版进度通过 `positionContentVersion` 与当前文件版本区分。
 
-`POST /backups` 创建一致性快照与版本清单，返回 `awaiting_external_backup`。管理员调用 `POST /backups/{id}/export` 后，通过 `GET /backups/{id}` 回读持久导出状态；只有 `exportState=completed` 才能从 `GET /backups/{id}/archive` 下载完整 `.qnext`，支持 Range 与 SHA-256 校验。失败或中断按原记录重试；检查点原件已经替换或缺失时明确失败，需新检查点，不把新版字节放进旧版本备份。
+`POST /backups` 创建一致性快照与重连清单，返回 `awaiting_external_backup`。新导出一律是记录备份。管理员调用 `POST /backups/{id}/export` 后，通过 `GET /backups/{id}` 回读持久导出状态；只有 `exportState=completed` 才能从 `GET /backups/{id}/archive` 下载 `.qnext`，支持 Range 与 SHA-256 校验。`scope=metadata` 是当前记录备份；`scope=complete` 只用于升级前的旧记录，其已发布归档继续可下载和恢复。记录备份不读取原件，因此原件替换或缺失不会让导出失败；失败或中断仍可按原记录重试。`GET /backups/export-estimate` 在创建检查点前给出快照与框架的估算、当前可用空间和保留量；服务端在写入任何 `archive.partial` 之前仍按实际清单复核，空间不足时把记录标为 `insufficient_storage` 并写明所需与可用字节。`DELETE /backups/{id}` 只清理失败或中断的导出及其检查点文件；已发布归档、正在导出的任务和仍被批次保护或迁移计划引用的检查点拒绝删除。
 
-完整归档使用有界清单和顺序流式载荷，包含 SQLite 业务事实、作者离线头像与迁移原始证据、现存及回收站原件，以及所有未入库上传的已提交前缀。派生缩略图和临时研究缓存可重建，不纳入归档；历史备份记录保留，但不递归打包其他归档。下载与本机归档均不构成独立备份证明，来源清理仍须另有可信目标实际读回的证据。
+记录备份使用有界清单和单个快照载荷：归档只有自身清单与已清除凭据、请求回执和本机路径的 SQLite 快照，包含业务事实、作者离线头像、标签、浏览记录与迁移原始证据，不包含任何作品原件。派生缩略图和临时研究缓存可重建，不纳入归档；历史备份记录保留，但不递归打包其他归档。离线恢复会在结果中给出 `originalsIncluded=false` 与缺失原件数量；恢复出的新实例只有目录，需把原件按原库相对路径放回 `data/libraries/<libraryId>/<relativePath>` 后才能继续读取。未完成上传的行在恢复事务中删除，避免指向从未恢复的 `.part` 文件。旧版归档仍可下载和恢复，恢复时保留其已提交上传前缀。下载与本机归档均不构成独立备份证明，来源清理仍须另有可信目标实际读回的证据。
 
 批次独立保护由 `POST /batches/{id}/protections` 启动，状态从同名列表/详情回读，失败通过原 `protectionId` 的 `/retry` 继续。它绑定 sealed 原始清单指纹；每个原输入都在报告中，成功项保护准确的 assetId/contentVersion/hash/size，未接收、取消或版本不可得的输入保留并说明原因。服务端向可信默认目标复制完整业务快照及这些内容对象，关闭文件后重新读取 SHA-256；同内容对象可以复用，但复用前仍核验。它是本批增量保护，不宣称包含全库所有原件；全库便携恢复使用 `.qnext`。
 

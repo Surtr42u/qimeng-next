@@ -70,7 +70,7 @@ internal fun MaintenanceScreen(library: LibraryViewModel, back: () -> Unit, uplo
                 if (state.folder.tree == null) Button(onClick = choose, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text("选择维护目录") }
                 if (details && state.folder.tree != null) Row {
                     TextButton(onClick = choose, enabled = !state.busy) { Text("更换目录") }
-                    TextButton(onClick = model::export, enabled = !state.busy) { Text("刷新目录") }
+                    TextButton(onClick = model::openExport, enabled = !state.busy) { Text("刷新目录") }
                     if (state.folder.pending) TextButton(onClick = { abandoning = true }, enabled = !state.busy) { Text("放弃轮换") }
                 }
                 if (state.folder.pending) Text("上次轮换未完成：可继续导出，或放弃后更换目录。旧的两代资料与上传归档保留。",
@@ -147,25 +147,57 @@ internal fun MaintenanceCard(icon: ImageVector, title: String, content: @Composa
 @Composable
 private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewModel, library: LibraryViewModel) {
     var restoreInfo by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    val unfinished = state.backups.filter { it.state in setOf("queued", "running", "failed", "interrupted") }
+    val running = unfinished.any { it.state == "queued" || it.state == "running" }
+    val latestCompleted = state.backups.filter { it.state == "completed" }.maxByOrNull { it.createdAt }
+    val nothingOnDisk = state.backupsLoaded && state.backups.isEmpty() && state.folder.lastChecked == 0L
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag("maintenance-backup-list"),
         verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { MaintenanceCard(BackupRestoreIcon, "备份与恢复") {
-            Text("保存作品原件、作者、头像、标签及浏览记录。", style = MaterialTheme.typography.bodySmall)
+            Text("保存数据库、作者、头像、标签及浏览记录；导出的备份不含作品原件。", style = MaterialTheme.typography.bodySmall)
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("最新备份 · 自动保留当前/上次两代", style = MaterialTheme.typography.labelMedium)
-                    Text(if (state.folder.tree == null) "先设置维护目录" else if (state.folder.lastChecked == 0L) "还没有保存备份"
-                        else DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(state.folder.lastChecked)))
+                    Text(when {
+                        state.folder.tree == null -> "先设置维护目录"
+                        state.folder.lastChecked > 0 -> DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault())
+                            .format(Instant.ofEpochMilli(state.folder.lastChecked)) + (latestCompleted?.let { " · ${scopeLabel(it.scope, true)}" } ?: "")
+                        latestCompleted != null -> "${backupTime(latestCompleted.createdAt)} · ${scopeLabel(latestCompleted.scope, true)}"
+                        !state.backupsLoaded -> "正在读取备份状态"
+                        nothingOnDisk -> "还没有保存备份"
+                        else -> "尚未完成备份轮换"
+                    })
+                    latestCompleted?.exportMessage?.let { if (it.isNotBlank()) Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
             }
+            if (unfinished.isNotEmpty()) {
+                Text("未完成备份", style = MaterialTheme.typography.titleSmall)
+                unfinished.forEach { backup ->
+                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${backupTime(backup.createdAt)} · ${backupStateLabel(backup.state)}", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Text(formatBytes(backup.storageBytes), style = MaterialTheme.typography.labelLarge)
+                            }
+                            Text(if (backup.totalFiles > 0) "${scopeLabel(backup.scope)} · ${backup.exportedFiles}/${backup.totalFiles} 项"
+                                else scopeLabel(backup.scope), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            backup.exportMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+                        }
+                    }
+                }
+                TextButton(onClick = { confirmDiscard = true }, enabled = !state.busy && !running) { Text("清除未完成备份") }
+                Text("只清除失败或中断的导出；正在进行的导出、已完成的备份和仍被批次保护引用的检查点保留。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = model::export, enabled = state.folder.tree != null && !state.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("导出备份") }
+                Button(onClick = model::openExport, enabled = state.folder.tree != null && !state.busy && !running, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("导出记录备份") }
                 OutlinedButton(onClick = { restoreInfo = !restoreInfo }, enabled = !state.busy,
                     modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Text("恢复说明") }
             }
             TextButton(onClick = { restoreInfo = true }, enabled = state.folder.tree != null) { Icon(HistoryRecentIcon, null, Modifier.size(18.dp)); Text("恢复上次") }
             if (restoreInfo) {
-                Text("每代备份中的「备份 / 影库备份.qnext」配有独立 .sha256 摘要。请用配套离线恢复命令还原到新的空目录。PC 或 NAS 选定的资料可通过「设备领取」接收。", style = MaterialTheme.typography.bodySmall)
+                Text("每代备份中的「备份 / 影库备份.qnext」配有独立 .sha256 摘要，可用配套离线恢复命令还原到新的空目录。备份不含作品原件；恢复后需要把原件按原库相对路径放回 data/libraries/<媒体库编号>/。PC 或 NAS 选定的资料可通过「设备领取」接收。", style = MaterialTheme.typography.bodySmall)
             }
         } }
         item { QimengSettingsCard { Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -174,7 +206,45 @@ private fun BackupMaintenance(state: MaintenanceState, model: MaintenanceViewMod
         } } }
         item { ActivityEventCard(library) }
     }
+    state.exportPlan?.let { plan ->
+        AlertDialog(onDismissRequest = model::dismissExport, title = { Text("导出记录备份") },
+            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("只导出数据库记录、作者头像、标签和浏览记录，不含作品原件。恢复后原件仍需留在或放回各自媒体库路径。",
+                    style = MaterialTheme.typography.bodySmall)
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("预计记录备份 ${formatBytes(plan.archiveBytes)}", style = MaterialTheme.typography.bodyMedium)
+                        Text("需要空间 ${formatBytes(plan.requiredBytes)}（含保留 ${formatBytes(plan.reserveBytes)}）", style = MaterialTheme.typography.bodySmall)
+                        Text("当前可用 ${formatBytes(plan.freeBytes)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (!plan.fits) Text("空间不足，不能开始导出。请先清除未完成备份或清理本机空间。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                state.error?.let { ErrorNotice(it) }
+            } },
+            confirmButton = { TextButton(onClick = model::startExport, enabled = plan.fits && !state.busy) { Text(if (plan.fits) "开始导出" else "空间不足") } },
+            dismissButton = { TextButton(onClick = model::dismissExport) { Text("取消") } })
+    }
+    if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("清除未完成备份？") },
+        text = { Text("将删除失败或中断的导出检查点与未完成归档，释放它们占用的空间。正在进行的导出、已完成的备份和仍被批次保护引用的检查点不会删除。") },
+        confirmButton = { TextButton(onClick = { model.discardUnfinished(); confirmDiscard = false }, enabled = !state.busy) { Text("清除") } },
+        dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("取消") } })
 }
+
+private fun scopeLabel(scope: String, completed: Boolean = false) = if (scope == "metadata") "记录备份（不含原件）"
+    else if (completed) "旧版备份" else "旧版导出"
+
+private fun backupStateLabel(state: String) = when (state) {
+    "queued" -> "等待开始"
+    "running" -> "正在导出"
+    "interrupted" -> "已中断"
+    "failed" -> "导出失败"
+    else -> state
+}
+
+private fun backupTime(value: String): String = runCatching {
+    DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(value))
+}.getOrDefault(value)
 
 @Composable
 private fun AuthorMaintenance(state: MaintenanceState, model: MaintenanceViewModel) {
@@ -183,7 +253,7 @@ private fun AuthorMaintenance(state: MaintenanceState, model: MaintenanceViewMod
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { uri -> model.prepareAuthor(uri) } }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { MaintenanceCard(TxtImportFileIcon, "作者主表") {
-            Text("主表记录作者、来源与作品关联。简介和头像随完整备份保存。", style = MaterialTheme.typography.bodySmall)
+            Text("主表记录作者、来源与作品关联。简介和头像随记录备份保存。", style = MaterialTheme.typography.bodySmall)
             if (state.folder.tree != null) Button(onClick = { model.prepareAuthor() }, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Text("导入 作者总表.txt") }
             OutlinedButton(onClick = { pick.launch(arrayOf("text/plain", "application/octet-stream")) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("选择其他 TXT") }
         } }

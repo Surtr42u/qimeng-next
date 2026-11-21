@@ -160,6 +160,10 @@ func New(config Config) (*Service, error) {
 		}
 		return nil, fmt.Errorf("initialize ownership database: %w", err)
 	}
+	// The exclusive lock proves no other process is exporting. Reclaim the
+	// largest staging files before opening a catalog that may sit on a full
+	// volume; the record-aware directory sweep runs after the catalog opens.
+	sweepBackupPartials(root)
 	db, err := store.Open(filepath.Join(config.DataDir, "qimeng.sqlite"))
 	if err != nil {
 		owner.Close()
@@ -264,10 +268,14 @@ func New(config Config) (*Service, error) {
 		s.Close()
 		return nil, err
 	}
-	if _, err = db.DB.ExecContext(ctx, "UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted') WHERE json_extract(data,'$.exportState') IN ('queued','running')"); err != nil {
+	if _, err = db.DB.ExecContext(ctx, "UPDATE backups SET data=json_set(data,'$.exportState','interrupted','$.exportError','backup_export_interrupted','$.exportMessage','导出已中断，未发布归档。可重新导出或清除未完成备份。') WHERE json_extract(data,'$.exportState') IN ('queued','running')"); err != nil {
 		s.Close()
 		return nil, err
 	}
+	// No HTTP request and no export worker exists yet, and the interrupted
+	// update above has already converted every persisted running job. The
+	// sweep therefore cannot race a live export; it still re-checks state.
+	s.sweepBackupDebris(ctx)
 	if _, err = db.DB.ExecContext(ctx, "UPDATE batch_protections SET state='interrupted',data=json_set(data,'$.state','interrupted','$.errorCode','protection_interrupted') WHERE state IN ('queued','running')"); err != nil {
 		s.Close()
 		return nil, err

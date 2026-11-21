@@ -1,6 +1,6 @@
 # 在原生恢复副本合并已校对的图片
 
-先用转换器以独立 ID 迁入全部旧资产。保管完整的未合并 `.qnext`、独立 SHA-256、旧封存库、原件和私有覆盖报告。合并只接受所有者逐组明确选择的原生图片。每组指定一个代表 ID、实际目标文件名、每个成员的身份以及对应来源帖。当前内容必须在同一库、同一目录，大小、原生类型、当前版本与完整字节摘要须匹配。[旧 PC 整库迁入](https://github.com/Surtr42u/qimeng-next/blob/main/docs/legacy-cold.md) · [原生恢复](https://github.com/Surtr42u/qimeng-next/blob/main/docs/migration.md#完整归档与隔离恢复)
+先用转换器以独立 ID 迁入全部旧资产。保管完整的未合并 `.qnext`、独立 SHA-256、旧封存库、原件和私有覆盖报告。合并只接受所有者逐组明确选择的原生图片。每组指定一个代表 ID、实际目标文件名、每个成员的身份以及对应来源帖。当前内容必须在同一库、同一目录，大小、原生类型、当前版本与完整字节摘要须匹配。[旧 PC 整库迁入](https://github.com/Surtr42u/qimeng-next/blob/main/docs/legacy-cold.md) · [原生恢复](https://github.com/Surtr42u/qimeng-next/blob/main/docs/migration.md#记录备份与隔离恢复)
 
 ## 准备与执行
 
@@ -26,7 +26,7 @@ qimeng-merge-selected apply --archive ARCHIVE --sha256 DIGEST --stage P/work --r
 
 ## 完成、回执与还原
 
-`P/data` 是新普通服务的数据根。代表保留其物理资产 ID 与选定名字。其他成员保持各自独立的文件实体，使用原生虚拟路径 `library-trash/<libraryId>/<assetId>/<fileName>`，本机对应 `libraries/<libraryId>/.qimeng-internal/trash/<assetId>/<fileName>`。域内的专门关系记录合并决定、每个物理成员、原身份和多份证据。完整归档继续携带成员字节与这些关系。
+`P/data` 是新普通服务的数据根。代表保留其物理资产 ID 与选定名字。其他成员保持各自独立的文件实体，使用原生虚拟路径 `library-trash/<libraryId>/<assetId>/<fileName>`，本机对应 `libraries/<libraryId>/.qimeng-internal/trash/<assetId>/<fileName>`。域内的专门关系记录合并决定、每个物理成员、原身份和多份证据。旧版归档继续携带成员字节与这些关系；记录备份只携带关系，成员原件另行保留。
 
 `P/preimage/qimeng.sqlite` 是合组前的原生封存数据库。`catalog-fingerprint.json` 保存长度、修改时间、摘要和文件身份。`baseline-files.json` 保存完整的逐项原生清单和实测文件证据，`selected-files.json` 保存每个所选成员的原路径、新路径与独立副本名，`originals/` 中的每份副本均已回读核验。只有所选原件获得额外副本，未选媒体随整个恢复目录一次改名。归档、私有计划和预像含私人内容，须由所有者保管。
 
