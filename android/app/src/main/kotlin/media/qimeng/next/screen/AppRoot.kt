@@ -83,7 +83,7 @@ fun AppRoot(model: LibraryViewModel) {
             model.addThumbnailImageComponents(this)
             if (imageTarget != null) add(OkHttpNetworkFetcherFactory(
                 callFactory = { model.mediaClient(imageTarget) },
-                // Coil 3.1.0 默认取图器用系统联网态判定（ConnectivityCheckerApi23）。手机连着无外网
+                // Coil 3.x 默认取图器用系统联网态判定（ConnectivityCheckerApi23）。手机连着无外网
                 // 的 Wi-Fi、或系统未验证网络时，即使 NAS / 隧道 / 回环仍可达也判为离线：
                 // NetworkFetcher 把请求的 Cache-Control 改写成 only-if-cached，本加载器的 OkHttp
                 // 客户端没有 Cache，只能合成 504，界面误报解码失败。旧版 CoilModule 用官方
@@ -93,7 +93,7 @@ fun AppRoot(model: LibraryViewModel) {
             ))
             if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
         }
-            // 旧版 CoilModule 显式 25%（CoilModule.kt:148-152/215）。Coil 3.1.0 未配置时
+            // 旧版 CoilModule 显式 25%（CoilModule.kt:148-152/215）。Coil 3.x 未配置时
             // 默认 20%（低内存机 15%）：3 列 × 三屏的 ORIGINAL 预热位图约 99×590KB≈58MB，
             // 在 256MB heap 上超过 20%（51MB）但落在 25%（64MB）内；5 列的 256×144
             // 预热约 40MB，两档都够。与旧版同值，避免三列回看时反复淘汰。
@@ -122,7 +122,7 @@ fun AppRoot(model: LibraryViewModel) {
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     Column(Modifier.fillMaxSize().then(if (backdrop != null && route == "main") Modifier.qimengBackdropSource(backdrop) else Modifier)) {
                         // 顶部安全区与路由页头都交给场景宿主：外壳不再按路由加减 padding，
-                        // 常驻首页被盖住时的测量尺寸不随覆盖路由变化。
+                        // 常驻 Tab 层被盖住时的测量尺寸不随覆盖路由变化。
                         ResidentSceneHost(
                             activeKey = if (route == "main") "tab:$tab" else route,
                             modifier = Modifier.weight(1f),
@@ -151,7 +151,7 @@ fun AppRoot(model: LibraryViewModel) {
 
 /**
  * 路由页头与 pushed 路由提示条：只渲染在活动场景内部（[ResidentSceneHost] 的 chrome 槽），
- * 不再作为常驻首页的兄弟节点占高度。判据沿用改前的外壳条件，按场景键判断：
+ * 不再作为常驻 Tab 层的兄弟节点占高度。判据沿用改前的外壳条件，按场景键判断：
  * Tab 场景（"tab:N"）等价于旧的 route == "main"。
  */
 @Composable
@@ -176,8 +176,8 @@ private fun SceneChrome(sceneKey: String, model: LibraryViewModel, message: Stri
 /**
  * 场景内容：原 SingleSceneHost { when (route) ... } 的分支体逐条搬到此处，判据由活动
  * route 换成场景键。pushed 路由的 sceneKey 与 route 恒等；Tab 场景是 "tab:N"，必须按键
- * 里的 N 取屏，不能回落到活动 tab——常驻首页层始终以 "tab:0" 组合，若回落到 tab，切走
- * 时隐藏层会跟着渲染新 Tab。未知键维持旧 else 的默认（我的）分支。
+ * 里的 N 取屏，不能回落到活动 tab——每个常驻层都以自己的 "tab:N" 组合，若回落到 tab，
+ * 隐藏层会跟着渲染新 Tab。未知键维持旧 else 的默认（我的）分支。
  */
 @Composable
 private fun SceneContent(

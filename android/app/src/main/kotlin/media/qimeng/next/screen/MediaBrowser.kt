@@ -108,9 +108,9 @@ fun HomeScreen(model: LibraryViewModel) {
     val rankGrid = rememberLazyGridState()
     val homeGrids = remember(regularGrid, cosGrid, rankGrid) { listOf(regularGrid, cosGrid, rankGrid) }
     val sceneActive = LocalSceneActive.current
-    // 常驻首页被其它 Tab / pushed 路由盖住时仍保持组合；筛选面板是 ModalBottomSheet
-    // （独立窗口），若不随场景撤下会浮在当前路由之上。showFilters 同时复位：面板若只是
-    // 被移除而标志仍为 true，回到首页时 if (sceneActive) 一恢复就会自动重开。
+    // 常驻 Tab 被其它 Tab / pushed 路由盖住时仍保持组合；筛选面板是 ModalBottomSheet
+    // （独立窗口），触摸死层盖不到它，若不随场景撤下会浮在当前路由之上。showFilters 同时
+    // 复位：面板若只是被移除而标志仍为 true，回到该 Tab 时 if (sceneActive) 一恢复就会自动重开。
     LaunchedEffect(sceneActive) { if (!sceneActive) controls.forEach { it.showFilters.value = false } }
     val saveHomeColumns = remember(model) { model::saveHomeColumns }
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
@@ -125,10 +125,12 @@ fun HomeScreen(model: LibraryViewModel) {
         // 首页顶栏玻璃位于 pager 上方，其采样窗与 pager 区域不重叠（BackdropGlassPanel 只在本节点
         // 边界内采样），因此这层 backdrop 从未画出任何像素，只是每帧把整个网格再录一遍。
         // 去掉录制后像素不变，滚动时少了一次全网格离屏拷贝。
-        HorizontalPager(pager, modifier = Modifier.weight(1f), key = { "home:$it" }) { page ->
+        // beyondViewportPageCount=1：只预组合当前页相邻的一页（另一侧在组合窗口之外，不占
+        // 内存），滑动时邻页已有首屏内容而不是骨架；邻页以 prefetchEnabled=false 组合，不起
+        // 自己的视口预取 worker（它照常登记列表并取第一页数据，见 MediaBrowser 参数说明）。
+        HorizontalPager(pager, modifier = Modifier.weight(1f), key = { "home:$it" }, beyondViewportPageCount = 1) { page ->
             // targetPage 在 pager 内容里读取：翻页只重组已组合的页面，不再带上整个首页。
             val active = pager.targetPage
-            val current = controls[active]
             // 首帧不等 /instance：能力位只决定"服务未就绪"提示，不决定是否组合网格。
             // 旧版同样是先组合网格、再等就绪探测；这样冷启动少一个整往返，骨架只随列表加载出现。
             if ((page != 2 && capabilities?.recommendations == false) || (page == 2 && capabilities?.rankings == false)) {
@@ -144,7 +146,10 @@ fun HomeScreen(model: LibraryViewModel) {
                     period = if (page == 2) period else "week",
                     onRefresh = if (page != 2) ({ seeds = seeds.mapIndexed { index, value -> if (index == page) kotlin.random.Random.nextLong(1, Long.MAX_VALUE) else value } }) else null,
                     controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == active },
-                    gridState = homeGrids[page])
+                    gridState = homeGrids[page],
+                    // 只有当前页（targetPage）起视口预取；预组合的邻页仍登记列表并取第一页，
+                    // 但不另开预取 worker/缩略图下载，避免与正在看的页面抢宽带。
+                    prefetchEnabled = page == active)
             }
         }
     }
@@ -309,7 +314,10 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                  controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true,
                  pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false,
                  authorKind: String? = null, leading: (@Composable () -> Unit)? = null, scrollTab: Int? = null,
-                 totalSeed: Long? = null, gridState: LazyGridState = rememberLazyGridState()) {
+                 totalSeed: Long? = null, gridState: LazyGridState = rememberLazyGridState(),
+                 // 首页 pager 的预组合邻页传 false：照常登记列表、取第一页数据，但不启动
+                 // 自己的视口前瞻预取。默认 true 保持搜索/收藏/历史/相册等既有行为。
+                 prefetchEnabled: Boolean = true) {
     // P4：组合期只做只读查询。缺失的列表由 effect 登记，避免在组合中创建/淘汰 ViewModel 的列表缓存
     // （淘汰会连带取消正在显示的列表的分页任务）。
     var listFlow by remember(key) { mutableStateOf(model.assets(key)) }
@@ -343,15 +351,25 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     val grid = gridState
     val sceneActive = LocalSceneActive.current
-    // 常驻首页隐藏时仍保持组合：alpha=0 与触摸死层只能挡住新手势，挡不住已经在跑的 fling，
+    // 常驻 Tab 隐藏时仍保持组合：alpha=0 与触摸死层只能挡住新手势，挡不住已经在跑的 fling，
     // 网格会在被盖住时继续滑。场景从可见翻到隐藏的那一刻把首项原地扶正（index + offset），
-    // 等效冻结滚动。LocalSceneActive 只对常驻首页提供 false（其它场景默认 true），
-    // 因此非常驻页面不会走这里。
+    // 等效冻结滚动。LocalSceneActive 对所有常驻 Tab（tab:0..3）提供 false，pushed 路由
+    // 没有 provide、默认 true，因此非常驻页面不会走这里。
     var sceneWasActive by remember(key) { mutableStateOf(sceneActive) }
     LaunchedEffect(sceneActive, grid) {
         val justHidden = sceneWasActive && !sceneActive
         sceneWasActive = sceneActive
         if (justHidden) grid.scrollToItem(grid.firstVisibleItemIndex, grid.firstVisibleItemScrollOffset)
+    }
+    // 常驻 Tab 失活时撤下本浏览区的独立窗口：筛选面板与相册批量面板都是 ModalBottomSheet，
+    // 属于单独窗口，触摸死层盖不住。showFilters 必须一起复位，否则回到该 Tab 时会立即重开；
+    // 批量面板走 AlbumBatchViewModel.closeSheet()：只清 sheetOpen（写入在途时保留进度/报告），
+    // 不清已选集。
+    LaunchedEffect(sceneActive) {
+        if (!sceneActive) {
+            controls.showFilters.value = false
+            batch?.closeSheet()
+        }
     }
     LaunchedEffect(scrollTab, grid) { if (scrollTab != null) TabScrollController.events.collect { if (it == scrollTab) grid.scrollToItem(0) } }
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
@@ -433,8 +451,13 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     // 选择模式/面板开关只派生窄布尔值，勾选单项不会触发浏览区重组。
     if (batch != null) {
-        BackHandler(enabled = selecting && !sheetOpen, onBack = batch::exit)
-        if (sheetOpen) AlbumBatchSheetHost(batch, selectionState, model::refreshAfterAlbumBatch)
+        // 隐藏的常驻 Tab 不接收返回键：场景 owner 是 CREATED 时 activity-compose 的
+        // lifecycle-aware BackHandler 不会进入 dispatcher，这里再按 LocalSceneActive 显式
+        // 收一道，避免任何注册时序把隐藏 Tab 的选择模式接到当前 Tab 的返回键上。
+        BackHandler(enabled = sceneActive && selecting && !sheetOpen, onBack = batch::exit)
+        // 批量面板只在所属场景可见时渲染：它是独立窗口，触摸死层盖不住（失活时已由上方
+        // effect 调 closeSheet()，这里挡住重开与浮空）。
+        if (sceneActive && sheetOpen) AlbumBatchSheetHost(batch, selectionState, model::refreshAfterAlbumBatch)
     }
     Column(Modifier.fillMaxSize()) {
         var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
@@ -460,7 +483,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             IconButton(onClick = { controls.showFilters.value = true }) { Icon(Icons.Outlined.Tune, "筛选") }
             IconButton(onClick = { setColumns(if (columns >= MAX_GRID_COLUMNS) MIN_GRID_COLUMNS else columns + 1) }) { Icon(Icons.Outlined.GridView, "列数") }
         }
-        if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
+        // 筛选面板只在所属场景可见时渲染（失活时已由上方 effect 复位 showFilters）：
+        // ModalBottomSheet 是独立窗口，隐藏 Tab 里的实例会浮在当前 Tab 之上。
+        if (sceneActive && (albumTitle != null || toolbar)) BrowserFilterSheet(controls)
         val retry: () -> Unit = {
             // 只有「当前查询确实加载过」才续页；重查失败后 loadedQuery 还是旧查询，
             // 用旧游标续新查询会拿错顺序，改为从第一页重取。
@@ -515,7 +540,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         }
         // 首页/搜索/收藏/历史与相册一样做视口前瞻预取（旧版 QimengMediaGrid 对全部网格生效）。
         // 带 leading 的网格下标含前导项，预取窗口会错位，故暂不接入。
-        if (leading == null && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
+        // prefetchEnabled=false（首页 pager 的预组合邻页）不启动预取 worker：邻页还没被看到，
+        // 不与当前页抢带宽；它的列表登记与第一页数据仍照常进行，滑过去不会先显示骨架。
+        if (leading == null && entries.isNotEmpty() && prefetchEnabled) PrefetchGalleryViewport(model, grid, sections, columns)
         PullToRefreshBox(isRefreshing = listRefreshing,
             onRefresh = {
                 // 先让全库预取让路，刷新首屏与它在局域网带宽上不再互抢（旧版问题B 同款）。
