@@ -62,6 +62,7 @@ func (s *Service) CreateLibrary(ctx context.Context, w *Write, name, kind string
 	}
 	_, e = q.ExecContext(ctx, "INSERT INTO libraries(id,name,kind,data) VALUES(?,?,?,?)", l.ID, l.Name, l.Kind, raw)
 	if e == nil {
+		w.libraryChanged()
 		w.after = append(w.after, func() error { s.wakeLibraryMonitor(); return nil })
 	}
 	return l, e
@@ -229,6 +230,7 @@ func (s *Service) UpdateAsset(ctx context.Context, w *Write, id string, in Asset
 			return a, e
 		}
 	}
+	w.libraryChanged()
 	return readAssetOnDay(ctx, q, id, day)
 }
 func cleanStrings(values []string, maxCount, maxLen int) ([]string, error) {
@@ -293,6 +295,7 @@ func (s *Service) UpdateTags(ctx context.Context, w *Write, id string, revision 
 	if e = protectHumanField(ctx, q, a.ID, "tags"); e != nil {
 		return a, e
 	}
+	w.libraryChanged()
 	return a, store.SaveAssetTags(ctx, q, a)
 }
 func validateAssetTags(ctx context.Context, q store.Querier, tags []string) ([]string, error) {
@@ -446,6 +449,9 @@ func (s *Service) CreateAuthor(ctx context.Context, w *Write, in AuthorInput) (m
 	if len(channels) > 0 {
 		e = s.projectAuthorSources(ctx, q, a)
 	}
+	if e == nil {
+		w.libraryChanged()
+	}
 	return a, e
 }
 
@@ -572,6 +578,7 @@ func (s *Service) UpdateAuthor(ctx context.Context, w *Write, id string, in Auth
 			return a, e
 		}
 	}
+	w.libraryChanged()
 	return a, finishAuthorTask(ctx, q, task, a.Revision)
 }
 
@@ -631,5 +638,9 @@ func (s *Service) CreateCollection(ctx context.Context, w *Write, in model.Colle
 	if e != nil {
 		return in, e
 	}
-	return in, store.InsertCollection(ctx, q, in)
+	if e = store.InsertCollection(ctx, q, in); e != nil {
+		return in, e
+	}
+	w.libraryChanged()
+	return in, nil
 }

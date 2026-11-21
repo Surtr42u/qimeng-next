@@ -71,7 +71,7 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
                 document?.blocks?.find { it.block == "accounts" }?.let { CreatorDetailLabel(identityLabel(it.values.identityStatus)) }
             }
         }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.loading && document == null) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.error?.let { item { ErrorNotice(it) { model.load(authorId, archiveId) } } }
         if (editing == null) error?.let { item { ErrorNotice(it) } }
         if (document != null) {
@@ -102,7 +102,7 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
             }
             if (showCandidates) {
                 candidates.error?.let { item { ErrorNotice(it) { model.loadCandidates() } } }
-                if (candidates.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                if (candidates.loading && !candidates.loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 if (candidates.loaded && candidates.items.isEmpty()) item { Text("暂无候选资料") }
                 items(candidates.items, key = { "candidate:${it.id}" }) { candidate -> ContentCard {
                     Text("${profileBlockName(candidate.block)} · ${candidateState(candidate.state)}", style = MaterialTheme.typography.titleMedium)

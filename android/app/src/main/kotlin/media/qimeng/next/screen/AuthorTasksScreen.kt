@@ -21,7 +21,7 @@ internal fun AuthorTasksScreen(model: LibraryViewModel) {
     LaunchedEffect(Unit) { if (!state.loaded) model.loadAuthorTasks() }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { TextButton(onClick = { model.loadAuthorTasks() }) { Text("刷新作者任务") } }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.loading && !state.loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.error?.let { item { ErrorNotice(it) { model.loadAuthorTasks() } } }
         if (state.loaded && state.items.isEmpty()) item { Text("暂无作者资料任务") }
         items(state.items, key = { it.id }) { task -> ContentCard {

@@ -45,7 +45,7 @@ internal fun UploadDestinationSection(model: LibraryViewModel, tree: UploadDirec
     }
     DisposableEffect(tree) { onDispose { tree.clear() } }
     UploadPanel("上传位置", "选择目标媒体库；未选择目录时上传到库根。") {
-        if (list.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (list.loading && !list.loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (list.error != null) ErrorNotice("媒体库列表读取失败，不能据此判断没有媒体库。")
         if (list.loaded && list.error == null && list.items.none { it.enabled }) {
             Text("还没有可选的媒体库", style = MaterialTheme.typography.titleSmall)

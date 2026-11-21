@@ -201,6 +201,9 @@ func run() error {
 		}
 		return e
 	case <-ctx.Done():
+		// End live event streams first: otherwise Shutdown waits for their
+		// long-lived responses until the drain deadline expires.
+		s.CloseEvents()
 		shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdown)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/engagement"
+	"qimeng.local/next/server/internal/events"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/store"
 )
@@ -13,11 +14,11 @@ import (
 type reactionSetter func(context.Context, store.Querier, model.Asset, bool, time.Time) (model.Asset, error)
 
 func (s *Service) SetAssetFavorite(ctx context.Context, w *Write, id string, value bool) (model.Asset, error) {
-	return s.setReaction(ctx, w, id, engagement.SetFavorite, value, nil)
+	return s.setReaction(ctx, w, id, events.TopicFavoriteChanged, engagement.SetFavorite, value, nil)
 }
 
 func (s *Service) SetAssetTodayLike(ctx context.Context, w *Write, id string, value bool) (model.Asset, error) {
-	return s.setReaction(ctx, w, id, engagement.SetTodayLike, value, nil)
+	return s.setReaction(ctx, w, id, events.TopicLikeChanged, engagement.SetTodayLike, value, nil)
 }
 
 // The old request always carried a cached favorite. A mismatched value on a
@@ -26,10 +27,10 @@ func (s *Service) Reaction(ctx context.Context, w *Write, id string, favorite, l
 	if !liked {
 		return s.SetAssetFavorite(ctx, w, id, favorite)
 	}
-	return s.setReaction(ctx, w, id, engagement.SetTodayLike, true, &favorite)
+	return s.setReaction(ctx, w, id, events.TopicLikeChanged, engagement.SetTodayLike, true, &favorite)
 }
 
-func (s *Service) setReaction(ctx context.Context, w *Write, id string, set reactionSetter, value bool, legacyFavorite *bool) (model.Asset, error) {
+func (s *Service) setReaction(ctx context.Context, w *Write, id, topic string, set reactionSetter, value bool, legacyFavorite *bool) (model.Asset, error) {
 	if err := Authorize(w.Principal, "admin", ""); err != nil {
 		return model.Asset{}, err
 	}
@@ -54,6 +55,11 @@ func (s *Service) setReaction(ctx context.Context, w *Write, id string, set reac
 		return a, Fail(409, "like_count_capacity", "累计计数已达到上限。")
 	case errors.Is(err, engagement.ErrDayUnknown):
 		return a, Fail(409, "legacy_like_day_unknown", "旧累计没有可核实的当日去重边界，原累计已保留。")
+	}
+	if err == nil {
+		// Favorite and vote are engagement signals, not library membership:
+		// they never publish library.changed or advance the asset set revision.
+		w.changed(topic, a.ID)
 	}
 	return a, err
 }

@@ -53,6 +53,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import media.qimeng.next.AlbumBatchViewModel
 import media.qimeng.next.AlbumSelectionState
+import media.qimeng.next.LIST_UP_TO_DATE_MESSAGE
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.ListState
 import media.qimeng.next.model.Asset
@@ -92,10 +93,26 @@ fun HomeScreen(model: LibraryViewModel) {
     val scope = rememberCoroutineScope()
     val preferences by model.preferences.collectAsStateWithLifecycle()
     val homeBackdrop = if (preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
-    val regular = rememberBrowserControls("home:0", columns = 2)
-    val cos = rememberBrowserControls("home:1", "cos", columns = 2)
-    val rank = rememberBrowserControls("home:2", columns = 2)
+    // 首页推荐/COS 两格共用一份持久化列数（冷启动恢复上次档位）；排行页没有独立偏好，
+    // 以同一档位起步，顶栏切换仍会同时作用于三页。
+    val homeColumns by model.homeColumns.collectAsStateWithLifecycle()
+    val regular = rememberBrowserControls("home:0", columns = homeColumns, minColumns = HOME_MIN_GRID_COLUMNS)
+    val cos = rememberBrowserControls("home:1", "cos", columns = homeColumns, minColumns = HOME_MIN_GRID_COLUMNS)
+    val rank = rememberBrowserControls("home:2", columns = homeColumns, minColumns = HOME_MIN_GRID_COLUMNS)
     val controls = remember(regular, cos, rank) { listOf(regular, cos, rank) }
+    // 三页的网格状态提到 pager 之外：pager 只为已组合的页面保留可保存状态（index+offset），
+    // 页面被回收后失去 LazyGrid 的 key 锚点，返回时只能按条目下标还原。常驻首页在整段
+    // 运行期都持有这三份状态，翻页/离开再回来都不重建。
+    val regularGrid = rememberLazyGridState()
+    val cosGrid = rememberLazyGridState()
+    val rankGrid = rememberLazyGridState()
+    val homeGrids = remember(regularGrid, cosGrid, rankGrid) { listOf(regularGrid, cosGrid, rankGrid) }
+    val sceneActive = LocalSceneActive.current
+    // 常驻首页被其它 Tab / pushed 路由盖住时仍保持组合；筛选面板是 ModalBottomSheet
+    // （独立窗口），若不随场景撤下会浮在当前路由之上。showFilters 同时复位：面板若只是
+    // 被移除而标志仍为 true，回到首页时 if (sceneActive) 一恢复就会自动重开。
+    LaunchedEffect(sceneActive) { if (!sceneActive) controls.forEach { it.showFilters.value = false } }
+    val saveHomeColumns = remember(model) { model::saveHomeColumns }
     val capabilities by model.capabilities.collectAsStateWithLifecycle()
     // 固定回调只在依赖变化时重建，避免每次重组都让 HomeTopRow 失去跳过资格。
     val openSearch = remember(model) { { model.navigate("search") } }
@@ -103,7 +120,7 @@ fun HomeScreen(model: LibraryViewModel) {
     // 翻页手势只经这一条 lambda 触发，胶囊栏重组不受影响。
     val selectPage: (Int) -> Unit = remember(scope, pager) { { page -> scope.launch { pager.scrollToPage(page) } } }
     Column(Modifier.fillMaxSize()) {
-        HomeTopRow(controls, pager, homeBackdrop, openSearch, openFilter)
+        HomeTopRow(controls, pager, homeBackdrop, openSearch, openFilter, saveHomeColumns)
         HomeChips(period, pager, selectPage, onPeriodChange = { period = it })
         // 首页顶栏玻璃位于 pager 上方，其采样窗与 pager 区域不重叠（BackdropGlassPanel 只在本节点
         // 边界内采样），因此这层 backdrop 从未画出任何像素，只是每帧把整个网格再录一遍。
@@ -112,8 +129,9 @@ fun HomeScreen(model: LibraryViewModel) {
             // targetPage 在 pager 内容里读取：翻页只重组已组合的页面，不再带上整个首页。
             val active = pager.targetPage
             val current = controls[active]
-            if (capabilities == null) QimengSkeletonGrid(current.columns.intValue, current.columns.intValue * QIMENG_SKELETON_GRID_ROWS)
-            else if ((page != 2 && capabilities?.recommendations == false) || (page == 2 && capabilities?.rankings == false)) {
+            // 首帧不等 /instance：能力位只决定"服务未就绪"提示，不决定是否组合网格。
+            // 旧版同样是先组合网格、再等就绪探测；这样冷启动少一个整往返，骨架只随列表加载出现。
+            if ((page != 2 && capabilities?.recommendations == false) || (page == 2 && capabilities?.rankings == false)) {
                 ContentCard(Modifier.padding(16.dp)) {
                     Text(if (page == 2) "排行榜服务尚未就绪" else "推荐服务尚未就绪")
                     OutlinedButton(onClick = model::refreshConnection) { Text("重试") }
@@ -125,14 +143,14 @@ fun HomeScreen(model: LibraryViewModel) {
                     // （两次多余请求 + 列表重置）。
                     period = if (page == 2) period else "week",
                     onRefresh = if (page != 2) ({ seeds = seeds.mapIndexed { index, value -> if (index == page) kotlin.random.Random.nextLong(1, Long.MAX_VALUE) else value } }) else null,
-                    controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == active })
+                    controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == active },
+                    gridState = homeGrids[page])
             }
         }
     }
-    // 常驻首页被其它 Tab / pushed 路由盖住时仍保持组合；筛选面板是 ModalBottomSheet
-    // （独立窗口），若不随场景撤下会浮在当前路由之上。可见性由 ResidentSceneHost 提供，
+    // 可见性由 ResidentSceneHost 提供（见上：失活时连同 showFilters 一并复位），
     // 非常驻场景没有 provide，默认 true 保持原行为。
-    if (LocalSceneActive.current) BrowserFilterSheet(cos)
+    if (sceneActive) BrowserFilterSheet(cos)
 }
 
 /** 首页胶囊栏：只在这一条栏里读 targetPage，翻页时不再重组整页。 */
@@ -157,13 +175,17 @@ private fun HomeTopRow(
     backdrop: QimengBackdropState?,
     onOpenSearch: () -> Unit,
     onOpenFilter: () -> Unit,
+    onColumnsCommitted: (Int) -> Unit,
 ) {
     // 列数跟随当前页；targetPage 的读取收在顶栏内，翻页只重组这一行。
     val current = controls[pager.targetPage]
-    val toggleColumns = remember(current, controls) {
+    val toggleColumns = remember(current, controls, onColumnsCommitted) {
         {
-            val next = if (current.columns.intValue == 2) 1 else 2
+            // 首页顶栏是 1 列 ↔ 2 列切换（单列大图流，图标 Grid1Icon 同源）；网格捏合仍只管 2~5 档。
+            // 持久化范围已包含 1，重启后原样恢复，不会被截成两列。
+            val next = if (current.columns.intValue == MIN_GRID_COLUMNS) HOME_MIN_GRID_COLUMNS else MIN_GRID_COLUMNS
             controls.forEach { it.columns.intValue = next }
+            onColumnsCommitted(next)
         }
     }
     Row(
@@ -287,7 +309,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                  controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true,
                  pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false,
                  authorKind: String? = null, leading: (@Composable () -> Unit)? = null, scrollTab: Int? = null,
-                 totalSeed: Long? = null) {
+                 totalSeed: Long? = null, gridState: LazyGridState = rememberLazyGridState()) {
     // P4：组合期只做只读查询。缺失的列表由 effect 登记，避免在组合中创建/淘汰 ViewModel 的列表缓存
     // （淘汰会连带取消正在显示的列表的分页任务）。
     var listFlow by remember(key) { mutableStateOf(model.assets(key)) }
@@ -297,6 +319,10 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     val listState = listFlow.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
+    // 主页面不渲染 AppRoot 的全局提示条（那里只覆盖 pushed 路由）；刷新「内容没有变化」
+    // 的轻提示由本组件在主页面内落地，避免消息设了却看不见。
+    val route by model.route.collectAsStateWithLifecycle()
+    val browserMessage by model.message.collectAsStateWithLifecycle()
     // 发布（上传入库）通知不在这里订阅：订阅会让每入库一个文件就重组一次列表，且过去把
     // publication 当 effect key，批量入库 100 个文件就整页重取 100 次。新鲜度由
     // LibraryViewModel.browse 自己比对 state.publicationId 与 UploadRepository.lastPublication，
@@ -315,7 +341,18 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val setColumns by rememberUpdatedState<(Int) -> Unit> { count ->
         if (sharedColumns) model.saveAlbumColumns(count) else controls.columns.intValue = count
     }
-    val grid = rememberLazyGridState()
+    val grid = gridState
+    val sceneActive = LocalSceneActive.current
+    // 常驻首页隐藏时仍保持组合：alpha=0 与触摸死层只能挡住新手势，挡不住已经在跑的 fling，
+    // 网格会在被盖住时继续滑。场景从可见翻到隐藏的那一刻把首项原地扶正（index + offset），
+    // 等效冻结滚动。LocalSceneActive 只对常驻首页提供 false（其它场景默认 true），
+    // 因此非常驻页面不会走这里。
+    var sceneWasActive by remember(key) { mutableStateOf(sceneActive) }
+    LaunchedEffect(sceneActive, grid) {
+        val justHidden = sceneWasActive && !sceneActive
+        sceneWasActive = sceneActive
+        if (justHidden) grid.scrollToItem(grid.firstVisibleItemIndex, grid.firstVisibleItemScrollOffset)
+    }
     LaunchedEffect(scrollTab, grid) { if (scrollTab != null) TabScrollController.events.collect { if (it == scrollTab) grid.scrollToItem(0) } }
     val query = controls.query(AssetQuery(text = textOverride.orEmpty(), kind = kind, favorite = favorite, authorId = author,
         sort = if (favorite == true) "favorited" else "default", source = source, seed = seed, period = period, collectionId = collectionId,
@@ -326,6 +363,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     // 重查在途时 loadedQuery 仍是旧查询：只要列表已有内容（或曾经加载成功），就继续用现有条目与
     // 计数渲染，等响应落地再整页替换——筛选/分区/刷新期间不再清空网格或退回骨架。
     val queryLoaded by remember(listState, query) { derivedStateOf { listState.value.showsDataFor(query) } }
+    // 本查询的首屏结果是否已经落地：重查在途时 loadedQuery 仍是上一个查询，旧条目只是
+    // 暂留显示。下拉刷新归位要求列表确实属于当前查询，避免在旧数据上提前归位。
+    val querySettled by remember(listState, query) { derivedStateOf { listState.value.loadedQuery == query } }
     val entries by remember(listState, query) {
         derivedStateOf {
             val value = listState.value
@@ -358,12 +398,22 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val unknownDateCount by remember(listState) { derivedStateOf { listState.value.unknownDateCount } }
     val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
+    // 用户下拉刷新标志：只由 PullToRefreshBox 的手势回调置位。重试、批量刷新、服务器推送、
+    // 翻页与换 seed 都不置位；成功归位或刷新失败时清零。
+    var userRefresh by remember(key) { mutableStateOf(false) }
     LaunchedEffect(key, session, query, group) {
         batch?.bindQuery(query)
         // 入库新鲜度不在这里触发：browse 自己比对 publicationId，进入列表时最多补一次。
         model.browse(key, query)
         val current = query.toString() + group
-        if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }
+        if (appliedQuery != current) {
+            appliedQuery = current
+            // 下拉刷新换 seed 也是一次「查询变化」：此刻屏幕上还是旧列表，立即归位会把旧 key
+            // 留给新列表，刷新落地后 Compose 又按该 key 找回索引——正是首页刷新落到未见内容
+            // 的原因。用户刷新引起的查询变化交给下方「新列表与新分组都已上屏」的 effect 归位；
+            // 其余真实筛选/分区切换保持原行为，立即回顶。
+            if (!userRefresh) grid.scrollToItem(0)
+        }
     }
     // 回前台补一次新鲜度检查（browse 内部只在 publicationId 落后时才发请求，否则直接返回）。
     // 汇入 100 个文件只会让列表变「旧」，不会在这里变成 100 次请求：刷新发生在下一次
@@ -373,8 +423,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         val layout = grid.layoutInfo
         layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 8
     } }
-    LaunchedEffect(nearEnd, listCursor, query) {
-        if (nearEnd && listError == null) model.browse(key, query, next = true)
+    LaunchedEffect(nearEnd, listCursor, query, sceneActive) {
+        // 隐藏场景里的布局残影（高度/可见项变化）也能让 nearEnd 成立；不为看不见的网格续页。
+        if (sceneActive && nearEnd && listError == null) model.browse(key, query, next = true)
     }
     // 选择模式/面板开关只派生窄布尔值，勾选单项不会触发浏览区重组。
     if (batch != null) {
@@ -385,14 +436,17 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         var rows: Map<String, media.qimeng.next.FacetRowState> = emptyMap()
         var filters: (@Composable () -> Unit)? = null
         if (albumTitle != null) {
-            val facets: media.qimeng.next.FacetViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            // 每个浏览区一份 facet 实例：相册/收藏/历史/作者页共用 Activity 级实例时，换页后
+            // 上一页的行会先留下一个往返（FacetViewModel 只比对实例、不比对查询），胶囊计数
+            // 就会短暂显示另一页的人群。按 key 分实例后，同一页离开再回来仍在，跨页不再串。
+            val facets: media.qimeng.next.FacetViewModel = viewModel(key = "facets:$key")
             val values by facets.rows.collectAsStateWithLifecycle()
             rows = values
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
             filters = { AlbumFilters(albumTitle, headerTotal, controls, values,
                 onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
                 loadFailed = listError != null, columns = columns, showTitle = !selecting,
-                onToggleColumns = { setColumns(if (columns == 5) 2 else columns + 1) }) }
+                onToggleColumns = { setColumns(if (columns >= MAX_GRID_COLUMNS) MIN_GRID_COLUMNS else columns + 1) }) }
             if (batch != null && selecting) AlbumSelectionBarHost(batch, selectionState, entries)
             if (leading == null) filters?.invoke()
         } else if (toolbar) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
@@ -400,7 +454,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                 FilterChip(controls.type.value == value, { controls.type.value = value }, label = { Text(label) })
             }
             IconButton(onClick = { controls.showFilters.value = true }) { Icon(Icons.Outlined.Tune, "筛选") }
-            IconButton(onClick = { setColumns(if (columns == 5) 2 else columns + 1) }) { Icon(Icons.Outlined.GridView, "列数") }
+            IconButton(onClick = { setColumns(if (columns >= MAX_GRID_COLUMNS) MIN_GRID_COLUMNS else columns + 1) }) { Icon(Icons.Outlined.GridView, "列数") }
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
         val retry: () -> Unit = {
@@ -409,6 +463,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             model.browse(key, query, next = listCursor != null && listState.value.loadedQuery == query, force = true)
         }
         if (leading == null) listError?.let { ErrorNotice(it, retry) }
+        // 下拉刷新「已是最新」轻提示：只显示这一条一次性文案，其他消息仍走 AppRoot 的
+        // pushed 路由提示条，避免同一条消息在两处重复。
+        if (route == "main") browserMessage?.takeIf { it == LIST_UP_TO_DATE_MESSAGE }?.let { UpToDateHint(it) }
         val sectionMode = when {
             source == "history" -> "history"
             favorite == true -> "favorite"
@@ -419,18 +476,39 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         // 占住当帧主线程。首帧仍在组合内同步算完，网格不会先空一帧；后台结果用引用相等策略
         // 写入（新旧值相等比较本身也是 O(n)，同样不能放主线程）。
         val sectionFacets = group?.let(rows::get)?.items.orEmpty()
+        // 分组时钟按浏览实例取一次快照：同一 instance 的每次重算都复用它，跨日/换时区时
+        // 「今天」这类标签不会在会话中途翻转（GallerySections 的 nowMillis 契约）。
+        val sectionsNow = remember(key) { System.currentTimeMillis() }
         val sectionsState = remember(key) {
             mutableStateOf(
-                gallerySections(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount),
+                gallerySections(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount, sectionsNow),
                 referentialEqualityPolicy(),
             )
         }
+        // 当前渲染的分组描述的是哪一版 entries。异步分组落地前 sectionsOf 仍是旧条目，
+        // 归位必须等它追上 entries，否则归位发生在旧列表上，新列表一落地又会按旧 key 找回索引。
+        var sectionsOf by remember(key) { mutableStateOf(entries) }
         LaunchedEffect(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount) {
-            sectionsState.value = withContext(Dispatchers.Default) {
-                gallerySections(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount)
+            val computed = withContext(Dispatchers.Default) {
+                gallerySections(entries, sectionMode, sectionFacets, dateCounts, unknownDateCount, sectionsNow)
             }
+            sectionsState.value = computed
+            sectionsOf = entries
         }
         val sections = sectionsState.value
+        // 下拉刷新的归位：等新列表真的落地（loading/refreshing 都结束、loadedQuery 属于本查询）
+        // 且这批条目的分组也已替换之后才回顶。此时网格里是新内容，索引 0 就是顶部；
+        // 归位若对着旧列表发出，Compose 会按旧首项 key 在新顺序里找回索引（首页换 seed 后
+        // 落在任意一行）。翻页/服务器推送不置 userRefresh，因此不会触发。
+        LaunchedEffect(userRefresh, listLoading, listRefreshing, listError, querySettled, sectionsOf, entries, grid) {
+            if (shouldResetScrollAfterRefresh(userRefresh, listLoading, listRefreshing, listError, querySettled, sectionsOf === entries)) {
+                userRefresh = false
+                grid.scrollToItem(0)
+            } else if (userRefresh && listError != null) {
+                // 刷新失败：丢弃标志。之后的重试与其它加载不属于这次手势，不应再跳位置。
+                userRefresh = false
+            }
+        }
         // 首页/搜索/收藏/历史与相册一样做视口前瞻预取（旧版 QimengMediaGrid 对全部网格生效）。
         // 带 leading 的网格下标含前导项，预取窗口会错位，故暂不接入。
         if (leading == null && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
@@ -438,7 +516,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             onRefresh = {
                 // 先让全库预取让路，刷新首屏与它在局域网带宽上不再互抢（旧版问题B 同款）。
                 model.pauseThumbnailPrefetch()
-                if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true)
+                // 用户显式下拉：归位等新列表与新分组都上屏（见上方 effect），不在这里提前跳。
+                userRefresh = true
+                if (query.source == "recommendations" && onRefresh != null) onRefresh()
+                // 用户显式下拉：同 id 序列时提示「已是最新」；重试/批量刷新不走这个参数。
+                else model.browse(key, query, force = true, announceUnchanged = true)
             },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
             // 骨架只覆盖「从未拿到数据」的列表：重查/返回详情时继续显示已有条目与计数。
@@ -474,7 +556,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                                         else -> 0
                                     }
                                     if (step != 0) {
-                                        pendingColumns = (pendingColumns + step).coerceIn(2, 5)
+                                        pendingColumns = (pendingColumns + step).coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS)
                                         pinchColumns = pendingColumns
                                         accumulated = 1f
                                     }
@@ -564,6 +646,21 @@ private fun BatchActionButton(batch: AlbumBatchViewModel, selection: State<Album
     )) { Text("批量设置作者与来源 ($count)") }
 }
 
+/**
+ * 下拉刷新成功但内容未变的轻提示（旧版 HomeScreen.InfoBanner 同款：secondaryContainer、
+ * 不可点击；自动消退由 LibraryViewModel 计时，属于成功路径而非错误横幅）。
+ */
+@Composable
+private fun UpToDateHint(message: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Text(message, Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer)
+    }
+}
+
 /** 网格缩略图圆角沿用旧版 24px（像素密度换算，不是 dp）。 */
 private const val TILE_CORNER_RADIUS_PX = 24f
 
@@ -575,6 +672,26 @@ private const val TILE_CORNER_RADIUS_PX = 24f
  */
 private fun ListState<Asset>.showsDataFor(query: AssetQuery): Boolean =
     loadedQuery == query || (error == null && (loaded || items.isNotEmpty()))
+
+/**
+ * 下拉刷新后是否允许把网格归位到顶部（§1 的纯条件，单测锁定）。
+ *
+ * - [userRefresh]：只由手势回调置位。翻页、批量刷新、服务器推送、换 seed 都不置位，
+ *   因此追加与后台补读永远不会触发归位。
+ * - [loading]/[refreshing]：请求在途时不动（归位必须落在刷新后的列表上）。
+ * - [error]：刷新失败不归位，由调用方丢弃标志。
+ * - [settled]：`loadedQuery` 已属于当前查询（换 seed 换查询时旧列表只是暂留显示）。
+ * - [sectionsMatch]：渲染中的分组描述的就是当前 entries——异步分组还没换完就归位，会被
+ *   随后的分区替换重新锚定（首页换 seed 后「跳一行」的另一半原因）。
+ */
+internal fun shouldResetScrollAfterRefresh(
+    userRefresh: Boolean,
+    loading: Boolean,
+    refreshing: Boolean,
+    error: String?,
+    settled: Boolean,
+    sectionsMatch: Boolean,
+): Boolean = userRefresh && !loading && !refreshing && error == null && settled && sectionsMatch
 
 /** 视频时长角标样式是常量，提到文件级避免逐项/逐次重组分配 TextStyle + Shadow。 */
 private val TILE_DURATION_STYLE = TextStyle(

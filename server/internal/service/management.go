@@ -79,6 +79,7 @@ func (s *Service) UpdateLibrary(ctx context.Context, w *Write, id string, in Lib
 	if _, e = q.ExecContext(ctx, "UPDATE libraries SET name=?,data=? WHERE id=?", l.Name, raw, l.ID); e != nil {
 		return l, e
 	}
+	w.libraryChanged()
 	return store.Get[model.Library](ctx, q, libraryProjection+"WHERE l.id=?", id)
 }
 func (s *Service) CreateDirectory(ctx context.Context, w *Write, libraryID, relative string) (Directory, error) {
@@ -187,7 +188,11 @@ func (s *Service) CreateTag(ctx context.Context, w *Write, name string) (Tag, er
 	if e != nil {
 		return Tag{}, e
 	}
-	return tagByID(ctx, q, existing)
+	tag, e := tagByID(ctx, q, existing)
+	if e == nil {
+		w.libraryChanged()
+	}
+	return tag, e
 }
 
 func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string, revision int64, remove bool) (any, error) {
@@ -244,6 +249,9 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 			return nil, e
 		}
 		_, e = q.ExecContext(ctx, "UPDATE tags SET deleted=1,revision=?,updated_at=? WHERE id=?", newRevision, now.Format(time.RFC3339Nano), tag.ID)
+		if e == nil {
+			w.libraryChanged()
+		}
 		return nil, e
 	}
 	if _, e = q.ExecContext(ctx, `INSERT INTO retired_tag_names(name,revision) VALUES(?,?)
@@ -252,6 +260,9 @@ func (s *Service) ChangeTag(ctx context.Context, w *Write, name, newName string,
 	}
 	tag.Name, tag.Revision, tag.UpdatedAt = newName, newRevision, now.Format(time.RFC3339Nano)
 	_, e = q.ExecContext(ctx, "UPDATE tags SET name=?,revision=?,updated_at=? WHERE id=?", tag.Name, tag.Revision, tag.UpdatedAt, tag.ID)
+	if e == nil {
+		w.libraryChanged()
+	}
 	return tag, e
 }
 func (s *Service) RemoveAssetTag(ctx context.Context, w *Write, id, tag string, revision int64) (model.Asset, error) {
@@ -290,6 +301,7 @@ func (s *Service) RemoveAssetTag(ctx context.Context, w *Write, id, tag string, 
 	if e = protectHumanField(ctx, q, a.ID, "tags"); e != nil {
 		return a, e
 	}
+	w.libraryChanged()
 	return a, store.SaveAssetTags(ctx, q, a)
 }
 

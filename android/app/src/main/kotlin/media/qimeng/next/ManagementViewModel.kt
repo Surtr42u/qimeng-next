@@ -11,6 +11,9 @@ import media.qimeng.next.model.*
 class ManagementViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as QimengApplication).graph
     private val repository = graph.management
+    // 整组词表编辑必须按当前连接与传输代次打开：旧连接读取的草稿不得带给新连接。
+    val session = graph.settings.session
+    val transportRevision = graph.settings.transportRevision
     private val mutableEntries = MutableStateFlow(ListState<VocabularyEntry>())
     val entries = mutableEntries.asStateFlow()
     private val mutableSources = MutableStateFlow(ListState<VocabularyEntry>())

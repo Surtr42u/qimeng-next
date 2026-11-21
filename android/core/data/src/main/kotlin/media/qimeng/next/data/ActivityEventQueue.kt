@@ -56,19 +56,20 @@ class ActivityEventQueue internal constructor(
 
     internal suspend fun flush(target: Session, api: DefaultApi): Boolean {
         var retry = false
+        val outcomes = mutableListOf<EventOutcome>()
         for (event in requireNotNull(queue.state.value).events) {
             if (!sameTarget(target, settings.session.value)) break
             if (!sameTarget(event.target, target) || !event.shouldSend()) continue
             val issue = send(api, event)
             if (issue?.kind == EventDeliveryKind.RETRYABLE) retry = true
-            if (issue != null && issue == event.issue && event.retryRequested != true && event.failure == null) continue
-            queue.update { snapshot ->
-                snapshot.copy(events = snapshot.events.mapNotNull { saved ->
-                    if (saved.id != event.id || !sameTarget(saved.target, event.target)) saved
-                    else issue?.let { saved.copy(issue = it, failure = null, retryRequested = null) }
-                })
-            }
+            if (!event.needsCommit(issue)) continue
+            outcomes += EventOutcome(event.id, event.target, issue)
         }
+        // One durable commit per flush instead of one per event: QueueStore.update serialises the
+        // whole snapshot and fsyncs it, and a reconnect flush may carry PENDING_EVENT_LIMIT rows.
+        // A send that throws (401/403) skips this commit; the rows stay pending and the server
+        // dedupes the resend by eventId (service.RecordEvent returns the stored row).
+        if (outcomes.isNotEmpty()) queue.update { snapshot -> snapshot.copy(events = applyOutcomes(snapshot.events, outcomes)) }
         return retry
     }
 
@@ -113,3 +114,33 @@ class ActivityEventQueue internal constructor(
         } else EventDeliveryIssue(EventDeliveryKind.UNCONFIRMED, failure.message)
     }
 }
+
+/** A terminal send result for one journal row; a null [issue] means the server accepted it. */
+internal data class EventOutcome(val id: String, val target: Session, val issue: EventDeliveryIssue?)
+
+/**
+ * True when the row must be rewritten after a send attempt. An accepted event is always removed;
+ * an issue is stored only when it differs from the saved one or an old retry flag / legacy failure
+ * text still has to be cleared. An unchanged outcome therefore never touches the journal.
+ */
+internal fun PendingEvent.needsCommit(issue: EventDeliveryIssue?): Boolean =
+    issue == null || issue != this.issue || retryRequested == true || failure != null
+
+/**
+ * Fold send outcomes into the rows read inside the single commit. Rows appended by another
+ * coroutine while the sends were in flight have no outcome and come back untouched, which keeps a
+ * batched commit from dropping them. A null [EventOutcome.issue] removes the accepted row.
+ */
+internal fun applyOutcomes(events: List<PendingEvent>, outcomes: List<EventOutcome>): List<PendingEvent> {
+    if (outcomes.isEmpty()) return events
+    val byKey = outcomes.associateBy { EventKey(it.id, it.target.baseUrl, it.target.instanceId) }
+    return events.mapNotNull { saved ->
+        val outcome = byKey[saved.key()] ?: return@mapNotNull saved
+        outcome.issue?.let { saved.copy(issue = it, failure = null, retryRequested = null) }
+    }
+}
+
+/** Rows are identified the way [sameTarget] compares servers: the same fact can target two instances. */
+private data class EventKey(val id: String, val baseUrl: String, val instanceId: String)
+
+private fun PendingEvent.key() = EventKey(id, target.baseUrl, target.instanceId)

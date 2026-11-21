@@ -1,7 +1,9 @@
 package media.qimeng.next.ui
 
 import androidx.compose.material3.*
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -21,9 +23,13 @@ import media.qimeng.next.ui.theme.isQimengDarkTheme
 /** ClassicBottomBar and FloatingTabDock are the two original render paths. */
 @Composable
 fun LibraryNavigationBar(items: List<GlassNavItem>, selected: Int, material: TabBarMaterial, backdrop: QimengBackdropState?,
-    onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    onSelect: (Int) -> Unit, modifier: Modifier = Modifier, visible: Boolean = true) {
+    // 选中丸的动画位置记在导航栏这一层：外壳在 pushed 路由上仍保留本组合（visible=false
+    // 时不出树），返回首页时丸从上次位置直接出现，不会因为重组出 alpha=0 的新 Animatable 弹入。
+    val pillCenter = remember { Animatable(Float.NaN) }
+    if (!visible) return
     if (material != TabBarMaterial.CLASSIC) {
-        FloatingTabDock(items, selected, onSelect, material, backdrop, modifier)
+        FloatingTabDock(items, selected, onSelect, material, backdrop, modifier, pillCenter)
         return
     }
     val indicator = if (isQimengDarkTheme()) QimengBrandColors.PrimarySoftDark else QimengBrandColors.PrimarySoftLight

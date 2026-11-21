@@ -24,9 +24,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
+import coil3.annotation.ExperimentalCoilApi
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.memory.MemoryCache
+import coil3.network.ConnectivityChecker
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.AssetEditorTarget
@@ -47,6 +49,7 @@ val LocalMediaImages = staticCompositionLocalOf<ImageLoader> { error("ImageLoade
 /** Coil 内存缓存占最大堆比例：旧版 CoilModule 同值 25%（Coil 3.1 默认 20%/低内存 15%）。 */
 private const val MEMORY_CACHE_PERCENT = 0.25
 
+@OptIn(ExperimentalCoilApi::class)
 @Composable
 fun AppRoot(model: LibraryViewModel) {
     val preferences by model.preferences.collectAsStateWithLifecycle()
@@ -72,10 +75,22 @@ fun AppRoot(model: LibraryViewModel) {
             isAppearanceLightStatusBars = !dark; isAppearanceLightNavigationBars = !dark
         } }
     }
-    val imageLoader = remember(session, transportRevision) {
+    // 只按"哪一台服务器"重建，不按传输代次（transportRevision）重建：代次变化只是 token/证书
+    // 刷新，Session 本身不含凭据，取图时由 mediaClient 读当前值。否则每次重新登录都会丢掉
+    // 整个已解码内存缓存，回看/再滑全部重新解码（旧版是进程级单例，没有这个代价）。
+    val imageLoader = remember(session?.baseUrl, session?.instanceId) {
         ImageLoader.Builder(context).components {
             model.addThumbnailImageComponents(this)
-            if (imageTarget != null) add(OkHttpNetworkFetcherFactory(callFactory = { model.mediaClient(imageTarget) }))
+            if (imageTarget != null) add(OkHttpNetworkFetcherFactory(
+                callFactory = { model.mediaClient(imageTarget) },
+                // Coil 3.1.0 默认取图器用系统联网态判定（ConnectivityCheckerApi23）。手机连着无外网
+                // 的 Wi-Fi、或系统未验证网络时，即使 NAS / 隧道 / 回环仍可达也判为离线：
+                // NetworkFetcher 把请求的 Cache-Control 改写成 only-if-cached，本加载器的 OkHttp
+                // 客户端没有 Cache，只能合成 504，界面误报解码失败。旧版 CoilModule 用官方
+                // "naive always-online" 常量 ConnectivityChecker.ONLINE 修正同一误报；真断网时请求
+                // 照常发出并由 OkHttp 抛 IOException，既有错误分档不变。
+                connectivityChecker = { ConnectivityChecker.ONLINE },
+            ))
             if (Build.VERSION.SDK_INT >= 28) add(AnimatedImageDecoder.Factory()) else add(GifDecoder.Factory())
         }
             // 旧版 CoilModule 显式 25%（CoilModule.kt:148-152/215）。Coil 3.1.0 未配置时
@@ -100,40 +115,60 @@ fun AppRoot(model: LibraryViewModel) {
                 LoginScreen(model)
             } else {
                 BackHandler(route != "main") { model.back() }
-                val backdrop = if (route == "main" && preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
-                val detailRoute = route.startsWith("asset:")
-                val searchRoute = route == "search" || route.startsWith("tag:")
-                val ownTopBar = route in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance", "data-manage", "thumbnail-cache", "source-rules") || route.startsWith("author:") ||
-                    route.startsWith("profile:") || route.startsWith("profile-archive:") || route.startsWith("asset-edit:")
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).then(if (detailRoute || ownTopBar) Modifier else Modifier.statusBarsPadding())) {
-                    Column(Modifier.fillMaxSize().then(if (backdrop != null) Modifier.qimengBackdropSource(backdrop) else Modifier)) {
-                        if (!detailRoute && !ownTopBar && !searchRoute && !route.startsWith("stats-detail:") && route !in setOf("main", "ai-access", "favorites", "history")) PageHeader(routeTitle(route), model::back)
-                        if (!detailRoute && route != "main" && route != "server" && message != null) {
-                            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.weight(1f)) { ErrorNotice(message!!) }
-                                IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
+                // 背板采样层按材质创建一次，不随路由销毁：pushed 路由期间仍保留上一帧的录制，
+                // 返回首页时底部胶囊坞的玻璃立刻有背板，不再先显示一帧平面条（原实现放在
+                // route == "main" 分支里，每次 push 都销毁、返回再重录）。
+                val backdrop = if (preferences.material.usesBackdrop) rememberQimengBackdropState(MaterialTheme.colorScheme.background) else null
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    Column(Modifier.fillMaxSize().then(if (backdrop != null && route == "main") Modifier.qimengBackdropSource(backdrop) else Modifier)) {
+                        // 顶部安全区与路由页头都交给场景宿主：外壳不再按路由加减 padding，
+                        // 常驻首页被盖住时的测量尺寸不随覆盖路由变化。
+                        ResidentSceneHost(
+                            activeKey = if (route == "main") "tab:$tab" else route,
+                            modifier = Modifier.weight(1f),
+                            chrome = { sceneKey -> SceneChrome(sceneKey, model, message) },
+                        ) { sceneKey -> SceneContent(sceneKey, model, session, transportRevision, preferences) }
+                    }
+                    var lastTap by remember { mutableLongStateOf(0L) }
+                    var lastNavigation by remember { mutableLongStateOf(0L) }
+                    // 导航栏保持组合（visible=false 时不出树）：选中丸的位置记在导航栏这一层，
+                    // pushed 路由返回首页时从上次位置直接出现，而不是 alpha 0 弹入。
+                    LibraryNavigationBar(listOf(GlassNavItem("首页", HomeIcon, "home"), GlassNavItem("相册", AlbumIcon, "albums"),
+                        GlassNavItem("数据", StatsIcon, "stats"), GlassNavItem("我的", ProfileIcon, "me")), tab, preferences.material, backdrop,
+                        onSelect = { index ->
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            when {
+                                index == tab && now - lastTap <= 400L -> TabScrollController.scrollToTop(index)
+                                now - lastNavigation >= 200L -> { lastNavigation = now; model.selectTab(index) }
                             }
-                        }
-                        ResidentSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) { sceneKey ->
-                            SceneContent(sceneKey, model, session, transportRevision, preferences)
-                        }
-                    }
-                    if (route == "main") {
-                        var lastTap by remember { mutableLongStateOf(0L) }
-                        var lastNavigation by remember { mutableLongStateOf(0L) }
-                        LibraryNavigationBar(listOf(GlassNavItem("首页", HomeIcon, "home"), GlassNavItem("相册", AlbumIcon, "albums"),
-                            GlassNavItem("数据", StatsIcon, "stats"), GlassNavItem("我的", ProfileIcon, "me")), tab, preferences.material, backdrop,
-                            onSelect = { index ->
-                                val now = android.os.SystemClock.elapsedRealtime()
-                                when {
-                                    index == tab && now - lastTap <= 400L -> TabScrollController.scrollToTop(index)
-                                    now - lastNavigation >= 200L -> { lastNavigation = now; model.selectTab(index) }
-                                }
-                                lastTap = now
-                            }, modifier = Modifier.align(Alignment.BottomCenter))
-                    }
+                            lastTap = now
+                        }, modifier = Modifier.align(Alignment.BottomCenter), visible = route == "main")
                 }
             }
+        }
+    }
+}
+
+/**
+ * 路由页头与 pushed 路由提示条：只渲染在活动场景内部（[ResidentSceneHost] 的 chrome 槽），
+ * 不再作为常驻首页的兄弟节点占高度。判据沿用改前的外壳条件，按场景键判断：
+ * Tab 场景（"tab:N"）等价于旧的 route == "main"。
+ */
+@Composable
+private fun SceneChrome(sceneKey: String, model: LibraryViewModel, message: String?) {
+    if (sceneKey.startsWith("tab:")) return
+    val detailRoute = sceneKey.startsWith("asset:")
+    val searchRoute = sceneKey == "search" || sceneKey.startsWith("tag:")
+    val ownTopBar = sceneKey in setOf("server", "libraries", "upload", "authors", "archive-folder", "appearance", "maintenance",
+        "data-manage", "thumbnail-cache", "source-rules") || sceneKey.startsWith("author:") ||
+        sceneKey.startsWith("profile:") || sceneKey.startsWith("profile-archive:") || sceneKey.startsWith("asset-edit:")
+    if (!detailRoute && !ownTopBar && !searchRoute && !sceneKey.startsWith("stats-detail:") &&
+        sceneKey !in setOf("ai-access", "favorites", "history")) PageHeader(routeTitle(sceneKey), model::back)
+    // 详情有自管的错误层，服务器页在卡片内显示提示，首页由列表内的轻提示承担：同改前。
+    if (!detailRoute && sceneKey != "server" && message != null) {
+        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { ErrorNotice(message) }
+            IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
         }
     }
 }

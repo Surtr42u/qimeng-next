@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"qimeng.local/next/server/internal/domain"
+	"qimeng.local/next/server/internal/events"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/store"
 )
@@ -289,6 +290,10 @@ func (s *Service) finishScan(run *scanRun, scanErr error) {
 	if err := run.saveProgress(finishCtx, s.DB.DB, j); err != nil {
 		slog.Error("scan terminal persistence failed", "scanId", run.id)
 	}
+	// A finished scan changed what the library shows, including failed and
+	// interrupted runs that already committed files. Clients reload through
+	// the same signal as an explicit edit.
+	s.publish(change{topic: events.TopicLibraryChanged})
 	if j.Added+j.Moved+j.Changed > 0 {
 		s.previews.changed(j.LibraryID, "")
 	}

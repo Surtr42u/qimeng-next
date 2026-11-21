@@ -3,7 +3,12 @@ package media.qimeng.next.screen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,11 +67,16 @@ internal val LocalSceneActive = compositionLocalOf { true }
  * SaveableState 口径与 core/ui 的 SingleSceneHost 完全一致：首页用固定键
  * [HOME_SCENE_KEY] 常驻，活动场景按 activeKey 换 provider；pushed 路由键只保留最近 12 个
  * （Tab 键不参与淘汰），避免详情历史无限积累。
+ *
+ * 顶部安全区与页头（2026-11-21 归位批）：外壳不再按路由加减 `statusBarsPadding`，
+ * 常驻首页层始终避开状态栏，因此被任何路由盖住时测量尺寸都不变；[chrome] 只渲染在活动
+ * 场景内部（页头/提示条不再挤压常驻层），详情这类沉浸式场景由它自己处理系统栏。
  */
 @Composable
 internal fun ResidentSceneHost(
     activeKey: String,
     modifier: Modifier = Modifier,
+    chrome: @Composable (String) -> Unit = {},
     content: @Composable (String) -> Unit,
 ) {
     val holder = rememberSaveableStateHolder()
@@ -113,7 +123,12 @@ internal fun ResidentSceneHost(
                             },
                         ),
                     ) {
-                        holder.SaveableStateProvider(HOME_SCENE_KEY) { content(HOME_SCENE_KEY) }
+                        // 常驻首页自己避开顶部安全区，且与当前被盖路由无关：外壳不再按路由加减
+                        // statusBarsPadding，隐藏层的高度因此不随覆盖它的页头/沉浸式详情变化，
+                        // 网格不会被重新测量后按旧 key 停到另一行。
+                        Box(Modifier.fillMaxSize().then(Modifier.sceneTopInset())) {
+                            holder.SaveableStateProvider(HOME_SCENE_KEY) { content(HOME_SCENE_KEY) }
+                        }
                     }
                 }
             }
@@ -124,11 +139,33 @@ internal fun ResidentSceneHost(
             // 第二层：活动场景。不透明底色保证隐藏首页不会从活动页的留白处透出。
             val activeZ = if (activeKey.startsWith("tab:")) 1f else 2f
             Box(Modifier.fillMaxSize().zIndex(activeZ).background(MaterialTheme.colorScheme.background)) {
-                holder.SaveableStateProvider(activeKey) { content(activeKey) }
+                // chrome 只属于活动场景：外壳页头/提示条不再作为常驻层的兄弟占高度，
+                // 常驻首页的测量尺寸因此固定。详情路由是沉浸式场景，自管系统栏，不做顶部避让。
+                Column(
+                    Modifier.fillMaxSize().then(if (isImmersiveScene(activeKey)) Modifier else Modifier.sceneTopInset()),
+                ) {
+                    chrome(activeKey)
+                    holder.SaveableStateProvider(activeKey) { content(activeKey) }
+                }
             }
         }
     }
 }
+
+/**
+ * 顶部安全区：在外壳场景层统一避让，并声明这部分 inset 已被消费。自管顶部栏的场景
+ * （QimengTopBar 内部按 TopAppBar 默认 insets 避让）读到的剩余 statusBar inset 为 0，
+ * 不会二次让位；外壳因此不必再按路由区分「谁自己避让」。
+ */
+@Composable
+private fun Modifier.sceneTopInset(): Modifier =
+    statusBarsPadding().consumeWindowInsets(WindowInsets.statusBars)
+
+/**
+ * 沉浸式场景：详情（asset:）会临时隐藏系统栏、自管避让，外壳不给它加顶部安全区
+ * （与改前的渲染一致）；其余场景都在外壳层避让。
+ */
+private fun isImmersiveScene(key: String): Boolean = key.startsWith("asset:")
 
 /**
  * 场景生命周期 owner：把父（Activity）生命周期按「本场景是否可见」收窄成场景自身的

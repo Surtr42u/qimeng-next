@@ -15,6 +15,7 @@ dependencies {
     implementation(libs.gson)
     api(libs.coil.core)
     api(libs.okhttp)
+    implementation(libs.okhttp.sse)
     implementation(libs.retrofit.gson)
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)

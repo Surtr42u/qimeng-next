@@ -27,7 +27,8 @@ class SecureSettings(context: Context) {
     private val mutableRecentServers = MutableStateFlow<List<String>>(emptyList())
     private val mutableTransportRevision = MutableStateFlow(0L)
     private val mutableSearchHistory = MutableStateFlow<List<String>>(emptyList())
-    private val mutableAlbumColumns = MutableStateFlow(3)
+    private val mutableAlbumColumns = MutableStateFlow(DEFAULT_ALBUM_COLUMNS)
+    private val mutableHomeColumns = MutableStateFlow(DEFAULT_HOME_COLUMNS)
     private val mutableDefaultEndpoint = MutableStateFlow<String?>(null)
     val session = mutableSession.asStateFlow()
     val preferences = mutablePreferences.asStateFlow()
@@ -36,7 +37,20 @@ class SecureSettings(context: Context) {
     val transportRevision = mutableTransportRevision.asStateFlow()
     val searchHistory = mutableSearchHistory.asStateFlow()
     val albumColumns = mutableAlbumColumns.asStateFlow()
+    /** 首页推荐/COS 两格共用的列数；与相册/收藏/历史的 [albumColumns] 分开保存。 */
+    val homeColumns = mutableHomeColumns.asStateFlow()
     val defaultEndpoint = mutableDefaultEndpoint.asStateFlow()
+
+    /**
+     * 已解密令牌（仅内存）：每个请求的鉴权拦截器都读一次 [tokenFor]，而一次 AndroidKeyStore
+     * 取密钥 + AES-GCM 解密是两次 Keystore 绑定调用（旧版鉴权拦截器读的是内存里的
+     * ServerConfigDataSource.currentToken()，零成本）。首屏并发几十个请求时这些调用还会被
+     * 本类的 [Synchronized] 串行化，肉眼可见地推迟第一批缩略图。只在 [saveSession] 成功
+     * 后写入、[clearSession] 时清空——与磁盘上的密文同生命周期，不新增持久化面。
+     */
+    private var cachedToken: String? = null
+    /** Keystore 里的会话密钥：进程内只 load 一次（密钥不轮换，轮换必然伴随重新登录）。 */
+    private var cachedKey: SecretKey? = null
 
     init {
         try {
@@ -49,7 +63,8 @@ class SecureSettings(context: Context) {
             }
             storage.getString("recent-servers", null)?.let { mutableRecentServers.value = gson.fromJson(it, Array<String>::class.java).toList() }
             storage.getString("search-history", null)?.let { mutableSearchHistory.value = gson.fromJson(it, Array<String>::class.java).toList() }
-            mutableAlbumColumns.value = storage.getInt("album-columns", 3).coerceIn(2, 5)
+            mutableAlbumColumns.value = storage.getInt("album-columns", DEFAULT_ALBUM_COLUMNS).coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS)
+            mutableHomeColumns.value = storage.getInt("home-columns", DEFAULT_HOME_COLUMNS).coerceIn(MIN_HOME_COLUMNS, MAX_GRID_COLUMNS)
             mutableDefaultEndpoint.value = storage.getString("default-endpoint", null)?.takeIf { it in setOf("local", "nas") }
         } catch (_: Exception) {
             mutableError.value = "连接配置无法读取，请重新登录。原有传输记录仍保留。"
@@ -59,12 +74,13 @@ class SecureSettings(context: Context) {
     @Synchronized
     fun tokenFor(target: Session): String {
         check(sameTarget(target, mutableSession.value)) { "连接已变更，请重新登录此任务所属服务器" }
+        cachedToken?.let { return it }
         val encoded = storage.getString("token", null) ?: error("登录凭据已移除")
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
         require(bytes.size > 12) { "登录凭据损坏，请重新登录" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
-        return cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
+        return cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8).also { cachedToken = it }
     }
 
     @Synchronized
@@ -86,6 +102,7 @@ class SecureSettings(context: Context) {
             editor.remove("session-endpoint")
         }
         check(editor.commit()) { "无法保存登录凭据" }
+        cachedToken = token
         mutableSession.value = session
         mutableTransportRevision.value++
         mutableRecentServers.value = recent
@@ -113,10 +130,22 @@ class SecureSettings(context: Context) {
 
     @Synchronized
     fun saveAlbumColumns(columns: Int) {
-        val value = columns.coerceIn(2, 5)
+        val value = columns.coerceIn(MIN_GRID_COLUMNS, MAX_GRID_COLUMNS)
         if (value == mutableAlbumColumns.value) return
         check(storage.edit().putInt("album-columns", value).commit()) { "无法保存网格列数" }
         mutableAlbumColumns.value = value
+    }
+
+    /**
+     * 首页推荐/COS 两格共用的列数（单键：两格始终同一档）。范围与相册三页同一保存纪律
+     * （列数循环/捏合适用的 2~5 列），但下界是 1——首页顶栏提供单列大图流。值未变不重复写盘。
+     */
+    @Synchronized
+    fun saveHomeColumns(columns: Int) {
+        val value = columns.coerceIn(MIN_HOME_COLUMNS, MAX_GRID_COLUMNS)
+        if (value == mutableHomeColumns.value) return
+        check(storage.edit().putInt("home-columns", value).commit()) { "无法保存首页网格列数" }
+        mutableHomeColumns.value = value
     }
 
     @Synchronized
@@ -163,16 +192,34 @@ class SecureSettings(context: Context) {
     @Synchronized
     fun clearSession() {
         check(storage.edit().remove("session").remove("token").remove("certificate").remove("session-endpoint").commit()) { "无法清除登录凭据" }
+        cachedToken = null
         mutableSession.value = null
         mutableTransportRevision.value++
     }
 
     private fun key(): SecretKey {
+        cachedKey?.let { return it }
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey("qimeng.next.session", null) as? SecretKey)?.let { return it }
+        (store.getKey("qimeng.next.session", null) as? SecretKey)?.let { stored ->
+            cachedKey = stored
+            return stored
+        }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
             init(KeyGenParameterSpec.Builder("qimeng.next.session", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
-        }.generateKey()
+        }.generateKey().also { cachedKey = it }
     }
 }
+
+/** 网格列数档位：与客户端列数循环/捏合范围一致（2~5 列）。 */
+private const val MIN_GRID_COLUMNS = 2
+private const val MAX_GRID_COLUMNS = 5
+/**
+ * 首页允许单列（顶栏 1 列 ↔ 2 列切换，旧版 KEY_HOME_COLUMNS 同为 1~2），捏合仍只在 2~5 档。
+ * 读取与保存都必须用这个下界，否则用户选的单列在重启后被静默截成两列。
+ */
+private const val MIN_HOME_COLUMNS = 1
+/** 相册/收藏/历史共用的缺省列数（旧版相册页默认 3 列）。 */
+private const val DEFAULT_ALBUM_COLUMNS = 3
+/** 首页推荐/COS 的缺省列数（沿用当前首页双列）。 */
+private const val DEFAULT_HOME_COLUMNS = 2

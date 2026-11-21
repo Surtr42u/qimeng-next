@@ -7,6 +7,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -36,7 +38,7 @@ internal fun TimelineControls(asset: Asset, player: ExoPlayer, model: Management
         if (expanded) {
             marks.error?.let { ErrorNotice(it) { model.loadMarks(asset) } }
             error?.let { ErrorNotice(it) }
-            if (marks.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (marks.loading && !marks.loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
             marks.items.forEach { mark ->
                 Text("${mark.positionMs / 1000} 秒 · ${mark.label}")
                 if (mark.contentVersion != asset.version) Text("属于旧内容版本 ${mark.contentVersion}，位置不映射到当前视频", style = MaterialTheme.typography.bodySmall)
@@ -53,7 +55,9 @@ internal fun TimelineControls(asset: Asset, player: ExoPlayer, model: Management
     if (editor) {
         var position by rememberSaveable { mutableStateOf((startPosition / 1000.0).toString()) }
         var label by rememberSaveable { mutableStateOf(edit?.label.orEmpty()) }
-        var color by rememberSaveable { mutableStateOf(edit?.color ?: "#6750A4") }
+        // 默认色随当前主题主色（本项目为中性灰），不再写入 M3 基线紫；服务器仍按 #RRGGBB 保存。
+        val defaultColor = markColorHex(MaterialTheme.colorScheme.primary)
+        var color by rememberSaveable { mutableStateOf(edit?.color ?: defaultColor) }
         val seconds = position.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 && it <= Long.MAX_VALUE / 1000.0 }
         AlertDialog(onDismissRequest = { if (!busy) editor = false }, title = { Text("时间轴标记") }, text = {
             Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -73,3 +77,6 @@ internal fun TimelineControls(asset: Asset, player: ExoPlayer, model: Management
         confirmButton = { TextButton(onClick = { model.deleteMark(asset, mark); deleting = null }, enabled = !busy) { Text("删除") } },
         dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }) }
 }
+
+/** 服务器按 #RRGGBB 存标记颜色；用 Locale.ROOT 避免地区化数字影响十六进制输出。 */
+internal fun markColorHex(color: Color): String = String.format(java.util.Locale.ROOT, "#%06X", color.toArgb() and 0xFFFFFF)

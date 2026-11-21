@@ -62,6 +62,9 @@ func (s *Service) RenameCollection(ctx context.Context, w *Write, id, name strin
 	}
 	c.Name, c.Revision = name, c.Revision+1
 	_, err = q.ExecContext(ctx, "UPDATE collections SET name=?,naming_revision=naming_revision+1,data=json_set(data,'$.name',?,'$.revision',?) WHERE id=?", name, name, c.Revision, id)
+	if err == nil {
+		w.libraryChanged()
+	}
 	return c, err
 }
 
@@ -91,6 +94,9 @@ func (s *Service) SetCollectionMemberPosition(ctx context.Context, w *Write, id,
 	}
 	member, err = store.Get[CollectionMember](ctx, q, `UPDATE collection_members SET position=?,reported_position=NULL,revision=revision+1
 		WHERE collection_id=? AND asset_id=? RETURNING `+memberJSON, position, id, assetID)
+	if err == nil {
+		w.libraryChanged()
+	}
 	return member, Normalize(err)
 }
 

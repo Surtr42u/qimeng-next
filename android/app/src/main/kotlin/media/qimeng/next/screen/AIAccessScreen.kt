@@ -75,7 +75,7 @@ fun AIAccessScreen(library: LibraryViewModel, model: AIAccessViewModel = viewMod
                     FilterChip(filter == key, { model.refresh(state = key) }, enabled = !busy, label = { Text(label) })
                 }
             } }
-            if (state.loading || busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if ((state.loading || busy) && !state.loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (reconcile) item { ErrorNotice("上次创建结果未确认，请刷新有效连接核对后再继续。") { model.refresh(state = "active") } }
             state.error?.let { item { ErrorNotice(it) { model.refresh() } } }
             if (state.loaded && state.items.isEmpty()) item { Text("此状态暂无 AI 接入") }
@@ -379,7 +379,7 @@ private fun AIAccessForm(library: LibraryViewModel, model: AIAccessViewModel, cl
                                     }
                                     Text("单帧识图会向已配置的识图服务发送一帧派生预览；需要选择影库、授权接收或已有作品预览，并保留正数研究额度。",
                                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    if (sources.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                    if (sources.loading && sources.data == null) LinearProgressIndicator(Modifier.fillMaxWidth())
                                     sources.error?.let { ErrorNotice(it, model::loadResearchSources) }
                                     if (sources.data?.enabled == false) Text("服务器当前已关闭外部查询。所选来源会在服务开启后生效。",
                                         style = MaterialTheme.typography.bodySmall)

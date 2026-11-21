@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"qimeng.local/next/server/internal/events"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/storage"
 	"qimeng.local/next/server/internal/store"
@@ -73,24 +74,27 @@ type Service struct {
 	recommendationInputCache recommendationInputCache
 	DB                       *store.Store
 	Root                     *storage.Root
-	Config                   Config
-	InstanceID               string
-	mu                       sync.Mutex
-	owner                    *sql.DB
-	workCtx                  context.Context
-	stopWork                 context.CancelFunc
-	workers                  sync.WaitGroup
-	activeScans              int
-	uploadVerify             chan struct{}
-	protectionRead           chan struct{}
-	scanWorkers              map[string]scanWorker
-	scanWake                 chan struct{}
-	mirrorWake               chan struct{}
-	mirrorEnabled            atomic.Bool
-	password                 *passwordLogin
-	loginLimit               loginBudget
-	localSync                *localSyncRunner
-	monitor                  *libraryMonitor
+	// Events carries committed invalidation signals to connected clients. It
+	// never carries business state; the HTTP layer owns its transport.
+	Events         *events.Bus
+	Config         Config
+	InstanceID     string
+	mu             sync.Mutex
+	owner          *sql.DB
+	workCtx        context.Context
+	stopWork       context.CancelFunc
+	workers        sync.WaitGroup
+	activeScans    int
+	uploadVerify   chan struct{}
+	protectionRead chan struct{}
+	scanWorkers    map[string]scanWorker
+	scanWake       chan struct{}
+	mirrorWake     chan struct{}
+	mirrorEnabled  atomic.Bool
+	password       *passwordLogin
+	loginLimit     loginBudget
+	localSync      *localSyncRunner
+	monitor        *libraryMonitor
 }
 
 func New(config Config) (*Service, error) {
@@ -162,7 +166,7 @@ func New(config Config) (*Service, error) {
 		root.Close()
 		return nil, err
 	}
-	s := &Service{DB: db, Root: root, Config: config, owner: owner, scanWake: make(chan struct{}), uploadVerify: make(chan struct{}, 1), password: password, loginLimit: loginBudget{slots: make(chan struct{}, 2)}}
+	s := &Service{DB: db, Root: root, Config: config, owner: owner, scanWake: make(chan struct{}), uploadVerify: make(chan struct{}, 1), password: password, loginLimit: loginBudget{slots: make(chan struct{}, 2)}, Events: events.NewBus(nil, events.DefaultBuffer)}
 	s.protectionRead = make(chan struct{}, 1)
 	s.workCtx, s.stopWork = context.WithCancel(context.Background())
 	s.localSync = localSync
@@ -300,6 +304,8 @@ func (s *Service) Close() error {
 	if s.stopWork != nil {
 		s.stopWork()
 	}
+	// End every live stream before the HTTP server waits for connections.
+	s.CloseEvents()
 	s.previews.shutdown()
 	s.workers.Wait()
 	s.selectedReads.wait()
@@ -377,6 +383,8 @@ type Write struct {
 	rollback                  []func()
 	operation, key, inputHash string
 	preparedUpload            string
+	changes                   []change
+	changeKeys                map[string]struct{}
 }
 
 func (w *Write) Q() (store.Querier, error) {
@@ -451,6 +459,9 @@ func (s *Service) Run(ctx context.Context, p model.Principal, operation, key str
 	}
 	w.tx = nil
 	committed = true
+	// Notify only after the transaction is durable: a rolled-back or replayed
+	// write must never tell clients to reload.
+	s.publishChanges(w.changes)
 	s.wakeAuthorMirror()
 	for _, after := range w.after {
 		if err = after(); err != nil {

@@ -259,7 +259,7 @@ jobs:
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
       - name: Compile and verify Android
         run: |
-          gradle --no-daemon -p android -Pqimeng.embedded=false -I "$GITHUB_WORKSPACE/android/architecture/verify.gradle" verifyClientArchitecture :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug --stacktrace
+          gradle --no-daemon -p android -Pqimeng.embedded=false -I "$GITHUB_WORKSPACE/android/architecture/verify.gradle" verifyClientArchitecture :app:testClientDebugUnitTest :core:model:test :core:data:testDebugUnitTest :core:ui:testDebugUnitTest :app:lintClientDebug :app:assembleClientRelease --stacktrace
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -268,6 +268,7 @@ jobs:
           path: |
             android/**/build/reports/
             android/app/build/outputs/apk/client/debug/*.apk
+            android/app/build/outputs/apk/client/release/*.apk
   android-native:
     if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'android'
     needs: generate
@@ -326,9 +327,10 @@ jobs:
         run: |
           sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;28.2.13676358'
           python tools/stage_android_native.py "$RUNNER_TEMP/android-native"
-          gradle --no-daemon -p android :embedded:assembleDebug :app:assembleEmbeddedDebug :app:testEmbeddedDebugUnitTest :embedded:testDebugUnitTest :app:lintEmbeddedDebug --stacktrace
+          gradle --no-daemon -p android :embedded:assembleDebug :app:assembleEmbeddedDebug :app:testEmbeddedDebugUnitTest :embedded:testDebugUnitTest :app:lintEmbeddedDebug :app:assembleEmbeddedRelease --stacktrace
           python tools/check_android_apk.py embedded android/embedded/build/outputs/aar/embedded-debug.aar
           python tools/check_android_apk.py embedded android/app/build/outputs/apk/embedded/debug/app-embedded-debug.apk
+          python tools/check_android_apk.py embedded android/app/build/outputs/apk/embedded/release/app-embedded-release.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -337,6 +339,7 @@ jobs:
           path: |
             android/**/build/reports/
             android/app/build/outputs/apk/embedded/debug/*.apk
+            android/app/build/outputs/apk/embedded/release/*.apk
             android/embedded/build/outputs/aar/embedded-debug.aar
   live:
     if: github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'web'

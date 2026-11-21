@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,15 +33,21 @@ import media.qimeng.next.ui.theme.softDaylightShadow
 fun StatsDetailScreen(model: LibraryViewModel, mode: String, range: String) {
     val state by model.analytics.collectAsStateWithLifecycle()
     val seriesColors = qimengStatsSeriesColors()
+    // 列表状态提到报告内容之外：换范围只替换条目，列本身不离开组合，滚动状态对象始终存活。
+    val listState = rememberLazyListState()
     LaunchedEffect(range) { if (state.data?.overview?.range != range) model.loadAnalytics(range) }
     val title = when (mode) { "trends" -> "类型浏览趋势"; "distribution" -> "分布统计"; else -> "常看作者与标签" }
+    val report = state.data?.takeIf { it.overview.range == range }
     Column(Modifier.fillMaxSize()) {
         StatsDetailTopBar(if (mode == "distribution") title else "$title · ${statsRangeSuffix(range)}", model::back)
-        if (state.loading) Text("加载中…", Modifier.padding(horizontal = 16.dp, vertical = 16.dp), style = MaterialTheme.typography.bodyMedium)
         state.error?.let { ErrorNotice(it) { model.loadAnalytics(range) } }
-        state.data?.takeIf { it.overview.range == range }?.let { report ->
-            val o = report.overview
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (report == null) {
+                // 提示只在还没有本范围报告时占据内容位置；已有报告时不向内容上方插入行。
+                if (state.loading) item { Text("加载中…", style = MaterialTheme.typography.bodyMedium) }
+            } else {
+                val o = report.overview
                 when (mode) {
                     "trends" -> {
                         item { DetailTrendCard("类型浏览趋势", typeDimensions(seriesColors), report.trends) }

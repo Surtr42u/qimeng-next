@@ -429,6 +429,7 @@ func (s *Service) completeUpload(ctx context.Context, w *Write, id string, prepa
 		if err != nil {
 			return model.UploadResult{}, err
 		}
+		w.uploadDone(asset.ID)
 		return model.UploadResult{Upload: publishedUpload(u, asset), Asset: &asset}, nil
 	}
 	if e = s.uploadsAllowed(ctx); e != nil {
@@ -690,6 +691,9 @@ func (s *Service) ingestPrepared(ctx context.Context, w *Write, u model.Upload, 
 	if e != nil {
 		return model.UploadResult{}, e
 	}
+	// The library invalidation is recorded by the file intent; upload.done adds
+	// the asset identity for clients that can refresh one entry precisely.
+	w.uploadDone(a.ID)
 	return model.UploadResult{Upload: publishedUpload(u, a), Asset: &a}, nil
 }
 func publishedUpload(u model.Upload, a model.Asset) model.Upload {

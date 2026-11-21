@@ -58,11 +58,7 @@ class ExtractionVocabularyViewModel(application: Application) : AndroidViewModel
                 val value = graph.extractionVocabulary.read(target)
                 if (!connected(target, connection)) return@launch
                 val current = mutable.value
-                mutable.value = when {
-                    replaceDraft || !current.dirty -> current.copy(base = value, draft = value.layer, loading = false, conflict = false)
-                    current.base?.revision == value.revision -> current.copy(base = value, loading = false)
-                    else -> current.copy(loading = false, conflict = true)
-                }
+                mutable.value = current.afterRead(value, replaceDraft)
                 if (replaceDraft) saveKey = UUID.randomUUID().toString()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {

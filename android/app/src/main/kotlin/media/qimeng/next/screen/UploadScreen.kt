@@ -90,7 +90,7 @@ fun UploadScreen(model: LibraryViewModel, naming: NamingViewModel = viewModel())
                         model::setUploadAutoName, model::setUploadFamily, { numberClass = it }, { naming.inspect(namingRequest) })
                     Button(onClick = model::startUpload, enabled = !busy && libraries.any { it.id == selected && it.enabled } &&
                         drafts.all { draft -> stems[draft.id]?.let(draft::validStem) != false } &&
-                        (!needsNaming || (namingState.request == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.canSubmit == true)),
+                        (!needsNaming || (namingState.inspectionRequest == namingRequest && !namingState.loading && namingState.error == null && namingState.inspection?.canSubmit == true)),
                         modifier = Modifier.fillMaxWidth()) { Text(if (busy) "上传中…" else "开始上传（${drafts.size} 项）") }
                 }
             }
@@ -192,7 +192,7 @@ private fun UploadAssociations(model: LibraryViewModel, target: Session, transpo
             OutlinedButton(onClick = { chooseAuthors = true }, enabled = !busy) { Text("选择作者") }
             var refreshSources by remember { mutableIntStateOf(0) }
             val options = acquisitionOptions(target, transport, refreshSources)
-            if (options.loading) Text("正在读取已有来源…", style = MaterialTheme.typography.bodySmall)
+            if (options.loading && options.data == null) Text("正在读取已有来源…", style = MaterialTheme.typography.bodySmall)
             options.error?.let { ErrorNotice(it) { refreshSources++ } }
             if (authorIds.isNotEmpty()) {
                 OutlinedTextField(authorSources, model::setUploadAuthorSources, enabled = !busy,
@@ -269,7 +269,7 @@ private fun BatchTasksScreen(model: LibraryViewModel) {
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { TextButton(onClick = { model.loadReports() }) { Text("刷新任务") } }
         state.error?.let { item { ErrorNotice(it) { model.loadReports() } } }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.loading && !state.loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         if (state.loaded && state.items.isEmpty()) item { Text("暂无任务报告") }
         items(state.items, key = { it.id }) { task -> ContentCard {
             Text(task.summary, style = MaterialTheme.typography.titleMedium)

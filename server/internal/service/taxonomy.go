@@ -92,6 +92,9 @@ func (s *Service) SaveSource(ctx context.Context, w *Write, id string, in TermIn
 		return v, e
 	}
 	_, e = q.ExecContext(ctx, "INSERT INTO sources(id,name,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,data=excluded.data", v.ID, v.Name, raw)
+	if e == nil {
+		w.libraryChanged()
+	}
 	return v, e
 }
 func (s *Service) SaveCharacter(ctx context.Context, w *Write, id string, in TermInput) (Character, error) {
@@ -135,6 +138,9 @@ func (s *Service) SaveCharacter(ctx context.Context, w *Write, id string, in Ter
 		return v, e
 	}
 	_, e = q.ExecContext(ctx, "INSERT INTO characters(id,source_id,name,data) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,name=excluded.name,data=excluded.data", v.ID, v.SourceID, v.Name, raw)
+	if e == nil {
+		w.libraryChanged()
+	}
 	return v, e
 }
 func (s *Service) resolveTaxonomy(ctx context.Context, a *model.Asset, sourceIDs, characterIDs []string) error {

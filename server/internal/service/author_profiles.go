@@ -165,6 +165,9 @@ func (s *Service) UpdateAuthorProfile(ctx context.Context, w *Write, authorID, b
 	if oldAvatar != nil && current.Avatar == nil {
 		err = pruneProfileAvatar(ctx, q, oldAvatar.ID)
 	}
+	if err == nil {
+		w.libraryChanged()
+	}
 	return current, err
 }
 

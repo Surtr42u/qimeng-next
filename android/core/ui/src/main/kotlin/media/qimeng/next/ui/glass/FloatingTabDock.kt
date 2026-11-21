@@ -2,6 +2,7 @@ package media.qimeng.next.ui.glass
 
 import android.os.Build
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -83,6 +84,9 @@ fun FloatingTabDock(
     material: TabBarMaterial,
     backdrop: QimengBackdropState?,
     modifier: Modifier = Modifier,
+    // 选中丸的动画位置由导航栏持有：坞体离开组合（pushed 路由）再回来时沿用上次位置，
+    // 不会因为新 Animatable 从 NaN 起步而先以 alpha 0 隐藏一帧。
+    pillCenter: Animatable<Float, AnimationVector1D> = remember { Animatable(Float.NaN) },
 ) {
     val capability = resolveBackdropCapabilities()
     // 效果提到文件常量，下游再按参数记住整条 drawBackdrop 修饰链：坞体重组时复用同一元素实例。
@@ -129,6 +133,7 @@ fun FloatingTabDock(
                     externalBackdrop = backdrop?.backdrop,
                     dockEffects = dockEffects,
                     scrimAlpha = scrimAlpha,
+                    pillCenter = pillCenter,
                 )
             }
             Spacer(
@@ -347,6 +352,7 @@ private fun DockItemsRow(
     externalBackdrop: Backdrop?,
     dockEffects: BackdropEffectScope.() -> Unit,
     scrimAlpha: Float,
+    pillCenter: Animatable<Float, AnimationVector1D>,
 ) {
     val density = LocalDensity.current
     var rowWidthPx by remember { mutableIntStateOf(0) }
@@ -359,7 +365,6 @@ private fun DockItemsRow(
         }
     val indicatorInsetPx = with(density) { TabDockDefaults.IndicatorInset.toPx() }
     val pillWidthPx = (slotWidthPx - 2 * indicatorInsetPx).coerceAtLeast(0f)
-    val pillCenter = remember { Animatable(Float.NaN) }
     val reduced = LocalReducedMotion.current
     LaunchedEffect(slotWidthPx, selectedIndex, reduced) {
         if (slotWidthPx <= 0f) return@LaunchedEffect

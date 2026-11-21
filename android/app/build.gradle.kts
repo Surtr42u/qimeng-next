@@ -11,6 +11,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    buildTypes {
+        // 交付/装机包必须是非 debuggable 的 release（旧版装机包同样是 release：minify + debug 签名）。
+        // 原因有两条，都在工具链里可查：
+        // 1) AGP 只把 assets/dexopt/baseline.prof 打进非 debuggable 变体
+        //    （PackageAndroidArtifact$CreationAction 对 getDebuggable()==true 不接 BINARY_ART_PROFILE 制品）；
+        // 2) ART 对 debuggable 包固定用 verify 过滤安装，不会按 profile 做 AOT，JIT 也要等跑热。
+        // 因此 debug 包只用于开发/仪器测试；性能对比与设备使用一律装 release（debug 签名，可覆盖安装）。
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // 本地实测用非发布签名：沿用 debug 签名档，保证能直接覆盖安装到已装 debug 的设备。
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
     flavorDimensions += "runtime"
     productFlavors {
         create("client") { dimension = "runtime" }
@@ -35,6 +50,9 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(libs.core)
     implementation(libs.activity)
+    // Baseline Profile 安装器（API 24+ 首次启动把 assets/dexopt/baseline.prof 写入 ART 的 cur 目录）。
+    // 之前只靠 Compose 的传递依赖带进来：一旦依赖树变化，profile 就没人装了，故显式声明。
+    implementation(libs.profileinstaller)
     implementation(libs.work)
     implementation(libs.lifecycle.runtime)
     implementation(libs.lifecycle.viewmodel)

@@ -145,5 +145,6 @@ func (s *Service) DeleteLibrary(ctx context.Context, w *Write, id string, revisi
 		s.wakeLibraryMonitor()
 		return nil
 	})
+	w.libraryChanged()
 	return nil
 }

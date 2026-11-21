@@ -21,6 +21,8 @@ data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = 
     val refreshing: Boolean = false)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
+/** 一次资产页请求的结果；[restarted] 表示推荐顺序过期后已静默重取第一页（见 [LibraryViewModel.browse]）。 */
+private data class FetchedPage(val page: Page<Asset>, val restarted: Boolean)
 
 class LibraryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     private val graph = (application as QimengApplication).graph
@@ -42,7 +44,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     val session = repository.session
     val preferences = graph.settings.preferences
     val albumColumns = graph.settings.albumColumns
-    private val albumColumnWrites = Mutex()
+    val homeColumns = graph.settings.homeColumns
+    /** 网格列数写入串行化：相册三页与首页两格共用同一把锁，列数提交不会交错。 */
+    private val columnWrites = Mutex()
     val settingsError = graph.settings.error
     val queue = graph.queue.state
     val lastPublication = graph.uploads.lastPublication
@@ -64,6 +68,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val nameWrites = mutableMapOf<String, Job>()
     private val mutableMessage = MutableStateFlow<String?>(null)
     val message = mutableMessage.asStateFlow()
+    /** 一次性轻提示的票据：新提示递增，旧定时器据此不再清掉新消息。 */
+    private var hintTicket = 0L
     private val mutableBusy = MutableStateFlow(false)
     val busy = mutableBusy.asStateFlow()
     private val libraryState = MutableStateFlow(ListState<Library>())
@@ -127,10 +133,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private var connectionGeneration = 0L
     private val activeOperations = mutableSetOf<Job>()
     private val pageJobs = mutableMapOf<MutableStateFlow<*>, Job>()
+    /** 与服务端事件计数配对：同一会话上的后续计数才算真实推送（见 [ServerEventSessionGate]）。 */
+    private val serverEventGate = ServerEventSessionGate()
 
     init {
         viewModelScope.launch {
             session.collect { connection ->
+                // 会话切换：下一次计数只当作重连（见 ServerEventSessionGate），不能拿旧会话
+                // 已加载的列表去补读——即便重新登录的是同一台服务器，列表也已在上方清空。
+                serverEventGate.forget()
                 connectionGeneration++
                 activeOperations.toList().forEach(Job::cancel)
                 mutableBusy.value = false
@@ -168,6 +179,33 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 }
             }
         }
+        // 服务端事件流（core/data 的 ServerEventConsumer）只广播「哪类数据变旧了」：library /
+        // favorite / like 是单调计数，合并成一个数后任意一类变化都做同一件事——静默重读已有
+        // 内容的列表与打开中的详情。distinctUntilChanged 消除三类计数在同一轮里相加后不变
+        // 的情况；drop(1) 丢掉 combine 的初始值（三个 0），不为启动补读。
+        // 会话闸门：连接（重新）建立时流会把三类计数各补一次（断线期间的事件无法重放），
+        // 那一次必须丢弃——此刻列表状态还属于旧会话，拿它 browse 会把旧查询发到新服务器。
+        viewModelScope.launch {
+            combine(graph.serverEvents.signals.library, graph.serverEvents.signals.favorite, graph.serverEvents.signals.like) { library, favorite, like ->
+                library + favorite + like
+            }.distinctUntilChanged().drop(1).collect {
+                if (serverEventGate.accept(session.value)) refreshAfterServerEvent()
+            }
+        }
+    }
+
+    /**
+     * 服务器推送后的静默补读：只重读已经有内容的列表，以及打开中的详情。未加载的列表由
+     * 各页面自己的首载负责（这里补读也只会让骨架多一次请求）。全部走 silent：不亮下拉刷新
+     * 指示、不触发 §1 的滚动归位——后台推送不应挪动用户正在看的位置。
+     */
+    private fun refreshAfterServerEvent() {
+        if (session.value == null) return
+        lists.forEach { (key, state) ->
+            if (state.value.loaded) browse(key, force = true, silent = true)
+        }
+        val open = route.value
+        if (open.startsWith("asset:")) refreshAsset(open.substringAfter(':'))
     }
 
     /**
@@ -220,11 +258,16 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     private fun connectionInstance(): String = session.value?.instanceId.orEmpty()
 
-    fun saveAlbumColumns(columns: Int) {
+    fun saveAlbumColumns(columns: Int) = saveColumns(columns) { graph.settings.saveAlbumColumns(it) }
+
+    /** 首页推荐/COS 两格的列数落盘（与相册列数同一把写锁、同一保存纪律）。 */
+    fun saveHomeColumns(columns: Int) = saveColumns(columns) { graph.settings.saveHomeColumns(it) }
+
+    private fun saveColumns(columns: Int, write: suspend (Int) -> Unit) {
         viewModelScope.launch {
             try {
-                albumColumnWrites.withLock {
-                    withContext(Dispatchers.IO) { graph.settings.saveAlbumColumns(columns) }
+                columnWrites.withLock {
+                    withContext(Dispatchers.IO) { write(columns) }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableMessage.value = explain(failure) }
@@ -272,7 +315,17 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         }
         browse("albums", force = true)
     }
-    fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false) {
+    /**
+     * 加载一页资产。[announceUnchanged] 只由用户显式下拉刷新传入：同一查询的强制首屏刷新
+     * 返回与屏幕完全相同的 id 序列时，经 [mutableMessage] 提示一次「已是最新」；
+     * 翻页、首载、筛选变化与后台补查都不提示。
+     *
+     * [silent] 只由服务器推送补读传入：不点亮下拉刷新指示（[ListState.refreshing]），
+     * 因此界面不会把它当作一次用户刷新去做滚动归位；已翻页的清单同时沿用「新鲜度补查」
+     * 的并入语义，不把用户已经滚到的页数截回第一页。
+     */
+    fun browse(key: String, query: AssetQuery = query(key), next: Boolean = false, force: Boolean = false,
+               announceUnchanged: Boolean = false, silent: Boolean = false) {
         val state = assetState(key)
         val previous = queries[key]
         val publication = lastPublication.value?.takeIf { sameTarget(it.first, session.value) }?.second
@@ -293,26 +346,24 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         // 条目与计数保持可见，只在响应落地时整页替换。只有从未加载过的列表才新建空状态（骨架）。
         val keep = next || previous == query || old.loaded || old.items.isNotEmpty()
         // 只有显式刷新（下拉/重试）与首页换 seed 才亮刷新指示；普通筛选重查沿用内容、不亮指示。
-        // 入库标记过期的同查询补查（freshnessOnly）是静默维护，同样不亮用户没触发的刷新指示。
-        val refreshing = !next && !freshnessOnly && (force || (previous != null && previous.copy(seed = query.seed) == query))
+        // 入库标记过期的同查询补查（freshnessOnly）是静默维护，同样不亮用户没触发的刷新指示；
+        // 服务器推送补读（silent）也是后台维护，用户没有下拉动作。
+        val refreshing = !silent && !next && !freshnessOnly && (force || (previous != null && previous.copy(seed = query.seed) == query))
+        // 只有用户显式下拉传入 announceUnchanged 才比较刷新前后；重试、换 seed 与后台补查都不算。
+        val reportUnchanged = announceUnchanged && !next && force
         // 翻页沿用原发布标记（尚未按最新发布补齐），首屏/刷新才认领当前发布。
         val requestPublication = if (next) old.publicationId else publication
         state.value = if (keep) old.copy(loading = true, refreshing = refreshing, error = null, publicationId = requestPublication)
             else ListState(loading = true, publicationId = requestPublication)
         listJobs[key] = viewModelScope.launch {
             try {
-                var restarted = false
-                val page = try {
-                    repository.assets(query, if (next) old.cursor else null)
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) {
-                    // 推荐顺序在服务端会短时过期，旧游标随之失效；此时静默从第一页重新加载，
-                    // 不把自动恢复当成需要用户处理的错误。其他失败仍照常呈现。
-                    if (!next || failure !is ApiFailure || failure.code != "recommendation_expired") throw failure
-                    restarted = true
-                    repository.assets(query, null)
-                }
-                val append = next && !restarted
+                // 翻页瞬时失败按 APPEND_RETRY_DELAYS_MS 退避重试；首载/刷新/筛选变化立即失败。
+                // 推荐顺序过期仍静默从第一页重取，退避重试不重置该分支（见 requestAssetPage）。
+                val fetched = requestAssetPage(query, if (next) old.cursor else null, next) {
+                    generation.isCurrent(ticket) && connection == connectionGeneration
+                } ?: return@launch
+                val page = fetched.page
+                val append = next && !fetched.restarted
                 if (generation.isCurrent(ticket) && connection == connectionGeneration) {
                     // 过期游标静默重取第一页后仍然**并入**现有清单：把屏幕上的 N 条缩成 50 条
                     // 会在用户钉在底部时抽走内容、把滚动位置钉到新尾部（旧版换轮追加=去重后
@@ -323,17 +374,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                     // 清单仍停在上一个查询，不能借入库补查把旧人群的条目混进新查询）。
                     // old.loaded 排除被有意作废的清单（批量改作者/来源会把 loaded 置假）：
                     // 那些旧条目已经不属于新人群，必须整页替换而不是并入。
+                    // 服务器推送的 silent 补读同样并入：它可能发生在用户滚到第 5 页时，整页替换
+                    // 会把清单截回第一页并把位置钉到新尾部（后台推送不应挪动阅读位置）。
                     // totalMatched 仅首屏返回，翻页继承已有非空总数，避免页头计数被 null 冲掉。
                     // 空页连发保护（旧版 HomeViewModel.MAX_EMPTY_SEED_ROUNDS=3 同口径）：服务端
                     // 可能按页过滤掉已回收/停用项而返回「0 条 + 非空游标」，哨兵会立刻再要下一页；
                     // 连续 MAX_EMPTY_APPEND_PAGES 个空页后把游标视为到底，停手而不是成串发请求。
-                    val emptyStreak = if (next && !restarted && page.items.isEmpty()) (emptyAppends[key] ?: 0) + 1 else 0
+                    val emptyStreak = if (next && !fetched.restarted && page.items.isEmpty()) (emptyAppends[key] ?: 0) + 1 else 0
                     if (emptyStreak == 0) emptyAppends.remove(key) else emptyAppends[key] = emptyStreak
-                    val exhausted = next && !restarted && page.items.isEmpty() && emptyStreak >= MAX_EMPTY_APPEND_PAGES
+                    val exhausted = next && !fetched.restarted && page.items.isEmpty() && emptyStreak >= MAX_EMPTY_APPEND_PAGES
                     // 空页不并入：第一页为空说明匹配项可能已被回收/停用（totalMatched=0），
                     // 此时保留旧条目会让网格与页头计数互相矛盾；空页走整页替换，两者一起归零。
-                    val mergeFresh = freshnessOnly && page.items.isNotEmpty() && old.loaded && old.loadedQuery == query && key in paginatedKeys
-                    val merged = append || restarted || mergeFresh
+                    val mergeFresh = (freshnessOnly || (silent && !next)) && page.items.isNotEmpty() && old.loaded && old.loadedQuery == query && key in paginatedKeys
+                    val merged = append || fetched.restarted || mergeFresh
                     // 整页替换（换筛选/显式刷新）后列表重新从第一页开始，翻页标记随之作废。
                     if (next || mergeFresh) paginatedKeys.add(key) else paginatedKeys.remove(key)
                     // 并入是 O(n) 的 id 去重：页追加时放到 Default，避免在页边界占住主线程。
@@ -342,6 +395,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                         withContext(Dispatchers.Default) { appendDistinct(old.items, page.items) }
                     } else page.items
                     if (!generation.isCurrent(ticket) || connection != connectionGeneration) return@launch
+                    // 下拉刷新成功但首屏 id 序列与屏幕上的完全一致：不重建内容，只轻提示一次。
+                    val unchangedRefresh = reportUnchanged && old.loaded && old.loadedQuery == query &&
+                        sameAssetIds(old.items, page.items)
                     state.value = ListState(mergedItems,
                         // 新鲜度并入沿用原游标：从用户停下的位置继续翻页，不把第 2..N 页重走一遍。
                         when {
@@ -351,12 +407,60 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                         }, loaded = true, totalMatched = page.totalMatched ?: old.totalMatched.takeIf { next || mergeFresh },
                         dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query,
                         unknownDateCount = if (next) old.unknownDateCount else page.unknownDateCount, publicationId = requestPublication)
+                    if (unchangedRefresh) showUpToDateHint()
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (generation.isCurrent(ticket) && connection == connectionGeneration)
                     state.value = state.value.copy(loading = false, refreshing = false, error = explain(failure))
             }
+        }
+    }
+
+    /**
+     * 取一页资产。[append] 失败按 [APPEND_RETRY_DELAYS_MS] 退避重试（旧版 APPEND_RETRY_DELAYS_MS
+     * 的「翻页失败即卡死」修复）；首载/显式刷新/筛选变化立即失败。推荐顺序过期仍静默从第一页
+     * 重取，且不消耗重试次数。[stillCurrent] 在每次退避后校验代次与连接，失效即放弃（返回 null），
+     * 调用方不写任何状态。
+     */
+    private suspend fun requestAssetPage(
+        query: AssetQuery,
+        cursor: String?,
+        append: Boolean,
+        stillCurrent: () -> Boolean,
+    ): FetchedPage? {
+        var restarted = false
+        var retryAttempt = 0
+        while (true) {
+            try {
+                val page = repository.assets(query, if (restarted) null else cursor)
+                return FetchedPage(page, restarted)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (!restarted && append && failure is ApiFailure && failure.code == "recommendation_expired") {
+                    restarted = true
+                    continue
+                }
+                val retryDelay = appendRetryDelayMs(append, retryAttempt) ?: throw failure
+                retryAttempt++
+                delay(retryDelay)
+                // 退避期间刷新/筛选/换连接已接管：直接退出，不把残局写回状态。
+                if (!stillCurrent()) return null
+            }
+        }
+    }
+
+    /**
+     * 刷新成功但内容未变的一次性轻提示（旧版 HomeUiState.infoMessage 口径：2.5 秒自动消退）。
+     * 用户手动关闭、导航清空或期间出现新提示时，旧定时器不得误清。
+     */
+    private fun showUpToDateHint() {
+        val ticket = ++hintTicket
+        mutableMessage.value = LIST_UP_TO_DATE_MESSAGE
+        viewModelScope.launch {
+            delay(UP_TO_DATE_HINT_MS)
+            if (ticket == hintTicket && mutableMessage.value == LIST_UP_TO_DATE_MESSAGE) mutableMessage.value = null
         }
     }
 
@@ -571,6 +675,20 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun detailPosition(id: String): Pair<Int, Int> {
         val batch = saved.get<String>("detailListKey")?.let { lists[it]?.value?.items }.orEmpty()
         return batch.indexOfFirst { it.id == id } to batch.size
+    }
+
+    /**
+     * 详情邻位原图候选：只取已加载清单内的邻居，不为了预载去多拉批次。
+     * 旧版 DetailPreloadPolicy 取前 2 后 1；是否值得预载（字节上限、媒体类型）由调用方按
+     * 列表行自带的事实判断，这里只负责位置。
+     */
+    fun detailNeighbourOriginals(id: String, back: Int, forward: Int): List<Asset> {
+        val source = saved.get<String>("detailListKey")?.let { lists[it]?.value?.items }.orEmpty()
+        val index = source.indexOfFirst { it.id == id }
+        if (index < 0) return emptyList()
+        val ahead = ((index + 1)..minOf(index + forward, source.lastIndex)).map(source::get)
+        val behind = ((index - 1) downTo maxOf(0, index - back)).map(source::get)
+        return ahead + behind
     }
 
     fun setFavorite(asset: Asset, favorite: Boolean) = applyReaction("favorite", asset, favorite) { key -> repository.setFavorite(asset, favorite, key) }
@@ -956,6 +1074,40 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 }
 
 /**
+ * 服务器事件计数与会话的配对闸门。
+ *
+ * 事件流每次（重新）建立都会把所有计数各加一次（`ServerEventSignals.streamOpened`），
+ * 因为断线期间的事件无法重放，重连后补一次权威读取是正确的补偿。但在登录 / 换服 / 登出
+ * 引起的会话切换上，这一次补增不能触发「重读已加载列表」：那一刻列表状态仍属于旧会话，
+ * 拿旧查询去 browse 会打新服务器（或登出后根本没有会话）。因此：
+ * - 没有会话时不接受；
+ * - 与上一次计数属于同一会话才接受（会话刚出现/刚更换的第一次计数只当作重连）。
+ * 纯逻辑，单测锁定。
+ */
+internal class ServerEventSessionGate {
+    private var lastSession: Session? = null
+    private var seen = false
+
+    /** 会话切换（登录 / 登出 / 换服）：下一次计数一律只算重连，不补读上一会话的列表。 */
+    fun forget() {
+        lastSession = null
+        seen = false
+    }
+
+    /** 记录本次计数对应的会话；true 表示同一会话上的真实推送，可以补读。 */
+    fun accept(current: Session?): Boolean {
+        if (current == null) {
+            lastSession = null
+            return false
+        }
+        val sameSession = seen && current == lastSession
+        lastSession = current
+        seen = true
+        return sameSession
+    }
+}
+
+/**
  * 连续空页上限（值 3 沿用旧版 HomeViewModel.MAX_EMPTY_SEED_ROUNDS = 3 的同款裁决：有限库
  * 深翻页被掏干后，3 轮空转即可判定穷尽，多试只是白打请求）。这里是「页」而不是「换 seed
  * 轮次」：服务端逐页过滤已回收/停用候选时会返回 0 条 + 非空游标，若不设上限，触底哨兵会
@@ -963,6 +1115,34 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
  * 到底（`cursor = null`），列表停手；下拉刷新或换查询重新计数。
  */
 private const val MAX_EMPTY_APPEND_PAGES = 3
+
+/**
+ * 下拉刷新成功但内容与刷新前完全一致的一次性提示（旧版 ListQueryDefaults.LIST_UP_TO_DATE_MESSAGE
+ * 同文案）。服务端返回同页同序数据时界面零变化，用户无法区分「没反应」与「刷新了但没新的」。
+ */
+internal const val LIST_UP_TO_DATE_MESSAGE = "已是最新，内容没有变化"
+
+/** 轻提示自动消退时间（毫秒）：旧版 HomeViewModel.INFO_HINT_AUTO_CLEAR_MS = 2_500L 同值。 */
+private const val UP_TO_DATE_HINT_MS = 2_500L
+
+/**
+ * 翻页（append）网络失败自动重试延迟（毫秒）：旧版 ListQueryDefaults.APPEND_RETRY_DELAYS_MS
+ * = listOf(1_000L, 3_000L) 同值（2026-09-28 问题A「翻页失败即卡死」）。第 1 次失败后等 1 秒、
+ * 再失败等 3 秒，仍失败才亮错误横幅；两次封顶防持续故障下无限锤击请求。
+ */
+internal val APPEND_RETRY_DELAYS_MS = listOf(1_000L, 3_000L)
+
+/**
+ * 第 [attempt] 次失败（从 0 计）后的重试延迟；null = 不重试。只有翻页（[append]）重试：
+ * 首载/显式刷新/筛选变化是用户显式动作，失败要立即反馈；翻页失败时用户往往钉在底部等待，
+ * 不重试就必须上滚再回滚才能再次触发。纯函数，重试节奏由单测锁定。
+ */
+internal fun appendRetryDelayMs(append: Boolean, attempt: Int): Long? =
+    if (append) APPEND_RETRY_DELAYS_MS.getOrNull(attempt) else null
+
+/** 屏幕上现有的清单与刷新返回的首屏逐项同 id、同顺序、同长度（不把重排冒充变化）。 */
+private fun sameAssetIds(onScreen: List<Asset>, fresh: List<Asset>): Boolean =
+    onScreen.size == fresh.size && onScreen.indices.all { onScreen[it].id == fresh[it].id }
 
 /**
  * 分页追加：一趟扫描按 id 去重（先出现的保留）。原实现 `old + page` 之后 `distinctBy` 要分配

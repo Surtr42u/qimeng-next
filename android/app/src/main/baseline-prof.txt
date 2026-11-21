@@ -1,0 +1,37 @@
+# 手工 baseline profile（HSPL = Hot + Startup + Post-startup；官方“手动编写规则”语法）。
+# 覆盖：冷启动壳（Application/MainActivity/ViewModel）→ 首页首滑（推荐/COS/排行三格）→
+# 相册索引与筛选 → 详情打开（ImageLoader/缩放/播放桥）→ 首个请求链路的网络与反序列化。
+# androidx 热点由各库 AAR 自带 profile 在合并时覆盖（Compose/Material3/Coil 等），不重复手写。
+# 与旧版 baseline-prof.txt 同一写法：整包通配，避免逐方法维护；R8 会在 release 构建里
+# 自动改写这些未混淆规则以匹配混淆后的类名。
+#
+# 冷启动壳：Application / MainActivity / 各 ViewModel（包根下的顶层类）
+HSPLmedia/qimeng/next/*;->**(**)
+# 组合与导航：AppRoot、场景宿主、各页面（首帧到首滑的主要方法体）
+HSPLmedia/qimeng/next/screen/**->**(**)
+# 数据层：SecureSettings/ApiProvider/各 Repository（首屏请求、缩略图取图、事件流）
+HSPLmedia/qimeng/next/data/**->**(**)
+# 领域模型与 Gson 反序列化（首屏列表/实例文档/队列日志）
+HSPLmedia/qimeng/next/model/**->**(**)
+# 共享 UI：主题、玻璃材质、骨架屏、底栏（首帧即参与测量/绘制）
+HSPLmedia/qimeng/next/ui/**->**(**)
+# 生成 SDK：Retrofit 接口与 DTO 反序列化（首屏 GET /assets、/libraries、/instance）
+HSPLmedia/qimeng/next/sdk/**->**(**)
+# 本机运行层接口（client 构建无此类，dexopt 直接跳过该规则）
+HSPLmedia/qimeng/next/runtime/**->**(**)
+# 内嵌运行层（仅 embedded 变体包含）
+HSPLmedia/qimeng/next/embedded/**->**(**)
+#
+# 首屏实际走到的三方基础设施（OkHttp/Coil/协程不带自己的 profile）。
+# 只列首屏必经的连接、请求、取图与调度入口，避免把整库方法写进 profile（dexopt 时间与包体）。
+# 类名按实际打包核对（okhttp 4.12 的调用实现是 okhttp3.internal.connection.RealCall）。
+HSPLokhttp3/internal/connection/RealCall;->**(**)
+HSPLokhttp3/internal/connection/RealConnection;->**(**)
+HSPLokhttp3/internal/connection/RealConnectionPool;->**(**)
+HSPLokhttp3/internal/http/BridgeInterceptor;->**(**)
+HSPLokhttp3/internal/http/RetryAndFollowUpInterceptor;->**(**)
+HSPLokhttp3/internal/http/CallServerInterceptor;->**(**)
+HSPLcoil3/RealImageLoader;->**(**)
+HSPLcoil3/request/ImageRequest$Builder;->**(**)
+HSPLkotlinx/coroutines/Dispatchers;->**(**)
+HSPLkotlinx/coroutines/scheduling/CoroutineScheduler;->**(**)

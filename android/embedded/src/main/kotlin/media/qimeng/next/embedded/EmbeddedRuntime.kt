@@ -76,6 +76,19 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
 
     override suspend fun stop() = mutex.withLock { stopLocked() }
 
+    /**
+     * Returning to the foreground asks the service for one liveness probe. The service is the
+     * only owner of the child, so a frozen-but-alive process can be replaced there without this
+     * layer touching the process handle. An explicit user stop clears [EmbeddedSecrets.enabled]
+     * and must not be resurrected by a foreground return.
+     */
+    override fun requestHealthCheck() {
+        if (!secrets.enabled) return
+        runCatching {
+            ContextCompat.startForegroundService(app, Intent(app, EmbeddedService::class.java).setAction(EmbeddedService.HEALTH_CHECK))
+        }
+    }
+
     private suspend fun stopLocked() {
         withContext(Dispatchers.IO) { secrets.enabled = false }
         if (status.value.phase in setOf(RuntimePhase.STOPPED, RuntimePhase.FAILED) && !HostState.ownerActive.get()) return

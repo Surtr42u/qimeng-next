@@ -53,6 +53,11 @@ class EmbeddedRuntimeTest {
             assertEquals("http://127.0.0.1:18431/", first.baseUrl)
             assertNull(first.certificateDerBase64)
             application.localConnection.connect(forceLogin = true)
+            // A foreground probe against a healthy real server must not restart or disturb it.
+            runtime.requestHealthCheck()
+            delay(1_500)
+            assertEquals(RuntimePhase.READY, runtime.status.value.phase)
+            assertEquals(first.instanceId, runtime.status.value.instanceId)
             // Use the same trusted spelling as the host. Android's public app-data alias can differ.
             val root = java.io.File(application.filesDir.canonicalFile, "embedded-v1/media/synthetic-registration")
             assertTrue("Create the existing synthetic media folder", root.mkdir() || root.isDirectory)

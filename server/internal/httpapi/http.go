@@ -16,20 +16,27 @@ import (
 	"strings"
 	"time"
 
+	"qimeng.local/next/server/internal/events"
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 	"qimeng.local/next/server/internal/transport/generated"
 )
 
+// apiVersion is the single source for the protocol version reported by the
+// instance document and the SSE hello frame. A client that speaks another
+// version is refused by the browser client.
+const apiVersion = "0.1.0"
+
 type principalKey struct{}
 type API struct {
-	s *service.Service
+	s      *service.Service
+	events *events.Handler
 }
 
 var _ generated.ServerInterface = (*API)(nil)
 
 func New(s *service.Service) http.Handler {
-	a := &API{s: s}
+	a := &API{s: s, events: events.NewHandler(s.Events, events.WithVersion(apiVersion))}
 	return a.routes(a)
 }
 
@@ -38,6 +45,10 @@ func (a *API) routes(operations generated.ServerInterface) http.Handler {
 	mux.HandleFunc("GET /healthz", a.healthz)
 	mux.HandleFunc("GET /metrics", a.auth(a.GetServiceMetrics))
 	contract := embeddedContract()
+	// The event stream is a long-lived response rather than a JSON operation,
+	// so it is registered by hand. It still passes the same authentication and
+	// scope middleware as every other route.
+	mux.HandleFunc("GET "+contract.baseURL+events.Path, a.auth(a.events.ServeHTTP))
 	router := &authenticatedRouter{ServeMux: mux, api: a, contract: contract}
 	handler := generated.HandlerWithOptions(operations, generated.StdHTTPServerOptions{
 		BaseURL: contract.baseURL, BaseRouter: router, ErrorHandlerFunc: parameterError,
@@ -296,7 +307,7 @@ func (a *API) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) GetInstance(w http.ResponseWriter, r *http.Request) {
-	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": "0.1.0", "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "localAutoLogin": a.s.Config.LocalAutoLogin, "recommendations": true, "rankings": true, "stats": true, "backups": true, "backupTargets": len(a.s.Config.BackupTargets) > 0, "migration": true}})
+	respond(w, 200, map[string]any{"id": a.s.InstanceID, "name": "绮梦 Next", "apiVersion": apiVersion, "capabilities": map[string]bool{"aiConfigured": a.s.Config.AIConfigured, "localAutoLogin": a.s.Config.LocalAutoLogin, "recommendations": true, "rankings": true, "stats": true, "backups": true, "backupTargets": len(a.s.Config.BackupTargets) > 0, "migration": true}})
 }
 
 func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {

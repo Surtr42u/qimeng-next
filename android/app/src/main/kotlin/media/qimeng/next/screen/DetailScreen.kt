@@ -3,11 +3,6 @@ package media.qimeng.next.screen
 import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,12 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -31,10 +21,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import coil3.compose.AsyncImage
-import coil3.request.CachePolicy
-import coil3.request.ImageRequest
-import coil3.size.Size
+import coil3.network.HttpException
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.Session
@@ -42,11 +29,13 @@ import media.qimeng.next.model.sameTarget
 import media.qimeng.next.screen.video.VideoPlaybackSystemBars
 import media.qimeng.next.ui.ContentCard
 import media.qimeng.next.ui.ErrorNotice
+import media.qimeng.next.ui.theme.QimengDimens
 import media.qimeng.next.ui.theme.isQimengDarkTheme
+import java.io.IOException
 import java.text.Collator
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     val asset by model.asset.collectAsStateWithLifecycle()
@@ -77,12 +66,21 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     LaunchedEffect(id) { if (asset?.id != id) model.refreshAsset(id) }
     val item = asset?.takeIf { it.id == id && sameTarget(it.target, target) }
     if (item == null) {
-        // 加载期只保留返回顶栏与留白正文（旧版 DetailTopRow 口径）：不再以整屏转圈充当内容。
-        Box(Modifier.fillMaxSize()) {
+        // 深链 / 任务跳转落地时详情尚未到达：先铺终态几何（全屏舞台 + 返回顶栏），
+        // 只在舞台中央放加载指示，等 item 到达后原地换内容，避免先空白再整块弹入。
+        val notice = message
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             DetailTopChrome(true, -1, 0, model::back, {})
-            message?.let {
+            if (notice == null) {
+                LoadingIndicator(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(QimengDimens.PageLoadingIndicatorSize)
+                        .testTag("asset-detail-loading"),
+                )
+            } else {
                 Column(Modifier.align(Alignment.Center).padding(16.dp)) {
-                    ErrorNotice(it)
+                    ErrorNotice(notice)
                     TextButton(onClick = { model.refreshAsset(id) }, enabled = !busy) { Text("点击重试") }
                 }
             }
@@ -96,8 +94,21 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     val position = model.detailPosition(id)
     val backdrop = if (visible) MaterialTheme.colorScheme.background else Color.Black
     Box(Modifier.fillMaxSize().background(backdrop).testTag("asset-detail")) {
-        if (item.mediaType == "video") VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
-        else ImageStage(item, model::adjacentAsset, { model.refreshAsset(item.id) }, Modifier.fillMaxSize(), { if (!zoomImmersive) chromeVisible = !chromeVisible }, { zoomImmersive = it }, resetImage)
+        if (item.mediaType == "video") {
+            VideoStage(item, model, Modifier.fillMaxSize(), { playerActive = it }, { playbackChrome = it })
+        } else {
+            ZoomableImageStage(
+                asset = item,
+                onNavigate = model::adjacentAsset,
+                onReload = { model.refreshAsset(item.id) },
+                modifier = Modifier.fillMaxSize(),
+                onToggleChrome = { if (!zoomImmersive) chromeVisible = !chromeVisible },
+                onZoomImmersive = { zoomImmersive = it },
+                reset = resetImage,
+            )
+            // 视频播放时不预载：避免邻位原图下载和视频流抢带宽（旧版 preloadEnabled 同口径）。
+            DetailNeighbourOriginalPreload(item)
+        }
         DetailTopChrome(visible, position.first, position.second, model::back, { showInfo = true }, Modifier.align(Alignment.TopCenter))
         DetailBottomChrome(visible, item, busy, busy, { model.setTodayLike(item, !item.liked) },
             { model.setFavorite(item, !item.favorite) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))
@@ -152,56 +163,6 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
         dismissButton = { TextButton(onClick = { showTrash = false }) { Text("取消") } })
     }
     if (showInfo) DetailInfoSheet(item) { showInfo = false }
-}
-
-@Composable
-private fun ImageStage(asset: Asset, onNavigate: (Int) -> Unit, onReload: () -> Unit, modifier: Modifier,
-    onToggleChrome: () -> Unit, onZoom: (Boolean) -> Unit, reset: Int) {
-    var scale by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(1f) }
-    var panX by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(0f) }
-    var panY by rememberSaveable(asset.id, asset.version) { mutableFloatStateOf(0f) }
-    val context = LocalContext.current
-    var error by remember(asset.id) { mutableStateOf(false) }
-    var retry by remember(asset.id) { mutableIntStateOf(0) }
-    LaunchedEffect(scale > 1f) { onZoom(scale > 1f) }
-    LaunchedEffect(reset) { if (reset > 0) { scale = 1f; panX = 0f; panY = 0f } }
-    Box(modifier
-        .pointerInput(asset.id) { detectTapGestures(onTap = { onToggleChrome() }, onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f; panX = 0f; panY = 0f }) }
-        .pointerInput(asset.id) {
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
-                var horizontal = 0f
-                var transformed = false
-                do {
-                    val event = awaitPointerEvent()
-                    val pan = event.calculatePan()
-                    if (event.changes.count { it.pressed } >= 2 || scale > 1f) {
-                        transformed = true
-                        scale = (scale * event.calculateZoom()).coerceIn(1f, 6f)
-                        val maxX = size.width * (scale - 1f) / 2
-                        val maxY = size.height * (scale - 1f) / 2
-                        panX = (panX + pan.x).coerceIn(-maxX, maxX)
-                        panY = (panY + pan.y).coerceIn(-maxY, maxY)
-                        event.changes.forEach { it.consume() }
-                    } else {
-                        horizontal += pan.x
-                        if (kotlin.math.abs(horizontal) > viewConfiguration.touchSlop) event.changes.forEach { it.consume() }
-                    }
-                } while (event.changes.any { it.pressed })
-                if (!transformed && kotlin.math.abs(horizontal) > size.width * 0.18f) onNavigate(if (horizontal < 0) 1 else -1)
-            }
-        }, contentAlignment = Alignment.Center) {
-        // 直接用网格同一份 Asset 缩略图请求，命中内存缓存；原图加载完成后覆盖。
-        AsyncImage(model = asset, imageLoader = LocalMediaImages.current, contentDescription = null,
-            contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-        AsyncImage(model = remember(asset.contentUrl, asset.version, retry) {
-            ImageRequest.Builder(context).data(asset.contentUrl).size(Size.ORIGINAL)
-                .diskCachePolicy(CachePolicy.DISABLED).memoryCacheKey("${asset.target.baseUrl}:${asset.target.instanceId}:${asset.id}:${asset.version}:original").build()
-        }, imageLoader = LocalMediaImages.current, contentDescription = asset.name, contentScale = ContentScale.Fit,
-            onError = { error = true }, onSuccess = { error = false },
-            modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = panX; translationY = panY })
-        if (error) FilledTonalButton(onClick = { retry++; error = false; onReload() }) { Text("图片加载失败 · 重试") }
-    }
 }
 
 @Composable
@@ -290,4 +251,32 @@ fun formatBytes(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "%.1f MiB".format(bytes / (1024.0 * 1024))
     bytes >= 1024 -> "%.1f KiB".format(bytes / 1024.0)
     else -> "$bytes B"
+}
+
+/** 失败归因的 cause 链最大深度：防止自引用链死循环（旧版 ImageLoadErrorClassifier 同值）。 */
+internal const val MAX_CAUSE_CHAIN_DEPTH = 5
+
+internal enum class ImageFailureKind { NETWORK, DECODE }
+
+/**
+ * 原图加载失败归因（旧版 feature/detail ImageLoadErrorClassifier 两档口径）：
+ * cause 链上出现 [IOException]（超时/断流/连接失败等）或 [HttpException]（非 2xx 响应，
+ * 继承 RuntimeException 而非 IOException）→ 网络；其余（解码器拒绝、格式不支持等）→ 解码。
+ * 归因决定详情覆盖层文案：把网络抖动报成「文件损坏」会误导用户。
+ */
+internal fun classifyImageFailure(cause: Throwable): ImageFailureKind {
+    var current: Throwable? = cause
+    var depth = 0
+    while (current != null && depth < MAX_CAUSE_CHAIN_DEPTH) {
+        if (current is IOException || current is HttpException) return ImageFailureKind.NETWORK
+        current = current.cause
+        depth++
+    }
+    return ImageFailureKind.DECODE
+}
+
+/** 文案与旧版 strings.xml 一致：传输类提示网络，其余提示文件无法解码。 */
+internal fun imageFailureMessage(kind: ImageFailureKind): String = when (kind) {
+    ImageFailureKind.NETWORK -> "网络不畅，图片加载失败，请重试"
+    ImageFailureKind.DECODE -> "该文件无法解码，可能已损坏或格式不受支持"
 }

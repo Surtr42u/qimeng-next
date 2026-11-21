@@ -72,5 +72,8 @@ func (s *Service) UpdateAcquisitionVocabulary(ctx context.Context, w *Write, in 
 		return current, e
 	}
 	_, e = q.ExecContext(ctx, "INSERT INTO settings(key,value) VALUES('acquisition_vocabulary',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", raw)
+	if e == nil {
+		w.libraryChanged()
+	}
 	return current, e
 }

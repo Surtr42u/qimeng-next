@@ -104,7 +104,11 @@ func (s *Service) SetAuthorUpdates(ctx context.Context, w *Write, id string, in 
 	if e != nil {
 		return current, e
 	}
-	return current, saveAuthorUpdates(ctx, q, current)
+	if e = saveAuthorUpdates(ctx, q, current); e != nil {
+		return current, e
+	}
+	w.libraryChanged()
+	return current, nil
 }
 func clearUnverifiedSubscription(ctx context.Context, q store.Querier, block AuthorProfileBlock) error {
 	if block.Block != "accounts" || profileString(block.Values.IdentityStatus) == "verified" {

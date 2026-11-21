@@ -235,7 +235,7 @@ fun TrashScreen(model: LibraryViewModel) {
         item { Text("已移入回收站的原件可以恢复。") }
         item { TextButton(onClick = { model.loadTrash() }) { Text("刷新回收站") } }
         state.error?.let { item { ErrorNotice(it) { model.loadTrash() } } }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.loading && !state.loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         if (state.loaded && state.items.isEmpty()) item { Text("回收站为空") }
         items(state.items, key = { it.id }) { asset -> ContentCard {
             Text(asset.name, style = MaterialTheme.typography.titleMedium)

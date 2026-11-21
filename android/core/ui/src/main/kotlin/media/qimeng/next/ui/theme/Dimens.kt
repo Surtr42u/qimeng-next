@@ -148,6 +148,10 @@ object QimengDimens {
      * feature 层按钮内嵌 loading（login/detail/upload）一律引用本 token，禁止再写局部 dp） */
     val ButtonLoadingIndicatorSize: Dp = 20.dp
 
+    /** 48dp：页级/整页加载指示器直径（M3 LoadingIndicator 组件默认档；详情深链/任务跳转
+     *  落地时舞台以此尺寸居中，与图到达后的终态几何同位，不先画空白）。 */
+    val PageLoadingIndicatorSize: Dp = 48.dp
+
     // ---------- 图标 ----------
 
     /** 24dp：矢量图标默认边长（Material 图标标准档；QimengIcons 全部自持矢量共用，M4-2A-B2 收编） */

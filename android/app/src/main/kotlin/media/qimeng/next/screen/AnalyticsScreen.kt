@@ -49,7 +49,7 @@ fun ActivityRankingScreen(model: LibraryViewModel, kind: String, range: String) 
             FilterChip(metric == "views", { metric = "views" }, label = { Text("浏览次数") })
             FilterChip(metric == "seconds", { metric = "seconds" }, label = { Text("停留时长") })
         } }
-        if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.loading && !state.loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.error?.let { item { ErrorNotice(it) { model.loadRanking(kind, range, metric) } } }
         if (state.loaded && state.items.isEmpty()) item { Text("这个窗口暂无记录") }
         items(state.items, key = { it.id }) { entry -> StatsCard(onClick = { openRank(model, kind, entry) }) {
@@ -75,7 +75,7 @@ fun ReviewScreen(model: LibraryViewModel, initialRange: String) {
     LaunchedEffect(range) { model.loadReview(range) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         RangeSelector(range) { range = it }
-        if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (state.loading && state.data?.range != range) LinearProgressIndicator(Modifier.fillMaxWidth())
         state.error?.let { ErrorNotice(it) { model.loadReview(range) } }
         state.data?.takeIf { it.range == range }?.let { report ->
             StatsCard {

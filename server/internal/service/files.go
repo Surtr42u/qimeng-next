@@ -625,6 +625,9 @@ func (s *Service) runPreparedFile(ctx context.Context, w *Write, j fileIntent) (
 		}
 		return finish()
 	})
+	// Every file intent changes what the library shows: ingest, replace, move,
+	// trash, restore and purge all pass through here.
+	w.libraryChanged()
 	return j.After, nil
 }
 func (s *Service) recoverIntents(ctx context.Context) error {

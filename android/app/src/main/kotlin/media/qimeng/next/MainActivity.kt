@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,6 +23,26 @@ class MainActivity : ComponentActivity() {
         followDisplayRefreshRate()
         setContent { AppRoot(model) }
         if (savedInstanceState == null) receiveShare(intent)
+        deferUntilFirstFrame()
+    }
+
+    /**
+     * 首帧之后才起跑进程级恢复与全库预取（[QimengApplication.onFirstFrame]）。
+     *
+     * 时机：pre-draw 只用来知道“第一帧即将绘制”，真正的工作用 `decor.post` 排到这一帧之后的
+     * 主线程消息里——既不推迟首绘，也不再让预取的第一轮目录清理/全库拉取和首屏首批请求
+     * 同时抢磁盘与局域网带宽（旧版这些工作在登录态观察里起跑，同样不在首绘路径上）。
+     * 回调在 Application 内幂等，Activity 重建不会重跑。
+     */
+    private fun deferUntilFirstFrame() {
+        val decor = window.decorView
+        decor.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                decor.viewTreeObserver.removeOnPreDrawListener(this)
+                decor.post { (application as QimengApplication).onFirstFrame() }
+                return true
+            }
+        })
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -33,6 +54,16 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.restoreLocalConnection()
+        // Returning to the foreground must also heal a child that is alive but was frozen with the
+        // shell. Probe only when the selected session is an owned local endpoint, matching the
+        // previous host's local-mode gate; explicit stops are remembered by the runtime.
+        runCatching {
+            val runtime = (application as QimengApplication).runtime
+            val session = model.session.value
+            if (session != null && session.baseUrl in runtime.ownedEndpoints(session.instanceId)) {
+                runtime.requestHealthCheck()
+            }
+        }
     }
 
     private fun receiveShare(intent: Intent) {

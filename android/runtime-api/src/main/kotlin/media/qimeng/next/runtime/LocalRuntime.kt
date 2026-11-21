@@ -21,6 +21,13 @@ interface LocalRuntime {
     val scans: LocalScans
     suspend fun start(): LocalConnection
     suspend fun stop()
+
+    /**
+     * Foreground self-heal hook: an embedded runtime probes its owned child and replaces a child
+     * that is alive but no longer scheduling. Runtimes without an owned process do nothing.
+     */
+    fun requestHealthCheck() = Unit
+
     suspend fun confirmInstance(instanceId: String)
     suspend fun configureAddress(address: String)
     fun validateAddress(address: String): String
