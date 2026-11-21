@@ -26,7 +26,7 @@ class ResidentTabLayersTest {
 
     @Test fun previouslyVisitedTabsStayResidentAndHidden() {
         assertEquals(
-            listOf(ResidentTabLayer("tab:0", true), ResidentTabLayer("tab:1", false)),
+            listOf(ResidentTabLayer("tab:0", false), ResidentTabLayer("tab:1", true)),
             residentTabLayers(listOf("tab:0"), "tab:1"),
         )
     }

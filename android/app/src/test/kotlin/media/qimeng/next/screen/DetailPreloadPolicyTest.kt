@@ -168,7 +168,7 @@ class DetailPreloadPolicyTest {
         // 合法邻居原样返回：中间双向与首尾向内。
         assertEquals(1, adjacentAssetIndex(index = 0, direction = 1, size = 5))
         assertEquals(3, adjacentAssetIndex(index = 4, direction = -1, size = 5))
-        assertEquals(2, adjacentAssetIndex(index = 2, direction = 1, size = 5))
+        assertEquals(3, adjacentAssetIndex(index = 2, direction = 1, size = 5))
         assertEquals(1, adjacentAssetIndex(index = 2, direction = -1, size = 5))
     }
 
