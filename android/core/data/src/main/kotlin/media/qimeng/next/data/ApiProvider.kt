@@ -182,7 +182,14 @@ internal object QueryEnumConverterFactory : Converter.Factory() {
             val values = LinkedHashMap<Enum<*>, String>()
             for (field in enumType.declaredFields) {
                 if (!field.isEnumConstant) continue
-                val constant = field.get(null) as? Enum<*> ?: continue
+                // A private/package-private enum class makes its public constant field
+                // inaccessible from here; opening it is enough and is allowed on Android.
+                val constant = try {
+                    field.isAccessible = true
+                    field.get(null) as? Enum<*>
+                } catch (_: Exception) {
+                    null
+                } ?: continue
                 values[constant] = field.getAnnotation(SerializedName::class.java)?.value ?: constant.name
             }
             values
