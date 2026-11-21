@@ -88,9 +88,15 @@ func (s *Service) AssetDetail(ctx context.Context, id string) (model.Asset, erro
 func readAssetOnDay(ctx context.Context, q store.Querier, id, day string) (model.Asset, error) {
 	a, e := resolveAssetOnDay(ctx, q, id, day)
 	if e == nil && a.ID != id {
-		return model.Asset{}, &Error{Status: 409, Code: "asset_merged", Message: "该原件已合并，请打开代表项目后再操作。", Details: map[string]any{"representativeId": a.ID}}
+		return model.Asset{}, mergedAssetError(a.ID)
 	}
 	return a, e
+}
+
+// mergedAssetError keeps the representative hand-off identical for every path
+// that resolves an archived original to its visible asset.
+func mergedAssetError(representativeID string) error {
+	return &Error{Status: 409, Code: "asset_merged", Message: "该原件已合并，请打开代表项目后再操作。", Details: map[string]any{"representativeId": representativeID}}
 }
 
 func resolveAssetOnDay(ctx context.Context, q store.Querier, id, day string) (model.Asset, error) {

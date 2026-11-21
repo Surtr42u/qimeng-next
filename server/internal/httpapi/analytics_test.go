@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"net/url"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -122,6 +123,32 @@ func TestActivityProjectionsRecommendationPaginationAndPreferenceConflict(t *tes
 	decode(t, f.json("GET", "/rankings?period=week&mediaType=image", "", nil, 200), &ranking)
 	if len(ranking.Items) != 1 || ranking.Items[0].Asset.ID != first.ID || ranking.Items[0].Score != 1 {
 		t.Fatalf("bad ranking: %+v", ranking)
+	}
+}
+
+// TestRankingPageMatchesPerAssetProjection guards the batched page read: every
+// ranked item must decode to the same asset as the shared per-asset projection,
+// including relations, counters and playback state.
+func TestRankingPageMatchesPerAssetProjection(t *testing.T) {
+	f := setup(t)
+	upload, _ := f.upload("ranking-projection.png", 168, nil)
+	asset := f.complete(upload).Asset
+	var author model.Author
+	decode(t, f.json("POST", "/authors", "ranking-projection-author", map[string]any{"name": "Projection author", "kind": "regular"}, 201), &author)
+	f.json("PATCH", "/assets/"+asset.ID, "ranking-projection-authors", map[string]any{"expectedRevision": asset.Revision, "authorIds": []string{author.ID}}, 200)
+	f.json("PUT", "/assets/"+asset.ID+"/tags", "ranking-projection-tags", map[string]any{"expectedRevision": asset.TagsRevision, "tags": []string{"投影标签"}}, 200)
+	f.json("POST", "/assets/"+asset.ID+"/events", "", map[string]any{"eventId": "ranking-projection-view", "sessionId": "ranking-projection-session", "kind": "view", "contentVersion": asset.ContentVersion}, 200)
+	var ranking model.Page[service.RankedAsset]
+	decode(t, f.json("GET", "/rankings?period=all&limit=5", "", nil, 200), &ranking)
+	if len(ranking.Items) != 1 || ranking.Items[0].Asset.ID != asset.ID {
+		t.Fatalf("ranking page: %+v", ranking)
+	}
+	want, err := f.s.Asset(t.Context(), asset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ranking.Items[0].Asset, want) {
+		t.Fatalf("batched ranking projection differs from the per-asset read:\nranking %+v\nasset   %+v", ranking.Items[0].Asset, want)
 	}
 }
 

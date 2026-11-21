@@ -71,46 +71,66 @@ func (s *Service) StatsOverview(ctx context.Context, window string) (Overview, e
 		average := float64(liveViews) / float64(result.ViewedAssets)
 		result.AverageViewsPerFile = &average
 	}
-	result.MediaTypes, e = s.activityDimensions(ctx, day, false)
+	result.MediaTypes, result.Sources, e = s.activityDimensions(ctx, day)
 	if e != nil {
 		return result, e
 	}
-	result.Sources, e = s.activityDimensions(ctx, day, true)
-	return result, e
+	return result, nil
 }
 
-func (s *Service) activityDimensions(ctx context.Context, day string, source bool) ([]ActivityDimension, error) {
-	expression := "a.media_type"
-	keys := []string{"image", "animated_image", "video"}
-	if source {
-		expression = assetPartition
-		keys = []string{"regular", "cos"}
-	}
-	// expression is selected only from these internal literals, never caller input.
-	rows, e := s.DB.DB.QueryContext(ctx, `WITH totals AS(SELECT asset_id,sum(views) AS views,sum(plays) AS plays,sum(seconds) AS seconds FROM asset_daily_stats WHERE day>=? GROUP BY asset_id)
- SELECT `+expression+`,count(*),coalesce(sum(a.size),0),coalesce(sum(t.views),0),coalesce(sum(t.plays),0),coalesce(sum(t.seconds),0) FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN totals t ON t.asset_id=a.id WHERE a.trashed=0 GROUP BY `+expression, day)
-	if e != nil {
-		return nil, e
-	}
-	defer rows.Close()
-	values := map[string]ActivityDimension{}
-	for rows.Next() {
-		var value ActivityDimension
-		if e = rows.Scan(&value.Key, &value.Assets, &value.Bytes, &value.Views, &value.Plays, &value.Seconds); e != nil {
-			return nil, e
-		}
-		values[value.Key] = value
-	}
-	if e = rows.Err(); e != nil {
-		return nil, e
-	}
+// addActivityDimension folds one (media type, partition) group into a
+// dimension map. ActivityTotals is embedded, so the fixed contract keys keep
+// their exact values after summing the per-partition groups.
+func addActivityDimension(values map[string]ActivityDimension, key string, value ActivityDimension) {
+	merged := values[key]
+	merged.Assets += value.Assets
+	merged.Bytes += value.Bytes
+	merged.Views += value.Views
+	merged.Plays += value.Plays
+	merged.Seconds += value.Seconds
+	values[key] = merged
+}
+
+// fixedActivityDimensions restores the declared key order and includes keys an
+// empty catalog never produced.
+func fixedActivityDimensions(values map[string]ActivityDimension, keys []string) []ActivityDimension {
 	output := make([]ActivityDimension, 0, len(keys))
 	for _, key := range keys {
 		value := values[key]
 		value.Key = key
 		output = append(output, value)
 	}
-	return output, nil
+	return output
+}
+
+// activityDimensions reads both fixed dimensions from one aggregate. The old
+// implementation repeated the daily-stats aggregation and the assets scan for
+// media types and partitions; grouping by both and combining the groups in Go
+// returns the same totals with one scan.
+func (s *Service) activityDimensions(ctx context.Context, day string) ([]ActivityDimension, []ActivityDimension, error) {
+	// assetPartition is an internal expression, never caller input.
+	rows, e := s.DB.DB.QueryContext(ctx, `WITH totals AS(SELECT asset_id,sum(views) AS views,sum(plays) AS plays,sum(seconds) AS seconds FROM asset_daily_stats WHERE day>=? GROUP BY asset_id)
+ SELECT a.media_type,`+assetPartition+`,count(*),coalesce(sum(a.size),0),coalesce(sum(t.views),0),coalesce(sum(t.plays),0),coalesce(sum(t.seconds),0) FROM assets a JOIN libraries lib ON lib.id=a.library_id LEFT JOIN totals t ON t.asset_id=a.id WHERE a.trashed=0 GROUP BY a.media_type,`+assetPartition, day)
+	if e != nil {
+		return nil, nil, e
+	}
+	defer rows.Close()
+	byMediaType := map[string]ActivityDimension{}
+	bySource := map[string]ActivityDimension{}
+	for rows.Next() {
+		var mediaType, source string
+		var value ActivityDimension
+		if e = rows.Scan(&mediaType, &source, &value.Assets, &value.Bytes, &value.Views, &value.Plays, &value.Seconds); e != nil {
+			return nil, nil, e
+		}
+		addActivityDimension(byMediaType, mediaType, value)
+		addActivityDimension(bySource, source, value)
+	}
+	if e = rows.Err(); e != nil {
+		return nil, nil, e
+	}
+	return fixedActivityDimensions(byMediaType, []string{"image", "animated_image", "video"}),
+		fixedActivityDimensions(bySource, []string{"regular", "cos"}), nil
 }
 
 type TrendDimension struct {

@@ -45,8 +45,8 @@ func (s *Service) ThumbnailCandidates(ctx context.Context, cursor string, limit 
 		}
 		page.TotalMatched = &total
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT a.id,json_extract(a.data,'$.contentVersion')"+previewCandidatesFrom+
-		" AND a.id>? ORDER BY a.id LIMIT ?", after.ID, n+1)
+	rows, err := tx.QueryContext(ctx, "SELECT r.id,v.version"+previewCandidatesFrom+
+		" AND loc.asset_id>? ORDER BY loc.asset_id LIMIT ?", after.ID, n+1)
 	if err != nil {
 		return page, err
 	}
@@ -155,7 +155,7 @@ func (s *Service) ThumbnailProgress(ctx context.Context) (ThumbnailProgress, err
 	if value, ok := s.cachedThumbnailProgress(true); ok {
 		return value, nil
 	}
-	rows, err := s.DB.DB.QueryContext(ctx, "SELECT a.id,"+previewVersionColumns+previewCandidatesFrom)
+	rows, err := s.DB.DB.QueryContext(ctx, "SELECT r.id,"+previewVersionColumns+previewCandidatesFrom)
 	if err != nil {
 		return out, err
 	}

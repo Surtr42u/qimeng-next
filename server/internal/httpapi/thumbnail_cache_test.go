@@ -10,11 +10,47 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"qimeng.local/next/server/internal/model"
 	"qimeng.local/next/server/internal/service"
 )
+
+// TestThumbnailCandidatesSeekKeepsAssetIDOrderAndCurrentVersion covers the
+// narrow candidate projection: the ID seek must visit every eligible asset once
+// in stable order, and the reported version must equal the asset read.
+func TestThumbnailCandidatesSeekKeepsAssetIDOrderAndCurrentVersion(t *testing.T) {
+	f := setup(t)
+	want := []string{}
+	for index, name := range []string{"seek-first.png", "seek-second.png", "seek-third.png"} {
+		upload, _ := f.upload(name, uint8(131+index), nil)
+		want = append(want, f.complete(upload).Asset.ID)
+	}
+	slices.Sort(want)
+	got := []string{}
+	query := "/thumbnails/candidates?limit=1"
+	for {
+		var page service.ThumbnailCandidatePage
+		decode(t, f.json("GET", query, "", nil, 200), &page)
+		if len(page.Items) != 1 {
+			t.Fatalf("candidate page: %+v", page)
+		}
+		item := page.Items[0]
+		asset, err := f.s.Asset(t.Context(), item.AssetID)
+		if err != nil || asset.ContentVersion != item.ContentVersion {
+			t.Fatalf("candidate %s version %d, asset read %d, %v", item.AssetID, item.ContentVersion, asset.ContentVersion, err)
+		}
+		got = append(got, item.AssetID)
+		if page.NextCursor == "" {
+			break
+		}
+		query = "/thumbnails/candidates?limit=1&cursor=" + url.QueryEscape(page.NextCursor)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("candidate seek order = %v, want %v", got, want)
+	}
+}
 
 func TestThumbnailCandidatesPageAndCoverageTrackCurrentDiskFiles(t *testing.T) {
 	f := setup(t)

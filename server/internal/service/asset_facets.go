@@ -33,13 +33,16 @@ func fixedFacetPosition(id string) int {
 }
 
 // facetCandidates builds the dynamic option set. Fixed partitions/types are
-// produced by fixedFacetCounts from one aggregate instead.
+// produced by fixedFacetCounts from one aggregate instead. The relationship
+// tables are keyed by (asset, owner) and the source view emits each pair once,
+// so a candidate's matched assets are exactly its joined rows: count(*) equals
+// the previous count(DISTINCT matched.id) without a temp B-tree per group.
 func facetCandidates(row string) (string, error) {
 	switch row {
 	case "works":
-		return `SELECT 'source:'||s.id key,'source' kind,s.id,s.name,count(DISTINCT m.id) n FROM matched m JOIN asset_source_memberships x ON x.asset_id=m.id JOIN sources s ON s.id=x.source_id WHERE m.kind='regular' GROUP BY s.id UNION ALL SELECT 'source:__other__','source','__other__','其他',count(*) FROM matched m WHERE m.kind='regular' AND NOT EXISTS(SELECT 1 FROM asset_source_memberships x WHERE x.asset_id=m.id) HAVING count(*)>0 UNION ALL SELECT 'author:'||au.id,'author',au.id,au.name,count(DISTINCT m.id) FROM matched m JOIN asset_authors x ON x.asset_id=m.id JOIN authors au ON au.id=x.author_id WHERE m.kind='cos' AND json_extract(au.data,'$.kind')='cos' GROUP BY au.id`, nil
+		return `SELECT 'source:'||s.id key,'source' kind,s.id,s.name,count(*) n FROM matched m JOIN asset_source_memberships x ON x.asset_id=m.id JOIN sources s ON s.id=x.source_id WHERE m.kind='regular' GROUP BY s.id UNION ALL SELECT 'source:__other__','source','__other__','其他',count(*) FROM matched m WHERE m.kind='regular' AND NOT EXISTS(SELECT 1 FROM asset_source_memberships x WHERE x.asset_id=m.id) HAVING count(*)>0 UNION ALL SELECT 'author:'||au.id,'author',au.id,au.name,count(*) FROM matched m JOIN asset_authors x ON x.asset_id=m.id JOIN authors au ON au.id=x.author_id WHERE m.kind='cos' AND json_extract(au.data,'$.kind')='cos' GROUP BY au.id`, nil
 	case "roles":
-		return `SELECT 'character:'||c.id key,'character' kind,c.id,c.name,count(DISTINCT m.id) n FROM matched m JOIN asset_characters x ON x.asset_id=m.id JOIN characters c ON c.id=x.character_id WHERE m.kind='regular' GROUP BY c.id UNION ALL SELECT 'work:'||w.id,'work',w.id,w.name,count(*) FROM matched m JOIN cos_works w ON w.id=m.cos_work_id WHERE m.kind='cos' GROUP BY w.id`, nil
+		return `SELECT 'character:'||c.id key,'character' kind,c.id,c.name,count(*) n FROM matched m JOIN asset_characters x ON x.asset_id=m.id JOIN characters c ON c.id=x.character_id WHERE m.kind='regular' GROUP BY c.id UNION ALL SELECT 'work:'||w.id,'work',w.id,w.name,count(*) FROM matched m JOIN cos_works w ON w.id=m.cos_work_id WHERE m.kind='cos' GROUP BY w.id`, nil
 	default:
 		return "", Fail(400, "invalid_facet_row", "相册维度必须是分区、作者、角色或类型。")
 	}

@@ -165,12 +165,54 @@ func (s *Service) Rankings(ctx context.Context, period, kind, cursor string, cou
 	if e != nil {
 		return result, e
 	}
-	for _, item := range values {
-		a, e := s.Asset(ctx, item.id)
+	if len(values) > 0 {
+		// The ranking statement above already fixed the page and its scores. Load
+		// the whole page with the shared asset projection in one statement instead
+		// of one read per ranked id; page.key restores that exact order.
+		scores := make(map[string]int64, len(values))
+		ids := make([]string, len(values))
+		for i, item := range values {
+			scores[item.id] = item.score
+			ids[i] = item.id
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return result, err
+		}
+		// assetJSON binds today's like day before json_each binds the id page.
+		rows, e = s.DB.DB.QueryContext(ctx, "SELECT "+assetJSON+`,page.value,a.id FROM json_each(?) page
+		 JOIN assets a ON a.id=coalesce((SELECT representative_id FROM selected_image_merge_members WHERE physical_asset_id=page.value),page.value)
+		 JOIN authors au ON au.id=a.author_id ORDER BY page.key`, time.Now().Format(time.DateOnly), string(encoded))
 		if e != nil {
 			return result, e
 		}
-		result.Items = append(result.Items, RankedAsset{a, item.score})
+		for rows.Next() {
+			var raw, rankedID, resolvedID string
+			if e = rows.Scan(&raw, &rankedID, &resolvedID); e != nil {
+				rows.Close()
+				return result, e
+			}
+			if resolvedID != rankedID {
+				rows.Close()
+				return result, mergedAssetError(resolvedID)
+			}
+			var a model.Asset
+			if e = json.Unmarshal([]byte(raw), &a); e != nil {
+				rows.Close()
+				return result, e
+			}
+			result.Items = append(result.Items, RankedAsset{a, scores[rankedID]})
+		}
+		e = rows.Err()
+		rows.Close()
+		if e != nil {
+			return result, e
+		}
+		if len(result.Items) != len(values) {
+			// Only a concurrent delete between the two statements can remove a
+			// ranked row; keep the per-row read's 404 contract for that case.
+			return result, Normalize(sql.ErrNoRows)
+		}
 	}
 	return paged(result.Items, n, offset, scope), nil
 }

@@ -31,11 +31,17 @@ const (
 	previewWarmFailureLimit = 8
 )
 
-const previewVersionColumns = `json_extract(a.data,'$.contentVersion'),
-	EXISTS(SELECT 1 FROM selected_image_merge_members WHERE physical_asset_id=a.id)`
-const previewCandidatesFrom = ` FROM assets a JOIN libraries l ON l.id=a.library_id
-	 WHERE a.trashed=0 AND coalesce(json_extract(l.data,'$.enabled'),1)=1
-	 AND coalesce(json_extract(a.data,'$.thumbnailUrl'),'')!=''`
+// Preview eligibility is read from the versioned tables rather than the assets
+// view: the view materialises the whole display document, so selecting its
+// contentVersion or thumbnail marker rebuilt every per-asset JSON subquery for
+// each scanned row. The columns below are the same facts the view exposes.
+const previewVersionColumns = `v.version,
+	EXISTS(SELECT 1 FROM selected_image_merge_members WHERE physical_asset_id=r.id)`
+const previewCandidatesFrom = ` FROM asset_locations loc JOIN asset_records r ON r.id=loc.asset_id
+	 JOIN asset_content_versions v ON v.asset_id=loc.asset_id AND v.version=loc.current_version
+	 JOIN libraries lb ON lb.id=loc.library_id
+	 WHERE loc.trashed=0 AND coalesce(json_extract(lb.data,'$.enabled'),1)=1
+	 AND coalesce(json_extract(r.data,'$.thumbnailUrl'),'')!=''`
 
 func previewWarmEdges() []int {
 	if runtime.GOOS == "android" {
@@ -117,14 +123,14 @@ type previewIdentity struct {
 }
 
 func (s *Service) warmPreviews(ctx context.Context, scope previewScope) error {
-	query := "SELECT a.id," + previewVersionColumns + previewCandidatesFrom + " AND a.id>?"
+	query := "SELECT r.id," + previewVersionColumns + previewCandidatesFrom + " AND loc.asset_id>?"
 	if scope.library != "" {
-		query += " AND a.library_id=?"
+		query += " AND loc.library_id=?"
 	}
 	if scope.asset != "" {
-		query += " AND a.id=?"
+		query += " AND loc.asset_id=?"
 	}
-	query += " ORDER BY a.id LIMIT 256"
+	query += " ORDER BY loc.asset_id LIMIT 256"
 	last := ""
 	for {
 		args := []any{last}
@@ -325,7 +331,10 @@ func (s *Service) removeOldPreviews(ctx context.Context, id, dirname string, ent
 	defer s.mu.Unlock()
 	var version int64
 	var selected bool
-	err := s.DB.DB.QueryRowContext(ctx, "SELECT "+previewVersionColumns+" FROM assets a WHERE a.id=? AND a.trashed=0", id).Scan(&version, &selected)
+	err := s.DB.DB.QueryRowContext(ctx, "SELECT "+previewVersionColumns+` FROM asset_locations loc
+	 JOIN asset_records r ON r.id=loc.asset_id
+	 JOIN asset_content_versions v ON v.asset_id=loc.asset_id AND v.version=loc.current_version
+	 WHERE loc.asset_id=? AND loc.trashed=0`, id).Scan(&version, &selected)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}

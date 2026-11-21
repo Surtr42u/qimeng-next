@@ -128,19 +128,21 @@ func (s *Service) History(ctx context.Context, cursor string, limit int) (model.
 }
 
 func (s *Service) Stats(ctx context.Context) (map[string]int64, error) {
-	result := map[string]int64{}
-	rows, e := s.DB.DB.QueryContext(ctx, `SELECT 'assets',count(*) FROM assets WHERE trashed=0 UNION ALL SELECT 'images',count(*) FROM assets WHERE trashed=0 AND media_type!='video' UNION ALL SELECT 'videos',count(*) FROM assets WHERE trashed=0 AND media_type='video' UNION ALL SELECT 'bytes',COALESCE(sum(size),0) FROM assets WHERE trashed=0 UNION ALL SELECT 'favorites',count(*) FROM assets WHERE trashed=0 AND favorite=1 UNION ALL SELECT 'authors',count(*) FROM authors WHERE id!='unknown' UNION ALL SELECT 'events',count(*) FROM events UNION ALL SELECT 'trash',(`+visibleTrashCount+")")
+	// One scan with conditional aggregates replaces the five UNION ALL scans of
+	// the assets view; authors, events and trash were never asset rows.
+	var assets, images, videos, bytes, favorites, authors, events, trash int64
+	e := s.DB.DB.QueryRowContext(ctx, `SELECT
+ coalesce(sum(CASE WHEN trashed=0 THEN 1 ELSE 0 END),0),
+ coalesce(sum(CASE WHEN trashed=0 AND media_type!='video' THEN 1 ELSE 0 END),0),
+ coalesce(sum(CASE WHEN trashed=0 AND media_type='video' THEN 1 ELSE 0 END),0),
+ coalesce(sum(CASE WHEN trashed=0 THEN size ELSE 0 END),0),
+ coalesce(sum(CASE WHEN trashed=0 AND favorite=1 THEN 1 ELSE 0 END),0),
+ (SELECT count(*) FROM authors WHERE id!='unknown'),
+ (SELECT count(*) FROM events),
+ (`+visibleTrashCount+`) FROM assets`).Scan(&assets, &images, &videos, &bytes, &favorites, &authors, &events, &trash)
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var key string
-		var value int64
-		if e = rows.Scan(&key, &value); e != nil {
-			return nil, e
-		}
-		result[key] = value
-	}
-	return result, rows.Err()
+	return map[string]int64{"assets": assets, "images": images, "videos": videos, "bytes": bytes,
+		"favorites": favorites, "authors": authors, "events": events, "trash": trash}, nil
 }
