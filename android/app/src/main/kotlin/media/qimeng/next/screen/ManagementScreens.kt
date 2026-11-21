@@ -99,15 +99,22 @@ private fun ServiceVersionRow(model: LibraryViewModel) {
 @Composable
 private fun ServiceVersionRow(model: LibraryViewModel, target: Session?, revision: Long) {
     var request by remember { mutableIntStateOf(0) }
-    val state by produceState(LoadState<String>(loading = target != null), request) {
+    // 首帧同步取缓存值：同一会话/传输修订重进「我的」直接显示已知版本，不先回到读取态。
+    val cached = remember(target, revision) { target?.let { model.cachedServerVersion(it, revision) } }
+    val initial: LoadState<String> = if (cached != null) LoadState(data = cached) else LoadState(loading = target != null)
+    val state by produceState(initial, request) {
         if (target == null) return@produceState
-        value = LoadState(loading = true)
-        value = model.readServerVersion(target, revision)
+        // 缓存只负责首帧：后台仍读一次，服务端升级后同一会话内不必重登就能看到新版本
+        // （readServerVersion 成功时同时回写缓存）。已知版本时不退回读取态，读取失败也不清空它。
+        if (value.data == null) value = LoadState(loading = true)
+        val result = model.readServerVersion(target, revision)
+        value = if (result.data != null) result else LoadState(data = value.data, error = result.error)
     }
     val subtitle = when {
         target == null -> "未连接到服务"
         state.loading -> "正在读取服务版本…"
-        state.error != null -> "${state.error} · 点击重试"
+        // 已有版本时错误只作附注：已知版本不被失败的后台刷新抹掉，重试入口照旧。
+        state.error != null -> "${state.data?.let { "服务端 $it · " }.orEmpty()}${state.error} · 点击重试"
         state.data != null -> "服务端 ${state.data}"
         else -> "服务端未声明版本"
     }

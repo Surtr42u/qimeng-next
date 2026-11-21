@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -18,8 +19,6 @@ type AssetFacet struct {
 	Count int64  `json:"count"`
 }
 
-const fixedFacetOrder = "CASE c.id WHEN 'all' THEN 0 WHEN 'regular' THEN 1 WHEN 'cos' THEN 2 WHEN 'image' THEN 1 WHEN 'animated_image' THEN 2 WHEN 'video' THEN 3 END"
-
 func fixedFacetPosition(id string) int {
 	switch id {
 	case "all":
@@ -32,12 +31,11 @@ func fixedFacetPosition(id string) int {
 		return 3
 	}
 }
+
+// facetCandidates builds the dynamic option set. Fixed partitions/types are
+// produced by fixedFacetCounts from one aggregate instead.
 func facetCandidates(row string) (string, error) {
 	switch row {
-	case "partitions":
-		return `SELECT 'all' key,'partition' kind,'all' id,'全部' name,count(*) n FROM matched UNION ALL SELECT 'regular','partition','regular','常规',count(*) FROM matched WHERE kind='regular' UNION ALL SELECT 'cos','partition','cos','COS',count(*) FROM matched WHERE kind='cos'`, nil
-	case "types":
-		return `SELECT 'all' key,'type' kind,'all' id,'全部' name,count(*) n FROM matched UNION ALL SELECT 'image','type','image','图片',count(*) FROM matched WHERE media_type='image' UNION ALL SELECT 'animated_image','type','animated_image','动图',count(*) FROM matched WHERE media_type='animated_image' UNION ALL SELECT 'video','type','video','视频',count(*) FROM matched WHERE media_type='video'`, nil
 	case "works":
 		return `SELECT 'source:'||s.id key,'source' kind,s.id,s.name,count(DISTINCT m.id) n FROM matched m JOIN asset_source_memberships x ON x.asset_id=m.id JOIN sources s ON s.id=x.source_id WHERE m.kind='regular' GROUP BY s.id UNION ALL SELECT 'source:__other__','source','__other__','其他',count(*) FROM matched m WHERE m.kind='regular' AND NOT EXISTS(SELECT 1 FROM asset_source_memberships x WHERE x.asset_id=m.id) HAVING count(*)>0 UNION ALL SELECT 'author:'||au.id,'author',au.id,au.name,count(DISTINCT m.id) FROM matched m JOIN asset_authors x ON x.asset_id=m.id JOIN authors au ON au.id=x.author_id WHERE m.kind='cos' AND json_extract(au.data,'$.kind')='cos' GROUP BY au.id`, nil
 	case "roles":
@@ -46,6 +44,59 @@ func facetCandidates(row string) (string, error) {
 		return "", Fail(400, "invalid_facet_row", "相册维度必须是分区、作者、角色或类型。")
 	}
 }
+
+// fixedFacetCounts returns one scan over the match set that yields both the
+// total and the counts of the fixed, small dimensions. The old candidate CTE
+// recounted matched once per option.
+func fixedFacetCounts(row string) (columns, values, countCase string, e error) {
+	switch row {
+	case "partitions":
+		return `count(*) total,coalesce(sum(CASE WHEN ` + assetPartition + `='regular' THEN 1 ELSE 0 END),0) regular,coalesce(sum(CASE WHEN ` + assetPartition + `='cos' THEN 1 ELSE 0 END),0) cos`,
+			`(0,'all','partition','all','全部'),(1,'regular','partition','regular','常规'),(2,'cos','partition','cos','COS')`,
+			`CASE v.position WHEN 0 THEN c.total WHEN 1 THEN c.regular ELSE c.cos END`, nil
+	case "types":
+		return `count(*) total,coalesce(sum(CASE WHEN a.media_type='image' THEN 1 ELSE 0 END),0) image,coalesce(sum(CASE WHEN a.media_type='animated_image' THEN 1 ELSE 0 END),0) animated_image,coalesce(sum(CASE WHEN a.media_type='video' THEN 1 ELSE 0 END),0) video`,
+			`(0,'all','type','all','全部'),(1,'image','type','image','图片'),(2,'animated_image','type','animated_image','动图'),(3,'video','type','video','视频')`,
+			`CASE v.position WHEN 0 THEN c.total WHEN 1 THEN c.image WHEN 2 THEN c.animated_image ELSE c.video END`, nil
+	}
+	return "", "", "", Fail(400, "invalid_facet_row", "相册维度必须是分区、作者、角色或类型。")
+}
+
+// facetItemJSON leaves a NULL item for the synthetic totals row so an empty
+// filtered page still carries the exact first-page facts.
+func facetItemJSON(alias string) string {
+	return `CASE WHEN ` + alias + `.key IS NULL THEN NULL ELSE json_object('key',` + alias + `.key,'kind',` + alias + `.kind,'id',` + alias + `.id,'name',` + alias + `.name,'count',` + alias + `.n) END`
+}
+
+// scanFacetPage reads (item,totalOptions,totalMatched) rows. The LEFT JOIN in
+// each query guarantees one row even when facetQ or the cursor matches nothing.
+func scanFacetPage(rows *sql.Rows) ([]AssetFacet, int64, int64, error) {
+	items := []AssetFacet{}
+	var totalOptions, totalMatched int64
+	for rows.Next() {
+		var raw sql.NullString
+		var options, matched sql.NullInt64
+		if err := rows.Scan(&raw, &options, &matched); err != nil {
+			return nil, 0, 0, err
+		}
+		if options.Valid {
+			totalOptions = options.Int64
+		}
+		if matched.Valid {
+			totalMatched = matched.Int64
+		}
+		if !raw.Valid {
+			continue
+		}
+		var value AssetFacet
+		if err := json.Unmarshal([]byte(raw.String), &value); err != nil {
+			return nil, 0, 0, err
+		}
+		items = append(items, value)
+	}
+	return items, totalOptions, totalMatched, rows.Err()
+}
+
 func (s *Service) AssetFacets(ctx context.Context, filter AssetFilter, row, query string) (model.Page[AssetFacet], error) {
 	page := model.Page[AssetFacet]{Items: []AssetFacet{}}
 	f, e := normalizeAssetFilter(filter)
@@ -63,34 +114,67 @@ func (s *Service) AssetFacets(ctx context.Context, filter AssetFilter, row, quer
 	if e != nil {
 		return page, e
 	}
-	candidates, e := facetCandidates(row)
-	if e != nil {
-		return page, e
-	}
 	key := predicate.FilterKey + "\x00" + row + "\x00" + query
 	fixed := row == "partitions" || row == "types"
 	sorting := "facet_count"
-	ordering := "c.n DESC,c.name,c.key"
+	ordering := "f.n DESC,f.name,f.key"
 	if fixed {
 		sorting = "fixed_row"
-		ordering = fixedFacetOrder
+		ordering = "f.position"
 	}
 	cursor, e := readSeek(f.Cursor, key, sorting)
 	if e != nil {
 		return page, e
 	}
-	cte := browseCTE + ", matched AS (SELECT a.id,a.library_id,a.media_type,a.cos_work_id," + assetPartition + " kind" + browseFrom + "WHERE " + predicate.Where + "), candidates AS (" + candidates + ")"
-	where := "instr(lower(c.name),lower(?))>0"
-	args := append(append([]any{}, predicate.Args...), query)
-	if cursor.ID != "" {
-		if fixed {
+	tx, e := s.DB.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if e != nil {
+		return page, e
+	}
+	defer tx.Rollback()
+
+	activity := activityForFilter(f)
+	// totalMatched is a first-page fact. Continuations carry it in the cursor so
+	// they do not rescan the match set, while still returning the same number.
+	var carriedTotal *int64
+	if cursor.ID != "" && cursor.Total != nil && *cursor.Total >= 0 {
+		carriedTotal = cursor.Total
+	}
+	var sqlQuery string
+	args := append([]any{}, predicate.Args...)
+	args = append(args, query)
+	on := "1=1"
+	if fixed {
+		columns, fixedValues, countCase, e := fixedFacetCounts(row)
+		if e != nil {
+			return page, e
+		}
+		if cursor.ID != "" {
 			position, e := strconv.Atoi(cursor.Value)
 			if e != nil || position < 0 || position > 3 {
 				return page, Fail(400, "invalid_cursor", "固定维度游标无效。")
 			}
-			where += " AND " + fixedFacetOrder + ">?"
+			on = "f.position>?"
 			args = append(args, position)
-		} else {
+		}
+		args = append(args, n+1)
+		sqlQuery = browsePrefix(activity) + "counts AS (SELECT " + columns + browseSource(activity) + "WHERE " + predicate.Where +
+			"), fixed(position,key,kind,id,name) AS (VALUES " + fixedValues +
+			"), fixed_rows AS (SELECT v.position,v.key,v.kind,v.id,v.name," + countCase +
+			" n,c.total total_matched FROM fixed v CROSS JOIN counts c)" +
+			", filtered AS (SELECT f.*,count(*) OVER () total_options FROM fixed_rows f WHERE instr(lower(f.name),lower(?))>0)" +
+			" SELECT " + facetItemJSON("f") + ",COALESCE((SELECT total_options FROM filtered LIMIT 1),0),(SELECT total_matched FROM fixed_rows LIMIT 1)" +
+			" FROM (SELECT 1) d LEFT JOIN filtered f ON " + on + " ORDER BY " + ordering + " LIMIT ?"
+	} else {
+		candidates, e := facetCandidates(row)
+		if e != nil {
+			return page, e
+		}
+		totals, totalExpression := ", totals AS (SELECT count(*) n FROM matched)", "(SELECT n FROM totals)"
+		if carriedTotal != nil {
+			totals, totalExpression = "", "?"
+			args = append(args, *carriedTotal)
+		}
+		if cursor.ID != "" {
 			parts := strings.SplitN(cursor.Value, "\x00", 2)
 			if len(parts) != 2 {
 				return page, Fail(400, "invalid_cursor", "候选游标无效。")
@@ -99,31 +183,28 @@ func (s *Service) AssetFacets(ctx context.Context, filter AssetFilter, row, quer
 			if e != nil || count < 0 {
 				return page, Fail(400, "invalid_cursor", "候选游标计数无效。")
 			}
-			where += " AND (c.n<? OR (c.n=? AND (c.name>? OR (c.name=? AND c.key>?))))"
+			on = "(f.n<? OR (f.n=? AND (f.name>? OR (f.name=? AND f.key>?))))"
 			args = append(args, count, count, parts[1], parts[1], cursor.ID)
 		}
+		args = append(args, n+1)
+		sqlQuery = browsePrefix(activity) + "matched AS (SELECT a.id,a.library_id,a.media_type,a.cos_work_id," + assetPartition + " kind" + browseSource(activity) + "WHERE " + predicate.Where +
+			"), candidates AS (" + candidates + totals +
+			", filtered AS (SELECT c.*,count(*) OVER () total_options FROM candidates c WHERE instr(lower(c.name),lower(?))>0)" +
+			" SELECT " + facetItemJSON("f") + ",COALESCE((SELECT total_options FROM filtered LIMIT 1),0)," + totalExpression +
+			" FROM (SELECT 1) d LEFT JOIN filtered f ON " + on + " ORDER BY " + ordering + " LIMIT ?"
 	}
-	args = append(args, n+1)
-	tx, e := s.DB.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	rows, e := tx.QueryContext(ctx, sqlQuery, args...)
 	if e != nil {
 		return page, e
 	}
-	defer tx.Rollback()
-	var count int64
-	if e = tx.QueryRowContext(ctx, browseCTE+" SELECT count(*)"+browseFrom+"WHERE "+predicate.Where, predicate.Args...).Scan(&count); e != nil {
-		return page, e
-	}
-	page.TotalMatched = &count
-	var options int64
-	if e = tx.QueryRowContext(ctx, cte+" SELECT count(*) FROM candidates c WHERE instr(lower(c.name),lower(?))>0", append(append([]any{}, predicate.Args...), query)...).Scan(&options); e != nil {
-		return page, e
-	}
-	page.TotalOptions = &options
-	values, e := store.List[AssetFacet](ctx, tx, cte+" SELECT json_object('key',c.key,'kind',c.kind,'id',c.id,'name',c.name,'count',c.n) FROM candidates c WHERE "+where+" ORDER BY "+ordering+" LIMIT ?", args...)
+	defer rows.Close()
+	values, options, matched, e := scanFacetPage(rows)
 	if e != nil {
 		return page, e
 	}
 	page.Items = values
+	page.TotalOptions = &options
+	page.TotalMatched = &matched
 	if len(values) > n {
 		page.Items = values[:n]
 		last := page.Items[n-1]
@@ -131,7 +212,7 @@ func (s *Service) AssetFacets(ctx context.Context, filter AssetFilter, row, quer
 		if fixed {
 			value = strconv.Itoa(fixedFacetPosition(last.ID))
 		}
-		page.NextCursor = makeSeek(key, sorting, value, last.Key)
+		page.NextCursor = makeSeekTotal(key, sorting, value, last.Key, matched)
 	}
 	return page, nil
 }
@@ -141,6 +222,37 @@ type SearchSuggestion struct {
 	Type string `json:"type"`
 	Name string `json:"name"`
 }
+
+// suggestionVocabulary reads the five materialised name dimensions and keeps a
+// name only when an indexed relationship reaches a live asset in an enabled
+// library. Work is bounded by vocabulary size, not by the number of assets.
+const suggestionVocabulary = `names(type,id,name) AS (
+ SELECT 'source',s.id,s.name FROM sources s WHERE
+  EXISTS(SELECT 1 FROM asset_sources x JOIN asset_locations l ON l.asset_id=x.asset_id JOIN libraries lib ON lib.id=l.library_id
+   WHERE x.source_id=s.id AND l.trashed=0 AND COALESCE(json_extract(lib.data,'$.enabled'),1)=1
+     AND NOT EXISTS(SELECT 1 FROM asset_authors pa JOIN authors pax ON pax.id=pa.author_id WHERE pa.asset_id=x.asset_id AND json_extract(pax.data,'$.kind')='cos'))
+  OR EXISTS(SELECT 1 FROM characters c JOIN asset_characters x ON x.character_id=c.id JOIN asset_locations l ON l.asset_id=x.asset_id JOIN libraries lib ON lib.id=l.library_id
+   WHERE c.source_id=s.id AND l.trashed=0 AND COALESCE(json_extract(lib.data,'$.enabled'),1)=1
+     AND NOT EXISTS(SELECT 1 FROM asset_authors pa JOIN authors pax ON pax.id=pa.author_id WHERE pa.asset_id=x.asset_id AND json_extract(pax.data,'$.kind')='cos'))
+ UNION ALL
+ SELECT 'character',c.id,c.name FROM characters c WHERE
+  EXISTS(SELECT 1 FROM asset_characters x JOIN asset_locations l ON l.asset_id=x.asset_id JOIN libraries lib ON lib.id=l.library_id
+   WHERE x.character_id=c.id AND l.trashed=0 AND COALESCE(json_extract(lib.data,'$.enabled'),1)=1
+     AND NOT EXISTS(SELECT 1 FROM asset_authors pa JOIN authors pax ON pax.id=pa.author_id WHERE pa.asset_id=x.asset_id AND json_extract(pax.data,'$.kind')='cos'))
+ UNION ALL
+ SELECT 'cosAuthor',au.id,au.name FROM authors au WHERE json_extract(au.data,'$.kind')='cos' AND
+  EXISTS(SELECT 1 FROM asset_authors x JOIN asset_locations l ON l.asset_id=x.asset_id JOIN libraries lib ON lib.id=l.library_id
+   WHERE x.author_id=au.id AND l.trashed=0 AND COALESCE(json_extract(lib.data,'$.enabled'),1)=1)
+ UNION ALL
+ SELECT 'cosWork',w.id,w.name FROM cos_works w WHERE
+  EXISTS(SELECT 1 FROM asset_records r JOIN asset_locations l ON l.asset_id=r.id JOIN libraries lib ON lib.id=l.library_id
+   WHERE r.cos_work_id=w.id AND l.trashed=0 AND COALESCE(json_extract(lib.data,'$.enabled'),1)=1
+     AND EXISTS(SELECT 1 FROM asset_authors pa JOIN authors pax ON pax.id=pa.author_id WHERE pa.asset_id=r.id AND json_extract(pax.data,'$.kind')='cos'))
+ UNION ALL
+ SELECT 'author',au.id,au.name FROM authors au WHERE json_extract(au.data,'$.kind')='regular' AND
+  EXISTS(SELECT 1 FROM asset_authors x JOIN asset_locations l ON l.asset_id=x.asset_id JOIN libraries lib ON lib.id=l.library_id
+   WHERE x.author_id=au.id AND l.trashed=0 AND COALESCE(json_extract(lib.data,'$.enabled'),1)=1)
+)`
 
 func (s *Service) SearchSuggestions(ctx context.Context, query string, recommend bool, limit int) (any, error) {
 	if limit == 0 {
@@ -156,9 +268,7 @@ func (s *Service) SearchSuggestions(ctx context.Context, query string, recommend
 	if query == "" && !recommend {
 		return out, nil
 	}
-	works, _ := facetCandidates("works")
-	roles, _ := facetCandidates("roles")
-	cte := `WITH matched AS (SELECT a.id,a.library_id,a.media_type,a.cos_work_id,` + assetPartition + ` kind FROM assets a JOIN libraries l ON l.id=a.library_id WHERE a.trashed=0 AND COALESCE(json_extract(l.data,'$.enabled'),1)=1), facet AS (` + works + ` UNION ALL ` + roles + `), names AS (SELECT id,CASE kind WHEN 'author' THEN 'cosAuthor' WHEN 'work' THEN 'cosWork' ELSE kind END type,name FROM facet WHERE id!='__other__' UNION ALL SELECT au.id,'author',au.name FROM matched m JOIN asset_authors x ON x.asset_id=m.id JOIN authors au ON au.id=x.author_id WHERE json_extract(au.data,'$.kind')='regular'), unique_names AS (SELECT CASE WHEN count(DISTINCT id)=1 THEN min(id) ELSE '' END id,type,name FROM names GROUP BY type,name)`
+	cte := `WITH ` + suggestionVocabulary + `, unique_names AS (SELECT CASE WHEN count(DISTINCT id)=1 THEN min(id) ELSE '' END id,type,name FROM names GROUP BY type,name)`
 	args := []any{}
 	sqlQuery := ""
 	if query == "" {

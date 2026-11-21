@@ -237,12 +237,16 @@ class State:
 
     def save(self, value, *, kind: str = "result") -> str:
         data = encode(value)
-        size = len(data.encode())
+        return self.save_encoded(data, data.encode(), kind=kind)
+
+    def save_encoded(self, data: str, raw: bytes, *, kind: str = "result") -> str:
+        # raw is data's UTF-8 encoding, measured and hashed without a second pass.
+        size = len(raw)
         if size > MAX_RESULT_BYTES:
             raise ToolError("RESULT_TOO_LARGE", "结果超出完整缓存上限，请在服务端使用分页查询")
         with self.transaction() as db:
             db.execute("DELETE FROM results WHERE created<?", (time.time() - RESULT_TTL,))
-            digest = hashlib.sha256(data.encode()).hexdigest()
+            digest = hashlib.sha256(raw).hexdigest()
             # Presentation results use a contract-specific kind; local immutable file/image
             # references can survive an SDK refresh, while old API result shapes cannot.
             stored_kind = kind + ":" + self.contract_sha if kind == "result" else kind

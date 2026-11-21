@@ -54,16 +54,30 @@ import java.io.File
 import java.io.IOException
 import java.net.URI
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 private const val PREFETCH_CONCURRENCY = 4
+
+/**
+ * 前台刷新让路窗口（秒级粒度）：刷新首屏与全库预取在局域网带宽上互抢是旧版实测过的
+ * 刷新慢叠加因素，旧版以 15s 有界窗口 + 1s 复查让路。窗口自愈过期，不需要恢复调用。
+ */
+private const val PREFETCH_YIELD_WINDOW_MS = 15_000L
+private const val PREFETCH_YIELD_POLL_MS = 1_000L
 
 /**
  * Single source for the local preview namespace. [VERSION] must mirror the server's
  * `PreviewPolicyVersion`; [SIZE] is the only size this client requests.
  */
 internal object ThumbnailCachePolicy {
-    const val DIRECTORY = "thumbnail-previews-v2"
+    /**
+     * 目录命名空间。v3 起磁盘键只含实例身份（同一实例换地址不重下）；v2 的键编入了地址，
+     * 升级后永远命中不到，由 [ThumbnailCacheRepository] 首次运行时整目录回收。
+     */
+    const val DIRECTORY = "thumbnail-previews-v3"
+    /** 被取代的旧命名空间（键含地址），只用于升级时一次性回收。 */
+    const val SUPERSEDED_DIRECTORY = "thumbnail-previews-v2"
     const val VERSION = "v5"
     const val SIZE = "md"
 
@@ -78,11 +92,18 @@ class ThumbnailCacheRepository internal constructor(
     private val unmetered: Flow<Boolean> = unmeteredNetwork(context),
     directory: File = File(context.cacheDir, ThumbnailCachePolicy.DIRECTORY),
     private val revisions: ThumbnailRevisionRepository = ThumbnailRevisionRepository(provider),
-    private val revisionStore: ThumbnailPrefetchRevisionStore = ThumbnailPrefetchRevisionStore(context),
 ) {
     private val selections = context.getSharedPreferences("thumbnail-instances", Context.MODE_PRIVATE)
+    /** 缓存根目录，用于升级时定位被取代的命名空间（构造函数参数本身只在初始化期可见）。 */
+    private val cacheRoot = directory
+    /** 旧命名空间只回收一次；所有调用点都在 IO 线程，删除大目录不阻塞界面。 */
+    private val supersededCleanup = AtomicBoolean(false)
     private val nas = ThumbnailDiskCache(File(directory, "nas"), 1024L * 1024 * 1024)
     private val local = ThumbnailDiskCache(File(directory, "local"), 512L * 1024 * 1024)
+    /** 每个物理缓存池一条修订记录：清空一个池只作废该池的 SKIP 证据，另一个池照旧跳过全量拉取。 */
+    private val revisionStores = ThumbnailPool.entries.associateWith {
+        ThumbnailPrefetchRevisionStore(context, it.name.lowercase())
+    }
     private val clearSignal = MutableStateFlow(0L)
     private val prefetchLock = Mutex()
     private val backgroundFetch = Semaphore(PREFETCH_CONCURRENCY)
@@ -92,6 +113,8 @@ class ThumbnailCacheRepository internal constructor(
     private val prefetchState = MutableStateFlow<ThumbnailPrefetch?>(null)
     private val nasDiskChanges = MutableStateFlow(0L)
     private val localDiskChanges = MutableStateFlow(0L)
+    /** 前台刷新让路截止时间（EpochMs，0=无）。背景预取在此窗口内不发起新下载。 */
+    @Volatile private var foregroundUntilMs = 0L
     val prefetch = prefetchState.asStateFlow()
 
     /** Per-pool counters so writes to one pool never force a rescan of the other pool's card. */
@@ -129,7 +152,12 @@ class ThumbnailCacheRepository internal constructor(
             else -> settings.certificateFor(target) != null || isLoopback(target.baseUrl)
         }
         val kind = if (embedded) ThumbnailPool.LOCAL else ThumbnailPool.NAS
-        val identity = if (embedded) target.instanceId else "${target.baseUrl}\n${target.instanceId}"
+        // 磁盘命名空间只由服务器实例身份决定：同一实例可以经 LAN 地址、隧道域名或回环访问，
+        // 换地址不等于换库。旧版 SignedMediaCacheKeys 剥掉 scheme/host 就是同一裁决；把 baseUrl
+        // 编进缓存键会让一次地址切换把整库缩略图判为未缓存、全部重下。
+        // 传输修订（transportRevision）仍留在 Preview.flightKey 里——那是内存/在途键：请求绑定
+        // 具体连接，连接变了旧请求不能算数；磁盘条目按 (实例, 资产, 内容版本) 复用，与连接无关。
+        val identity = target.instanceId
         Connection(target, revision, ThumbnailCacheSelection(kind, thumbnailHash(identity))).also { capturedConnection = it }
     }
 
@@ -149,13 +177,15 @@ class ThumbnailCacheRepository internal constructor(
         builder.add(Fetcher.Factory<Asset> { asset, options, _ ->
             val request = preview(asset) ?: return@Factory null
             Fetcher {
+                // 磁盘命中直接交出文件读出的 Buffer，网络命中交出已下载的 Buffer：
+                // 两者都不再经 ByteArray 中转，Coil 从同一份缓冲解码。
                 val (bytes, source) = withContext(Dispatchers.IO) { fetchVisible(request) }
-                SourceFetchResult(ImageSource(Buffer().write(bytes), options.fileSystem), "image/jpeg", source)
+                SourceFetchResult(ImageSource(bytes, options.fileSystem), "image/jpeg", source)
             }
         })
     }
 
-    private suspend fun fetchVisible(preview: Preview): Pair<ByteArray, DataSource> =
+    private suspend fun fetchVisible(preview: Preview): Pair<Buffer, DataSource> =
         flights.run(preview.flightKey) {
             requireCurrent(preview.connection)
             val disk = diskFor(preview.connection.selection.pool)
@@ -181,10 +211,21 @@ class ThumbnailCacheRepository internal constructor(
         if (currentConnection() != connection) throw CancellationException("缩略图所属连接已改变")
     }
 
+    /** 前台刷新开始时让路：背景预取在下个复查周期暂停下载，窗口到期自愈（幂等，可重复续期）。 */
+    fun pauseForForegroundRefresh() {
+        foregroundUntilMs = System.currentTimeMillis() + PREFETCH_YIELD_WINDOW_MS
+    }
+
+    private suspend fun yieldForForegroundRefresh() {
+        while (System.currentTimeMillis() < foregroundUntilMs) delay(PREFETCH_YIELD_POLL_MS)
+    }
+
     suspend fun prefetchNearby(assets: List<Asset>) = withContext(Dispatchers.IO) {
         val connection = currentConnection() ?: return@withContext
+        // 视口前瞻不做计费网络门（旧版网格预取同样不设门）：这些条目是用户正在滚入、
+        // 无论如何都会请求的缩略图，提前 1 个往返不增加总流量；全库预取仍按未计费网络门控。
+        if (clearedConnection == connection) return@withContext
         val pool = connection.selection.pool
-        if (clearedConnection == connection || (pool == ThumbnailPool.NAS && !unmetered.first())) return@withContext
         val disk = diskFor(pool)
         val generation = disk.generation
         for (asset in assets) {
@@ -192,7 +233,7 @@ class ThumbnailCacheRepository internal constructor(
             if (asset.thumbnailUrl.isBlank() || asset.mediaType == "animated_image" || !sameTarget(asset.target, connection.target)) continue
             val request = Preview(asset.id, asset.version, connection, generation)
             try {
-                if (prefetchOne(request, disk) == ThumbnailDiskResult.FULL) return@withContext
+                if (prefetchOne(request, disk, lookahead = true) == ThumbnailDiskResult.FULL) return@withContext
             } catch (failure: ApiFailure) {
                 if (failure.isMissingThumbnail()) continue
                 Log.d("ThumbnailCache", "Nearby thumbnail prefetch stopped (HTTP ${failure.status})")
@@ -210,8 +251,24 @@ class ThumbnailCacheRepository internal constructor(
     }
 
     suspend fun usage(pool: ThumbnailPool): ThumbnailPoolUsage = withContext(Dispatchers.IO) {
+        removeSupersededNamespace()
         val selection = selected(pool, currentConnection())
         ThumbnailPoolUsage(selection, selection?.let { diskFor(pool).usage(it.instanceKey) } ?: ThumbnailUsage(0, 0))
+    }
+
+    /**
+     * 升级一次性回收：v2 目录的键包含服务器地址，本版只按实例寻址，旧条目永远不会再被读取；
+     * 留着的目录仍占最多 1 GiB（计入旧池的 LRU 预算），而 [usage] 只扫描新目录，卡片会报 0。
+     * 删除被取代的命名空间后显示与实际磁盘一致，首次预取也不必重下已失效的旧字节。
+     * 目录不存在时 deleteRecursively 无副作用；删除失败只记日志，下次进程启动会再试。
+     * 只在 IO 线程（预取循环/缓存统计）调用，避免在构造或组合线程上做多秒磁盘遍历。
+     */
+    private fun removeSupersededNamespace() {
+        if (!supersededCleanup.compareAndSet(false, true)) return
+        val parent = cacheRoot.parentFile ?: return
+        val superseded = File(parent, ThumbnailCachePolicy.SUPERSEDED_DIRECTORY)
+        if (superseded.exists() && !superseded.deleteRecursively())
+            Log.w("ThumbnailCache", "Superseded thumbnail cache could not be removed")
     }
 
     suspend fun clear(selection: ThumbnailCacheSelection) = withContext(Dispatchers.IO) {
@@ -225,8 +282,9 @@ class ThumbnailCacheRepository internal constructor(
             try {
                 diskFor(selection.pool).clear(selection.instanceKey)
             } finally {
-                // A retained revision record would make the next round skip an empty pool.
-                revisionStore.clear()
+                // A retained revision record would make the next round skip an empty pool; the
+                // record is scoped per pool so the other pool keeps its skip evidence.
+                revisionStores.getValue(selection.pool).clear()
             }
         } finally {
             noteDiskChange(selection.pool)
@@ -251,6 +309,8 @@ class ThumbnailCacheRepository internal constructor(
      */
     suspend fun runPrefetchLoop() = prefetchLock.withLock {
         withContext(Dispatchers.IO) {
+            // 首次运行先回收旧命名空间（应用启动即进入本循环），再开始预取。
+            removeSupersededNamespace()
             combine(settings.transportRevision, unmetered, clearSignal) { _, networkAllowed, _ ->
                 currentConnection()?.let {
                     Round(it, networkAllowed || it.selection.pool == ThumbnailPool.LOCAL, clearedConnection == it)
@@ -287,15 +347,16 @@ class ThumbnailCacheRepository internal constructor(
     }
 
     private suspend fun fetchRound(connection: Connection) {
-        val disk = diskFor(connection.selection.pool)
+        val pool = connection.selection.pool
+        val disk = diskFor(pool)
         val generation = disk.generation
         val revision = readRevision(connection)
         val serverKey = serverKey(connection)
         if (revision != null && ThumbnailPrefetchGate.decide(
-                revision.revision, readLastDone(), serverKey, revision.thumbnailVersion,
+                revision.revision, readLastDone(pool), serverKey, revision.thumbnailVersion,
             ) == ThumbnailPrefetchDecision.SKIP
         ) {
-            val sample = readStoredSample()
+            val sample = readStoredSample(pool)
             val missing = sample.count { disk.warmState(it.key, it.version) != ThumbnailDiskResult.READY }
             if (!ThumbnailPrefetchSampleGate.shouldDowngradeToFull(sample.size, missing)) {
                 publish(connection, ThumbnailPrefetchStatus.Skipped)
@@ -340,6 +401,8 @@ class ThumbnailCacheRepository internal constructor(
                             currentCoroutineContext().ensureActive()
                             val index = next.getAndIncrement()
                             if (index >= previews.size) break
+                            // 前台刷新在途时逐周期让路（旧版 ThumbnailPrefetchThrottle 同款语义）。
+                            yieldForForegroundRefresh()
                             val preview = previews[index]
                             val result = try {
                                 prefetchOne(preview, disk)
@@ -366,7 +429,7 @@ class ThumbnailCacheRepository internal constructor(
             }
             cursor = page.nextCursor
         } while (cursor != null)
-        recordRound(revision, serverKey, samples)
+        recordRound(pool, revision, serverKey, samples)
         publish(connection, ThumbnailPrefetchStatus.Done(cached, total, atCapacity))
     }
 
@@ -378,14 +441,14 @@ class ThumbnailCacheRepository internal constructor(
         null
     }
 
-    private fun readLastDone(): ThumbnailPrefetchRecord? = try {
-        revisionStore.lastDone()
+    private fun readLastDone(pool: ThumbnailPool): ThumbnailPrefetchRecord? = try {
+        revisionStores.getValue(pool).lastDone()
     } catch (_: Exception) {
         null
     }
 
-    private fun readStoredSample(): Set<ThumbnailPrefetchSample> = try {
-        revisionStore.storedSample()
+    private fun readStoredSample(pool: ThumbnailPool): Set<ThumbnailPrefetchSample> = try {
+        revisionStores.getValue(pool).storedSample()
     } catch (_: Exception) {
         emptySet()
     }
@@ -396,13 +459,14 @@ class ThumbnailCacheRepository internal constructor(
      * record, so the next round runs full again rather than skipping on stale evidence.
      */
     private fun recordRound(
+        pool: ThumbnailPool,
         revision: ThumbnailRevisionSnapshot?,
         serverKey: String,
         samples: List<ThumbnailPrefetchSample>,
     ) {
         if (revision == null) return
         try {
-            revisionStore.setLastDone(
+            revisionStores.getValue(pool).setLastDone(
                 ThumbnailPrefetchRecord(serverKey, revision.revision, revision.thumbnailVersion),
                 ThumbnailPrefetchSampleGate.pickSample(samples),
             )
@@ -411,27 +475,37 @@ class ThumbnailCacheRepository internal constructor(
         }
     }
 
-    private suspend fun prefetchOne(preview: Preview, disk: ThumbnailDiskCache): ThumbnailDiskResult {
+    /**
+     * 预取一条预览。
+     *
+     * 预取**不再占用可见请求的 flight**：同一 key 的可见加载会自己下载，而不是排在一条
+     * 可能很慢的预取下载后面（旧版网格预取与可见图各自入队，谁先到谁先出）。重复下载
+     * 只发生在「预热中的格子恰好滚入视口」这一窗口，且磁盘写入由 [ThumbnailDiskCache.store]
+     * 串行化，结果一致。lookahead=true 的视口预取另外跳过后台配额：它服务的是马上要看的
+     * 格子，不能排在 4 条全库预取后面。
+     */
+    private suspend fun prefetchOne(preview: Preview, disk: ThumbnailDiskCache, lookahead: Boolean = false): ThumbnailDiskResult {
         val current = disk.warmState(preview.key, preview.version)
         if (current != ThumbnailDiskResult.MISSING) return current
-        return backgroundFetch.withPermit {
-            flights.run(preview.flightKey) {
-                requireCurrent(preview.connection)
-                if (disk.generation != preview.generation || clearedConnection == preview.connection) {
-                    throw CancellationException("缩略图缓存已清空")
-                }
-                val existing = disk.warmState(preview.key, preview.version)
-                if (existing != ThumbnailDiskResult.MISSING) return@run existing
-                val payload = download(preview, background = true)
-                currentCoroutineContext().ensureActive()
-                requireCurrent(preview.connection)
-                val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
-                    currentConnection() == preview.connection && clearedConnection != preview.connection
-                }
-                if (result == ThumbnailDiskResult.READY) noteDiskChange(preview.connection.selection.pool)
-                result
-            }
+        if (lookahead) return downloadMissing(preview, disk, lookahead = true)
+        return backgroundFetch.withPermit { downloadMissing(preview, disk, lookahead = false) }
+    }
+
+    private suspend fun downloadMissing(preview: Preview, disk: ThumbnailDiskCache, lookahead: Boolean): ThumbnailDiskResult {
+        requireCurrent(preview.connection)
+        if (disk.generation != preview.generation || clearedConnection == preview.connection) {
+            throw CancellationException("缩略图缓存已清空")
         }
+        val existing = disk.warmState(preview.key, preview.version)
+        if (existing != ThumbnailDiskResult.MISSING) return existing
+        val payload = download(preview, background = true, lookahead)
+        currentCoroutineContext().ensureActive()
+        requireCurrent(preview.connection)
+        val result = disk.store(preview.key, preview.version, payload.bytes, preview.generation, background = true) {
+            currentConnection() == preview.connection && clearedConnection != preview.connection
+        }
+        if (result == ThumbnailDiskResult.READY) noteDiskChange(preview.connection.selection.pool)
+        return result
     }
 
     private fun publish(connection: Connection, status: ThumbnailPrefetchStatus) {
@@ -444,15 +518,23 @@ class ThumbnailCacheRepository internal constructor(
         if (instanceId != connection.target.instanceId) throw ApiFailure(409, "地址已指向另一个媒体库，请重新登录", "instance_changed")
     }
 
-    private data class Payload(val bytes: ByteArray, val verified: Boolean)
+    /** 下载结果直接持有 okio 缓冲：正文只经「网络 → Buffer」一次拷贝，落盘用 clone 共享片段。 */
+    private data class Payload(val bytes: Buffer, val verified: Boolean)
 
-    private suspend fun download(preview: Preview, background: Boolean): Payload {
+    private suspend fun download(preview: Preview, background: Boolean, lookahead: Boolean = false): Payload {
         val target = preview.connection.target
         val url = target.baseUrl.toHttpUrl().newBuilder()
             .addPathSegments("api/v1/assets").addPathSegment(preview.assetId).addPathSegment("thumbnail")
             .addQueryParameter("version", preview.version.toString()).addQueryParameter("size", ThumbnailCachePolicy.SIZE)
             .apply { if (background) addQueryParameter("background", "true") }.build()
-        val call = provider.client(target).newCall(Request.Builder().url(url).header("Accept", "image/jpeg").build())
+        // 可见项、视口前瞻与后台全库预取分属不同 Dispatcher：任一方在途都不会占掉另一方的
+        // 每主机并发名额（旧版 Coil 客户端与列表 SDK 客户端也是分开的）。
+        val client = when {
+            lookahead -> provider.mediaClient(target)
+            background -> provider.backgroundMediaClient(target)
+            else -> provider.mediaClient(target)
+        }
+        val call = client.newCall(Request.Builder().url(url).header("Accept", "image/jpeg").build())
         call.timeout().timeout(65, TimeUnit.SECONDS)
         return suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation { call.cancel() }
@@ -471,6 +553,8 @@ class ThumbnailCacheRepository internal constructor(
                             if (body.contentType()?.toString()?.substringBefore(';') != "image/jpeg") {
                                 throw IOException("缩略图格式无效")
                             }
+                            // 直接读进 Buffer 交给解码器；落盘时 store 用 clone() 共享片段，
+                            // 不再有 ByteArray 中转或第二份整块缓冲。
                             val buffer = Buffer()
                             val source = body.source()
                             while (true) {
@@ -478,9 +562,8 @@ class ThumbnailCacheRepository internal constructor(
                                 if (read == -1L) break
                                 if (buffer.size > MAX_THUMBNAIL_BYTES) throw IOException("缩略图响应超出读取预算")
                             }
-                            val bytes = buffer.readByteArray()
-                            if (!validJpeg(bytes)) throw IOException("缩略图正文不是完整 JPEG")
-                            Payload(bytes, mediaInstance != null)
+                            if (!validJpeg(buffer)) throw IOException("缩略图正文不是完整 JPEG")
+                            Payload(buffer, mediaInstance != null)
                         }
                     })
                 }

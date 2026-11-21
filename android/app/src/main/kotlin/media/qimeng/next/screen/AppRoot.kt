@@ -29,6 +29,8 @@ import coil3.gif.GifDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.AssetEditorTarget
+import media.qimeng.next.model.Preferences
+import media.qimeng.next.model.Session
 import media.qimeng.next.model.ThemeChoice
 import media.qimeng.next.ui.*
 import media.qimeng.next.ui.glass.GlassNavItem
@@ -100,51 +102,8 @@ fun AppRoot(model: LibraryViewModel) {
                                 IconButton(onClick = model::clearMessage) { Icon(Icons.Outlined.Close, "关闭提示") }
                             }
                         }
-                        SingleSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) {
-                            when {
-                                route.startsWith("asset:") -> DetailScreen(model, route.substringAfter(':'), session)
-                                route.startsWith("asset-edit:") -> {
-                                    val id = route.substringAfter(':')
-                                    model.targetForAssetEditor(id)?.let { target ->
-                                        AssetEditScreen(AssetEditorTarget(target, transportRevision, id),
-                                            { model.closeAssetEditor(id) }, { model.closeAssetEditor(id, more = true) })
-                                    }
-                                }
-                                route.startsWith("author:") -> AuthorCollectionScreen(model, route.substringAfter(':'))
-                                route.startsWith("profile:") -> AuthorProfileScreen(route.substringAfter(':'), model)
-                                route.startsWith("profile-archive:") -> AuthorProfileScreen(route.split(':')[1], model, archiveId = route.split(':')[2])
-                                route.startsWith("task:") -> TaskDetailScreen(model, route.substringAfter(':'), session)
-                                route.startsWith("review:") -> ReviewScreen(model, route.substringAfter(':'))
-                                route.startsWith("stats-detail:") -> route.split(':').let { StatsDetailScreen(model, it[1], it[2]) }
-                                route.startsWith("vocabulary:") -> VocabularyScreen(route.substringAfter(':'))
-                                route == "source-rules" -> session?.let { ExtractionVocabularyScreen(it, transportRevision, model::back) }
-                                route.startsWith("collection:") -> MediaBrowser(model, route, collectionId = route.substringAfter(':'))
-                                route.startsWith("ranking:") -> ActivityRankingScreen(model, route.split(':')[1], route.split(':')[2])
-                                searchRoute -> SearchScreen(model, initialTag = route.substringAfter(':', "").takeIf(String::isNotEmpty))
-                                route == "favorites" -> MediaBrowser(model, "favorites", favorite = true, albumTitle = "收藏")
-                                route == "authors" -> AuthorDirectoryScreen(model)
-                                route == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
-                                route == "upload" -> UploadScreen(model)
-                                route == "archive-folder" -> ArchiveSettingsScreen(model::back)
-                                route == "maintenance" -> MaintenanceScreen(model, model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
-                                route == "reports" -> TasksScreen(model)
-                                route == "appearance" -> AppearanceScreen(preferences.theme, preferences.material,
-                                    { model.savePreferences(preferences.copy(theme = it)) }, { model.savePreferences(preferences.copy(material = it)) }, model::back)
-                                route == "server" -> ServerSettingsScreen(model)
-                                route == "libraries" -> LibraryManagementScreen(model::back)
-                                route == "data-manage" -> DataManageScreen(model)
-                                route == "thumbnail-cache" -> ThumbnailCacheScreen(model::back)
-                                route == "vocabulary-manage" -> VocabularyManageScreen(model)
-                                route == "trash" -> TrashScreen(model)
-                                route == "recommendation" -> RecommendationSettings(model)
-                                route == "ai-access" -> AIAccessScreen(model)
-                                else -> when (tab) {
-                                    0 -> HomeScreen(model)
-                                    1 -> AlbumsScreen(model)
-                                    2 -> StatisticsScreen(model)
-                                    else -> ProfileScreen(model)
-                                }
-                            }
+                        ResidentSceneHost(if (route == "main") "tab:$tab" else route, Modifier.weight(1f)) { sceneKey ->
+                            SceneContent(sceneKey, model, session, transportRevision, preferences)
                         }
                     }
                     if (route == "main") {
@@ -163,6 +122,67 @@ fun AppRoot(model: LibraryViewModel) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 场景内容：原 SingleSceneHost { when (route) ... } 的分支体逐条搬到此处，判据由活动
+ * route 换成场景键。pushed 路由的 sceneKey 与 route 恒等；Tab 场景是 "tab:N"，必须按键
+ * 里的 N 取屏，不能回落到活动 tab——常驻首页层始终以 "tab:0" 组合，若回落到 tab，切走
+ * 时隐藏层会跟着渲染新 Tab。未知键维持旧 else 的默认（我的）分支。
+ */
+@Composable
+private fun SceneContent(
+    sceneKey: String,
+    model: LibraryViewModel,
+    session: Session?,
+    transportRevision: Long,
+    preferences: Preferences,
+) {
+    val searchRoute = sceneKey == "search" || sceneKey.startsWith("tag:")
+    when {
+        sceneKey.startsWith("asset:") -> DetailScreen(model, sceneKey.substringAfter(':'), session)
+        sceneKey.startsWith("asset-edit:") -> {
+            val id = sceneKey.substringAfter(':')
+            model.targetForAssetEditor(id)?.let { target ->
+                AssetEditScreen(AssetEditorTarget(target, transportRevision, id),
+                    { model.closeAssetEditor(id) }, { model.closeAssetEditor(id, more = true) })
+            }
+        }
+        sceneKey.startsWith("author:") -> AuthorCollectionScreen(model, sceneKey.substringAfter(':'))
+        sceneKey.startsWith("profile:") -> AuthorProfileScreen(sceneKey.substringAfter(':'), model)
+        sceneKey.startsWith("profile-archive:") -> AuthorProfileScreen(sceneKey.split(':')[1], model, archiveId = sceneKey.split(':')[2])
+        sceneKey.startsWith("task:") -> TaskDetailScreen(model, sceneKey.substringAfter(':'), session)
+        sceneKey.startsWith("review:") -> ReviewScreen(model, sceneKey.substringAfter(':'))
+        sceneKey.startsWith("stats-detail:") -> sceneKey.split(':').let { StatsDetailScreen(model, it[1], it[2]) }
+        sceneKey.startsWith("vocabulary:") -> VocabularyScreen(sceneKey.substringAfter(':'))
+        sceneKey == "source-rules" -> session?.let { ExtractionVocabularyScreen(it, transportRevision, model::back) }
+        sceneKey.startsWith("collection:") -> MediaBrowser(model, sceneKey, collectionId = sceneKey.substringAfter(':'))
+        sceneKey.startsWith("ranking:") -> ActivityRankingScreen(model, sceneKey.split(':')[1], sceneKey.split(':')[2])
+        searchRoute -> SearchScreen(model, initialTag = sceneKey.substringAfter(':', "").takeIf(String::isNotEmpty))
+        sceneKey == "favorites" -> MediaBrowser(model, "favorites", favorite = true, albumTitle = "收藏")
+        sceneKey == "authors" -> AuthorDirectoryScreen(model)
+        sceneKey == "history" -> MediaBrowser(model, "history", source = "history", albumTitle = "浏览历史")
+        sceneKey == "upload" -> UploadScreen(model)
+        sceneKey == "archive-folder" -> ArchiveSettingsScreen(model::back)
+        sceneKey == "maintenance" -> MaintenanceScreen(model, model::back, { model.navigate("upload") }, { model.navigate("archive-folder") }, { DeviceDeliveryScreen() })
+        sceneKey == "reports" -> TasksScreen(model)
+        sceneKey == "appearance" -> AppearanceScreen(preferences.theme, preferences.material,
+            { model.savePreferences(preferences.copy(theme = it)) }, { model.savePreferences(preferences.copy(material = it)) }, model::back)
+        sceneKey == "server" -> ServerSettingsScreen(model)
+        sceneKey == "libraries" -> LibraryManagementScreen(model::back)
+        sceneKey == "data-manage" -> DataManageScreen(model)
+        sceneKey == "thumbnail-cache" -> ThumbnailCacheScreen(model::back)
+        sceneKey == "vocabulary-manage" -> VocabularyManageScreen(model)
+        sceneKey == "trash" -> TrashScreen(model)
+        sceneKey == "recommendation" -> RecommendationSettings(model)
+        sceneKey == "ai-access" -> AIAccessScreen(model)
+        else -> when (sceneKey) {
+            "tab:0" -> HomeScreen(model)
+            "tab:1" -> AlbumsScreen(model)
+            "tab:2" -> StatisticsScreen(model)
+            else -> ProfileScreen(model)
         }
     }
 }

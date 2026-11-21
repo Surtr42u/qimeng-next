@@ -6,6 +6,7 @@ import com.google.gson.annotations.SerializedName
 import media.qimeng.next.model.Session
 import media.qimeng.next.sdk.api.DefaultApi
 import media.qimeng.next.transport.PinnedTls
+import okhttp3.Dispatcher
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -72,7 +73,8 @@ internal class ApiProvider(private val settings: SecureSettings) {
     private val baseClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS).build()
     private data class ClientKey(val target: Session, val certificate: String?)
-    @Volatile private var cachedClient: Pair<ClientKey, OkHttpClient>? = null
+    private data class Clients(val api: OkHttpClient, val media: OkHttpClient, val background: OkHttpClient)
+    @Volatile private var cachedClients: Pair<ClientKey, Clients>? = null
 
     fun anonymous(baseUrl: String, certificateDerBase64: String? = null): DefaultApi = build(baseUrl, trustedClient(baseUrl, certificateDerBase64))
 
@@ -95,10 +97,31 @@ internal class ApiProvider(private val settings: SecureSettings) {
 
     fun client(target: Session): OkHttpClient {
         val certificate = try { settings.certificateFor(target) } catch (_: Exception) { throw ApiFailure(401, "连接已变更，请重新登录") }
+        return clients(target, certificate).api
+    }
+
+    /**
+     * 缩略图（可见项与 Coil 网络取图）专用客户端：与 API 共用一个连接池、拦截器与凭据校验，
+     * 但**独立 Dispatcher**。OkHttp 的每主机并发上限是 dispatcher 级别的，共用时全库预取的
+     * 4 条后台下载会占满 5 个名额，列表分页/首页刷新与可见缩略图都得排在其后（旧版 Coil 用
+     * 独立 OkHttpClient，列表请求从不与预取排队）。
+     */
+    fun mediaClient(target: Session): OkHttpClient {
+        val certificate = try { settings.certificateFor(target) } catch (_: Exception) { throw ApiFailure(401, "连接已变更，请重新登录") }
+        return clients(target, certificate).media
+    }
+
+    /** 后台预取专用客户端：再分一个 Dispatcher，预取不会挤掉正在等待的可见缩略图。 */
+    fun backgroundMediaClient(target: Session): OkHttpClient {
+        val certificate = try { settings.certificateFor(target) } catch (_: Exception) { throw ApiFailure(401, "连接已变更，请重新登录") }
+        return clients(target, certificate).background
+    }
+
+    private fun clients(target: Session, certificate: String?): Clients {
         val key = ClientKey(target, certificate)
-        cachedClient?.takeIf { it.first == key }?.let { return it.second }
+        cachedClients?.takeIf { it.first == key }?.let { return it.second }
         val expected = target.baseUrl.toHttpUrl()
-        return trustedClient(target.baseUrl, certificate).newBuilder().addInterceptor { chain ->
+        val api = trustedClient(target.baseUrl, certificate).newBuilder().addInterceptor { chain ->
             val url = chain.request().url
             if (!sameOrigin(url, expected)) throw IOException("拒绝向其他服务器发送媒体凭据")
             val currentCertificate = try { settings.certificateFor(target) }
@@ -107,7 +130,10 @@ internal class ApiProvider(private val settings: SecureSettings) {
             val token = try { settings.tokenFor(target) }
             catch (_: Exception) { throw ApiFailure(401, "登录凭据不可用或连接已变更，请重新登录") }
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build())
-        }.build().also { cachedClient = key to it }
+        }.build()
+        // newBuilder() 保留连接池/超时/拦截器，只换 Dispatcher——分流的只是并发名额，不是连接。
+        return Clients(api, api.newBuilder().dispatcher(Dispatcher()).build(), api.newBuilder().dispatcher(Dispatcher()).build())
+            .also { cachedClients = key to it }
     }
 
     fun api(target: Session): DefaultApi = build(target.baseUrl, client(target))

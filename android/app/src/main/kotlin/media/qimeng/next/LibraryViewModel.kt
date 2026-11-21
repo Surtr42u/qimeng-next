@@ -16,7 +16,9 @@ import java.util.UUID
 data class ListState<T>(val items: List<T> = emptyList(), val cursor: String? = null,
     val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null,
     val totalMatched: Long? = null, val dateCounts: List<DateCount> = emptyList(), val loadedQuery: AssetQuery? = null,
-    val unknownDateCount: Long? = null, val publicationId: String? = null)
+    val unknownDateCount: Long? = null, val publicationId: String? = null,
+    /** 显式刷新（下拉/重试）在途：只有这里驱动刷新指示，筛选重查沿用内容但不亮指示。 */
+    val refreshing: Boolean = false)
 data class LoadState<T>(val data: T? = null, val loading: Boolean = false, val error: String? = null)
 private data class ReactionIntent(val target: Session, val id: String, val revision: Long, val enabled: Boolean)
 
@@ -105,6 +107,10 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     private val queries = mutableMapOf<String, AssetQuery>()
     private val listJobs = mutableMapOf<String, Job>()
     private val listVersions = mutableMapOf<String, RequestGeneration>()
+    /** 每个浏览 key 连续「0 条 + 非空游标」的页数；见 [MAX_EMPTY_APPEND_PAGES]。 */
+    private val emptyAppends = mutableMapOf<String, Int>()
+    /** 已翻过页的浏览 key：同查询的入库补查只并入第一页，不把清单缩回第一页（见 [browse]）。 */
+    private val paginatedKeys = mutableSetOf<String>()
     private val authorState = MutableStateFlow(ListState<Author>())
     val authors = authorState.asStateFlow()
     private val reportState = MutableStateFlow(ListState<TaskReport>())
@@ -129,6 +135,8 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 activeOperations.toList().forEach(Job::cancel)
                 mutableBusy.value = false
                 listJobs.values.forEach(Job::cancel)
+                emptyAppends.clear()
+                paginatedKeys.clear()
                 pageJobs.values.forEach(Job::cancel); pageJobs.clear()
                 detailJob?.cancel()
                 detailGeneration.next()
@@ -171,6 +179,47 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
 
     /** 非组合调用：登记 key 并返回稳定列表流（动态 key 超量时淘汰最旧一条）。 */
     fun openAssets(key: String): StateFlow<ListState<Asset>> = assetState(key)
+
+    /**
+     * 最近一次权威匹配总数，按「实例 + 浏览 key + 查询身份」保留。列表状态本身在换筛选/
+     * 重新进入时保留计数（见 [browse] 的 keep 语义），但列表被淘汰（author:/collection:
+     * 超过上限）或换实例后重建时计数随之消失；胶囊旁的计数不允许因此回退成空白，故另存一份。
+     * 换了筛选就是另一组人群，旧数字不能冒充新查询（[screen.CountSeeds] 同一条规则），
+     * 因此查询身份必须进键，而不只是浏览 key。只在响应成功之后写入，绝不写入推测值。
+     */
+    private val carriedTotals = mutableMapOf<Triple<String, String, String>, Long>()
+
+    /**
+     * 查询身份：数据类完整字段的稳定文本；不用 hashCode，避免不同筛选相撞后串用计数。
+     * 稳定性依赖「AssetQuery 里没有无序集合」：当前字段均为 String/Boolean?/Long/Int?/List<String>，
+     * List 的 toString 有序；以后若引入 Set/Map/数组，必须在这里改成有序/规范化渲染，
+     * 否则无序的 toString 会让同一查询得到不同键，计数互相串用。
+     */
+    private fun countScope(query: AssetQuery): String = query.toString()
+
+    /** 组合期只读：该实例该 key 该查询上一次成功的匹配总数；从未成功加载时为 null（不伪造 0）。 */
+    fun carriedTotal(key: String, query: AssetQuery): Long? =
+        carriedTotals[Triple(connectionInstance(), key, countScope(query))]
+
+    /** 记录权威匹配总数（[screen.MediaBrowser] 在响应落地后回写；只写本次查询的数字）。 */
+    fun carryTotal(key: String, query: AssetQuery, total: Long?) {
+        if (total != null) carriedTotals[Triple(connectionInstance(), key, countScope(query))] = total
+    }
+
+    /**
+     * 媒体库索引已完整加载时，无筛选资产查询的总数 = 启用库 fileCount 之和：服务端
+     * libraryProjection 的 fileCount 与 GET /assets 默认谓词同为「trashed=0 且库 enabled」，
+     * 因此这是导航前就已拿到的真实计数，可在相册首屏响应落地前直接显示。索引尚未加载或
+     * 仍有下一页时返回 null——不拿残缺清单求和，也不打印 0。
+     */
+    fun libraryIndexTotal(): Long? {
+        val page = libraryState.value
+        if (!page.loaded || page.cursor != null) return null
+        return page.items.filter { it.enabled }.sumOf { it.fileCount }
+    }
+
+    private fun connectionInstance(): String = session.value?.instanceId.orEmpty()
+
     fun saveAlbumColumns(columns: Int) {
         viewModelScope.launch {
             try {
@@ -183,6 +232,12 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
 
     suspend fun prefetchNearbyThumbnails(assets: List<Asset>) = graph.thumbnails.prefetchNearby(assets)
+
+    /**
+     * 前台刷新让路（对齐旧版 ThumbnailPrefetchThrottle）：全库预取在窗口内暂停下载，
+     * 首屏/刷新请求独占局域网带宽。窗口有界且自愈，不需要配对的恢复调用。
+     */
+    fun pauseThumbnailPrefetch() = graph.thumbnails.pauseForForegroundRefresh()
 
     private fun assetState(key: String): MutableStateFlow<ListState<Asset>> {
         lists[key]?.let { return it }
@@ -198,7 +253,11 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         listJobs.remove(key)?.cancel()
         listVersions[key]?.next()
         lists[key]?.let { state ->
-            if (state.value.loading) state.value = state.value.copy(loading = false, loaded = false)
+            // 取消在途请求不等于丢弃已有结果：返回列表页时仍显示上次加载的条目与计数，
+            // 骨架只留给从未拿到数据的列表。需要作废数据的调用方（批量保存/收藏变更）
+            // 自行把 loaded 置假。
+            if (state.value.loading || state.value.refreshing)
+                state.value = state.value.copy(loading = false, refreshing = false)
         }
     }
     fun clearSearchResults() {
@@ -217,7 +276,9 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val state = assetState(key)
         val previous = queries[key]
         val publication = lastPublication.value?.takeIf { sameTarget(it.first, session.value) }?.second
-        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query || state.value.publicationId != publication)) return
+        // 入库（publication）只作「旧」标记：翻页不因新发布而被拦下（那会让列表停更），
+        // 也不在翻页时把标记认作最新——页面本身由下一次进入列表/回前台的补查刷新。
+        if (next && (state.value.loading || state.value.cursor == null || state.value.loadedQuery != query)) return
         if (!next && !force && previous == query && state.value.publicationId == publication && (state.value.loaded || state.value.loading)) return
         queries[key] = query
         listJobs[key]?.cancel()
@@ -225,8 +286,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         val ticket = generation.next()
         val connection = connectionGeneration
         val old = state.value
-        val keep = next || previous == query
-        state.value = if (keep) old.copy(loading = true, error = null, publicationId = publication) else ListState(loading = true, publicationId = publication)
+        // 仅因入库标记过期而补查（查询未变、也不是显式刷新）：旧清单仍是同一查询的结果，
+        // 已翻页的列表在响应落地时并入第一页而不是被替换成 50 条（见下方 mergeFresh）。
+        val freshnessOnly = !next && !force && previous == query && old.publicationId != publication
+        // 重新查询不等于丢弃现有内容：旧版在筛选/分区/刷新重查期间把 isLoading 叠在现有状态上，
+        // 条目与计数保持可见，只在响应落地时整页替换。只有从未加载过的列表才新建空状态（骨架）。
+        val keep = next || previous == query || old.loaded || old.items.isNotEmpty()
+        // 只有显式刷新（下拉/重试）与首页换 seed 才亮刷新指示；普通筛选重查沿用内容、不亮指示。
+        // 入库标记过期的同查询补查（freshnessOnly）是静默维护，同样不亮用户没触发的刷新指示。
+        val refreshing = !next && !freshnessOnly && (force || (previous != null && previous.copy(seed = query.seed) == query))
+        // 翻页沿用原发布标记（尚未按最新发布补齐），首屏/刷新才认领当前发布。
+        val requestPublication = if (next) old.publicationId else publication
+        state.value = if (keep) old.copy(loading = true, refreshing = refreshing, error = null, publicationId = requestPublication)
+            else ListState(loading = true, publicationId = requestPublication)
         listJobs[key] = viewModelScope.launch {
             try {
                 var restarted = false
@@ -242,15 +314,42 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
                 }
                 val append = next && !restarted
                 if (generation.isCurrent(ticket) && connection == connectionGeneration) {
-                    state.value = ListState(if (append) appendDistinct(old.items, page.items) else page.items,
-                        page.nextCursor, loaded = true, totalMatched = page.totalMatched,
-                        dateCounts = if (append) old.dateCounts else page.dateCounts, loadedQuery = query,
-                        unknownDateCount = if (append) old.unknownDateCount else page.unknownDateCount, publicationId = publication)
+                    // 过期游标静默重取第一页后仍然**并入**现有清单：把屏幕上的 N 条缩成 50 条
+                    // 会在用户钉在底部时抽走内容、把滚动位置钉到新尾部（旧版换轮追加=去重后
+                    // 并入，同语义；游标随新顺序走，后续翻页继续）。
+                    // 入库后的同查询补查同理：已翻页的清单把第一页按 id 并入（现有条目在前，
+                    // 新 id 追加到末尾）——条目顺序不变，网格不会跳回顶部；未翻页的列表仍整页替换。
+                    // old.loadedQuery == query 保证并入的旧条目确实属于本次查询（上一次筛选失败时
+                    // 清单仍停在上一个查询，不能借入库补查把旧人群的条目混进新查询）。
+                    // old.loaded 排除被有意作废的清单（批量改作者/来源会把 loaded 置假）：
+                    // 那些旧条目已经不属于新人群，必须整页替换而不是并入。
+                    // totalMatched 仅首屏返回，翻页继承已有非空总数，避免页头计数被 null 冲掉。
+                    // 空页连发保护（旧版 HomeViewModel.MAX_EMPTY_SEED_ROUNDS=3 同口径）：服务端
+                    // 可能按页过滤掉已回收/停用项而返回「0 条 + 非空游标」，哨兵会立刻再要下一页；
+                    // 连续 MAX_EMPTY_APPEND_PAGES 个空页后把游标视为到底，停手而不是成串发请求。
+                    val emptyStreak = if (next && !restarted && page.items.isEmpty()) (emptyAppends[key] ?: 0) + 1 else 0
+                    if (emptyStreak == 0) emptyAppends.remove(key) else emptyAppends[key] = emptyStreak
+                    val exhausted = next && !restarted && page.items.isEmpty() && emptyStreak >= MAX_EMPTY_APPEND_PAGES
+                    // 空页不并入：第一页为空说明匹配项可能已被回收/停用（totalMatched=0），
+                    // 此时保留旧条目会让网格与页头计数互相矛盾；空页走整页替换，两者一起归零。
+                    val mergeFresh = freshnessOnly && page.items.isNotEmpty() && old.loaded && old.loadedQuery == query && key in paginatedKeys
+                    val merged = append || restarted || mergeFresh
+                    // 整页替换（换筛选/显式刷新）后列表重新从第一页开始，翻页标记随之作废。
+                    if (next || mergeFresh) paginatedKeys.add(key) else paginatedKeys.remove(key)
+                    state.value = ListState(if (merged) appendDistinct(old.items, page.items) else page.items,
+                        // 新鲜度并入沿用原游标：从用户停下的位置继续翻页，不把第 2..N 页重走一遍。
+                        when {
+                            exhausted -> null
+                            mergeFresh -> old.cursor
+                            else -> page.nextCursor
+                        }, loaded = true, totalMatched = page.totalMatched ?: old.totalMatched.takeIf { next || mergeFresh },
+                        dateCounts = if (next) old.dateCounts else page.dateCounts, loadedQuery = query,
+                        unknownDateCount = if (next) old.unknownDateCount else page.unknownDateCount, publicationId = requestPublication)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (generation.isCurrent(ticket) && connection == connectionGeneration)
-                    state.value = state.value.copy(loading = false, error = explain(failure))
+                    state.value = state.value.copy(loading = false, refreshing = false, error = explain(failure))
             }
         }
     }
@@ -299,9 +398,14 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
             if (generation == connectionGeneration) mutableMessage.value = null
         }
     }
+    /** 服务版本按「会话 + 传输修订」缓存：同一连接重进「我的」先显已知值，不再先读后显。 */
+    private var serverVersionCache: Triple<Session, Long, String>? = null
+    fun cachedServerVersion(target: Session, transport: Long): String? = serverVersionCache
+        ?.takeIf { it.first == target && it.second == transport }?.third
     suspend fun readServerVersion(target: Session, transport: Long): LoadState<String> = try {
         val version = repository.serverVersion(target)
         check(sameTarget(target, session.value) && transport == transportRevision.value) { "连接已改变" }
+        serverVersionCache = Triple(target, transport, version)
         LoadState(data = version)
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (failure: ApiFailure) { LoadState(error = failure.message) }
@@ -546,8 +650,19 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     fun loadReports(next: Boolean = false) = loadPage(reportState, next) { repository.reports(it) }
     fun loadAuthorTasks(next: Boolean = false) = loadPage(authorTaskState, next) { repository.authorTasks(it) }
     fun cancelAuthorTask(id: String) = action { repository.cancelAuthorTask(id); loadAuthorTasks() }
-    fun openAuthor(id: String) {
-        navigate("author:$id"); mutableAuthor.value = null
+    /**
+     * 进入作者作品页。
+     *
+     * [seed] = 调用方点按的那一项（作者管理行 / 详情作者卡）已经持有的作者对象。旧版把
+     * authorName 放进路由参数（feature/author/AuthorCollectionRoutes.kt:19,30），标题第一帧
+     * 就是真名；新版把同样的信息用 seed 带过来，名字与 fileCount 立即上屏，详情请求随后
+     * 静默覆盖。同一作者再次打开时保留现值而不是先清空（旧实现在每次 open 时写 null，
+     * 造成标题回落「作者」、计数回落「—」）。
+     */
+    fun openAuthor(id: String, seed: Author? = null) {
+        navigate("author:$id")
+        val known = seed?.takeIf { it.id == id } ?: mutableAuthor.value?.takeIf { it.id == id }
+        if (mutableAuthor.value != known) mutableAuthor.value = known
         action { val result = repository.author(id); if (route.value == "author:$id") mutableAuthor.value = result }
     }
     fun followAuthor(authorId: String) {
@@ -622,24 +737,30 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
     fun cancelReport() = action { mutableReport.value?.let { mutableReport.value = repository.cancelReport(it) } }
     fun loadStatistics() = action { mutableStats.value = repository.statistics() }
+    /**
+     * 统计页三档重新进入时保留上一份报告：旧版统计卡片的数字在重查期间不消失，只有
+     * 从未取到过的范围才显示加载文案。成功整份替换、失败保留旧数字并在页内提示。
+     */
     fun loadAnalytics(range: String) {
         analyticsJob?.cancel()
-        analyticsState.value = LoadState(loading = true)
+        val previous = analyticsState.value
+        analyticsState.value = previous.copy(loading = true, error = null)
         val connection = connectionGeneration
         analyticsJob = viewModelScope.launch {
             try { val result = graph.analytics.report(range); if (connection == connectionGeneration) analyticsState.value = LoadState(data = result) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (connection == connectionGeneration) analyticsState.value = LoadState(error = explain(failure)) }
+            catch (failure: Exception) { if (connection == connectionGeneration) analyticsState.value = previous.copy(loading = false, error = explain(failure)) }
         }
     }
     fun loadReview(range: String) {
         reviewJob?.cancel()
-        reviewState.value = LoadState(loading = true)
+        val previous = reviewState.value
+        reviewState.value = previous.copy(loading = true, error = null)
         val connection = connectionGeneration
         reviewJob = viewModelScope.launch {
             try { val result = graph.analytics.review(range); if (connection == connectionGeneration) reviewState.value = LoadState(data = result) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (connection == connectionGeneration) reviewState.value = LoadState(error = explain(failure)) }
+            catch (failure: Exception) { if (connection == connectionGeneration) reviewState.value = previous.copy(loading = false, error = explain(failure)) }
         }
     }
     fun loadRecommendationPreferences() = action { recommendationState.value = graph.analytics.preferences() }
@@ -827,6 +948,15 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
         job.start()
     }
 }
+
+/**
+ * 连续空页上限（值 3 沿用旧版 HomeViewModel.MAX_EMPTY_SEED_ROUNDS = 3 的同款裁决：有限库
+ * 深翻页被掏干后，3 轮空转即可判定穷尽，多试只是白打请求）。这里是「页」而不是「换 seed
+ * 轮次」：服务端逐页过滤已回收/停用候选时会返回 0 条 + 非空游标，若不设上限，触底哨兵会
+ * 在 0ms 内链式要下一页，批量回收/停用后一次滑动就能打出成串请求。达到上限后把游标视为
+ * 到底（`cursor = null`），列表停手；下拉刷新或换查询重新计数。
+ */
+private const val MAX_EMPTY_APPEND_PAGES = 3
 
 /**
  * 分页追加：一趟扫描按 id 去重（先出现的保留）。原实现 `old + page` 之后 `distinctBy` 要分配

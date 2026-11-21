@@ -75,7 +75,7 @@ fun AuthorProfileScreen(authorId: String, library: LibraryViewModel, archiveId: 
         state.error?.let { item { ErrorNotice(it) { model.load(authorId, archiveId) } } }
         if (editing == null) error?.let { item { ErrorNotice(it) } }
         if (document != null) {
-            items(document.blocks, key = { it.block }) { block ->
+            items(document.blocks, key = { it.block }, contentType = { it.block }) { block ->
               val editable = document.editable && archiveId == null
               val startEdit: (() -> Unit)? = if (editable) ({ candidateId = null; editing = block.block }) else null
               CreatorProfileGroup(profileBlockName(block.block), !busy && !state.loading, startEdit) {
@@ -177,7 +177,12 @@ fun AuthorProfileSummary(authorId: String, model: AuthorProfileViewModel = viewM
 @Composable
 private fun ProfileAvatarImage(avatar: ProfileAvatar, size: Dp) {
     val context = LocalContext.current
-    AsyncImage(model = ImageRequest.Builder(context).data(avatar.url).memoryCacheKey(avatar.cacheKey).diskCacheKey(avatar.cacheKey).build(),
+    // 请求对象随头像标识缓存：列表每行一次组合不再分配新的 ImageRequest（Coil 请求等价，
+    // 参数/缓存键语义不变）。context 也入键，配置变化后重建。
+    val request = remember(avatar.url, avatar.cacheKey, context) {
+        ImageRequest.Builder(context).data(avatar.url).memoryCacheKey(avatar.cacheKey).diskCacheKey(avatar.cacheKey).build()
+    }
+    AsyncImage(model = request,
         imageLoader = LocalMediaImages.current, contentDescription = "服务器保存的作者头像", contentScale = ContentScale.Crop, modifier = Modifier.size(size).clip(CircleShape))
 }
 

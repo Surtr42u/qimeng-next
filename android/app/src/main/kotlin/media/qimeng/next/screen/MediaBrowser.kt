@@ -45,6 +45,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
@@ -52,6 +54,7 @@ import coil3.request.ImageRequest
 import media.qimeng.next.AlbumBatchViewModel
 import media.qimeng.next.AlbumSelectionState
 import media.qimeng.next.LibraryViewModel
+import media.qimeng.next.ListState
 import media.qimeng.next.model.Asset
 import media.qimeng.next.model.AssetQuery
 import media.qimeng.next.model.Session
@@ -115,13 +118,19 @@ fun HomeScreen(model: LibraryViewModel) {
                 }
             } else {
                 MediaBrowser(model, "home:$page", kind = if (page == 1) "cos" else "regular", bottomDock = true,
-                    source = if (page == 2) "rankings" else "recommendations", seed = seeds.getOrElse(page) { 1L }, period = period,
+                    source = if (page == 2) "rankings" else "recommendations", seed = seeds.getOrElse(page) { 1L },
+                    // 周期只作用于排行榜；此前三页共用 period，点一次周期会把两条推荐流也重查一遍
+                    // （两次多余请求 + 列表重置）。
+                    period = if (page == 2) period else "week",
                     onRefresh = if (page != 2) ({ seeds = seeds.mapIndexed { index, value -> if (index == page) kotlin.random.Random.nextLong(1, Long.MAX_VALUE) else value } }) else null,
                     controls = controls[page], toolbar = false, pinchEnabled = false, scrollTab = 0.takeIf { page == active })
             }
         }
     }
-    BrowserFilterSheet(cos)
+    // 常驻首页被其它 Tab / pushed 路由盖住时仍保持组合；筛选面板是 ModalBottomSheet
+    // （独立窗口），若不随场景撤下会浮在当前路由之上。可见性由 ResidentSceneHost 提供，
+    // 非常驻场景没有 provide，默认 true 保持原行为。
+    if (LocalSceneActive.current) BrowserFilterSheet(cos)
 }
 
 /** 首页胶囊栏：只在这一条栏里读 targetPage，翻页时不再重组整页。 */
@@ -258,7 +267,13 @@ private fun HomeSearchFieldContent() {
 
 @Composable
 fun AlbumsScreen(model: LibraryViewModel) {
-    MediaBrowser(model, "albums", bottomDock = true, albumTitle = "相册", scrollTab = 1)
+    // 媒体库索引在会话建立时即加载（refreshConnection → loadLibraries）。无筛选相册的总数
+    // 就是启用库 fileCount 之和（服务端 libraryProjection 与 GET /assets 默认谓词同为
+    // trashed=0 + enabled），导航前已经拿到；用它给首帧计数兜底，列表响应随后覆盖。
+    // 索引仍在加载或仍有下一页时为 null：宁可暂缺，也不拿残缺清单求和。
+    val libraries by model.libraryPage.collectAsStateWithLifecycle()
+    val seededTotal = remember(libraries) { model.libraryIndexTotal() }
+    MediaBrowser(model, "albums", bottomDock = true, albumTitle = "相册", scrollTab = 1, totalSeed = seededTotal)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -269,7 +284,8 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                  collectionId: String? = null, initialTag: String? = null, albumTitle: String? = null,
                  controls: BrowserControls = rememberBrowserControls(key, kind, initialTag.orEmpty()), toolbar: Boolean = true,
                  pinchEnabled: Boolean = true, textOverride: String? = null, caption: Boolean = false,
-                 authorKind: String? = null, leading: (@Composable () -> Unit)? = null, scrollTab: Int? = null) {
+                 authorKind: String? = null, leading: (@Composable () -> Unit)? = null, scrollTab: Int? = null,
+                 totalSeed: Long? = null) {
     // P4：组合期只做只读查询。缺失的列表由 effect 登记，避免在组合中创建/淘汰 ViewModel 的列表缓存
     // （淘汰会连带取消正在显示的列表的分页任务）。
     var listFlow by remember(key) { mutableStateOf(model.assets(key)) }
@@ -279,7 +295,10 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     }
     val listState = listFlow.collectAsStateWithLifecycle()
     val session by model.session.collectAsStateWithLifecycle()
-    val publication by model.lastPublication.collectAsStateWithLifecycle()
+    // 发布（上传入库）通知不在这里订阅：订阅会让每入库一个文件就重组一次列表，且过去把
+    // publication 当 effect key，批量入库 100 个文件就整页重取 100 次。新鲜度由
+    // LibraryViewModel.browse 自己比对 state.publicationId 与 UploadRepository.lastPublication，
+    // 只在进入列表或回前台时检查一次（见下方 ON_RESUME）。
     val batch = if (key == "albums") viewModel<AlbumBatchViewModel>() else null
     // 选中集只在条目/选择栏内部读取；这里只派生窄状态，勾选一项不再重组浏览区与全部可见卡片。
     val selectionState: State<AlbumSelectionState?> =
@@ -302,28 +321,52 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         if (favorite == true) it.copy(sort = "favorited", order = "desc") else it
     }
     // ListState 每页/每次加载都会换新对象：逐字段派生后，没变的读取不再让浏览区（及其可见卡片）重组。
-    val queryLoaded by remember(listState, query) { derivedStateOf { listState.value.loadedQuery == query } }
+    // 重查在途时 loadedQuery 仍是旧查询：只要列表已有内容（或曾经加载成功），就继续用现有条目与
+    // 计数渲染，等响应落地再整页替换——筛选/分区/刷新期间不再清空网格或退回骨架。
+    val queryLoaded by remember(listState, query) { derivedStateOf { listState.value.showsDataFor(query) } }
     val entries by remember(listState, query) {
         derivedStateOf {
             val value = listState.value
-            if (value.loadedQuery == query) value.items else emptyList()
+            if (value.showsDataFor(query)) value.items else emptyList()
         }
     }
     val listLoading by remember(listState) { derivedStateOf { listState.value.loading } }
+    val listRefreshing by remember(listState) { derivedStateOf { listState.value.refreshing } }
     val listLoaded by remember(listState) { derivedStateOf { listState.value.loaded } }
     val listError by remember(listState) { derivedStateOf { listState.value.error } }
     val listCursor by remember(listState) { derivedStateOf { listState.value.cursor } }
     val totalMatched by remember(listState) { derivedStateOf { listState.value.totalMatched } }
+    // 只有响应确实属于本次查询时，totalMatched 才能归到该查询名下；重查在途时它仍是上一个
+    // 查询的数字，回写会让兜底计数串到另一组人群（见 LibraryViewModel.carriedTotals 的 KDoc）。
+    val loadedTotal by remember(listState, query) {
+        derivedStateOf { listState.value.totalMatched.takeIf { listState.value.loadedQuery == query } }
+    }
+    // 胶囊旁计数（相册/收藏/历史页头「N 文件」、作者作品页「筛选结果 N 个文件」）的兜底链：
+    // 当前列表的权威计数 → 该 key 上一次成功计数（列表被淘汰/重建时仍保留）→ 导航前已拿到
+    // 的种子（相册=启用库 fileCount 之和，作者页=点按行带入的 author.fileCount）。
+    // 规则：显示过的数字不回退成空白；从未知道才允许缺省；不打印伪造的 0。
+    // 只在查询仍是「无额外筛选」时使用种子——加了筛选就属于另一组人群，旧数字不能冒充。
+    val carriedTotal = model.carriedTotal(key, query)
+    LaunchedEffect(key, query, loadedTotal) { model.carryTotal(key, query, loadedTotal) }
+    // 重查失败（queryLoaded=false）时旧查询的数字不再冒充新筛选的结果；同一查询的失败刷新
+    // 仍因 loadedQuery == query 而保留计数，显示过的数字不回退成空白。
+    val headerTotal = totalMatched.takeIf { queryLoaded } ?: carriedTotal
+        ?: totalSeed?.takeIf { query.isUnfilteredCountScope(allowAuthor = author != null) }
     val dateCounts by remember(listState) { derivedStateOf { listState.value.dateCounts } }
     val unknownDateCount by remember(listState) { derivedStateOf { listState.value.unknownDateCount } }
     val group = if (albumTitle != null && leading == null) controls.row else null
     var appliedQuery by rememberSaveable(key) { mutableStateOf(query.toString() + group) }
-    LaunchedEffect(key, session, query, group, publication) {
+    LaunchedEffect(key, session, query, group) {
         batch?.bindQuery(query)
+        // 入库新鲜度不在这里触发：browse 自己比对 publicationId，进入列表时最多补一次。
         model.browse(key, query)
         val current = query.toString() + group
         if (appliedQuery != current) { grid.scrollToItem(0); appliedQuery = current }
     }
+    // 回前台补一次新鲜度检查（browse 内部只在 publicationId 落后时才发请求，否则直接返回）。
+    // 汇入 100 个文件只会让列表变「旧」，不会在这里变成 100 次请求：刷新发生在下一次
+    // 进入列表或回前台，每次至多一次；手动下拉刷新不受影响。
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.browse(key, query) }
     val nearEnd by remember { derivedStateOf {
         val layout = grid.layoutInfo
         layout.totalItemsCount > 0 && (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 8
@@ -344,7 +387,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
             val values by facets.rows.collectAsStateWithLifecycle()
             rows = values
             LaunchedEffect(session, query) { session?.let { facets.bind(it, query) } }
-            filters = { AlbumFilters(albumTitle, totalMatched.takeIf { queryLoaded }, controls, values,
+            filters = { AlbumFilters(albumTitle, headerTotal, controls, values,
                 onBack = if (bottomDock) null else model::back, fetch = facets::fetch, authorKind = authorKind,
                 loadFailed = listError != null, columns = columns, showTitle = !selecting,
                 onToggleColumns = { setColumns(if (columns == 5) 2 else columns + 1) }) }
@@ -359,7 +402,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         }
         if (albumTitle != null || toolbar) BrowserFilterSheet(controls)
         val retry: () -> Unit = {
-            model.browse(key, query, next = listCursor != null && queryLoaded, force = true)
+            // 只有「当前查询确实加载过」才续页；重查失败后 loadedQuery 还是旧查询，
+            // 用旧游标续新查询会拿错顺序，改为从第一页重取。
+            model.browse(key, query, next = listCursor != null && listState.value.loadedQuery == query, force = true)
         }
         if (leading == null) listError?.let { ErrorNotice(it, retry) }
         val sectionMode = when {
@@ -371,15 +416,22 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         val sections = remember(entries, sectionMode, rows, dateCounts, unknownDateCount) {
             gallerySections(entries, sectionMode, group?.let(rows::get)?.items.orEmpty(), dateCounts, unknownDateCount)
         }
-        if (sharedColumns && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
-        PullToRefreshBox(isRefreshing = listLoading && listLoaded && listCursor == null,
-            onRefresh = { if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true) },
+        // 首页/搜索/收藏/历史与相册一样做视口前瞻预取（旧版 QimengMediaGrid 对全部网格生效）。
+        // 带 leading 的网格下标含前导项，预取窗口会错位，故暂不接入。
+        if (leading == null && entries.isNotEmpty()) PrefetchGalleryViewport(model, grid, sections, columns)
+        PullToRefreshBox(isRefreshing = listRefreshing,
+            onRefresh = {
+                // 先让全库预取让路，刷新首屏与它在局域网带宽上不再互抢（旧版问题B 同款）。
+                model.pauseThumbnailPrefetch()
+                if (query.source == "recommendations" && onRefresh != null) onRefresh() else model.browse(key, query, force = true)
+            },
             modifier = Modifier.weight(1f).testTag("media-browser:$key")) {
-            if (leading == null && !listLoaded && listError == null) {
+            // 骨架只覆盖「从未拿到数据」的列表：重查/返回详情时继续显示已有条目与计数。
+            if (leading == null && entries.isEmpty() && !listLoaded && listError == null) {
                 QimengSkeletonGrid(columns, columns * QIMENG_SKELETON_GRID_ROWS)
                 return@PullToRefreshBox
             }
-            if (leading == null && listLoaded && entries.isEmpty() && !listLoading && key !in setOf("home:0", "home:1"))
+            if (leading == null && listLoaded && entries.isEmpty() && !listLoading && listError == null && key !in setOf("home:0", "home:1"))
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (key == "home:2") "暂无数据" else "没有符合条件的媒体") }
             LazyVerticalGrid(columns = GridCells.Fixed(columns), state = grid,
                 contentPadding = PaddingValues(start = QimengDimens.SpaceM, end = QimengDimens.SpaceM, bottom = when {
@@ -499,6 +551,15 @@ private fun BatchActionButton(batch: AlbumBatchViewModel, selection: State<Album
 
 /** 网格缩略图圆角沿用旧版 24px（像素密度换算，不是 dp）。 */
 private const val TILE_CORNER_RADIUS_PX = 24f
+
+/**
+ * 这份列表状态是否有可以给 [query] 渲染的内容。重查在途时 `loadedQuery` 仍是上一个查询，
+ * 列表条目会被保留：继续渲染它，网格与计数就不会在筛选/刷新期间闪空。请求失败后
+ * （error != null）不再沿用上一个查询的条目与计数，否则新筛选会顶着旧结果冒充成功；
+ * 同一查询的失败刷新仍由 `loadedQuery == query` 保住内容。
+ */
+private fun ListState<Asset>.showsDataFor(query: AssetQuery): Boolean =
+    loadedQuery == query || (error == null && (loaded || items.isNotEmpty()))
 
 /** 视频时长角标样式是常量，提到文件级避免逐项/逐次重组分配 TextStyle + Shadow。 */
 private val TILE_DURATION_STYLE = TextStyle(

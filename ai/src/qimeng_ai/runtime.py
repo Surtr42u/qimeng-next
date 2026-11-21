@@ -47,6 +47,8 @@ class Runtime:
         self.delegation_checked = False
         self.bound_task = None
         self.session_checked = False
+        self.tool_cache: dict[tuple, list[dict]] = {}
+        self.task_states: dict[str, State] = {}
         self.lock = threading.RLock()
 
     def close(self) -> None:
@@ -104,6 +106,17 @@ class Runtime:
             return self._tools(binding)
 
     def _tools(self, binding, *, filtered: bool = True) -> list[dict]:
+        # Definitions depend only on the credential binding; permissions and live
+        # session state are still evaluated per call by _visible(). Callers must
+        # treat the returned tool and schema objects as read-only.
+        key = None if binding is None else (binding.kind, binding.id, binding.delegated, tuple(binding.fields))
+        result = self.tool_cache.get(key)
+        if result is None:
+            result = self._build_tools(binding)
+            self.tool_cache[key] = result
+        return [tool for tool in result if self._visible(tool)] if filtered else list(result)
+
+    def _build_tools(self, binding) -> list[dict]:
         result = [{"name": name, "description": value["description"],
                    "inputSchema": value["inputSchema"], "scope": value["scope"],
                    "readOnly": value["readOnly"]}
@@ -136,7 +149,7 @@ class Runtime:
                     "description": "task.start/resume返回的任务ID；可信执行器据此选择该任务的受限凭据与预算"}
             if binding:
                 binding.present(tool)
-        return [tool for tool in result if self._visible(tool)] if filtered else result
+        return result
 
     def tool_definition(self, name: str):
         """Unfiltered definition, used only to explain why an action is refused."""
@@ -212,8 +225,20 @@ class Runtime:
         else:
             self.transport.active_token = state.task_credential(task_id) if task_id else None
         if task_id:
-            state = State(replace(self.config, task_id=task_id), self.instance_id, self.contract["openapiSha256"])
+            state = self._task_state(task_id)
         self.state = state
+        return state
+
+    def _task_state(self, task_id: str) -> State:
+        # State holds only immutable configuration; every budget and pending-write
+        # transition reads the SQLite file in its own transaction. Rebuilding it
+        # per call would just repeat schema initialization.
+        state = self.task_states.get(task_id)
+        if state is None:
+            state = State(replace(self.config, task_id=task_id), self.instance_id, self.contract["openapiSha256"])
+            if len(self.task_states) >= 64:
+                self.task_states.pop(next(iter(self.task_states)))
+            self.task_states[task_id] = state
         return state
 
     def call(self, name: str, arguments: dict):
@@ -335,7 +360,7 @@ class Runtime:
             tool = next((item for item in self.tools() if item["name"] == arguments["tool"]), None)
             if tool is None:
                 raise ToolError("TOOL_UNKNOWN", "不存在该工具")
-            return tool
+            return copy.deepcopy(tool)
         if name == "platform.result.read":
             return output.page(state, arguments["resultRef"], arguments.get("pointer", ""),
                                arguments.get("offset", 0), arguments.get("limit", 20), max_bytes=self.config.output_bytes)

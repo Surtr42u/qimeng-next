@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import ipaddress
 import json
@@ -165,7 +166,8 @@ def offered_tools(runtime, allow_image_lookup, scopes, research):
             continue
         if name in {"research.provider.query", "research.image.search"} and research["remainingResearchCalls"] <= 0:
             continue
-        schema = tool["inputSchema"]
+        # Runtime reuses definitions between calls; this menu narrows its own copy.
+        schema = copy.deepcopy(tool["inputSchema"])
         if name == "research.provider.query":
             schema["properties"]["provider"]["enum"] = research["allowedProviders"]
         if name == "research.submit":

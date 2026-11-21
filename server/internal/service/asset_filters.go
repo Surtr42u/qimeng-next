@@ -14,9 +14,90 @@ import (
 	"qimeng.local/next/server/internal/model"
 )
 
-const browseCTE = `WITH activity AS (SELECT asset_id,sum(views) views,sum(plays) plays FROM asset_daily_stats GROUP BY asset_id)`
-const browseFrom = ` FROM assets a JOIN libraries l ON l.id=a.library_id LEFT JOIN activity st ON st.asset_id=a.id `
-const assetSearchText = `(a.file_name||char(10)||substr(a.relative_path,1,length(a.relative_path)-length(a.file_name))||char(10)||COALESCE((SELECT group_concat(tag,char(10)) FROM asset_tag_names WHERE asset_id=a.id),'')||char(10)||COALESCE((SELECT group_concat(au.name||' '||COALESCE(json_extract(au.data,'$.aliases'),''),char(10)) FROM asset_authors aa JOIN authors au ON au.id=aa.author_id WHERE aa.asset_id=a.id),'')||char(10)||COALESCE((SELECT group_concat(s.name,char(10)) FROM asset_source_memberships x JOIN sources s ON s.id=x.source_id WHERE x.asset_id=a.id),json_extract(a.data,'$.source'),'')||char(10)||COALESCE((SELECT group_concat(c.name,char(10)) FROM asset_characters x JOIN characters c ON c.id=x.character_id WHERE x.asset_id=a.id),json_extract(a.data,'$.characters'),''))`
+const activityCTE = `activity AS (SELECT asset_id,sum(views) views,sum(plays) plays FROM asset_daily_stats GROUP BY asset_id)`
+
+// The activity aggregate is only joined for sorts and filters that read
+// view/play counts. Everything else (including the asset projection, which
+// sums per asset in assetJSON) stays on the assets view alone.
+func activityForFilter(f AssetFilter) bool {
+	return f.MinViews != nil || f.MaxViews != nil || f.MinPlays != nil || f.MaxPlays != nil
+}
+func activityForPage(f AssetFilter) bool {
+	return activityForFilter(f) || f.Sort == "views" || f.Sort == "plays"
+}
+
+// browsePrefix opens a statement whose remaining body starts with a CTE.
+func browsePrefix(useActivity bool) string {
+	if useActivity {
+		return "WITH " + activityCTE + ","
+	}
+	return "WITH "
+}
+
+// browseStatementPrefix opens a statement whose next token is SELECT.
+func browseStatementPrefix(useActivity bool) string {
+	if useActivity {
+		return "WITH " + activityCTE + " "
+	}
+	return ""
+}
+func browseSource(useActivity bool) string {
+	if useActivity {
+		return ` FROM assets a LEFT JOIN activity st ON st.asset_id=a.id `
+	}
+	return ` FROM assets a `
+}
+
+// assetSearchAliasRows is the live alias channel as a one-column compound
+// select. It joins the materialised probe inside one IN so SQLite builds the
+// token's candidate set once instead of evaluating two OR-connected scans.
+const assetSearchAliasRows = `SELECT at.asset_id FROM tag_aliases ta JOIN asset_tags at ON at.tag_id=ta.tag_id
+ WHERE qimeng_search_token(ta.alias,?)=1
+ UNION ALL
+ SELECT cm.asset_id FROM collections c CROSS JOIN collection_members cm ON cm.collection_id=c.id
+ WHERE qimeng_search_token(c.name,?)=1
+ UNION ALL
+ SELECT cm.asset_id FROM collection_aliases ca CROSS JOIN collection_members cm ON cm.collection_id=ca.collection_id
+ WHERE qimeng_search_token(ca.alias,?)=1`
+
+// assetSearchProbe turns one token into the asset_search WHERE term.
+// asset_search.text is ASCII-folded by migration 0048; brackets is the same
+// text with every opening bracket form normalised to '('. A plain token is a
+// literal instr on text. A page token is a literal instr on brackets. A digit
+// token must be a complete run: the GLOBs require a non-digit (or the string
+// edge) on both sides, and the bracket-normalised preceding-character class
+// rejects a run directly after '(' — exactly domain.SearchToken's branches.
+func assetSearchProbe(token string) (string, []any) {
+	kind, folded, page := domain.SearchTokenPattern(token)
+	switch kind {
+	case domain.SearchTokenPage:
+		return `instr(brackets,?)>0`, []any{page}
+	case domain.SearchTokenNumber:
+		// SearchTokenPattern classifies only all-digit runs here. Re-check it:
+		// a GLOB pattern is safe only when the token cannot contain GLOB
+		// metacharacters.
+		if !domain.SearchTokenDigits(folded) {
+			return `instr(text,?)>0`, []any{folded}
+		}
+		// brackets has every opening bracket form normalised to '(' so the
+		// digit-run check only has to exclude '('; this also keeps the GLOB
+		// character class free of '['.
+		before := "*[^0-9(]" + folded
+		return `instr(brackets,?)>0 AND (` +
+				`brackets GLOB ? OR brackets GLOB ? OR brackets GLOB ? OR brackets GLOB ?)`,
+			[]any{folded, folded + "[^0-9]*", folded, before + "[^0-9]*", before}
+	}
+	return `instr(text,?)>0`, []any{folded}
+}
+
+// assetSearchMatches returns the complete candidate set for one token: the
+// materialised probe UNION ALL every live alias branch.
+func assetSearchMatches(token string) (string, []any) {
+	probe, values := assetSearchProbe(token)
+	args := append(values, token, token, token)
+	return "a.id IN (SELECT s.asset_id FROM asset_search s WHERE " + probe +
+		" UNION ALL " + assetSearchAliasRows + ")", args
+}
 
 type browsePredicate struct {
 	Where     string
@@ -24,21 +105,13 @@ type browsePredicate struct {
 	FilterKey string
 }
 
-// Search each spelling on its owner. IN keeps a media item unique when several
-// associated tags and its collection share the same alias.
-const assetNameMatches = `(qimeng_search_token(` + assetSearchText + `,?)=1 OR a.id IN (
- SELECT at.asset_id FROM tag_aliases ta JOIN asset_tags at ON at.tag_id=ta.tag_id
- WHERE qimeng_search_token(ta.alias,?)=1
- UNION ALL
- SELECT cm.asset_id FROM collections c JOIN collection_members cm ON cm.collection_id=c.id
- WHERE qimeng_search_token(c.name,?)=1
- UNION ALL
- SELECT cm.asset_id FROM collection_aliases ca JOIN collection_members cm ON cm.collection_id=ca.collection_id
- WHERE qimeng_search_token(ca.alias,?)=1))`
-
 type browseSort struct {
 	Expression, Name              string
 	Descending, Numeric, Nullable bool
+	// NullSentinel is set when Expression replaces NULL with a sentinel so the
+	// ordering can use a plain index and a row-value seek. It also accepts a
+	// pre-upgrade "~null" cursor.
+	NullSentinel string
 }
 
 func normalizeAssetFilter(in AssetFilter) (AssetFilter, error) {
@@ -244,13 +317,25 @@ func fileDateBounds(f AssetFilter) (*time.Time, *time.Time, error) {
 	return &start, &end, nil
 }
 func assetPredicate(f AssetFilter) (browsePredicate, error) {
-	where := []string{"a.trashed=?"}
-	args := []any{f.Trashed}
+	// trashed is a two-valued filter, not user text, so it is inlined. The full
+	// expression indexes added by migration 0047 live on asset_records and serve
+	// the ORDER BY (including keyset seeks); trashed is a separate asset_locations
+	// column, so the predicate stays an ordinary filter, not a partial-index
+	// predicate.
+	trashed := "0"
+	if f.Trashed {
+		trashed = "1"
+	}
+	where := []string{"a.trashed=" + trashed}
+	args := []any{}
 	if f.Trashed {
 		where = append(where, "a.id NOT IN "+selectedImageDonors)
 	}
 	if !f.IncludeDisabled && !f.Trashed {
-		where = append(where, "COALESCE(json_extract(l.data,'$.enabled'),1)=1")
+		// EXISTS keeps the sort-driving table (asset_records) first. A joined
+		// libraries row forced the planner into an asset_locations scan plus a
+		// temp B-tree for the default order.
+		where = append(where, "EXISTS(SELECT 1 FROM libraries l WHERE l.id=a.library_id AND COALESCE(json_extract(l.data,'$.enabled'),1)=1)")
 	}
 	if f.Directory != nil {
 		directory := *f.Directory
@@ -310,8 +395,10 @@ func assetPredicate(f AssetFilter) (browsePredicate, error) {
 		}
 	}
 	for _, token := range strings.Fields(f.Q) {
-		where = append(where, assetNameMatches)
-		args = append(args, token, token, token, token)
+		// One candidate set per token: materialised text UNION ALL live aliases.
+		match, values := assetSearchMatches(token)
+		where = append(where, match)
+		args = append(args, values...)
 	}
 	if f.Tag != "" {
 		where = append(where, "EXISTS(SELECT 1 FROM asset_tag_names WHERE asset_id=a.id AND tag=?)")
@@ -377,9 +464,18 @@ func assetSort(f AssetFilter) browseSort {
 	value := browseSort{Name: f.Sort + ":" + f.Order, Descending: f.Order == "desc"}
 	switch f.Sort {
 	case "default", "fileDate":
-		value.Expression = "a.file_date"
+		// SQLite sorts NULL below every value. Replacing it with a sentinel keeps
+		// NULL rows last in both directions without the non-indexable
+		// "file_date IS NULL" ORDER BY prefix, so assets_file_date_null_last_desc
+		// and _asc serve the whole scan including keyset continuations.
+		if value.Descending {
+			value.Expression = "COALESCE(a.file_date,-9223372036854775808)"
+			value.NullSentinel = "-9223372036854775808"
+		} else {
+			value.Expression = "COALESCE(a.file_date,9223372036854775807)"
+			value.NullSentinel = "9223372036854775807"
+		}
 		value.Numeric = true
-		value.Nullable = true
 	case "addedDate":
 		value.Expression = "a.created_at"
 	case "updated_desc":
@@ -408,6 +504,35 @@ func seekClause(key seekCursor, order browseSort, idExpression string) (string, 
 	comparison := ">"
 	if order.Descending {
 		comparison = "<"
+	}
+	if order.NullSentinel != "" {
+		raw := key.Value
+		if raw == "~null" {
+			// Cursors issued before NULL was folded into the sort key.
+			raw = order.NullSentinel
+		}
+		var value any = raw
+		if order.Numeric {
+			n, e := strconv.ParseInt(raw, 10, 64)
+			if e != nil {
+				return "", nil, Fail(400, "invalid_cursor", "排序游标数值无效。")
+			}
+			value = n
+		}
+		return " AND (" + order.Expression + "," + idExpression + ")" + comparison + "(?,?)", []any{value, key.ID}, nil
+	}
+	if !order.Nullable {
+		var value any = key.Value
+		if order.Numeric {
+			n, e := strconv.ParseInt(key.Value, 10, 64)
+			if e != nil {
+				return "", nil, Fail(400, "invalid_cursor", "排序游标数值无效。")
+			}
+			value = n
+		}
+		// Row-value comparison is exactly (key < cursor OR (key = cursor AND id < id)).
+		// Keeping it as one term lets the planner keep scanning the sort index.
+		return " AND (" + order.Expression + "," + idExpression + ")" + comparison + "(?,?)", []any{value, key.ID}, nil
 	}
 	if key.Value == "~null" && order.Nullable {
 		return " AND " + order.Expression + " IS NULL AND " + idExpression + comparison + "?", []any{key.ID}, nil
@@ -465,8 +590,13 @@ func (s *Service) Assets(ctx context.Context, filter AssetFilter) (model.Page[mo
 		return page, e
 	}
 	defer tx.Rollback()
+	// The whole-set count and date buckets are first-page facts. Later pages
+	// carry the number in the opaque cursor (seekCursor.Total) instead of
+	// rescanning the match set; they still return the same totalMatched.
+	filterActivity := activityForFilter(f)
 	var count int64
-	if f.DateCounts && f.Cursor == "" {
+	switch {
+	case f.DateCounts && f.Cursor == "":
 		buckets := []model.DateCountBucket{}
 		unknown := int64(0)
 		args := append([]any{f.TZOffsetMinutes * 60}, predicate.Args...)
@@ -475,7 +605,7 @@ func (s *Service) Assets(ctx context.Context, filter AssetFilter) (model.Page[mo
 			// SQLite can round a fraction near midnight into the next second.
 			epoch = "unixepoch(substr(a.favorited_at,1,19)||'Z')"
 		}
-		rows, e := tx.QueryContext(ctx, browseCTE+" SELECT date("+epoch+"+?,'unixepoch') day,count(*)"+browseFrom+"WHERE "+predicate.Where+" GROUP BY day ORDER BY day DESC", args...)
+		rows, e := tx.QueryContext(ctx, browseStatementPrefix(filterActivity)+"SELECT date("+epoch+"+?,'unixepoch') day,count(*)"+browseSource(filterActivity)+"WHERE "+predicate.Where+" GROUP BY day ORDER BY day DESC", args...)
 		if e != nil {
 			return page, e
 		}
@@ -500,16 +630,19 @@ func (s *Service) Assets(ctx context.Context, filter AssetFilter) (model.Page[mo
 		}
 		page.DateCounts = &buckets
 		page.UnknownDateCount = &unknown
-	} else {
-		if e = tx.QueryRowContext(ctx, browseCTE+" SELECT COUNT(*)"+browseFrom+"WHERE "+predicate.Where, predicate.Args...).Scan(&count); e != nil {
+	case f.Cursor != "" && cursor.Total != nil && *cursor.Total >= 0:
+		count = *cursor.Total
+	default:
+		if e = tx.QueryRowContext(ctx, browseStatementPrefix(filterActivity)+"SELECT COUNT(*)"+browseSource(filterActivity)+"WHERE "+predicate.Where, predicate.Args...).Scan(&count); e != nil {
 			return page, e
 		}
 	}
 	page.TotalMatched = &count
+	pageActivity := activityForPage(f)
 	args := append([]any{}, predicate.Args...)
 	args = append(args, values...)
 	args = append(args, n+1, time.Now().Format("2006-01-02"))
-	query := browseCTE + ", page AS (SELECT a.id," + order.Expression + " sort_key" + browseFrom + "WHERE " + predicate.Where + seek + " ORDER BY " + sortSQL(order, order.Expression, "a.id") + " LIMIT ?) SELECT " + assetJSON + ",CAST(p.sort_key AS TEXT) FROM page p JOIN assets a ON a.id=p.id JOIN authors au ON au.id=a.author_id ORDER BY " + sortSQL(order, "p.sort_key", "p.id")
+	query := browsePrefix(pageActivity) + "page AS (SELECT a.id," + order.Expression + " sort_key" + browseSource(pageActivity) + "WHERE " + predicate.Where + seek + " ORDER BY " + sortSQL(order, order.Expression, "a.id") + " LIMIT ?) SELECT " + assetJSON + ",CAST(p.sort_key AS TEXT) FROM page p JOIN assets a ON a.id=p.id JOIN authors au ON au.id=a.author_id ORDER BY " + sortSQL(order, "p.sort_key", "p.id")
 	rows, e := tx.QueryContext(ctx, query, args...)
 	if e != nil {
 		return page, e
@@ -539,7 +672,7 @@ func (s *Service) Assets(ctx context.Context, filter AssetFilter) (model.Page[mo
 	if len(page.Items) > n {
 		page.Items = page.Items[:n]
 		last := page.Items[n-1]
-		page.NextCursor = makeSeek(predicate.FilterKey, order.Name, keys[n-1], last.ID)
+		page.NextCursor = makeSeekTotal(predicate.FilterKey, order.Name, keys[n-1], last.ID, count)
 	}
 	return page, nil
 }

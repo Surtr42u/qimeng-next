@@ -56,7 +56,9 @@ class StatisticsAndHomeTest {
     }
 
     private fun assertHomePartitions(model: LibraryViewModel, regular: String, cos: String) {
-        val recommendations = entries(model, "home:0", 51)
+        // 推荐流页深 = 协议上限 100（MediaRepository 的 RECOMMENDATION_PAGE_SIZE）；51 条合成推荐
+        // 一页即尽，不再有「首屏 50 + 滚动续页」两段。排行榜与普通列表仍是 50。
+        val recommendations = entries(model, "home:0", 51, pageSize = 100)
         assertEquals("regular", compose.runOnIdle { model.query("home:0").kind })
         assertEquals(setOf(regular), recommendations.map { it.libraryId }.toSet())
 
@@ -76,15 +78,15 @@ class StatisticsAndHomeTest {
         assertEquals(mapOf(regular to 51, cos to 2), albums.groupingBy { it.libraryId }.eachCount())
     }
 
-    private fun entries(model: LibraryViewModel, key: String, count: Int): List<Asset> {
+    private fun entries(model: LibraryViewModel, key: String, count: Int, pageSize: Int = 50): List<Asset> {
         val state = compose.runOnIdle { model.assets(key) }
         compose.waitUntil(25_000) { state.value.loaded || state.value.error != null }
         assertNull(state.value.error)
-        if (count > 50) {
-            assertEquals(50, state.value.items.size)
+        if (count > pageSize) {
+            assertEquals(pageSize, state.value.items.size)
             assertNotNull(state.value.cursor)
             compose.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("media-browser:$key")), useUnmergedTree = true)
-                .performScrollToIndex(48)
+                .performScrollToIndex(pageSize - 2)
             compose.waitUntil(20_000) { state.value.cursor == null || state.value.error != null }
         }
         assertNull(state.value.error)

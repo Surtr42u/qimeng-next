@@ -26,6 +26,8 @@ class FacetViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableRows = MutableStateFlow(emptyMap<String, FacetRowState>())
     val rows = mutableRows.asStateFlow()
     private val requests = mutableMapOf<String, Pair<Session, AssetQuery>>()
+    /** 每行当前候选来自哪个实例：换服务器时旧计数属于另一座库，不能继续显示。 */
+    private val rowInstances = mutableMapOf<String, String>()
     private val jobs = mutableMapOf<String, Job>()
 
     fun bind(target: Session, query: AssetQuery) {
@@ -41,21 +43,30 @@ class FacetViewModel(application: Application) : AndroidViewModel(application) {
 
     fun fetch(row: String, next: Boolean) {
         val request = requests[row] ?: return
-        val previous = if (next) mutableRows.value[row] ?: return else FacetRowState()
+        // 实例变了（换服务器）旧行的候选与计数属于另一座库，必须丢弃；同一实例内的重查沿用。
+        val sameInstance = rowInstances[row] == request.first.instanceId
+        rowInstances[row] = request.first.instanceId
+        // 首屏重查（换筛选/重试）沿用上一行候选与计数：旧版 loadFacets() 在响应回来前保留
+        // partitionOptions/…/totalForAllPill，成功才整份覆盖。清空会让胶囊数字消失、值区块
+        // 塌成 0 高（表头二次回流），这正是「计数先消失再出现」的来源。只有翻页才要求已有行。
+        val previous = if (next) mutableRows.value[row]?.takeIf { sameInstance } ?: return
+            else mutableRows.value[row]?.takeIf { sameInstance } ?: FacetRowState()
         if (next && (previous.loading || previous.cursor == null)) return
         jobs.remove(row)?.cancel()
         mutableRows.update { it + (row to previous.copy(loading = true, error = null)) }
         jobs[row] = viewModelScope.launch {
             try {
-                val result = media.facets(row, request.second, previous.cursor)
+                // 首屏重查必须从游标 null 开始；沿用旧行只为了显示，请求参数不能跟着沿用。
+                val result = media.facets(row, request.second, if (next) previous.cursor else null)
                 if (media.session.value == request.first && requests[row] == request) {
-                    mutableRows.update { it + (row to FacetRowState((previous.items + result.items).distinctBy(FacetChoice::key),
-                        result.nextCursor, result.totalOptions, result.totalMatched)) }
+                    val items = if (next) (previous.items + result.items).distinctBy(FacetChoice::key) else result.items
+                    mutableRows.update { it + (row to FacetRowState(items, result.nextCursor, result.totalOptions, result.totalMatched)) }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (media.session.value == request.first && requests[row] == request) {
                     val message = if (failure is ApiFailure) failure.message else "筛选选项读取失败，请重试"
+                    // 失败也保留上一份真实候选与计数（页内另有错误提示），不回退成空白。
                     mutableRows.update { it + (row to previous.copy(loading = false, error = message)) }
                 }
             }

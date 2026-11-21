@@ -63,33 +63,34 @@ type Config struct {
 	Scanner                                      *LibraryMonitorConfig
 }
 type Service struct {
-	researchGateway publicResearchGateway
-	Traffic         sysmon.Traffic
-	samples         systemSamples
-	previews        previewWork
-	selectedReads   selectedImageReads
-	sourceRules     sourceRuleWorker
-	recommendations recommendationOrders
-	DB              *store.Store
-	Root            *storage.Root
-	Config          Config
-	InstanceID      string
-	mu              sync.Mutex
-	owner           *sql.DB
-	workCtx         context.Context
-	stopWork        context.CancelFunc
-	workers         sync.WaitGroup
-	activeScans     int
-	uploadVerify    chan struct{}
-	protectionRead  chan struct{}
-	scanWorkers     map[string]scanWorker
-	scanWake        chan struct{}
-	mirrorWake      chan struct{}
-	mirrorEnabled   atomic.Bool
-	password        *passwordLogin
-	loginLimit      loginBudget
-	localSync       *localSyncRunner
-	monitor         *libraryMonitor
+	researchGateway          publicResearchGateway
+	Traffic                  sysmon.Traffic
+	samples                  systemSamples
+	previews                 previewWork
+	selectedReads            selectedImageReads
+	sourceRules              sourceRuleWorker
+	recommendations          recommendationOrders
+	recommendationInputCache recommendationInputCache
+	DB                       *store.Store
+	Root                     *storage.Root
+	Config                   Config
+	InstanceID               string
+	mu                       sync.Mutex
+	owner                    *sql.DB
+	workCtx                  context.Context
+	stopWork                 context.CancelFunc
+	workers                  sync.WaitGroup
+	activeScans              int
+	uploadVerify             chan struct{}
+	protectionRead           chan struct{}
+	scanWorkers              map[string]scanWorker
+	scanWake                 chan struct{}
+	mirrorWake               chan struct{}
+	mirrorEnabled            atomic.Bool
+	password                 *passwordLogin
+	loginLimit               loginBudget
+	localSync                *localSyncRunner
+	monitor                  *libraryMonitor
 }
 
 func New(config Config) (*Service, error) {

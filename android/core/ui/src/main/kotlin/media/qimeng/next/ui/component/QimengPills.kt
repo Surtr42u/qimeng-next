@@ -22,8 +22,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -158,7 +160,10 @@ fun QimengValuePillBlock(
     // 区块内「两行/全部」与调用方的 filter.expanded（整块显隐）是两层不同的展开
     var valuesExpanded by rememberSaveable(resetKey) { mutableStateOf(false) }
     val scroll = rememberScrollState()
-    val nearEnd = scroll.value >= scroll.maxValue - 100
+    // 近底判定收敛为派生布尔：滚动像素不再在读值处触发本作用域重组（原实现每个滚动事件
+    // 都重跑整块与修饰符链，并重启加载协程）。阈值 100px 与 LaunchedEffect 键语义不变：
+    // pills.size 键保证晚到的一页在 maxValue 未变（列表仍不可滚）时也能再检查一次。
+    val nearEnd by remember { derivedStateOf { scroll.value >= scroll.maxValue - 100 } }
     androidx.compose.runtime.LaunchedEffect(valuesExpanded, nearEnd, pills.size, loadMore != null) {
         if (valuesExpanded && nearEnd) loadMore?.invoke()
     }

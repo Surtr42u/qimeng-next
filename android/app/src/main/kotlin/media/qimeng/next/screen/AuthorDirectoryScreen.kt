@@ -91,7 +91,8 @@ internal fun AuthorDirectoryScreen(library: LibraryViewModel, model: AuthorDirec
             LazyColumn(state = list, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (page.loaded && page.items.isEmpty()) item { Text("暂无作者", style = MaterialTheme.typography.bodySmall) }
                 items(page.items, key = Author::id) { row ->
-                    AuthorDirectoryRow(row, busy, { library.openAuthor(row.id) }, { model.follow(row) }, { open(it, row) })
+                    // 点按行已带名字与 fileCount：作为 seed 进入作者作品页，标题/计数首帧即真值。
+                    AuthorDirectoryRow(row, busy, { library.openAuthor(row.id, seed = row) }, { model.follow(row) }, { open(it, row) })
                 }
             }
         }

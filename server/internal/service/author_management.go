@@ -102,6 +102,7 @@ func (s *Service) DeleteAuthor(ctx context.Context, w *Write, id string, revisio
 	_, e = q.ExecContext(ctx, "DELETE FROM authors WHERE id=?", id)
 	return e
 }
+
 // delegateAuthorMerge is reachable only with the standing credential issued
 // with author.merge; task credentials and unrelated authors stay denied.
 func (s *Service) delegateAuthorMerge(ctx context.Context, p model.Principal, in AuthorMergeInput) error {

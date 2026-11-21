@@ -31,9 +31,16 @@ import media.qimeng.next.sdk.model.Author as ApiAuthor
 import media.qimeng.next.sdk.model.Batch as ApiBatch
 import media.qimeng.next.sdk.model.BatchInput
 
+/**
+ * 推荐流单页深度取协议上限 100（api/openapi.yaml 的 Limit 参数 maximum=100；默认 50）。
+ * 推荐每深一页服务端只做一次缓存顺序切片 + 关联查询，客户端覆盖同样深度由此减半请求数；
+ * 旧版一次拉 200（旧服务端允许），新服务端上限 100。普通列表仍用协议默认 50——
+ * 50 是 StatisticsAndHomeTest 锁定的首屏页大小，且收益边际。
+ */
+private const val RECOMMENDATION_PAGE_SIZE = 100
+
 /** Only this data boundary knows generated DTOs. UI and ViewModels use client models. */
-class MediaRepository internal constructor(val settings: SecureSettings, private val provider: ApiProvider) {
-    val session = settings.session
+class MediaRepository internal constructor(val settings: SecureSettings, private val provider: ApiProvider) {    val session = settings.session
     private val authenticationGeneration = AtomicLong()
     private val authenticationLock = Any()
     private fun target() = session.value ?: error("请先登录服务器")
@@ -149,21 +156,21 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         val target = target()
         if (query.source == "history") {
             val page = history(cursor, query)
-            return Page(page.items.map { row ->
+            return Page(page.items.projectOffMain { row ->
                 (row.asset ?: throw IOException("浏览历史缺少当前媒体投影")).copy(lastViewedAt = row.createdAt)
             }, page.nextCursor, page.totalMatched, page.dateCounts)
         }
         if (query.source == "recommendations") {
-            val page = provider.api(target).getRecommendations(seed = query.seed, cursor = cursor, limit = 50,
+            val page = provider.api(target).getRecommendations(seed = query.seed, cursor = cursor, limit = RECOMMENDATION_PAGE_SIZE,
                 kind = query.kind?.let { value -> DefaultApi.KindGetRecommendations.entries.first { it.value == value } },
                 mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeGetRecommendations.entries.first { it.value == value } }).bodyOrThrow()
-            return Page(page.items.map { it.toModel(target) }, page.nextCursor)
+            return Page(page.items.projectOffMain { it.toModel(target) }, page.nextCursor)
         }
         if (query.source == "rankings") {
             val page = provider.api(target).getRankings(period = DefaultApi.PeriodGetRankings.entries.first { it.value == query.period },
                 kind = query.kind?.let { value -> DefaultApi.KindGetRankings.entries.first { it.value == value } },
                 mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeGetRankings.entries.first { it.value == value } }, cursor = cursor, limit = 50).bodyOrThrow()
-            return Page(page.items.map { it.asset.toModel(target).copy(rankingScore = it.score) }, page.nextCursor)
+            return Page(page.items.projectOffMain { it.asset.toModel(target).copy(rankingScore = it.score) }, page.nextCursor)
         }
         val page = provider.api(target).listAssets(cursor = cursor, limit = 50, libraryId = query.libraryId,
             q = query.text.takeIf { it.isNotBlank() }, mediaType = query.mediaType?.let { type -> DefaultApi.MediaTypeListAssets.entries.first { it.value == type } },
@@ -180,7 +187,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             dateCounts = cursor == null, dateCountsBy = if (cursor == null && query.sort == "favorited")
                 DefaultApi.DateCountsByListAssets.entries.first { it.value == "favoritedAt" } else null,
             tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
-        return Page(page.items.map { it.toModel(target) }, page.nextCursor, page.totalMatched,
+        return Page(page.items.projectOffMain { it.toModel(target) }, page.nextCursor, page.totalMatched,
             page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) }, page.unknownDateCount)
     }
 
@@ -271,7 +278,7 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
             mediaType = query.mediaType?.let { value -> DefaultApi.MediaTypeListHistory.entries.first { it.value == value } },
             workKeys = query.workKeys, roleKeys = query.roleKeys,
             tzOffsetMinutes = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000).bodyOrThrow()
-        return Page(page.items.map { HistoryEntry(it.eventId, it.assetId, it.fileName ?: "已移除的媒体", it.kind.value,
+        return Page(page.items.projectOffMain { HistoryEntry(it.eventId, it.assetId, it.fileName ?: "已移除的媒体", it.kind.value,
             it.positionMs ?: 0, it.createdAt, it.asset?.toModel(target), it.contentVersion) }, page.nextCursor, page.totalMatched,
             page.dateCounts.orEmpty().map { DateCount(it.date, it.fileCount) })
     }
@@ -383,8 +390,12 @@ class MediaRepository internal constructor(val settings: SecureSettings, private
         return InventoryStats(value.assets, value.images, value.videos, value.bytes, value.favorites, value.authors, value.events, value.trash)
     }
 
-    fun mediaClient(target: Session) = provider.client(target)
+    fun mediaClient(target: Session) = provider.mediaClient(target)
 }
+
+/** UI projections pre-parse grouping timestamps and build media URLs; keep that work off the main thread. */
+private suspend fun <T, R> List<T>.projectOffMain(transform: (T) -> R): List<R> =
+    withContext(Dispatchers.IO) { this@projectOffMain.map(transform) }
 
 private fun ApiLibrary.toModel() = Library(id, name, kind.value, enabled, revision, fileCount, scanState.value, latestScanId)
 

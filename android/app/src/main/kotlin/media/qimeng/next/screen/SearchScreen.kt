@@ -41,6 +41,7 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
     val submitted by model.submitted.collectAsStateWithLifecycle()
     val phase by model.phase.collectAsStateWithLifecycle()
     val history by model.history.collectAsStateWithLifecycle()
+    val recommendWords by model.recommendWords.collectAsStateWithLifecycle()
     val words by model.words.collectAsStateWithLifecycle()
     val error by model.error.collectAsStateWithLifecycle()
     val controls = rememberBrowserControls("search")
@@ -101,7 +102,6 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
                 MediaBrowser(library, "search", controls = controls, toolbar = false, textOverride = submitted, caption = true)
             }
             "suggest" -> {
-                if (words.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 words.error?.let { ErrorNotice(it, model::refreshWords) }
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(words.data.orEmpty(), key = { "${it.type}:${it.id}" }) { word ->
@@ -119,9 +119,8 @@ fun SearchScreen(library: LibraryViewModel, initialTag: String? = null, model: S
             else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 item {
                     SearchSectionHeader("推荐搜索")
-                    if (words.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    words.error?.let { ErrorNotice(it, model::refreshWords) }
-                    QimengWordPillFlow(words.data.orEmpty().map { QimengPill(it.name) }, { submit(words.data.orEmpty()[it].name) }, Modifier.padding(bottom = 12.dp))
+                    recommendWords.error?.let { ErrorNotice(it, model::refreshWords) }
+                    QimengWordPillFlow(recommendWords.data.orEmpty().map { QimengPill(it.name) }, { submit(recommendWords.data.orEmpty()[it].name) }, Modifier.padding(bottom = 12.dp))
                 }
                 if (history.isNotEmpty()) item {
                     Row(verticalAlignment = Alignment.CenterVertically) {

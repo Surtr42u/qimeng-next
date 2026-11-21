@@ -99,13 +99,27 @@ func (s *Service) ActivityRanking(ctx context.Context, kind, window, metric, cur
 	case "tag":
 		projection = `SELECT at.tag AS id,at.tag AS name,sum(t.views) AS views,sum(t.plays) AS plays,sum(t.seconds) AS seconds,count(*) AS assets,'' AS data FROM totals t JOIN asset_tag_names at ON at.asset_id=t.asset_id GROUP BY at.tag`
 	case "asset":
-		projection = `SELECT a.id,a.file_name AS name,t.views,t.plays,t.seconds,1 AS assets,a.data FROM totals t JOIN assets a ON a.id=t.asset_id`
 	default:
 		return result, Fail(400, "invalid_ranking", "榜单类别无效。")
 	}
+	// asset_locations has one row per asset and its foreign keys guarantee the
+	// asset_records/content-version rows joined by the assets view. Selecting
+	// trashed from it is therefore the same eligibility test without building
+	// the view's display document.
 	// metric and projection are selected from internal literals above, never raw SQL input.
-	query := `WITH totals AS(SELECT d.asset_id,sum(d.views) AS views,sum(d.plays) AS plays,sum(d.seconds) AS seconds FROM asset_daily_stats d JOIN assets a ON a.id=d.asset_id AND a.trashed=0 WHERE d.day>=? GROUP BY d.asset_id), ranked AS (` + projection + `)
+	totals := `WITH totals AS(SELECT d.asset_id,sum(d.views) AS views,sum(d.plays) AS plays,sum(d.seconds) AS seconds FROM asset_daily_stats d JOIN asset_locations loc ON loc.asset_id=d.asset_id AND loc.trashed=0 WHERE d.day>=? GROUP BY d.asset_id)`
+	var query string
+	if kind == "asset" {
+		// Rank the narrow totals rows first; the assets view is joined only for
+		// the rows that survive the cursor, ordering and limit. Eligibility is
+		// checked inside ranked so a totals row without an assets row is
+		// discarded before the limit instead of silently shortening the page.
+		query = totals + `, ranked AS (SELECT t.asset_id AS id,t.views,t.plays,t.seconds,1 AS assets FROM totals t WHERE EXISTS(SELECT 1 FROM assets ax WHERE ax.id=t.asset_id)), page AS (SELECT id,views,plays,seconds,assets FROM ranked WHERE ` + metric + `>0 AND (?='' OR ` + metric + `<? OR (` + metric + `=? AND id>?)) ORDER BY ` + metric + ` DESC,id ASC LIMIT ?)
+ SELECT p.id,a.file_name AS name,p.views,p.plays,p.seconds,p.assets,a.data,p.` + metric + ` FROM page p JOIN assets a ON a.id=p.id ORDER BY p.` + metric + ` DESC,p.id ASC`
+	} else {
+		query = totals + `, ranked AS (` + projection + `)
  SELECT id,name,views,plays,seconds,assets,data,` + metric + ` FROM ranked WHERE ` + metric + `>0 AND (?='' OR ` + metric + `<? OR (` + metric + `=? AND id>?)) ORDER BY ` + metric + ` DESC,id ASC LIMIT ?`
+	}
 	rows, e := s.DB.DB.QueryContext(ctx, query, day, after.ID, after.Value, after.Value, after.ID, n+1)
 	if e != nil {
 		return result, e

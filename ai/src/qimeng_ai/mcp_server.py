@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 
 from mcp.server import Server, ServerRequestContext
@@ -19,8 +20,9 @@ from .state import RESEARCH_QUERY_OPERATIONS
 def create_server(runtime: Runtime) -> Server:
     async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
         tools = await asyncio.to_thread(runtime.tools)
+        # The runtime reuses definitions; the protocol model receives its own schema.
         return ListToolsResult(tools=[Tool(name=tool["name"], description=tool["description"],
-                                         input_schema=tool["inputSchema"],
+                                         input_schema=copy.deepcopy(tool["inputSchema"]),
                                          annotations=ToolAnnotations(read_only_hint=tool["readOnly"],
                                              destructive_hint=not tool["readOnly"],
                                              idempotent_hint=tool["readOnly"] or any(key in tool["inputSchema"].get("required", []) for key in ("operationId", "Idempotency-Key")),

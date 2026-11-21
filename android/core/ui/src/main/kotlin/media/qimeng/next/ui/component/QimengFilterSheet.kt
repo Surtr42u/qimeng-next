@@ -20,6 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -100,8 +103,13 @@ fun QimengFilterSheet(
     // 首帧 sheet 顶就位），半开档会让面板文案只露出一半，与实录形态不符
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scroll = rememberScrollState()
-    LaunchedEffect(scroll.value, scroll.maxValue, tags.size, hasMoreTags, loadingTags) {
-        if (hasMoreTags && !loadingTags && scroll.value >= scroll.maxValue - 100) onLoadMoreTags()
+    // 近底判定经 derivedStateOf 收敛为布尔：滚动像素只让派生值失效、不改写本作用域
+    // （原先把 scroll.value/maxValue 直接作 LaunchedEffect 键，每个滚动事件都重启加载协程）。
+    // 阈值 100px 与语义不变；tags.size 等键保留——列表短到不可滚动时 maxValue 恒 0，
+    // 新一页到达需靠 size 键再触发一次近底检查。
+    val nearEnd by remember { derivedStateOf { scroll.value >= scroll.maxValue - 100 } }
+    LaunchedEffect(nearEnd, tags.size, hasMoreTags, loadingTags) {
+        if (hasMoreTags && !loadingTags && nearEnd) onLoadMoreTags()
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,

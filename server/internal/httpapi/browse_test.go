@@ -353,7 +353,7 @@ func TestDefaultDateFavoriteTimeAndHistoryUseServerFacts(t *testing.T) {
 	}
 	r = f.json("GET", "/history?limit=1&cursor="+history.NextCursor, "", nil, 200)
 	decode(t, r, &history)
-	if len(history.Items) != 1 || history.Items[0].AssetID != older.ID {
-		t.Fatal("history cursor did not reach the other asset")
+	if len(history.Items) != 1 || history.Items[0].AssetID != older.ID || history.TotalMatched == nil || *history.TotalMatched != 2 {
+		t.Fatal("history cursor did not reach the other asset with a carried total")
 	}
 }

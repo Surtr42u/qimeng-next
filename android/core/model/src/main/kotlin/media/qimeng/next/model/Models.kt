@@ -1,5 +1,8 @@
 package media.qimeng.next.model
 
+import java.time.DateTimeException
+import java.time.Instant
+
 data class Session(val baseUrl: String, val instanceId: String, val label: String)
 enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 enum class TabBarMaterial(val label: String) {
@@ -59,7 +62,31 @@ data class Asset(
     val cosWorkName: String? = null,
     val sourceName: String? = null,
     val favoritedAt: String? = null,
-)
+) {
+    /**
+     * Date-grouping instants parsed once when the asset is converted, so the gallery never
+     * re-parses strings on the composition thread. Body properties are not part of the data
+     * class contract (equals/copy/toString/componentN), so remember keys and saved model
+     * comparisons keep their previous semantics; copy() still refreshes them from its inputs.
+     */
+    val fileDateMillis: Long? = epochMillis(fileDate)
+    val lastViewedAtMillis: Long? = epochMillis(lastViewedAt)
+    val favoritedAtMillis: Long? = epochMillis(favoritedAt)
+}
+
+/**
+ * RFC 3339 to epoch millis, parsed once per asset instead of once per grouping pass.
+ * A malformed value becomes null so the asset lands in the existing 未知日期 bucket;
+ * bad metadata must not fail the whole page load.
+ */
+private fun epochMillis(value: String?): Long? = value?.let {
+    try {
+        Instant.parse(it).toEpochMilli()
+    } catch (_: DateTimeException) {
+        null
+    }
+}
+
 data class AssetGroup(val key: String, val name: String)
 data class AssetQuery(
     val text: String = "",

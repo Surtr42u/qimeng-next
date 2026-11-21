@@ -13,6 +13,7 @@ type seekCursor struct {
 	Sort   string `json:"s"`
 	Value  string `json:"v"`
 	ID     string `json:"id"`
+	Total  *int64 `json:"t,omitempty"`
 }
 
 func readSeek(encoded, filter, sort string) (seekCursor, error) {
@@ -34,6 +35,13 @@ func readSeek(encoded, filter, sort string) (seekCursor, error) {
 }
 func makeSeek(filter, sort, value, id string) string {
 	raw, _ := json.Marshal(seekCursor{Filter: digest([]byte(filter)), Sort: sort, Value: value, ID: id})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// makeSeekTotal carries an already computed total so later pages can keep the
+// same totalMatched value without repeating the aggregate query.
+func makeSeekTotal(filter, sort, value, id string, total int64) string {
+	raw, _ := json.Marshal(seekCursor{Filter: digest([]byte(filter)), Sort: sort, Value: value, ID: id, Total: &total})
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 func dateKey(value time.Time) string { return value.UTC().Format(timestampKey) }

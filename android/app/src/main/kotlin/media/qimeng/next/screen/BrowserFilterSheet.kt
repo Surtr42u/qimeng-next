@@ -15,7 +15,8 @@ internal fun BrowserFilterSheet(controls: BrowserControls, terms: ManagementView
     val tags by terms.entries.collectAsStateWithLifecycle()
     val failure by terms.error.collectAsStateWithLifecycle()
     val busy by terms.busy.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { terms.load("tags") }
+    // 面板每次打开都重新组合：只有词表尚未读到时才加载，已加载的标签沿用，避免每次打开先空后弹。
+    LaunchedEffect(Unit) { if (!tags.loaded && !tags.loading) terms.load("tags") }
     QimengFilterSheet(draft = draft, tags = tags.items.map { FilterTag(it.id, it.name, it.revision) },
         message = failure ?: tags.error, onDraftChange = { draft = it },
         onReset = { controls.panel = FilterPanelDraft(); controls.showFilters.value = false },

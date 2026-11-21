@@ -2,6 +2,7 @@ package media.qimeng.next.data
 
 import coil3.disk.DiskCache
 import media.qimeng.next.model.ThumbnailUsage
+import okio.Buffer
 import okio.ByteString.Companion.encodeUtf8
 import okio.Path.Companion.toOkioPath
 import java.io.File
@@ -16,9 +17,13 @@ private val entryKeyPattern = Regex("[0-9a-f]{64}:[0-9a-f]{64}")
 
 internal fun thumbnailHash(value: String): String = value.encodeUtf8().sha256().hex()
 
-internal fun validJpeg(bytes: ByteArray): Boolean = bytes.size >= 4 &&
-    bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() &&
-    bytes[bytes.lastIndex - 1] == 0xff.toByte() && bytes.last() == 0xd9.toByte()
+/** 预览是已验证后原子落盘的完整 JPEG；这里只按首尾两字节复核，不复制正文。 */
+internal fun validJpeg(bytes: Buffer): Boolean {
+    if (bytes.size < 4) return false
+    val last = bytes.size - 1
+    return bytes.get(0L) == 0xff.toByte() && bytes.get(1L) == 0xd8.toByte() &&
+        bytes.get(last - 1) == 0xff.toByte() && bytes.get(last) == 0xd9.toByte()
+}
 
 internal enum class ThumbnailDiskResult { READY, MISSING, FULL }
 
@@ -28,15 +33,25 @@ internal class ThumbnailDiskCache(private val directory: File, maxBytes: Long) {
     @Volatile var generation = 0L
         private set
 
-    @Synchronized
-    fun read(key: String, version: Long): ByteArray? {
+    /**
+     * Reads are deliberately not synchronized on this instance: Coil's DiskCache owns its own
+     * journal lock and only exposes committed entries, and prefetch no longer shares the visible
+     * flight. Holding a class monitor across a multi-megabyte file read serialized all visible
+     * tiles of one pool — the same reason [usage] walks without the monitor.
+     *
+     * Returns a [Buffer] instead of a ByteArray so the bytes go disk → decoder without an extra
+     * ByteArray round trip (the previous path copied file → ByteArray → Buffer).
+     */
+    fun read(key: String, version: Long): Buffer? {
         val snapshot = disk.openSnapshot(key) ?: return null
         val data = snapshot.use {
             val entry = metadata(it.metadata.toFile()) ?: return@use null
             if (entry.version != version || entry.key != key) return null
             try {
-                if (Files.size(it.data.toFile().toPath()) !in 4L..MAX_THUMBNAIL_BYTES) return@use null
-                it.data.toFile().readBytes().takeIf(::validJpeg)
+                if (dataBytes(it.data.toFile()) !in 4L..MAX_THUMBNAIL_BYTES) return@use null
+                val buffer = Buffer()
+                disk.fileSystem.source(it.data).use { source -> buffer.writeAll(source) }
+                buffer.takeIf(::validJpeg)
             } catch (_: FileNotFoundException) {
                 null
             } catch (_: NoSuchFileException) {
@@ -47,7 +62,7 @@ internal class ThumbnailDiskCache(private val directory: File, maxBytes: Long) {
         return data
     }
 
-    @Synchronized
+    /** 同 [read]：探测只读已提交条目，不占类监视器。 */
     fun warmState(key: String, version: Long): ThumbnailDiskResult {
         val current = disk.openSnapshot(key)?.use {
             val entry = metadata(it.metadata.toFile()) ?: return@use null
@@ -60,7 +75,7 @@ internal class ThumbnailDiskCache(private val directory: File, maxBytes: Long) {
     }
 
     @Synchronized
-    fun store(key: String, version: Long, jpeg: ByteArray, capturedGeneration: Long, background: Boolean,
+    fun store(key: String, version: Long, jpeg: Buffer, capturedGeneration: Long, background: Boolean,
               authorized: () -> Boolean): ThumbnailDiskResult {
         if (generation != capturedGeneration || !authorized()) return ThumbnailDiskResult.MISSING
         val previous = disk.openSnapshot(key)?.use { metadata(it.metadata.toFile()) }
@@ -73,7 +88,8 @@ internal class ThumbnailDiskCache(private val directory: File, maxBytes: Long) {
         val editor = disk.openEditor(key) ?: return ThumbnailDiskResult.MISSING
         try {
             disk.fileSystem.write(editor.metadata) { writeUtf8(text) }
-            disk.fileSystem.write(editor.data) { write(jpeg) }
+            // clone() 只共享片段、不复制正文：调用方的 Buffer 仍可交给解码器。
+            disk.fileSystem.write(editor.data) { writeAll(jpeg.clone()) }
         } catch (failure: Exception) {
             editor.abort()
             throw failure

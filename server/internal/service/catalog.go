@@ -313,7 +313,7 @@ func validateAssetTags(ctx context.Context, q store.Querier, tags []string) ([]s
 	return values, nil
 }
 func (s *Service) Author(ctx context.Context, id string) (model.Author, error) {
-	a, e := store.Get[model.Author](ctx, s.DB.DB, authorCountsCTE+" SELECT "+authorJSON+authorFrom+"WHERE au.id=?", id)
+	a, e := store.Get[model.Author](ctx, s.DB.DB, authorDetailSQL, id, id)
 	return a, Normalize(e)
 }
 

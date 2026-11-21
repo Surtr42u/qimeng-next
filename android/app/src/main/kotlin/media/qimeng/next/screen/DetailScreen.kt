@@ -77,13 +77,12 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
     LaunchedEffect(id) { if (asset?.id != id) model.refreshAsset(id) }
     val item = asset?.takeIf { it.id == id && sameTarget(it.target, target) }
     if (item == null) {
+        // 加载期只保留返回顶栏与留白正文（旧版 DetailTopRow 口径）：不再以整屏转圈充当内容。
         Box(Modifier.fillMaxSize()) {
             DetailTopChrome(true, -1, 0, model::back, {})
-            Column(Modifier.align(Alignment.Center).padding(16.dp)) {
-                message?.let { ErrorNotice(it) }
-                if (message == null) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                } else {
+            message?.let {
+                Column(Modifier.align(Alignment.Center).padding(16.dp)) {
+                    ErrorNotice(it)
                     TextButton(onClick = { model.refreshAsset(id) }, enabled = !busy) { Text("点击重试") }
                 }
             }
@@ -104,7 +103,9 @@ fun DetailScreen(model: LibraryViewModel, id: String, target: Session?) {
             { model.setFavorite(item, !item.favorite) }, { showTags = true; model.loadTags() }, { showAuthorSheet = true }, Modifier.align(Alignment.BottomCenter))
     }
     if (showAuthorSheet) DetailAuthorSheet(assetAuthors, busy,
-        { id -> assetAuthors.find { it.id == id }?.let(model::followAssetAuthor) }, { author, _ -> model.openAuthor(author) },
+        { id -> assetAuthors.find { it.id == id }?.let(model::followAssetAuthor) },
+        // 作者卡已经持有该作者的名字与 fileCount：seed 进作者作品页，标题/计数首帧即真值。
+        { authorId, _ -> model.openAuthor(authorId, seed = assetAuthors.find { it.id == authorId }) },
         { model.openAssetEditor(item) }, { showAuthorSheet = false })
     if (showEditor) ModalBottomSheet(onDismissRequest = { showEditor = false }) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

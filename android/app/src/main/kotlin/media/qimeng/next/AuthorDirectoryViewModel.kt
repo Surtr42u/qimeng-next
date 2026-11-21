@@ -39,7 +39,9 @@ class AuthorDirectoryViewModel(application: Application) : AndroidViewModel(appl
         val previous = selection
         if (next == previous) return
         if (previous?.first != target) {
+            // 换服务器时清空目录行：保留旧行只适用于同一会话内的搜索/排序/体系重查。
             write?.cancel(); submitting.value = false; total.value = null; mutationError.value = null
+            mutable.value = ListState()
             if (previous != null) closeSources()
         }
         selection = next
@@ -48,15 +50,18 @@ class AuthorDirectoryViewModel(application: Application) : AndroidViewModel(appl
 
     fun load(next: Boolean = false, debounce: Boolean = false) {
         val current = selection ?: return
-        val previous: ListState<Author> = if (next) mutable.value else ListState()
-        if (next && (previous.cursor == null || previous.loading)) return
+        if (next && (mutable.value.loading || mutable.value.cursor == null)) return
         read?.cancel()
-        mutable.value = previous.copy(loading = true, error = null)
+        // 第一页重查（搜索/排序/体系）保留当前行，请求成功后再整表替换，列表不再先清空。
+        // 第一页重查作废旧游标：失败后的「重试」仍从第一页开始，不会把旧游标接到新查询上。
+        val previous: ListState<Author> = mutable.value.copy(loading = false)
+        val inFlight = previous.copy(loading = true, error = null, cursor = if (next) previous.cursor else null)
+        mutable.value = inFlight
         read = viewModelScope.launch {
             try {
                 if (debounce) delay(250)
                 val (target, query) = current
-                val page = media.authors(cursor = previous.cursor, query = query.word.takeIf(String::isNotBlank), kind = query.kind, sort = query.sort, target = target)
+                val page = media.authors(cursor = if (next) previous.cursor else null, query = query.word.takeIf(String::isNotBlank), kind = query.kind, sort = query.sort, target = target)
                 val count = when {
                     query.word.isBlank() && query.kind == null -> page.totalMatched
                     next -> total.value
@@ -64,10 +69,11 @@ class AuthorDirectoryViewModel(application: Application) : AndroidViewModel(appl
                 }
                 if (selection == current && session.value == target) {
                     total.value = count
-                    mutable.value = ListState((previous.items + page.items).distinctBy(Author::id), page.nextCursor, loaded = true, totalMatched = page.totalMatched)
+                    mutable.value = ListState(if (next) (previous.items + page.items).distinctBy(Author::id) else page.items,
+                        page.nextCursor, loaded = true, totalMatched = page.totalMatched)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { mutable.value = previous.copy(error = libraryError(failure)) }
+            catch (failure: Exception) { mutable.value = inFlight.copy(loading = false, error = libraryError(failure)) }
         }
     }
     fun dismissError() { mutationError.value = null }

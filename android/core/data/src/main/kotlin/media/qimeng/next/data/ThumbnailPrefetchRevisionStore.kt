@@ -18,9 +18,17 @@ internal data class ThumbnailPrefetchRecord(
  * The sample is written in the same SharedPreferences edit as the revision so a skip decision
  * can never observe a record without its sample. [clear] invalidates the record whenever a
  * cache pool is emptied; otherwise a static library would keep skipping an empty cache.
+ *
+ * [scope] separates the physical cache pools (nas / local). Clearing one pool must not
+ * invalidate the other pool's skip evidence: with a shared record, clearing NAS makes the next
+ * local round re-list the whole library and vice versa. The empty scope keeps the historical
+ * single-record file used before pooling (and by this store's instrumentation test).
  */
-internal class ThumbnailPrefetchRevisionStore(context: Context) {
-    private val storage = context.getSharedPreferences(THUMBNAIL_PREFETCH_PREFERENCES, Context.MODE_PRIVATE)
+internal class ThumbnailPrefetchRevisionStore(context: Context, scope: String = "") {
+    private val storage = context.getSharedPreferences(
+        if (scope.isEmpty()) THUMBNAIL_PREFETCH_PREFERENCES else "$THUMBNAIL_PREFETCH_PREFERENCES-$scope",
+        Context.MODE_PRIVATE,
+    )
 
     fun lastDone(): ThumbnailPrefetchRecord? {
         if (!storage.contains(KEY_SERVER) || !storage.contains(KEY_REVISION)) return null

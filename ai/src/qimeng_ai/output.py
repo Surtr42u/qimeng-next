@@ -9,12 +9,13 @@ from .state import State, encode
 
 SECRET_FIELDS = {"token", "authorization", "password", "secret", "leaseToken", "credentialSecret"}
 PRIVATE_FIELDS = {"root", "absolutePath", "localPath", "dataDir", "mediaRoot"}
+HIDDEN_FIELDS = SECRET_FIELDS | PRIVATE_FIELDS
 
 
 def public(value, token: str):
     if isinstance(value, dict):
         return {key: public(item, token) for key, item in value.items()
-                if key not in SECRET_FIELDS | PRIVATE_FIELDS}
+                if key not in HIDDEN_FIELDS}
     if isinstance(value, list):
         return [public(item, token) for item in value]
     if isinstance(value, str):
@@ -26,10 +27,11 @@ def public(value, token: str):
 def present(value, state: State, limit: int, token: str):
     value = public(value, token)
     encoded = encode(value)
-    if len(encoded.encode()) <= limit:
+    raw = encoded.encode()
+    if len(raw) <= limit:
         return value
-    reference = state.save(value)
-    summary = {"truncated": True, "resultRef": reference, "totalBytes": len(encoded.encode()),
+    reference = state.save_encoded(encoded, raw, kind="result")
+    summary = {"truncated": True, "resultRef": reference, "totalBytes": len(raw),
                "readWith": "platform.result.read", "omitted": "完整结果保存在受控引用；按 JSON Pointer 和 offset 续读"}
     if isinstance(value, dict):
         for key in ("id", "batchId", "state", "status", "revision", "fingerprint", "nextCursor", "operationKey"):

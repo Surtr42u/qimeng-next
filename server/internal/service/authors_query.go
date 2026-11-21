@@ -15,6 +15,17 @@ const authorCountsCTE = `WITH author_counts AS (SELECT aa.author_id,COUNT(DISTIN
 const authorFrom = ` FROM authors au LEFT JOIN author_counts ac ON ac.author_id=au.id LEFT JOIN txt_order txt ON txt.author_id=au.id `
 const authorJSON = `json_set(au.data,'$.fileCount',COALESCE(ac.files,0),'$.viewCount',COALESCE(ac.views,0),'$.txtOrder',txt.rank,'$.acquisitionSources',json(COALESCE(json_extract(au.data,'$.acquisitionSources'),'[]')))`
 
+// authorDetailSQL is the single-author form of authorCountsCTE+authorJSON.
+// Counts read only this author's asset_authors rows. author_lists.position is
+// unique, so an author's earliest (position,ordinal) totally orders its
+// txtOrder slot; counting authors whose earliest membership precedes that tuple
+// reproduces txt_order's global row_number without materializing every author.
+// The author_id tie-break mirrors the window even though unique list positions
+// make it unreachable.
+const authorDetailSQL = `WITH target AS (SELECT m.list_id,l.position,m.ordinal FROM author_list_members m JOIN author_lists l ON l.id=m.list_id WHERE m.author_id=? ORDER BY l.position,m.ordinal LIMIT 1)
+ SELECT json_set(au.data,'$.fileCount',COALESCE((SELECT COUNT(DISTINCT a.id) FROM asset_authors aa JOIN assets a ON a.id=aa.asset_id WHERE aa.author_id=au.id AND a.trashed=0),0),'$.viewCount',COALESCE((SELECT sum(st.views) FROM asset_authors aa JOIN assets a ON a.id=aa.asset_id LEFT JOIN asset_daily_stats st ON st.asset_id=a.id WHERE aa.author_id=au.id AND a.trashed=0),0),'$.txtOrder',CASE WHEN NOT EXISTS(SELECT 1 FROM target) THEN NULL ELSE 1+(SELECT COUNT(DISTINCT m2.author_id) FROM author_list_members m2 JOIN author_lists l2 ON l2.id=m2.list_id,target t WHERE l2.position<t.position OR (l2.position=t.position AND m2.ordinal<t.ordinal) OR (l2.position=t.position AND m2.ordinal=t.ordinal AND m2.author_id<au.id)) END,'$.acquisitionSources',json(COALESCE(json_extract(au.data,'$.acquisitionSources'),'[]')))
+ FROM authors au WHERE au.id=?`
+
 func (s *Service) Authors(ctx context.Context, query, cursor string, limit int, following bool, options ...string) (model.Page[model.Author], error) {
 	result := model.Page[model.Author]{Items: []model.Author{}}
 	kind, sorting := "", "default"
@@ -95,7 +106,9 @@ func (s *Service) Authors(ctx context.Context, query, cursor string, limit int, 
 	}
 	defer tx.Rollback()
 	var count int64
-	if e = tx.QueryRowContext(ctx, authorCountsCTE+" SELECT count(*)"+authorFrom+"WHERE "+strings.Join(where, " AND "), args...).Scan(&count); e != nil {
+	// Filters reference authors only, and both CTE joins are at most one row per
+	// author, so the count does not need the library-wide aggregates.
+	if e = tx.QueryRowContext(ctx, "SELECT count(*) FROM authors au WHERE "+strings.Join(where, " AND "), args...).Scan(&count); e != nil {
 		return result, e
 	}
 	result.TotalMatched = &count

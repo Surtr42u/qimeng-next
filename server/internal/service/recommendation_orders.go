@@ -19,7 +19,20 @@ import (
 
 const maxOrderIDs = 100_000
 const maxOrders = 32
-const orderTTL = time.Minute
+
+// An order only carries IDs and the page projection re-checks trashed assets,
+// disabled libraries, partition and media type. A reading session therefore
+// stays valid until normal browsing is over; catalog writes still invalidate it
+// immediately through orderScope.Generation.
+const orderTTL = 30 * time.Minute
+
+// Candidate inputs are independent of seed and weights. Reusing one snapshot
+// for neighbouring seed builds avoids repeating the expensive per-asset read.
+// The generation and every query dimension are part of the key, so a snapshot
+// can never cross a catalog change, day boundary, partition or media type.
+const recommendationInputTTL = 15 * time.Second
+const maxRecommendationInputs = 4
+const maxRecommendationInputCandidates = maxOrderIDs
 
 type orderScope struct {
 	Generation           int64
@@ -31,6 +44,81 @@ type recommendationOrder struct {
 	ids     []string
 	created time.Time
 	used    uint64
+}
+
+type recommendationInputKey struct {
+	Generation           int64
+	Day, Kind, MediaType string
+}
+type recommendationInputSnapshot struct {
+	created time.Time
+	items   []analytics.Candidate
+}
+
+// The score also depends on activity and impressions, so the cache only
+// shortens the window in which those are observed; it does not replace the
+// order snapshot. Entries are immutable after publication.
+type recommendationInputCache struct {
+	mu    sync.Mutex
+	byKey map[recommendationInputKey]recommendationInputSnapshot
+	total int
+}
+
+func recommendationInputsKey(scope orderScope) recommendationInputKey {
+	return recommendationInputKey{scope.Generation, scope.Day, scope.Kind, scope.MediaType}
+}
+func (cache *recommendationInputCache) lookup(scope orderScope, now time.Time) ([]analytics.Candidate, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	key := recommendationInputsKey(scope)
+	entry, ok := cache.byKey[key]
+	if !ok {
+		return nil, false
+	}
+	if !now.Before(entry.created.Add(recommendationInputTTL)) {
+		cache.total -= len(entry.items)
+		delete(cache.byKey, key)
+		return nil, false
+	}
+	return entry.items, true
+}
+func (cache *recommendationInputCache) remember(scope orderScope, items []analytics.Candidate, now time.Time) {
+	if len(items) > maxRecommendationInputCandidates {
+		return
+	}
+	key := recommendationInputsKey(scope)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.byKey == nil {
+		cache.byKey = make(map[recommendationInputKey]recommendationInputSnapshot)
+	}
+	for existingKey, entry := range cache.byKey {
+		if !now.Before(entry.created.Add(recommendationInputTTL)) {
+			cache.total -= len(entry.items)
+			delete(cache.byKey, existingKey)
+		}
+	}
+	if previous, ok := cache.byKey[key]; ok {
+		cache.total -= len(previous.items)
+		delete(cache.byKey, key)
+	}
+	for len(cache.byKey) >= maxRecommendationInputs || cache.total+len(items) > maxRecommendationInputCandidates {
+		var oldestKey recommendationInputKey
+		var oldest recommendationInputSnapshot
+		found := false
+		for existingKey, entry := range cache.byKey {
+			if !found || entry.created.Before(oldest.created) {
+				oldestKey, oldest, found = existingKey, entry, true
+			}
+		}
+		if !found {
+			return
+		}
+		cache.total -= len(oldest.items)
+		delete(cache.byKey, oldestKey)
+	}
+	cache.byKey[key] = recommendationInputSnapshot{created: now, items: items}
+	cache.total += len(items)
 }
 
 // The catalog is authoritative. Only IDs are reused, so a cache hit cannot
@@ -166,6 +254,19 @@ func (s *Service) rankOrder(ctx context.Context, scope orderScope, prefs Recomme
 	}
 	return order, nil
 }
+func (s *Service) recommendationInputsFor(ctx context.Context, scope orderScope) ([]analytics.Candidate, error) {
+	now := time.Now()
+	if items, ok := s.recommendationInputCache.lookup(scope, now); ok {
+		return items, nil
+	}
+	items, err := s.recommendationInputs(ctx, RecommendationFilter{Kind: scope.Kind, MediaType: scope.MediaType}, scope.Day)
+	if err != nil {
+		return nil, err
+	}
+	s.recommendationInputCache.remember(scope, items, time.Now())
+	return items, nil
+}
+
 func (s *Service) recommendationOrder(ctx context.Context, scope orderScope, prefs RecommendationPreferences, id string, now time.Time) (*recommendationOrder, error) {
 	if order := s.recommendations.lookup(scope, now); order != nil && (id == "" || id == order.id) {
 		return order, nil
@@ -190,7 +291,7 @@ func (s *Service) recommendationOrder(ctx context.Context, scope orderScope, pre
 	if id != "" && !time.Now().Before(when.Add(orderTTL)) {
 		return nil, expiredRecommendation()
 	}
-	inputs, err := s.recommendationInputs(ctx, RecommendationFilter{Kind: scope.Kind, MediaType: scope.MediaType}, scope.Day)
+	inputs, err := s.recommendationInputsFor(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +322,6 @@ func (s *Service) warmRegularOrders(ctx context.Context) error {
 		return err
 	}
 	scope := orderScope{Generation: generation, Day: when.Format("2006-01-02"), Kind: "regular", Preferences: prefs.Revision}
-	var inputs []analytics.Candidate
 	for _, seed := range []int64{1, 0} {
 		scope.Seed = seed
 		if s.recommendations.lookup(scope, when) != nil {
@@ -234,14 +334,12 @@ func (s *Service) warmRegularOrders(ctx context.Context) error {
 		if current != generation {
 			return nil
 		}
-		if inputs == nil {
-			inputs, err = s.recommendationInputs(ctx, RecommendationFilter{Kind: "regular"}, scope.Day)
-			if err != nil {
-				return err
-			}
-			if len(inputs) > maxOrderIDs {
-				return nil
-			}
+		inputs, err := s.recommendationInputsFor(ctx, scope)
+		if err != nil {
+			return err
+		}
+		if len(inputs) > maxOrderIDs {
+			return nil
 		}
 		if _, err = s.rankOrder(ctx, scope, prefs, inputs, when); err != nil {
 			return err

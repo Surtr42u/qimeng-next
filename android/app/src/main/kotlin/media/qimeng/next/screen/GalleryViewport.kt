@@ -10,11 +10,26 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.model.Asset
 
+/**
+ * 视口前瞻预取的并发上限：旧版网格 `gridThumbnailPrefetchPermits = Semaphore(2)`
+ * （QimengMediaGrid.kt:77）同值。两两成对意味着滚动中最多两条预热请求在途，
+ * 既赶得上可见项的加载又不会抢满局域网带宽。
+ */
+private const val LOOKAHEAD_CONCURRENCY = 2
+
+/**
+ * 滚动中的前瞻预取（旧版 QimengMediaGrid.kt:284-309 同款语义）：可见窗口每次变化
+ * （滚动中也算）就为窗口前后各 2 行预热缩略图，按滚动方向排序、2 条并发；
+ * 新窗口到来由 collectLatest 取消上一批，不等待滚动落定。旧版证明这是滚入即出图
+ * 的关键——落定后再取会让新格先空一个往返。
+ */
 @Composable
 internal fun PrefetchGalleryViewport(
     model: LibraryViewModel,
@@ -34,34 +49,37 @@ internal fun PrefetchGalleryViewport(
     }
     LaunchedEffect(lifecycleOwner, grid, tiles, columns, transportRevision) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            // 只观察轻量的窗口下标 + 滚动标志：原实现在 snapshotFlow 里逐帧构造 Asset 列表，
-            // 每帧都要做一次深比较；这里由 snapshotFlow 自己按值去重，滚动中转场不会反复重建列表。
+            // 只观察轻量的窗口下标：snapshotFlow 自身按值去重，滚动中每个新窗口都会发射。
+            var previousFirst = -1
             snapshotFlow {
                 val items = grid.layoutInfo.visibleItemsInfo
-                VisibleWindow(
-                    first = items.firstOrNull()?.index ?: -1,
-                    last = items.lastOrNull()?.index ?: -1,
-                    scrolling = grid.isScrollInProgress,
-                )
+                VisibleWindow(first = items.firstOrNull()?.index ?: -1, last = items.lastOrNull()?.index ?: -1)
             }.collectLatest { window ->
-                // 滚动中不预取：预取下载/解码会和可见项的加载抢带宽与 CPU，先保证跟手度。
-                if (window.scrolling || window.first < 0) return@collectLatest
-                delay(120)
-                val nearby = adjacentThumbnails(tiles, window.first, window.last + 1, columns * 2)
-                if (nearby.isNotEmpty()) model.prefetchNearbyThumbnails(nearby)
+                if (window.first < 0) return@collectLatest
+                val forward = previousFirst < 0 || window.first >= previousFirst
+                previousFirst = window.first
+                val nearby = adjacentThumbnails(tiles, window.first, window.last + 1, columns * 2, forward)
+                for (pair in nearby.chunked(LOOKAHEAD_CONCURRENCY)) {
+                    coroutineScope {
+                        pair.map { asset -> async { model.prefetchNearbyThumbnails(listOf(asset)) } }.awaitAll()
+                    }
+                }
             }
         }
     }
 }
 
-/** 可见窗口的最小快照：只在首尾下标或滚动标志变化时重新触发预取。 */
-private data class VisibleWindow(val first: Int, val last: Int, val scrolling: Boolean)
+/** 可见窗口下标快照。不含滚动标志：滚动中的窗口变化同样要触发前瞻预取。 */
+private data class VisibleWindow(val first: Int, val last: Int)
 
-private fun adjacentThumbnails(tiles: List<Asset?>, before: Int, after: Int, limit: Int): List<Asset> {
+/**
+ * 窗口外的候选：行进方向前方 2 行优先，反向 2 行随后（旧版 nearbyThumbnailUrls 的
+ * forward/backward 判向口径）。组头占位（null）不参与。
+ */
+private fun adjacentThumbnails(tiles: List<Asset?>, before: Int, after: Int, limit: Int, forward: Boolean): List<Asset> {
     val start = before.coerceAtMost(tiles.size)
     val end = after.coerceAtMost(tiles.size)
-    return buildList {
-        for (index in end until minOf(end + limit, tiles.size)) tiles[index]?.let(::add)
-        for (index in start - 1 downTo maxOf(0, start - limit)) tiles[index]?.let(::add)
-    }
+    val ahead = buildList { for (index in end until minOf(end + limit, tiles.size)) tiles[index]?.let(::add) }
+    val behind = buildList { for (index in start - 1 downTo maxOf(0, start - limit)) tiles[index]?.let(::add) }
+    return if (forward) ahead + behind else behind + ahead
 }

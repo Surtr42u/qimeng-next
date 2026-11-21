@@ -61,7 +61,10 @@ internal fun AuthorCollectionScreen(library: LibraryViewModel, id: String, profi
             }
         } else {
             panes.SaveableStateProvider("local") {
-                MediaBrowser(library, "author:$id", author = id, albumTitle = author.name, authorKind = author.kind, leading = header)
+                // 作者名与 fileCount 由点按行 seed 进 openAuthor：标题/卡片/「筛选结果 N 个文件」
+                // 首帧即真值（旧版把 authorName 放进路由参数，机制等价）；列表响应随后覆盖计数。
+                MediaBrowser(library, "author:$id", author = id, albumTitle = author.name, authorKind = author.kind,
+                    leading = header, totalSeed = author.fileCount)
             }
         }
     }

@@ -38,14 +38,17 @@ class ManagementViewModel(application: Application) : AndroidViewModel(applicati
     fun load(kind: String, next: Boolean = false) {
         if (next && (mutableEntries.value.loading || mutableEntries.value.cursor == null)) return
         listJob?.cancel()
-        val previous: ListState<VocabularyEntry> = if (entryKind == kind) mutableEntries.value else ListState()
+        val previous: ListState<VocabularyEntry> = if (entryKind == kind) mutableEntries.value.copy(loading = false) else ListState()
         entryKind = kind
-        mutableEntries.value = if (next) previous.copy(loading = true, error = null) else ListState(loading = true)
+        // 第一页重读也保留上一份词表（同 loadSources 口径），成功后整表替换；失败时恢复旧行。
+        // 第一页重读会作废旧游标：失败后的「重试」仍从第一页开始，而不是接到旧游标后面。
+        val inFlight = previous.copy(loading = true, error = null, cursor = if (next) previous.cursor else null)
+        mutableEntries.value = inFlight
         listJob = viewModelScope.launch {
             try { val page = repository.vocabulary(kind, if (next) previous.cursor else null)
                 mutableEntries.value = ListState(if (next) previous.items + page.items else page.items, page.nextCursor, loaded = true)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { mutableEntries.value = previous.copy(loading = false, error = explanation(failure)) }
+            catch (failure: Exception) { mutableEntries.value = inFlight.copy(loading = false, error = explanation(failure)) }
         }
     }
     fun loadSources(next: Boolean = false) {
