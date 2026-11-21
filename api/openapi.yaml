@@ -1191,7 +1191,7 @@ paths:
       operationId: estimateBackupExport
       description: Owner-only preflight estimate for the next records-only checkpoint (snapshot plus the small archive manifest). The export worker repeats the check against the exact manifest before opening a partial file.
       responses:
-        '200': {description: Estimated archive bytes, configured reserve and current free bytes, content: {application/json: {schema: {$ref: '#/components/schemas/BackupExportEstimate'}}}}
+        '200': {description: 'Estimated archive bytes, configured reserve and current free bytes', content: {application/json: {schema: {$ref: '#/components/schemas/BackupExportEstimate'}}}}
         default: {$ref: '#/components/responses/Error'}
   /backups/change-state:
     get:
