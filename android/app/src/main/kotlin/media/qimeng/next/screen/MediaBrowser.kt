@@ -57,6 +57,7 @@ import media.qimeng.next.LIST_UP_TO_DATE_MESSAGE
 import media.qimeng.next.LibraryViewModel
 import media.qimeng.next.ListState
 import media.qimeng.next.sameEndpoint
+import media.qimeng.next.shouldOfferLocalIndexRebuild
 import media.qimeng.next.shouldOfferLocalRecovery
 import media.qimeng.next.shouldPreferRuntimeFailureMessage
 import media.qimeng.next.shouldRestartLocalRuntime
@@ -342,6 +343,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
     val preferRuntimeMessage = shouldPreferRuntimeFailureMessage(
         model.localRuntimeAvailable, currentIsLocal, localRuntimeStatus.phase, localRuntimeStatus.message)
     val localRuntimeNotice = localRuntimeStatus.message.takeIf { preferRuntimeMessage }
+    // 子进程带退出码退出说明控制目录里的索引数据让服务启不起来：重启运行层不会自愈，
+    // 横幅补充需要确认的「重建本机索引」。只在用户点按后才执行，绝不自动重建。
+    val offerIndexRebuild = shouldOfferLocalIndexRebuild(
+        model.localRuntimeAvailable, currentIsLocal, localRuntimeStatus.phase, localRuntimeStatus.message)
+    var confirmIndexRebuild by remember(key) { mutableStateOf(false) }
     // 主页面不渲染 AppRoot 的全局提示条（那里只覆盖 pushed 路由）；刷新「内容没有变化」
     // 的轻提示由本组件在主页面内落地，避免消息设了却看不见。
     val route by model.route.collectAsStateWithLifecycle()
@@ -533,6 +539,11 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         }
         // 远端会话：传输失败时给「连接本机影库」。本机端点未 READY 时上面的重试已改走本机
         // 流程，不再重复摆第二个按钮；运行层 READY 但请求仍失败时保留这个显式重连接口。
+        // 本机子进程退出：主按钮仍是「重启本机影库」，第二动作换成需要确认的「重建本机索引」；
+        // 远端会话保留原来的「连接本机影库」。两者互斥（重建只在 FAILED+本机时出现）。
+        val rebuildLocalIndex = remember(offerIndexRebuild) {
+            if (offerIndexRebuild) ErrorNoticeAction("重建本机索引", onClick = { confirmIndexRebuild = true }) else null
+        }
         val localRecovery = remember(listErrorIsTransport, session?.baseUrl, localRuntimeAddress,
             localRuntimeStatus.phase, currentIsLocal, restartLocalRuntime) {
             if (!restartLocalRuntime && shouldOfferLocalRecovery(model.localRuntimeAvailable, session?.baseUrl,
@@ -540,8 +551,9 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                 ErrorNoticeAction("连接本机影库", model::connectLocalLibrary)
             else null
         }
+        val noticeSecondary = rebuildLocalIndex ?: localRecovery
         val retryLabel = if (restartLocalRuntime) "重启本机影库" else "重试"
-        if (leading == null) listNotice?.let { ErrorNoticeWithActions(it, retry, retryLabel, localRecovery) }
+        if (leading == null) listNotice?.let { ErrorNoticeWithActions(it, retry, retryLabel, noticeSecondary) }
         // 下拉刷新「已是最新」轻提示：只显示这一条一次性文案，其他消息仍走 AppRoot 的
         // pushed 路由提示条，避免同一条消息在两处重复。
         if (route == "main") browserMessage?.takeIf { it == LIST_UP_TO_DATE_MESSAGE }?.let { UpToDateHint(it) }
@@ -660,7 +672,7 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
                         message != null -> {
                             item(key = "author-error", contentType = "author-status", span = { GridItemSpan(maxLineSpan) }) {
                                 Box(Modifier.padding(horizontal = QimengDimens.ScreenPaddingHorizontal, vertical = QimengDimens.SpaceM)) {
-                                    ErrorNoticeWithActions(message, retry, retryLabel, localRecovery)
+                                    ErrorNoticeWithActions(message, retry, retryLabel, noticeSecondary)
                                 }
                             }
                         }
@@ -701,6 +713,16 @@ fun MediaBrowser(model: LibraryViewModel, key: String, favorite: Boolean? = null
         }
         if (batch != null && selecting) BatchActionButton(batch, selectionState)
     }
+    // 重建索引会丢弃本机元数据（媒体保留），必须先说明后果并由用户确认；取消不做任何事。
+    if (confirmIndexRebuild) AlertDialog(
+        onDismissRequest = { confirmIndexRebuild = false },
+        title = { Text("重建本机索引") },
+        text = { Text("原来的本机索引目录会改名为备份，不会删除；媒体文件保持原样。新实例从空索引开始，本机元数据、标签与整理记录不会带过来，重建后可以重新扫描导入媒体。") },
+        confirmButton = {
+            TextButton(onClick = { confirmIndexRebuild = false; model.rebuildLocalIndex() }) { Text("重建") }
+        },
+        dismissButton = { TextButton(onClick = { confirmIndexRebuild = false }) { Text("取消") } },
+    )
 }
 
 /** 选择栏自己读选中集：勾选只让这一条栏重组，不再带着浏览区整页重组。 */

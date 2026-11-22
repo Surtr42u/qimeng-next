@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -75,6 +76,43 @@ class EmbeddedRuntime(context: Context) : LocalRuntime {
     }
 
     override suspend fun stop() = mutex.withLock { stopLocked() }
+
+    /**
+     * 重建本机索引：先停止自己持有的 host，把已确认的控制目录改名为同父目录下的备份，
+     * 清除实例身份（保留 Keystore 引导凭据与启用标记），再启动一个全新实例。
+     *
+     * 媒体目录与原件不动；新控制目录会生成新的 instanceId，调用方必须按本机登录流程重新
+     * 交换会话。改名失败时运行层保持停止并恢复原启用标记；任何情况下都不删除旧目录。
+     */
+    override suspend fun rebuildLocalIndex(): LocalConnection {
+        mutex.withLock {
+            val wasEnabled = secrets.enabled
+            try {
+                // 停止失败（超时）时仍持有数据库：绝不能改名控制目录，直接按失败返回。
+                stopLocked()
+                // 改名、建空目录与清除实例身份必须整段完成：中途被取消会留下「旧目录已备份、
+                // 身份仍在」的不一致状态，下一次启动反而会被数据目录守卫拦住。
+                withContext(NonCancellable + Dispatchers.IO) {
+                    val root = File(app.filesDir.canonicalFile, "embedded-v1")
+                    val control = File(root, "control")
+                    if (control.exists()) {
+                        val backup = File(root, "control.bak-${System.currentTimeMillis()}")
+                        check(control.renameTo(backup)) { "原本机索引目录无法改名备份，未重建本机索引" }
+                    }
+                    check(control.isDirectory || control.mkdirs()) { "无法创建新的本机索引目录" }
+                    // 新目录从空索引开始；引导凭据与启用标记保留，媒体目录不动。
+                    secrets.resetIdentity()
+                }
+            } catch (failure: Exception) {
+                // stopLocked() 已清掉启用标记；失败时恢复原偏好，旧目录仍可按正常流程自动恢复。
+                withContext(NonCancellable + Dispatchers.IO) {
+                    try { if (wasEnabled) secrets.enabled = true } catch (_: Exception) { /* 保持停止态 */ }
+                }
+                throw failure
+            }
+        }
+        return start()
+    }
 
     /**
      * Returning to the foreground asks the service for one liveness probe. The service is the

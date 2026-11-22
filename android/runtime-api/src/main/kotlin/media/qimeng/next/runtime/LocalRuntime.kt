@@ -28,6 +28,14 @@ interface LocalRuntime {
      */
     fun requestHealthCheck() = Unit
 
+    /**
+     * Rebuild the local catalog index without touching media: an embedded runtime renames the
+     * confirmed control directory to a backup, forgets the instance identity and starts a fresh
+     * instance. The returned connection uses a new instance identity, so the caller must log in
+     * again before normal API requests. Runtimes without a local service reject the request.
+     */
+    suspend fun rebuildLocalIndex(): LocalConnection = throw UnsupportedOperationException("此安装包未包含本机服务")
+
     suspend fun confirmInstance(instanceId: String)
     suspend fun configureAddress(address: String)
     fun validateAddress(address: String): String

@@ -60,4 +60,13 @@ internal class EmbeddedSecrets(context: Context) {
         activePort?.let { editor.putStringSet("confirmed-ports", (confirmedPorts() + it).map(Int::toString).toSet()) }
         check(editor.commit()) { "无法保存本机实例身份" }
     }
+
+    /**
+     * Forgets the confirmed instance identity so a rebuilt control directory can start as a new
+     * instance. The encrypted bootstrap credential and the enabled preference stay: a fresh empty
+     * directory is still unlocked by the existing token.
+     */
+    fun resetIdentity() {
+        check(prefs.edit().remove("instance").remove("confirmed-ports").commit()) { "无法清除本机实例身份" }
+    }
 }

@@ -31,6 +31,8 @@ func setWebCacheHeaders(w http.ResponseWriter, requestPath string) {
 }
 
 func main() {
+	// Capture the redaction values before run(): it unsets the admin password.
+	redactions := startupFailureRedactions(os.Getenv)
 	if e := run(); e != nil {
 		reason := "configuration, storage or listener failure"
 		var op *net.OpError
@@ -38,6 +40,13 @@ func main() {
 			reason = "cannot bind TCP listener, check the configured address and whether the port is in use"
 		}
 		slog.Error("service stopped", "reason", reason)
+		// The supervised Android host discards child output in release builds. A bounded,
+		// redacted detail beside the startup receipt is the only way the failure banner can
+		// distinguish a malformed catalog, another owner of the data directory or an
+		// unfinished restore from a generic exit status 1.
+		if writeErr := publishStartupFailure(os.Getenv("QIMENG_STARTUP_RECEIPT"), os.Getenv("QIMENG_LAUNCH_ID"), sanitizeStartupFailure(e.Error(), redactions)); writeErr != nil {
+			slog.Warn("startup failure detail not published", "detail", "check the private runtime directory")
+		}
 		os.Exit(1)
 	}
 }

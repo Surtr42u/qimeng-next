@@ -627,6 +627,20 @@ class LibraryViewModel(application: Application, private val saved: SavedStateHa
     }
 
     /**
+     * 连接失败横幅上的「重建本机索引」：停止本机 host，把原控制目录改名为备份，再以新实例
+     * 启动。媒体目录与原件不动，但新控制目录产生新的 instanceId，旧会话已经失效，必须走
+     * 显式本机登录（forceLogin）用引导凭据换取并保存新会话。只在用户于确认对话框中点按
+     * 「重建」后调用，绝不自动执行。
+     */
+    fun rebuildLocalIndex() = action {
+        check(localRuntimeAvailable) { "此安装包未包含本机服务" }
+        runtime.rebuildLocalIndex()
+        // connectLocal 内部会 refreshConnection()；forceLogin 保证新实例会话被保存。
+        connectLocal(forceLogin = true)
+        refreshFailedLists()
+    }
+
+    /**
      * 连接失败横幅上的「连接本机影库」：显式启动本机运行模块并按正常会话交换登录。
      * 只有用户点按才会调用；失败时不自动切换媒体库，也不在后台拉起本机服务。
      */

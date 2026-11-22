@@ -167,6 +167,10 @@ class EmbeddedService : Service() {
             val runner = binary(nativeRoot, "libqimeng_runner.so")
             val server = binary(nativeRoot, "libqimeng.so")
             val receipt = File(runtime, "ready.json")
+            // Written by the Go child when it exits before publishing the receipt. Release builds
+            // keep no child output, so this bounded, redacted document is the only diagnosis the
+            // banner can show.
+            val failureReceipt = File(runtime, receipt.name + ".failed")
             val storageRoots = EmbeddedFileAccess.roots(this, media)
             val port = secrets.port
             val listen = "127.0.0.1:$port"
@@ -176,6 +180,7 @@ class EmbeddedService : Service() {
                 restartReason.set(null)
                 if (stopping.get()) return
                 if (receipt.exists() && !receipt.delete()) fail("无法清理上次本机启动回执")
+                if (failureReceipt.exists() && !failureReceipt.delete()) fail("无法清理上次本机失败详情")
                 val launchId = UUID.randomUUID().toString()
                 val builder = ProcessBuilder(runner.absolutePath, server.absolutePath).directory(control).redirectErrorStream(true)
                 builder.environment().apply {
@@ -235,7 +240,10 @@ class EmbeddedService : Service() {
                 if (!stopping.get()) {
                     val readyInstance = instanceId ?: run {
                         if (!launched.isAlive) outputThread.join(1_000)
-                        fail(if (launched.isAlive) "本机启动超时，未取得受信回执" else "本机程序启动失败（退出码 ${launched.exitValue()}）")
+                        if (launched.isAlive) fail("本机启动超时，未取得受信回执")
+                        // The child exited before writing its receipt: a matching .failed document
+                        // turns the bare exit code into the actual data/catalog reason.
+                        fail(startupFailureMessage(launched.exitValue(), startupFailureDetail(failureReceipt, launchId)))
                     }
                     val active = HostSession(ticket, epoch, launched, baseUrl, certificate, readyInstance, startedAt, attempt)
                     session.set(active)
@@ -439,6 +447,19 @@ class EmbeddedService : Service() {
         } finally { connection.disconnect() }
     }
 
+    /**
+     * `<回执>.failed` is written atomically by the Go child when it exits before publishing the
+     * receipt. It binds the launch identity of that one attempt and carries a redacted, truncated
+     * reason. The file must stay small; a missing, oversized, corrupt or foreign-launch document
+     * yields null so the banner keeps the plain exit code.
+     */
+    private fun startupFailureDetail(file: File, launchId: String): String? = runCatching {
+        if (!file.isFile || file.length() !in 1L..MAX_FAILURE_DETAIL_BYTES) return@runCatching null
+        val value = JSONObject(file.readText())
+        if (value.optString("launchId") != launchId) return@runCatching null
+        value.optString("detail").takeIf { it.isNotBlank() }
+    }.getOrNull()
+
     private fun stopOwnedProcess(startId: Int) {
         stopping.set(true)
         HostState.status.value = RuntimeStatus(RuntimePhase.STOPPING, "正在保存并停止本机服务")
@@ -532,6 +553,9 @@ class EmbeddedService : Service() {
 
         /** Startup receipt budget; the Go server writes it after it is able to answer. */
         private const val STARTUP_RECEIPT_TIMEOUT_MS = 45_000L
+
+        /** The failure detail is a single short reason; anything larger is not our document. */
+        private const val MAX_FAILURE_DETAIL_BYTES = 4_096L
 
         /** Grace for the Go server's 20 s shutdown before the host force-kills it. */
         private const val STOP_GRACE_MS = 25_000L

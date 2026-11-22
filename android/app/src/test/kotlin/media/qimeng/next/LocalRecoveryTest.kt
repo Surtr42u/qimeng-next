@@ -168,4 +168,35 @@ class LocalRecoveryTest {
         assertFalse(sameEndpoint(null, runtimeUrl))
         assertFalse(sameEndpoint(runtimeUrl, " "))
     }
+
+    @Test fun aLocalServerExitOffersTheIndexRebuild() {
+        // 子进程带退出码退出：控制目录里的索引数据让服务启不起来，重启运行层不会自愈。
+        assertTrue(shouldOfferLocalIndexRebuild(
+            runtimeAvailable = true, sessionIsLocalEndpoint = true, runtimePhase = RuntimePhase.FAILED,
+            runtimeMessage = "本机程序启动失败（退出码 1）：database disk image is malformed"))
+        assertTrue(shouldOfferLocalIndexRebuild(
+            runtimeAvailable = true, sessionIsLocalEndpoint = true, runtimePhase = RuntimePhase.FAILED,
+            runtimeMessage = "本机程序启动失败（退出码 1）"))
+    }
+
+    @Test fun theIndexRebuildNeverAppearsWithoutAServerExit() {
+        // 启动超时、凭据缺失、仍在前台启动/已就绪、远端会话或没有运行模块都不提供。
+        assertFalse(shouldOfferLocalIndexRebuild(
+            runtimeAvailable = true, sessionIsLocalEndpoint = true, runtimePhase = RuntimePhase.FAILED,
+            runtimeMessage = "本机启动超时，未取得受信回执"))
+        assertFalse(shouldOfferLocalIndexRebuild(
+            runtimeAvailable = true, sessionIsLocalEndpoint = true, runtimePhase = RuntimePhase.FAILED,
+            runtimeMessage = null))
+        listOf(RuntimePhase.READY, RuntimePhase.STARTING, RuntimePhase.STOPPING, RuntimePhase.STOPPED, null).forEach { phase ->
+            assertFalse("phase=$phase", shouldOfferLocalIndexRebuild(
+                runtimeAvailable = true, sessionIsLocalEndpoint = true, runtimePhase = phase,
+                runtimeMessage = "本机程序启动失败（退出码 1）"))
+        }
+        assertFalse(shouldOfferLocalIndexRebuild(
+            runtimeAvailable = true, sessionIsLocalEndpoint = false, runtimePhase = RuntimePhase.FAILED,
+            runtimeMessage = "本机程序启动失败（退出码 1）"))
+        assertFalse(shouldOfferLocalIndexRebuild(
+            runtimeAvailable = false, sessionIsLocalEndpoint = true, runtimePhase = RuntimePhase.FAILED,
+            runtimeMessage = "本机程序启动失败（退出码 1）"))
+    }
 }

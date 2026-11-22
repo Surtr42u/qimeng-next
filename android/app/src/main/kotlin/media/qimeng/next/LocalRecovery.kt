@@ -72,3 +72,21 @@ internal fun shouldPreferRuntimeFailureMessage(
 ): Boolean = runtimeAvailable && sessionIsLocalEndpoint && !runtimeMessage.isNullOrBlank() &&
     (runtimePhase == RuntimePhase.FAILED || runtimePhase == RuntimePhase.STARTING || runtimePhase == RuntimePhase.STOPPED)
 
+/**
+ * 连接失败横幅是否补充「重建本机索引」（纯判断，单测锁定）。
+ *
+ * 只有本机端点、运行层 FAILED 且失败文案带子进程退出码时才提供：那说明控制目录里的索引
+ * 数据（SQLite 所有权锁、损坏的目录库、未完成恢复标记）让新进程启动即退出，单纯重启
+ * 运行层不会自愈。启动超时、凭据缺失、远端会话或运行层未失败都不提供，避免把可恢复的
+ * 配置问题当成数据损坏。
+ */
+internal fun shouldOfferLocalIndexRebuild(
+    runtimeAvailable: Boolean,
+    sessionIsLocalEndpoint: Boolean,
+    runtimePhase: RuntimePhase?,
+    runtimeMessage: String?,
+): Boolean = runtimeAvailable && sessionIsLocalEndpoint && runtimePhase == RuntimePhase.FAILED &&
+    runtimeMessage?.contains(EXIT_CODE_MARKER) == true
+
+/** 运行层子进程退出码文案的标记；具体退出码不参与判定。 */
+private const val EXIT_CODE_MARKER = "退出码"

@@ -109,8 +109,13 @@ func ephemeralCertificate(listenIP net.IP) (tls.Certificate, error) {
 }
 
 func publishStartupReceipt(filename string, value startupReceipt) error {
-	// The trusted host chooses the private directory. File operations are scoped
-	// through os.Root; a symlink at the final name is replaced, never followed.
+	return publishPrivateJSON(filename, value)
+}
+
+// publishPrivateJSON writes a 0600 JSON document atomically inside the trusted host's private
+// directory. File operations are scoped through os.Root; a symlink at the final name is
+// replaced, never followed.
+func publishPrivateJSON(filename string, value any) error {
 	root, e := os.OpenRoot(filepath.Dir(filename))
 	if e != nil {
 		return e
